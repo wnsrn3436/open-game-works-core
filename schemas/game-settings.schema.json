@@ -1,0 +1,2571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "game-settings.schema.json",
+  "title": "game settings",
+  "description": "When the x-owner of an item is content, the content agent can edit it in the loop. Humans and the harness tool edit the other items",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "engine",
+    "coreVersion",
+    "coreModules",
+    "appId",
+    "supportedLanguages",
+    "environments",
+    "buildPlatforms",
+    "serverImage",
+    "postgresqlMajor",
+    "baseResolution",
+    "maxResolution",
+    "uiCheckScreens",
+    "titleScene",
+    "firstScene",
+    "loadingScreen",
+    "termsPopup",
+    "termsDocuments",
+    "nicknameUnique",
+    "consent"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "engine": {
+      "enum": [
+        "godot"
+      ],
+      "description": "Choose only an engine that has a client core"
+    },
+    "coreVersion": {
+      "description": "The core release version used",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "coreModules": {
+      "description": "The core modules the game chose. The names are module names of coreVersion. `## module` of the `core` skill defines the modules that a game uses",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client",
+        "server"
+      ],
+      "properties": {
+        "client": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z]*Core$"
+          },
+          "uniqueItems": true
+        },
+        "server": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "x-owner": "content"
+    },
+    "appId": {
+      "description": "The reverse domain ID by which stores and the OS identify the app. e.g. com.example.mygame",
+      "x-stage": "build",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
+    },
+    "sourceLanguage": {
+      "description": "The language of the source text written in text columns. BCP 47 tag",
+      "type": "string",
+      "default": "ko"
+    },
+    "supportedLanguages": {
+      "description": "All languages the game ships. Includes sourceLanguage. BCP 47 tag",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "loopIterationLimit": {
+      "description": "The maximum number of loop iterations of one command. `## iteration` of the `game-loop` skill defines how they are counted",
+      "type": "integer",
+      "minimum": 1,
+      "default": 20
+    },
+    "buildRetryLimit": {
+      "description": "The maximum number of times one build command goes back to the hardening step (`build` skill `## procedure` step 2). `ogw build retry` counts them, and the `build` skill defines when it counts",
+      "type": "integer",
+      "minimum": 0,
+      "default": 3
+    },
+    "targetFps": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 60
+    },
+    "loadingTimeLimitMs": {
+      "description": "The limit of the duration of loading one scene",
+      "type": "integer",
+      "minimum": 1,
+      "default": 3000
+    },
+    "rowSimulationSeeds": {
+      "description": "The number of seeds that row simulation runs per row",
+      "type": "integer",
+      "minimum": 1,
+      "default": 20
+    },
+    "dailyResetOffsetMs": {
+      "description": "The ms by which the game day boundary is offset from UTC 00:00. The game day of server-time and TimeCore and the Daily, Weekly and Monthly reset boundaries all use this value. Midnight of timezone UTC+h is -h × 3600000. Not changed after the first PROD build, because the meaning of saved game days and reset times would change",
+      "x-owner": "content",
+      "type": "integer",
+      "minimum": -86399999,
+      "maximum": 86399999,
+      "default": 0
+    },
+    "baseResolution": {
+      "description": "Base resolution. [width, height] pixels",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "maxResolution": {
+      "description": "Maximum resolution of the game area. [width, height] in game coordinates units",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "uiCheckScreens": {
+      "description": "The list of screens that the UI quality check captures",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "window",
+          "fillMode",
+          "notch"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "window": {
+            "description": "[width, height] window pixels",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "fillMode": {
+            "enum": [
+              "Crop",
+              "Letterbox"
+            ]
+          },
+          "notch": {
+            "description": "[left, top, right, bottom] window pixels",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "keyboard": {
+            "description": "The height of the on-screen keyboard placed in the keyboard capture. Window pixels. 0 means no keyboard capture. Less than the height of window",
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        }
+      }
+    },
+    "gamepadSupported": {
+      "description": "Whether every screen can be operated with a gamepad. When true, the UI quality check does the gamepad focus check",
+      "type": "boolean",
+      "default": false
+    },
+    "titleScene": {
+      "type": "string",
+      "description": "Resource key of the title scene",
+      "x-owner": "content"
+    },
+    "firstScene": {
+      "type": "string",
+      "description": "Resource key of the first scene opened after login",
+      "x-owner": "content"
+    },
+    "loadingScreen": {
+      "type": "string",
+      "description": "Resource key of the loading screen prefab",
+      "x-owner": "content"
+    },
+    "cutsceneView": {
+      "type": "string",
+      "description": "Resource key of the cutscene view prefab. Required when coreModules.client has CutsceneCore",
+      "x-owner": "content"
+    },
+    "tutorialView": {
+      "type": "string",
+      "description": "Resource key of the tutorial view prefab. Required when coreModules.client has TutorialCore",
+      "x-owner": "content"
+    },
+    "termsPopup": {
+      "type": "string",
+      "description": "Resource key of the terms consent popup prefab",
+      "x-owner": "content"
+    },
+    "termsDocuments": {
+      "description": "Terms documents",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "TERMS",
+        "PRIVACY"
+      ],
+      "properties": {
+        "TERMS": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "url"
+          ],
+          "properties": {
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        },
+        "PRIVACY": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "url"
+          ],
+          "properties": {
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      }
+    },
+    "nicknameUnique": {
+      "description": "Whether duplicate nicknames are forbidden. Not changed after the first PROD build, because the save structure would change",
+      "type": "boolean"
+    },
+    "consent": {
+      "description": "How age confirmation and privacy choices are asked",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ageConfirmation",
+        "privacyChoices",
+        "version",
+        "trackingRequest"
+      ],
+      "properties": {
+        "ageConfirmation": {
+          "type": "boolean",
+          "description": "Whether age confirmation is required"
+        },
+        "privacyChoices": {
+          "type": "boolean",
+          "description": "Whether the ad personalization and analytics choices are asked"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The version of the current privacy choice wording"
+        },
+        "trackingRequest": {
+          "type": "boolean",
+          "description": "Whether tracking permission (ATT) is asked on iOS"
+        },
+        "ageBandBoundaries": {
+          "description": "List of age band boundary ages. In ascending order, without duplicates. Holds core settings `auth.childAgeYears`, `auth.digitalConsentAgeYears` and `minimumAge` (when present)",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "default": [
+            13,
+            14,
+            16,
+            18,
+            19
+          ]
+        },
+        "minimumAge": {
+          "description": "Users whose age is less than this cannot log in. No limit when omitted. It is an age in `ageBandBoundaries`",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "agePopup": {
+      "type": "string",
+      "description": "Resource key of the age confirmation popup prefab. Required when `consent.ageConfirmation` is true",
+      "x-owner": "content"
+    },
+    "privacyPopup": {
+      "type": "string",
+      "description": "Resource key of the privacy choice popup prefab. Required when `consent.privacyChoices` is true",
+      "x-owner": "content"
+    },
+    "purchaseLimits": {
+      "description": "Monthly spend limit and test transaction grant limit",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "monthlyBelowAge": {
+          "description": "For each age n (decimal string key), the monthly spend limit of users whose age band is less than n. A key is an age in `consent.ageBandBoundaries`. When several keys apply, the smallest value is used",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "testGrants": {
+          "description": "The number of test transaction grants that each user can receive during `periodMs`. No limit when omitted",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "periodMs"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "periodMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "pushConsent": {
+      "description": "Consent to receive ad push (ad push consent) and the night window. The night window runs within the device-local day from minute `nightStartMinute` until before minute `nightEndMinute`, and crosses midnight when `nightStartMinute` is greater than `nightEndMinute`. The two values differ",
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "adPush": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether ad push is sent"
+        },
+        "nightStartMinute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1439,
+          "default": 1260
+        },
+        "nightEndMinute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1439,
+          "default": 480
+        }
+      }
+    },
+    "pushConsentPopup": {
+      "type": "string",
+      "description": "Resource key of the ad push consent popup prefab. Required when `pushConsent.adPush` is true",
+      "x-owner": "content"
+    },
+    "appleTeamId": {
+      "description": "Apple Developer Team ID. Used by `login-apple`, `push-apns` and ios signing. Required when `buildPlatforms` has ios, or when in at least one environment `adapters.login-apple` is `login-apple` or `adapters.push-apns` is not `fake`",
+      "x-stage": "build",
+      "type": "string",
+      "pattern": "^[A-Z0-9]{10}$"
+    },
+    "loginApple": {
+      "description": "Key ID of the Sign in with Apple key. Required when `adapters.login-apple` is `login-apple` in at least one environment",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "loginGoogle": {
+      "description": "OAuth client IDs of Google Sign-In. When `adapters.login-google` is `login-google` in at least one environment, `serverClientId` is required, and then `iosClientId` is also required when `buildPlatforms` has ios, and `desktopClientId` when it has one of windows, macos, linux. `desktopClientId` is an OAuth client of the Desktop app type of Google Cloud, and environment `secrets.loginGoogleDesktop` points to its client secret",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serverClientId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iosClientId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "desktopClientId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "iapApple": {
+      "description": "Issuer ID and key ID of the App Store Server API key, and the app Apple ID of App Store Connect. Required when `adapters.iap-apple` is not `fake` in at least one environment",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuerId",
+        "keyId",
+        "appAppleId"
+      ],
+      "properties": {
+        "issuerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appAppleId": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "iapGoogle": {
+      "description": "The email of the service account that calls the Google Play Developer API, and the authentication service account email of the Pub/Sub push subscription that sends store notifications. Required when `adapters.iap-google` is `iap-google` in at least one environment",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serviceAccountEmail",
+        "notificationServiceAccountEmail"
+      ],
+      "properties": {
+        "serviceAccountEmail": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+$"
+        },
+        "notificationServiceAccountEmail": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+$"
+        }
+      }
+    },
+    "pushApns": {
+      "description": "Key ID of the APNs token authentication key. Required when `adapters.push-apns` is not `fake` in at least one environment",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "admob": {
+      "description": "AdMob app ID. When `adapters.ads` is `ads-admob` in at least one environment, the values for android and ios that are in `buildPlatforms` are required",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "appIdAndroid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appIdIos": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "environments": {
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "DEV",
+        "STG",
+        "PROD"
+      ],
+      "properties": {
+        "DEV": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/environment"
+            },
+            {
+              "required": [
+                "deploy"
+              ],
+              "properties": {
+                "secrets": {
+                  "required": [
+                    "devAccess"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "STG": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/environment"
+            },
+            {
+              "required": [
+                "deploy"
+              ]
+            },
+            {
+              "$ref": "#/$defs/noDevAccess"
+            }
+          ]
+        },
+        "PROD": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/environment"
+            },
+            {
+              "not": {
+                "required": [
+                  "deploy"
+                ]
+              }
+            },
+            {
+              "$ref": "#/$defs/noDevAccess"
+            }
+          ]
+        }
+      }
+    },
+    "buildPlatforms": {
+      "description": "All platforms to build",
+      "type": "array",
+      "items": {
+        "enum": [
+          "android",
+          "ios",
+          "web",
+          "windows",
+          "macos",
+          "linux"
+        ]
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "serverImage": {
+      "description": "The server image that build makes and pushes to GitHub Container Registry",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository"
+      ],
+      "properties": {
+        "repository": {
+          "description": "The image name without the image tag. e.g. ghcr.io/example/mygame-server",
+          "type": "string",
+          "pattern": "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)+$"
+        },
+        "platform": {
+          "description": "The OS and CPU architecture of the host that starts the server",
+          "enum": [
+            "linux/amd64",
+            "linux/arm64"
+          ],
+          "default": "linux/amd64"
+        }
+      }
+    },
+    "postgresqlMajor": {
+      "description": "The PostgreSQL major version that the DEV, STG and PROD DBs use. `## deploy` of the `build` skill defines the procedure to change it",
+      "type": "integer",
+      "minimum": 1
+    },
+    "signing": {
+      "description": "Names of the secrets used for signing per platform. `## platform build` of the `build` skill defines what the build of each platform requires, and `ogw game check --build` and `ogw build start` check it. Values are kept in the host secret store",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "android": {
+          "$ref": "#/$defs/secretNames"
+        },
+        "ios": {
+          "$ref": "#/$defs/secretNames"
+        },
+        "windows": {
+          "$ref": "#/$defs/secretNames"
+        },
+        "macos": {
+          "$ref": "#/$defs/secretNames"
+        }
+      }
+    },
+    "androidKeyAlias": {
+      "description": "Alias of the key in the android signing keystore. Required when `signing.android` is present",
+      "x-stage": "build",
+      "type": "string",
+      "minLength": 1
+    },
+    "macosNotary": {
+      "description": "Key ID and issuer ID of the App Store Connect API key used for macos notarization. Required when `signing.macos` is present. The key itself is the secret that `notaryApiKey` of `signing.macos` points to",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "issuerId"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issuerId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "trustedSigning": {
+      "description": "Endpoint, account and certificate profile of the Azure Trusted Signing that signs the windows build, and the tenant ID and client ID of the Microsoft Entra ID app used for signing. Required when `signing.windows` is present. The client secret is the secret that `clientSecret` of `signing.windows` points to",
+      "x-stage": "build",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "account",
+        "certificateProfile",
+        "tenantId",
+        "clientId"
+      ],
+      "properties": {
+        "endpoint": {
+          "description": "e.g. https://eus.codesigning.azure.net",
+          "type": "string",
+          "pattern": "^https://[a-z0-9]+\\.codesigning\\.azure\\.net$"
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1
+        },
+        "certificateProfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "privacy": {
+      "description": "Declaration of the data that content collects. `## collected data` of the `core` skill gives the row format and the meaning of the values. When no data is collected, `contentData` is an empty list",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contentData"
+      ],
+      "properties": {
+        "contentData": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/collectedData"
+          }
+        }
+      },
+      "x-owner": "content"
+    },
+    "core": {
+      "description": "Written only when changing core settings values. Checked against the core settings schema of coreVersion. Keys whose x-owner is human in the core settings schema of coreVersion are edited by a human",
+      "type": "object",
+      "x-owner": "content"
+    }
+  },
+  "$defs": {
+    "environment": {
+      "description": "LOCAL is not written, because it is fixed to SQLite and fake adapters",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serverUrl",
+        "corsAllowedOrigins",
+        "trustedProxyCount",
+        "adminOperators",
+        "secrets",
+        "adapters"
+      ],
+      "properties": {
+        "serverUrl": {
+          "description": "The address of the shared server of that environment. The scheme is `https`",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "corsAllowedOrigins": {
+          "description": "List of origins that serve the web build. The web build calls the rpc, cheat and update routes of the server from these origins. The scheme is `https`. `ogw game derive` fills it by the rules of the `game-setup` skill",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          }
+        },
+        "trustedProxyCount": {
+          "description": "The number of proxies that append the client IP to the end of `X-Forwarded-For`. Counts the reverse proxy in front of the server and every proxy in front of that. e.g. CDN, load balancer",
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatePublicKeys": {
+          "description": "List of Ed25519 public keys that the client trusts for deploy list signature verification. A value is the standard base64 of 32 bytes. Holds the public key of `secrets.updateSigningKey` of the server of that environment",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+/]{43}=$"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "adminOperators": {
+          "description": "List of operators that call the admin API. `name` is unique within an environment. `ogw game init` and `ogw game derive` fill `name`, `roles` and `secret` of the operator `ogw` of the harness tool by the rules of the `game-setup` skill",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "roles",
+              "secret"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]*$"
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "read",
+                    "ops",
+                    "economy",
+                    "release",
+                    "privacy"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "secret": {
+                "$ref": "#/$defs/secretName",
+                "description": "Name of the admin secret. The value is kept in the host secret store"
+              }
+            }
+          }
+        },
+        "devAllowedCidrs": {
+          "description": "Written only for DEV. CIDR list of the client IPs from which the DEV server accepts cheat requests and `DevLogin`. When omitted, nothing is blocked by IP",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "adminAllowedCidrs": {
+          "description": "CIDR list of the client IPs from which admin requests are accepted. When omitted, nothing is blocked by IP",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "analyticsGa4": {
+          "description": "The measurement ID of GA4 Measurement Protocol, the GA4 property ID that receives user deletion requests, and the email of the service account that gets the access token for those requests. Required when `adapters.analytics` is `analytics-ga4`",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "measurementId",
+            "propertyId",
+            "serviceAccountEmail"
+          ],
+          "properties": {
+            "measurementId": {
+              "type": "string",
+              "pattern": "^G-[A-Z0-9]+$"
+            },
+            "propertyId": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "serviceAccountEmail": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$"
+            }
+          }
+        },
+        "cdnR2": {
+          "description": "Account ID, bucket, access key ID and public address of Cloudflare R2. Update files and the web build are uploaded to this bucket. Required when `adapters.cdn` is `cdn-r2`. `publicBaseUrl` is the address that makes that bucket public, and does not end with `/`",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accountId",
+            "bucket",
+            "accessKeyId",
+            "publicBaseUrl"
+          ],
+          "properties": {
+            "accountId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bucket": {
+              "type": "string",
+              "minLength": 1
+            },
+            "accessKeyId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "publicBaseUrl": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://.*[^/]$"
+            }
+          }
+        },
+        "turnCoturn": {
+          "description": "List of TURN URLs of the coturn relay server. Required when `adapters.turn` is `turn-coturn`",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urls"
+          ],
+          "properties": {
+            "urls": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^turns?:"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          }
+        },
+        "fcm": {
+          "description": "Firebase project and android app values, and the email of the service account with which the server calls the FCM HTTP v1 API. Required when `adapters.push-fcm` is `push-fcm`",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "projectNumber",
+            "appIdAndroid",
+            "apiKeyAndroid",
+            "serviceAccountEmail"
+          ],
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "projectNumber": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "appIdAndroid": {
+              "type": "string",
+              "minLength": 1
+            },
+            "apiKeyAndroid": {
+              "type": "string",
+              "minLength": 1
+            },
+            "serviceAccountEmail": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$"
+            }
+          }
+        },
+        "adUnits": {
+          "description": "AdMob ad unit IDs. The key is the placement ID name of an `ad_placement` row, and the value is the ad unit ID per platform. Each environment uses ad units made separately for it. When `adapters.ads` is `ads-admob`, the `admob` check of build checks it",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\[[a-z0-9_]+\\]$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "ios": {
+                "type": "string",
+                "minLength": 1
+              },
+              "android": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "containerLog": {
+          "description": "Log rotation values of the server and PostgreSQL containers. The Docker `json-file` log driver moves to a new file when one file reaches `maxBytes`, and deletes the oldest file when there are more than `maxFiles` files. The log of one container is at most `maxBytes` × `maxFiles` bytes",
+          "type": "object",
+          "additionalProperties": false,
+          "default": {},
+          "properties": {
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 1048576,
+              "default": 104857600
+            },
+            "maxFiles": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 5
+            }
+          }
+        },
+        "deploy": {
+          "description": "The host to which ogw deploy connects by SSH to start the server and PostgreSQL with Docker Compose. Required for DEV and STG, and not written for PROD",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "host",
+            "hostKey",
+            "user",
+            "dir",
+            "port"
+          ],
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SSH host name or address"
+            },
+            "user": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SSH user. It can use the Docker of the host"
+            },
+            "dir": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the host. Holds the compose file `<dir>/compose.yaml` and the secret files `<dir>/secrets/<secret name>`"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535,
+              "description": "The port of host `127.0.0.1` on which the port of the server container is opened"
+            },
+            "hostKey": {
+              "type": "string",
+              "pattern": "^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+={0,2}$",
+              "description": "The SSH host public key of the host. The two parts, key type and base64 key, from `/etc/ssh/ssh_host_<type>_key.pub` of the host"
+            }
+          }
+        },
+        "secrets": {
+          "description": "Names of the secrets used in this environment. Values are kept in the host secret store",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "db",
+            "accessTokenKey",
+            "updateSigningKey"
+          ],
+          "properties": {
+            "db": {
+              "$ref": "#/$defs/secretName",
+              "description": "PostgreSQL connection string"
+            },
+            "accessTokenKey": {
+              "$ref": "#/$defs/secretName",
+              "description": "Access token signing key"
+            },
+            "updateSigningKey": {
+              "$ref": "#/$defs/secretName",
+              "description": "Deploy list signing key"
+            },
+            "devAccess": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required in DEV, and not written for STG and PROD. The dev access value that the DEV server compares with `X-Ogw-Dev-Access` of cheat requests. It goes into the build info of DEV builds"
+            },
+            "cdn": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.cdn` is `cdn-r2`. R2 secret access key"
+            },
+            "turn": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.turn` is `turn-coturn`. coturn `static-auth-secret`"
+            },
+            "analytics": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.analytics` is `analytics-ga4`. GA4 Measurement Protocol API secret"
+            },
+            "analyticsServiceAccount": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.analytics` is `analytics-ga4`. Private key (PEM) of the `analyticsGa4.serviceAccountEmail` service account"
+            },
+            "pushFcm": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.push-fcm` is not `fake`. Private key (PEM) of the `fcm.serviceAccountEmail` service account"
+            },
+            "pushApns": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.push-apns` is not `fake`. APNs auth key (.p8 PEM)"
+            },
+            "iapAccountToken": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters` has at least one of `iap-apple`, `iap-google`"
+            },
+            "iapApple": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.iap-apple` is not `fake`. App Store Server API private key (.p8 PEM)"
+            },
+            "iapGoogle": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.iap-google` is not `fake`. Private key (PEM) of the game settings `iapGoogle.serviceAccountEmail` service account"
+            },
+            "loginApple": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.login-apple` is `login-apple`. Sign in with Apple private key (.p8 PEM)"
+            },
+            "loginGoogleDesktop": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `adapters.login-google` is `login-google` and `buildPlatforms` has one of windows, macos, linux. `ogw game check` checks it. Client secret of `loginGoogle.desktopClientId`"
+            },
+            "deploySsh": {
+              "$ref": "#/$defs/secretName",
+              "description": "SSH private key for connecting to the host of `deploy`. Required when `deploy` is present"
+            },
+            "dbPassword": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `deploy` is present. The password of user `postgres` in the compose PostgreSQL of the `deploy` host. In that case `db` is the connection string that connects with this password and user `postgres` to database `postgres` on host `db`, port 5432"
+            }
+          }
+        },
+        "adapters": {
+          "description": "Adapter name per external service. Only the services the game uses are written. The value is `fake` or an adapter name from the spec of the core module that uses that key",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "login-apple": {
+              "enum": [
+                "fake",
+                "login-apple"
+              ]
+            },
+            "login-google": {
+              "enum": [
+                "fake",
+                "login-google"
+              ]
+            },
+            "iap-apple": {
+              "enum": [
+                "fake",
+                "iap-apple-sandbox",
+                "iap-apple"
+              ]
+            },
+            "iap-google": {
+              "enum": [
+                "fake",
+                "iap-google"
+              ]
+            },
+            "ads": {
+              "enum": [
+                "fake",
+                "ads-admob"
+              ]
+            },
+            "push-fcm": {
+              "enum": [
+                "fake",
+                "push-fcm"
+              ]
+            },
+            "push-apns": {
+              "description": "Build-time check `adapter` of the `build` skill defines the values allowed per environment",
+              "enum": [
+                "fake",
+                "push-apns-sandbox",
+                "push-apns"
+              ]
+            },
+            "turn": {
+              "enum": [
+                "fake",
+                "turn-coturn"
+              ]
+            },
+            "cdn": {
+              "enum": [
+                "fake",
+                "cdn-r2"
+              ]
+            },
+            "analytics": {
+              "enum": [
+                "fake",
+                "analytics-ga4"
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "deploy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "deploySsh",
+                  "dbPassword"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "cdn"
+                ],
+                "properties": {
+                  "cdn": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "required": [
+              "cdnR2"
+            ],
+            "properties": {
+              "secrets": {
+                "required": [
+                  "cdn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "turn"
+                ],
+                "properties": {
+                  "turn": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "required": [
+              "turnCoturn"
+            ],
+            "properties": {
+              "secrets": {
+                "required": [
+                  "turn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "push-fcm"
+                ],
+                "properties": {
+                  "push-fcm": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "required": [
+              "fcm"
+            ],
+            "properties": {
+              "secrets": {
+                "required": [
+                  "pushFcm"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "push-apns"
+                ],
+                "properties": {
+                  "push-apns": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "pushApns"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "iap-apple"
+                ],
+                "properties": {
+                  "iap-apple": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "iapApple"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "iap-google"
+                ],
+                "properties": {
+                  "iap-google": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "iapGoogle"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "iap-apple"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "iap-google"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "iapAccountToken"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "required": [
+                  "login-apple"
+                ],
+                "properties": {
+                  "login-apple": {
+                    "not": {
+                      "const": "fake"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "loginApple"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapters": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "analytics"
+                    ],
+                    "properties": {
+                      "analytics": {
+                        "not": {
+                          "const": "fake"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "required": [
+              "adapters"
+            ]
+          },
+          "then": {
+            "required": [
+              "analyticsGa4"
+            ],
+            "properties": {
+              "secrets": {
+                "required": [
+                  "analytics",
+                  "analyticsServiceAccount"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "collectedData": {
+      "description": "One collected data row. The fields are the columns of the `## collected data` table of the `core` skill, without `source` and `condition`",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataType",
+        "description",
+        "purposes",
+        "linked",
+        "tracking",
+        "shared",
+        "optional",
+        "platforms"
+      ],
+      "properties": {
+        "dataType": {
+          "enum": [
+            "user_id",
+            "device_id",
+            "nickname",
+            "purchase_history",
+            "product_interaction",
+            "gameplay_content",
+            "in_app_messages",
+            "other_user_content",
+            "crash_data",
+            "performance_data",
+            "advertising_data",
+            "coarse_location",
+            "other_data"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purposes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "app_functionality",
+              "account_management",
+              "analytics",
+              "product_personalization",
+              "developer_communications",
+              "developer_advertising",
+              "third_party_advertising",
+              "fraud_prevention"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "linked": {
+          "type": "boolean"
+        },
+        "tracking": {
+          "type": "boolean"
+        },
+        "shared": {
+          "type": "boolean"
+        },
+        "optional": {
+          "type": "boolean"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "android",
+              "ios",
+              "web",
+              "windows",
+              "macos",
+              "linux"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "noDevAccess": {
+      "description": "STG and PROD have no DEV code, so `devAllowedCidrs` and `secrets.devAccess` are not written",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "devAllowedCidrs"
+            ]
+          },
+          {
+            "required": [
+              "secrets"
+            ],
+            "properties": {
+              "secrets": {
+                "required": [
+                  "devAccess"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "secretName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "secretNames": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/secretName"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "signing": {
+            "required": [
+              "android"
+            ]
+          }
+        },
+        "required": [
+          "signing"
+        ]
+      },
+      "then": {
+        "required": [
+          "androidKeyAlias"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "buildPlatforms": {
+            "contains": {
+              "const": "ios"
+            }
+          }
+        },
+        "required": [
+          "buildPlatforms"
+        ]
+      },
+      "then": {
+        "required": [
+          "appleTeamId"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "signing": {
+            "required": [
+              "windows"
+            ]
+          }
+        },
+        "required": [
+          "signing"
+        ]
+      },
+      "then": {
+        "required": [
+          "trustedSigning"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "signing": {
+            "required": [
+              "macos"
+            ]
+          }
+        },
+        "required": [
+          "signing"
+        ]
+      },
+      "then": {
+        "required": [
+          "macosNotary"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environments": {
+            "anyOf": [
+              {
+                "properties": {
+                  "DEV": {
+                    "properties": {
+                      "adapters": {
+                        "required": [
+                          "ads"
+                        ],
+                        "properties": {
+                          "ads": {
+                            "const": "ads-admob"
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "DEV"
+                ]
+              },
+              {
+                "properties": {
+                  "STG": {
+                    "properties": {
+                      "adapters": {
+                        "required": [
+                          "ads"
+                        ],
+                        "properties": {
+                          "ads": {
+                            "const": "ads-admob"
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "STG"
+                ]
+              },
+              {
+                "properties": {
+                  "PROD": {
+                    "properties": {
+                      "adapters": {
+                        "required": [
+                          "ads"
+                        ],
+                        "properties": {
+                          "ads": {
+                            "const": "ads-admob"
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "PROD"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "environments"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "buildPlatforms": {
+                  "contains": {
+                    "const": "android"
+                  }
+                }
+              },
+              "required": [
+                "buildPlatforms"
+              ]
+            },
+            "then": {
+              "required": [
+                "admob"
+              ],
+              "properties": {
+                "admob": {
+                  "required": [
+                    "appIdAndroid"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "buildPlatforms": {
+                  "contains": {
+                    "const": "ios"
+                  }
+                }
+              },
+              "required": [
+                "buildPlatforms"
+              ]
+            },
+            "then": {
+              "required": [
+                "admob"
+              ],
+              "properties": {
+                "admob": {
+                  "required": [
+                    "appIdIos"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "consent": {
+            "properties": {
+              "ageConfirmation": {
+                "const": true
+              }
+            }
+          }
+        },
+        "required": [
+          "consent"
+        ]
+      },
+      "then": {
+        "required": [
+          "agePopup"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "consent": {
+            "properties": {
+              "privacyChoices": {
+                "const": true
+              }
+            }
+          }
+        },
+        "required": [
+          "consent"
+        ]
+      },
+      "then": {
+        "required": [
+          "privacyPopup"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "coreModules": {
+            "properties": {
+              "client": {
+                "contains": {
+                  "const": "TutorialCore"
+                }
+              }
+            },
+            "required": [
+              "client"
+            ]
+          }
+        },
+        "required": [
+          "coreModules"
+        ]
+      },
+      "then": {
+        "required": [
+          "tutorialView"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "coreModules": {
+            "properties": {
+              "client": {
+                "contains": {
+                  "const": "CutsceneCore"
+                }
+              }
+            },
+            "required": [
+              "client"
+            ]
+          }
+        },
+        "required": [
+          "coreModules"
+        ]
+      },
+      "then": {
+        "required": [
+          "cutsceneView"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "pushConsent": {
+            "properties": {
+              "adPush": {
+                "const": true
+              }
+            },
+            "required": [
+              "adPush"
+            ]
+          }
+        },
+        "required": [
+          "pushConsent"
+        ]
+      },
+      "then": {
+        "required": [
+          "pushConsentPopup"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environments": {
+            "anyOf": [
+              {
+                "properties": {
+                  "DEV": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "login-apple"
+                            ],
+                            "properties": {
+                              "login-apple": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "DEV"
+                ]
+              },
+              {
+                "properties": {
+                  "STG": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "login-apple"
+                            ],
+                            "properties": {
+                              "login-apple": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "STG"
+                ]
+              },
+              {
+                "properties": {
+                  "PROD": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "login-apple"
+                            ],
+                            "properties": {
+                              "login-apple": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "PROD"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "environments"
+        ]
+      },
+      "then": {
+        "required": [
+          "loginApple",
+          "appleTeamId"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environments": {
+            "anyOf": [
+              {
+                "properties": {
+                  "DEV": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "login-google"
+                            ],
+                            "properties": {
+                              "login-google": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "DEV"
+                ]
+              },
+              {
+                "properties": {
+                  "STG": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "login-google"
+                            ],
+                            "properties": {
+                              "login-google": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "STG"
+                ]
+              },
+              {
+                "properties": {
+                  "PROD": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "login-google"
+                            ],
+                            "properties": {
+                              "login-google": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "PROD"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "environments"
+        ]
+      },
+      "then": {
+        "required": [
+          "loginGoogle"
+        ],
+        "properties": {
+          "loginGoogle": {
+            "required": [
+              "serverClientId"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "buildPlatforms": {
+                  "contains": {
+                    "const": "ios"
+                  }
+                }
+              },
+              "required": [
+                "buildPlatforms"
+              ]
+            },
+            "then": {
+              "properties": {
+                "loginGoogle": {
+                  "required": [
+                    "iosClientId"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "buildPlatforms": {
+                  "contains": {
+                    "enum": [
+                      "windows",
+                      "macos",
+                      "linux"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "buildPlatforms"
+              ]
+            },
+            "then": {
+              "properties": {
+                "loginGoogle": {
+                  "required": [
+                    "desktopClientId"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environments": {
+            "anyOf": [
+              {
+                "properties": {
+                  "DEV": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "iap-apple"
+                            ],
+                            "properties": {
+                              "iap-apple": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "DEV"
+                ]
+              },
+              {
+                "properties": {
+                  "STG": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "iap-apple"
+                            ],
+                            "properties": {
+                              "iap-apple": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "STG"
+                ]
+              },
+              {
+                "properties": {
+                  "PROD": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "iap-apple"
+                            ],
+                            "properties": {
+                              "iap-apple": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "PROD"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "environments"
+        ]
+      },
+      "then": {
+        "required": [
+          "iapApple"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environments": {
+            "anyOf": [
+              {
+                "properties": {
+                  "DEV": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "iap-google"
+                            ],
+                            "properties": {
+                              "iap-google": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "DEV"
+                ]
+              },
+              {
+                "properties": {
+                  "STG": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "iap-google"
+                            ],
+                            "properties": {
+                              "iap-google": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "STG"
+                ]
+              },
+              {
+                "properties": {
+                  "PROD": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "iap-google"
+                            ],
+                            "properties": {
+                              "iap-google": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "PROD"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "environments"
+        ]
+      },
+      "then": {
+        "required": [
+          "iapGoogle"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environments": {
+            "anyOf": [
+              {
+                "properties": {
+                  "DEV": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "push-apns"
+                            ],
+                            "properties": {
+                              "push-apns": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "DEV"
+                ]
+              },
+              {
+                "properties": {
+                  "STG": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "push-apns"
+                            ],
+                            "properties": {
+                              "push-apns": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "STG"
+                ]
+              },
+              {
+                "properties": {
+                  "PROD": {
+                    "properties": {
+                      "adapters": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "push-apns"
+                            ],
+                            "properties": {
+                              "push-apns": {
+                                "not": {
+                                  "const": "fake"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "adapters"
+                    ]
+                  }
+                },
+                "required": [
+                  "PROD"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "environments"
+        ]
+      },
+      "then": {
+        "required": [
+          "pushApns",
+          "appleTeamId"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "environments": {
+          "properties": {
+            "PROD": {
+              "properties": {
+                "adapters": {
+                  "required": [
+                    "cdn"
+                  ],
+                  "properties": {
+                    "cdn": {
+                      "const": "cdn-r2"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

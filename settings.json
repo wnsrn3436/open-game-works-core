@@ -1,0 +1,586 @@
+{
+  "$schema": "./schemas/harness-settings.schema.json",
+  "humanLanguage": "en",
+  "agents": {
+    "content": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "resource": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "translation": {
+      "cli": "claude-code",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium"
+    },
+    "play": {
+      "cli": "claude-code",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium"
+    },
+    "judge": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "server-hardening": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "client-hardening": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "core": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "review": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    }
+  },
+  "instanceWaitTimeoutMs": 1800000,
+  "jobWaitTimeoutMs": 300000,
+  "backgroundRetryLimit": 2,
+  "webSmokeCpuThrottleRate": 4,
+  "loopStop": {
+    "repeatedDefect": 3,
+    "oscillation": 2,
+    "plateau": 3,
+    "successJudges": 2
+  },
+  "reviewRounds": 4,
+  "codeCheck": {
+    "maxComplexity": 15
+  },
+  "rigCheck": {
+    "iouMin": 0.95,
+    "colorDiffMax": 8
+  },
+  "paths": {
+    "coreImpl": "open-game-works-core-impl",
+    "coreReleases": "open-game-works-core-releases",
+    "games": "games",
+    "worktrees": "worktrees"
+  },
+  "coreReleaseRepository": "wnsrn3436/open-game-works-core-impl",
+  "useLocalCore": false,
+  "resourceGeneration": [
+    {
+      "name": "flux2-klein",
+      "kind": "local-model",
+      "resourceTypes": [
+        "image",
+        "sprite_sheet",
+        "icon",
+        "background",
+        "nine_slice",
+        "texture",
+        "skybox",
+        "app_icon",
+        "splash"
+      ],
+      "safetyTimeoutMs": 300000,
+      "pins": [
+        {
+          "kind": "pip",
+          "source": "mflux==0.20.0,rembg[cpu]==2.0.85"
+        },
+        {
+          "kind": "hf",
+          "source": "black-forest-labs/FLUX.2-klein-4B",
+          "revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+          "files": "*",
+          "exclude": "flux-2-klein-4b.safetensors",
+          "sha256": "6ff40c444c45222e5f9f296f400b95db71b98f5d697f06e2325db9a090a96e0c"
+        },
+        {
+          "kind": "file",
+          "source": "birefnet-general",
+          "files": "birefnet-general.onnx",
+          "sha256": "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+          "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-epoch_244.onnx"
+        }
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "ace-step",
+      "kind": "local-model",
+      "resourceTypes": [
+        "bgm"
+      ],
+      "safetyTimeoutMs": 300000,
+      "pins": [
+        {
+          "kind": "git",
+          "source": "https://github.com/ace-step/ACE-Step-1.5.git",
+          "revision": "ca1e85fe9430179831e6bc6be790c332190a3866"
+        },
+        {
+          "kind": "hf",
+          "source": "ACE-Step/Ace-Step1.5",
+          "revision": "19671f406d603126926c1b7e2adc169acbcade22",
+          "files": "*",
+          "exclude": "acestep-v15-turbo/configuration_acestep_v15.py,acestep-v15-turbo/modeling_acestep_v15_turbo.py",
+          "sha256": "b7be9e41718f7c04863178600d058388ab4dce3b99afae2dd83861a65e641747"
+        },
+        {
+          "kind": "pip",
+          "source": "absl-py==2.5.1,accelerate==1.15.0,aiofiles==24.1.0,aiohappyeyeballs==2.7.1,aiohttp==3.14.5,aiosignal==1.4.0,annotated-doc==0.0.5,annotated-types==0.8.0,anyio==4.15.1,attrs==26.1.0,audioop-lts==0.2.2,brotli==1.2.0,certifi==2026.7.22,cffi==2.1.1,charset-normalizer==3.5.2,click==8.5.0,colorama==0.4.6 ; sys_platform == 'win32',contourpy==1.4.0,cryptography==50.0.2,cuda-bindings==12.9.4 ; sys_platform == 'linux',cuda-pathfinder==1.8.3 ; sys_platform == 'linux',cycler==0.12.1,diffusers==0.39.0,diskcache==5.6.3,einops==0.8.2,einx==0.4.3,fastapi==0.143.1,ffmpy==1.0.0,filelock==4.2.0,fonttools==4.67.0,frozendict==2.4.7,frozenlist==1.8.0,fsspec==2026.9.0,gradio==6.2.0,gradio-client==2.0.2,groovy==0.1.2,grpcio==1.84.0,h11==0.16.0,hf-xet==1.7.0,httpcore==1.0.9,httptools==0.9.0,httpx==0.28.1,huggingface-hub==0.36.2,idna==3.20,importlib-metadata==9.0.1,jinja2==3.1.6,kiwisolver==1.5.1,lightning==2.6.6,lightning-utilities==0.15.3,llvmlite==0.50.0,loguru==0.7.3,lycoris-lora==4.0.0,markdown==3.11.1,markdown-it-py==4.2.0,markupsafe==3.0.4,matplotlib==3.11.2,mdurl==0.1.2,mlx==0.32.4 ; sys_platform == 'darwin',mlx-lm==0.29.1 ; sys_platform == 'darwin',mlx-metal==0.32.4 ; sys_platform == 'darwin',modelscope==1.40.2,modelscope-hub==0.4.6,mpmath==1.3.0,multidict==7.1.0,networkx==3.7,numba==0.68.0,numpy==2.5.4,nvidia-cublas-cu12==12.8.4.1 ; sys_platform == 'linux',nvidia-cuda-cupti-cu12==12.8.90 ; sys_platform == 'linux',nvidia-cuda-nvrtc-cu12==12.8.93 ; sys_platform == 'linux',nvidia-cuda-runtime-cu12==12.8.90 ; sys_platform == 'linux',nvidia-cudnn-cu12==9.10.2.21 ; sys_platform == 'linux',nvidia-cufft-cu12==11.3.3.83 ; sys_platform == 'linux',nvidia-cufile-cu12==1.13.1.3 ; sys_platform == 'linux',nvidia-curand-cu12==10.3.9.90 ; sys_platform == 'linux',nvidia-cusolver-cu12==11.7.3.90 ; sys_platform == 'linux',nvidia-cusparse-cu12==12.5.8.93 ; sys_platform == 'linux',nvidia-cusparselt-cu12==0.7.1 ; sys_platform == 'linux',nvidia-nccl-cu12==2.27.5 ; sys_platform == 'linux',nvidia-nvjitlink-cu12==12.8.93 ; sys_platform == 'linux',nvidia-nvshmem-cu12==3.4.5 ; sys_platform == 'linux',nvidia-nvtx-cu12==12.8.90 ; sys_platform == 'linux',opentelemetry-api==1.45.1,orjson==3.13.0,packaging==26.3,pandas==2.3.3,peft==0.21.2,pillow==12.3.0,propcache==0.5.4,protobuf==7.36.2,psutil==7.2.2,pycparser==3.11,pydantic==2.14.1,pydantic-core==2.50.1,pydub==0.25.1,pygments==2.21.0,pyparsing==3.3.3,python-dateutil==2.9.0.post0,python-dotenv==1.2.4,python-multipart==0.0.32,pytorch-lightning==2.6.6,pytorch-wavelets==1.3.0,pytz==2026.5,pywavelets==1.10.0,pyyaml==6.0.3,regex==2026.9.29,requests==2.34.2,rich==15.0.0,safehttpx==0.1.7,safetensors==0.8.0,scipy==1.18.1,semantic-version==2.10.0,sentencepiece==0.2.2 ; sys_platform == 'darwin',setuptools==71.1.0,shellingham==1.5.4,six==1.17.0,soundfile==0.14.0,starlette==0.52.1,sympy==1.14.0,tensorboard==2.21.0,tensorboard-data-server==0.7.2,tokenizers==0.22.2,toml==0.10.2,tomlkit==0.13.3,torch==2.12.1 ; sys_platform == 'darwin',torch==2.10.0 ; sys_platform == 'linux',torch==2.7.1 ; sys_platform == 'win32',torch-einops-utils==0.1.36,torchao==0.16.0,torchaudio==2.11.0 ; sys_platform == 'darwin',torchaudio==2.10.0 ; sys_platform == 'linux',torchaudio==2.7.1 ; sys_platform == 'win32',torchcodec==0.17.0,torchmetrics==1.9.0,torchvision==0.27.1 ; sys_platform == 'darwin',torchvision==0.25.0 ; sys_platform == 'linux',torchvision==0.22.1 ; sys_platform == 'win32',tqdm==4.70.1,transformers==4.57.6,triton==3.6.0 ; sys_platform == 'linux',typer==0.27.3,typer-slim==0.24.0,typing-extensions==4.16.0,typing-inspection==0.4.4,tzdata==2026.5,urllib3==2.8.0,uvicorn==0.54.0,uvloop==0.23.0 ; sys_platform == 'darwin' or sys_platform == 'linux',vector-quantize-pytorch==1.31.6,watchfiles==1.3.0,websockets==17.2,werkzeug==3.1.9,win32-setctime==1.2.0 ; sys_platform == 'win32',yarl==1.25.1,zipp==4.1.1"
+        }
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "moss-sfx",
+      "kind": "local-model",
+      "resourceTypes": [
+        "sfx"
+      ],
+      "safetyTimeoutMs": 300000,
+      "pins": [
+        {
+          "kind": "git",
+          "source": "https://github.com/OpenMOSS/MOSS-TTS.git",
+          "revision": "934d6826b084c46a0d033402174d5f8ac4ed2519",
+          "pyproject": "moss_soundeffect_v2/pyproject.toml"
+        },
+        {
+          "kind": "patch",
+          "source": "tools/patches/moss-sfx-mps.patch",
+          "sha256": "6cd49e30620c3229acffb7304bb603c216e3dc4d74e1b97e00a41b9c8afd049f"
+        },
+        {
+          "kind": "pip",
+          "source": "absl-py==2.5.1,aiofiles==24.1.0,annotated-doc==0.0.5,annotated-types==0.8.0,anyio==4.15.1,argbind==0.3.9,asttokens==3.0.2,audioop-lts==0.2.2,audioread==3.1.0,brotli==1.2.0,certifi==2026.7.22,cffi==2.1.1,charset-normalizer==3.5.2,click==8.5.0,cloudpickle==3.1.2,colorama==0.4.6 ; sys_platform == 'win32',contourpy==1.3.3,cycler==0.12.1,decorator==5.3.1,descript-audiotools==0.7.2,diffusers==0.37.1,docstring-parser==0.18.0,einops==0.8.2,executing==2.3.0,fastapi==0.143.1,ffmpy==1.0.0,filelock==4.2.0,fire==0.7.1,flatten-dict==0.5.0,fonttools==4.67.0,fsspec==2026.9.0,ftfy==6.3.1,gradio==6.11.0,gradio-client==2.4.0,groovy==0.1.2,grpcio==1.84.0,h11==0.16.0,hf-gradio==0.4.1,hf-xet==1.7.0,httpcore==1.0.9,httpx==0.28.1,huggingface-hub==0.36.2,idna==3.20,imageio==2.37.3,importlib-metadata==9.0.1,importlib-resources==7.1.0,ipython==9.17.1,ipython-pygments-lexers==1.1.1,jedi==0.20.1,jinja2==3.1.6,joblib==1.6.0,julius==0.2.8,kiwisolver==1.5.1,lazy-loader==0.6,librosa==0.11.0,llvmlite==0.50.0,markdown==3.11.1,markdown-it-py==4.2.0,markdown2==2.5.5,markupsafe==3.0.4,matplotlib==3.11.2,matplotlib-inline==0.2.2,mdurl==0.1.2,mpmath==1.3.0,msgpack==1.2.3,narwhals==2.27.1,networkx==3.7,numba==0.68.0,numpy==1.26.4,nvidia-cublas-cu12==12.8.4.1 ; sys_platform == 'linux',nvidia-cuda-cupti-cu12==12.8.90 ; sys_platform == 'linux',nvidia-cuda-nvrtc-cu12==12.8.93 ; sys_platform == 'linux',nvidia-cuda-runtime-cu12==12.8.90 ; sys_platform == 'linux',nvidia-cudnn-cu12==9.10.2.21 ; sys_platform == 'linux',nvidia-cufft-cu12==11.3.3.83 ; sys_platform == 'linux',nvidia-cufile-cu12==1.13.1.3 ; sys_platform == 'linux',nvidia-curand-cu12==10.3.9.90 ; sys_platform == 'linux',nvidia-cusolver-cu12==11.7.3.90 ; sys_platform == 'linux',nvidia-cusparse-cu12==12.5.8.93 ; sys_platform == 'linux',nvidia-cusparselt-cu12==0.7.1 ; sys_platform == 'linux',nvidia-nccl-cu12==2.27.5 ; sys_platform == 'linux',nvidia-nvjitlink-cu12==12.8.93 ; sys_platform == 'linux',nvidia-nvshmem-cu12==3.3.20 ; sys_platform == 'linux',nvidia-nvtx-cu12==12.8.90 ; sys_platform == 'linux',opentelemetry-api==1.45.1,orjson==3.13.0,packaging==26.3,pandas==3.0.6,parso==0.8.7,pexpect==4.9.0 ; sys_platform == 'darwin' or sys_platform == 'linux',pillow==12.2.0,platformdirs==4.13.0,pooch==1.9.0,prompt-toolkit==3.0.53,protobuf==3.19.6,psutil==7.2.2,ptyprocess==0.7.0 ; sys_platform == 'darwin' or sys_platform == 'linux',pure-eval==0.2.4,pycparser==3.11,pydantic==2.14.1,pydantic-core==2.50.1,pydub==0.25.1,pygments==2.21.0,pyloudnorm==0.2.0,pyparsing==3.3.3,pystoi==0.4.1,python-dateutil==2.9.0.post0,python-multipart==0.0.32,pytz==2026.5,pyyaml==6.0.3,randomname==0.2.1,regex==2026.4.4,requests==2.34.2,rich==15.0.0,safehttpx==0.1.7,safetensors==0.7.0,scikit-learn==1.9.1,scipy==1.17.1,semantic-version==2.10.0,setuptools==84.0.0,shellingham==1.5.4,six==1.17.0,soundfile==0.13.1,soxr==1.1.0,stack-data==0.6.3,standard-aifc==3.13.0,standard-chunk==3.13.0,standard-sunau==3.13.0,starlette==1.8.0,sympy==1.14.0,tensorboard==2.20.0,tensorboard-data-server==0.7.2,termcolor==3.3.0,threadpoolctl==3.7.0,tokenizers==0.22.2,tomlkit==0.13.3,torch==2.9.0,torch-stoi==0.2.3,torchaudio==2.9.0,tqdm==4.67.3,traitlets==5.16.1,transformers==4.57.1,triton==3.5.0 ; sys_platform == 'linux',typer==0.27.3,typing-extensions==4.16.0,typing-inspection==0.4.4,tzdata==2026.5 ; sys_platform == 'win32',urllib3==2.8.0,uvicorn==0.54.0,wcwidth==0.9.2,werkzeug==3.1.9,zipp==4.1.1"
+        },
+        {
+          "kind": "hf",
+          "source": "OpenMOSS-Team/MOSS-SoundEffect-v2.0",
+          "revision": "e35df4d82fbe87fcd5d14e5d100e349c0c3c076d",
+          "files": "*",
+          "sha256": "ffa19e03de61f6363417147c9ecbc1f9c4aa014c323c72aeb5b31de1fdb381a0"
+        }
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "qwen3-tts",
+      "kind": "local-model",
+      "resourceTypes": [
+        "voice"
+      ],
+      "safetyTimeoutMs": 300000,
+      "pins": [
+        {
+          "kind": "pip",
+          "source": "qwen-tts==0.1.1,soundfile==0.14.0"
+        },
+        {
+          "kind": "hf",
+          "source": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+          "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
+          "files": "*",
+          "sha256": "3dd6805f9498ef2b30f6617289fa965696c852cb107a29c8d68df76bd95f3d66"
+        }
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "trellis2",
+      "kind": "local-model",
+      "resourceTypes": [
+        "model"
+      ],
+      "safetyTimeoutMs": 600000,
+      "pins": [
+        {
+          "kind": "git",
+          "source": "https://github.com/lyonsno/trellis2mlx.git",
+          "revision": "cddaf3cb8a9f28956114956ebe754d6661a3f695"
+        },
+        {
+          "kind": "hf",
+          "source": "microsoft/TRELLIS.2-4B",
+          "revision": "af44b45f2e35a493886929c6d786e563ec68364d",
+          "files": "ckpts/*,pipeline.json",
+          "sha256": "5f3cf32f26127b20186c414b018dcb988cb13045f6416faf9af5dc5cf85a26cd"
+        },
+        {
+          "kind": "hf",
+          "source": "microsoft/TRELLIS-image-large",
+          "revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+          "files": "ckpts/ss_dec_conv3d_16l8_fp16.safetensors,ckpts/ss_dec_conv3d_16l8_fp16.json",
+          "sha256": "552a1b16be38c09092ddbb490adcf7392aad3042bf3f297bdba006ae3e3aa9d0"
+        },
+        {
+          "kind": "hf",
+          "source": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+          "revision": "ea8dc2863c51be0a264bab82070e3e8836b02d51",
+          "files": "model.safetensors,LICENSE.md",
+          "secret": "huggingface",
+          "sha256": "529d9a7a8d0b4810d730f04694aaf53120e9a09c55fa9d90b231e31f6988e71d"
+        },
+        {
+          "kind": "pip",
+          "source": "anyio==4.15.1 ; sys_platform == 'darwin' or sys_platform == 'win32',attrs==26.1.0 ; sys_platform == 'darwin' or sys_platform == 'win32',certifi==2026.7.22 ; sys_platform == 'darwin' or sys_platform == 'win32',charset-normalizer==3.5.2 ; sys_platform == 'darwin' or sys_platform == 'win32',click==8.5.0 ; sys_platform == 'darwin' or sys_platform == 'win32',colorama==0.4.6 ; sys_platform == 'win32',fast-simplification==0.2.0 ; sys_platform == 'darwin' or sys_platform == 'win32',filelock==4.2.0 ; sys_platform == 'darwin' or sys_platform == 'win32',flatbuffers==25.12.19 ; sys_platform == 'darwin' or sys_platform == 'win32',fsspec==2026.9.0 ; sys_platform == 'darwin' or sys_platform == 'win32',h11==0.16.0 ; sys_platform == 'darwin' or sys_platform == 'win32',hf-xet==1.7.0 ; sys_platform == 'darwin' or sys_platform == 'win32',httpcore2==2.13.1 ; sys_platform == 'darwin' or sys_platform == 'win32',httpx2==2.13.1 ; sys_platform == 'darwin' or sys_platform == 'win32',huggingface-hub==2.2.0 ; sys_platform == 'darwin' or sys_platform == 'win32',idna==3.20 ; sys_platform == 'darwin' or sys_platform == 'win32',imageio==2.38.1 ; sys_platform == 'darwin' or sys_platform == 'win32',jsonschema==4.26.0 ; sys_platform == 'darwin' or sys_platform == 'win32',jsonschema-specifications==2025.9.1 ; sys_platform == 'darwin' or sys_platform == 'win32',lazy-loader==0.6 ; sys_platform == 'darwin' or sys_platform == 'win32',libigl==2.6.3 ; sys_platform == 'darwin' or sys_platform == 'win32',llvmlite==0.50.0 ; sys_platform == 'darwin' or sys_platform == 'win32',mlx==0.32.4 ; sys_platform == 'darwin' or sys_platform == 'win32',mlx-metal==0.32.4 ; sys_platform == 'darwin',networkx==3.7 ; sys_platform == 'darwin' or sys_platform == 'win32',numba==0.68.0 ; sys_platform == 'darwin' or sys_platform == 'win32',numpy==2.5.4 ; sys_platform == 'darwin' or sys_platform == 'win32',onnxruntime==1.31.0 ; sys_platform == 'darwin' or sys_platform == 'win32',opencv-python==5.0.0.93 ; sys_platform == 'darwin' or sys_platform == 'win32',packaging==26.3 ; sys_platform == 'darwin' or sys_platform == 'win32',pillow==12.3.0 ; sys_platform == 'darwin' or sys_platform == 'win32',platformdirs==4.13.0 ; sys_platform == 'darwin' or sys_platform == 'win32',pooch==1.9.0 ; sys_platform == 'darwin' or sys_platform == 'win32',protobuf==7.36.2 ; sys_platform == 'darwin' or sys_platform == 'win32',pymatting==1.1.16 ; sys_platform == 'darwin' or sys_platform == 'win32',pyyaml==6.0.3 ; sys_platform == 'darwin' or sys_platform == 'win32',referencing==0.37.0 ; sys_platform == 'darwin' or sys_platform == 'win32',rembg==2.0.76 ; sys_platform == 'darwin' or sys_platform == 'win32',requests==2.34.2 ; sys_platform == 'darwin' or sys_platform == 'win32',rpds-py==2026.9.1 ; sys_platform == 'darwin' or sys_platform == 'win32',safetensors==0.8.0 ; sys_platform == 'darwin' or sys_platform == 'win32',scikit-image==0.26.0 ; sys_platform == 'darwin' or sys_platform == 'win32',scipy==1.18.1 ; sys_platform == 'darwin' or sys_platform == 'win32',tifffile==2026.9.20 ; sys_platform == 'darwin' or sys_platform == 'win32',tqdm==4.70.1 ; sys_platform == 'darwin' or sys_platform == 'win32',trimesh==5.1.1 ; sys_platform == 'darwin' or sys_platform == 'win32',truststore==0.10.5 ; sys_platform == 'darwin' or sys_platform == 'win32',typing-extensions==4.16.0 ; sys_platform == 'darwin' or sys_platform == 'win32',urllib3==2.8.0 ; sys_platform == 'darwin' or sys_platform == 'win32',xatlas==0.0.11 ; sys_platform == 'darwin' or sys_platform == 'win32'"
+        }
+      ],
+      "license": "Apache-2.0 AND LicenseRef-DINOv3 AND MIT"
+    },
+    {
+      "name": "sprite-gen-codex",
+      "kind": "external-service",
+      "resourceTypes": [
+        "sprite_animation"
+      ],
+      "provider": "codex",
+      "safetyTimeoutMs": 600000,
+      "pins": [
+        {
+          "kind": "git",
+          "source": "https://github.com/aldegad/sprite-gen.git",
+          "revision": "611813b3f9d2069073cca8587e99647f8f184707"
+        },
+        {
+          "kind": "pip",
+          "source": "pillow==12.3.0,numpy==2.5.4"
+        }
+      ],
+      "license": "LicenseRef-OpenAI-Output"
+    },
+    {
+      "name": "sprite-gen-grok",
+      "kind": "external-service",
+      "resourceTypes": [
+        "sprite_animation"
+      ],
+      "provider": "grok",
+      "safetyTimeoutMs": 600000,
+      "pins": [
+        {
+          "kind": "git",
+          "source": "https://github.com/aldegad/sprite-gen.git",
+          "revision": "611813b3f9d2069073cca8587e99647f8f184707"
+        },
+        {
+          "kind": "pip",
+          "source": "pillow==12.3.0,numpy==2.5.4"
+        }
+      ],
+      "license": "LicenseRef-xAI-Output",
+      "attribution": "Created with Grok"
+    },
+    {
+      "name": "rig-2d",
+      "kind": "procedural",
+      "resourceTypes": [
+        "rig_animation_2d"
+      ],
+      "safetyTimeoutMs": 600000,
+      "license": "Apache-2.0 AND LicenseRef-game-owned"
+    },
+    {
+      "name": "blender",
+      "kind": "procedural",
+      "resourceTypes": [
+        "model",
+        "rig",
+        "animation_3d",
+        "material"
+      ],
+      "safetyTimeoutMs": 300000,
+      "license": "LicenseRef-game-owned"
+    },
+    {
+      "name": "procedural",
+      "kind": "procedural",
+      "resourceTypes": [
+        "texture_atlas",
+        "particle",
+        "shader",
+        "material",
+        "haptic",
+        "tileset"
+      ],
+      "safetyTimeoutMs": 300000,
+      "license": "LicenseRef-game-owned"
+    },
+    {
+      "name": "font-catalog",
+      "kind": "catalog",
+      "resourceTypes": [
+        "font"
+      ],
+      "safetyTimeoutMs": 300000,
+      "pins": [
+        {
+          "kind": "git",
+          "source": "https://github.com/google/fonts.git",
+          "revision": "b38c5c93af322c45f633e17ac440ec1e6c94d489",
+          "files": "ofl/notosans,ofl/notoserif,ofl/notosanskr,ofl/notoserifkr,ofl/notosansjp,ofl/notoserifjp,ofl/notosanssc,ofl/notosanstc,ofl/notosansthai,ofl/notosansarabic,ofl/pressstart2p,ofl/dotgothic16,ofl/blackhansans,ofl/jua"
+        }
+      ]
+    }
+  ],
+  "tools": {
+    "blender": {
+      "version": "5.2.2",
+      "downloads": [
+        {
+          "platform": "macos-arm64",
+          "url": "https://download.blender.org/release/Blender5.2/blender-5.2.2-macos-arm64.dmg",
+          "sha256": "dc4125399b8bfefe283cc1624d6cfc7809d1cac20ace51072127eb371f31f210"
+        },
+        {
+          "platform": "linux-x64",
+          "url": "https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz",
+          "sha256": "84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168"
+        },
+        {
+          "platform": "windows-x64",
+          "url": "https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip",
+          "sha256": "3849d17a682cba006075aaa3f3597ecb5c9c30ec31035b2e092c53e40679b535"
+        }
+      ]
+    },
+    "placeholderFont": {
+      "version": "Noto Sans KR google/fonts b38c5c93af322c45f633e17ac440ec1e6c94d489",
+      "downloads": [
+        {
+          "platform": "any",
+          "url": "https://raw.githubusercontent.com/google/fonts/b38c5c93af322c45f633e17ac440ec1e6c94d489/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf",
+          "sha256": "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252"
+        }
+      ]
+    },
+    "postgresql": {
+      "tag": "18.6",
+      "digest": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+    },
+    "ffmpeg": {
+      "version": "eugeneware/ffmpeg-static b6.1.1",
+      "downloads": [
+        {
+          "platform": "macos-arm64",
+          "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64",
+          "sha256": "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"
+        },
+        {
+          "platform": "linux-x64",
+          "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-linux-x64",
+          "sha256": "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99"
+        },
+        {
+          "platform": "windows-x64",
+          "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-win32-x64",
+          "sha256": "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00"
+        }
+      ]
+    },
+    "chromium": {
+      "version": "155.0.8059.79",
+      "downloads": [
+        {
+          "platform": "macos-arm64",
+          "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.79/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+          "sha256": "5f51504ead3d41815111cd73e79c4979df3a4e6aedc7cf6fe2b042ae037363b5"
+        }
+      ]
+    },
+    "gdtoolkit": {
+      "version": "4.5.0",
+      "python": "3.14",
+      "downloads": [
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/36/fe/afcf23a58b3e20897484b546d86741a7ea0d8cf57ae616c1677482b47f61/gdtoolkit-4.5.0-py3-none-any.whl",
+          "sha256": "f25c5bf7f7fe861e1127164c5d73e0a7fb204ec74cf05d375b76a5dcf8610cdb"
+        }
+      ],
+      "dependencies": [
+        {
+          "platform": "windows-x64",
+          "url": "https://files.pythonhosted.org/packages/23/20/bb6982b26a40bb43951265ba29d4c246ef0ff59c9fdcdf0ed04e0687de4d/pyyaml-6.0.3-cp314-cp314-win_amd64.whl",
+          "sha256": "4a2e8cebe2ff6ab7d1050ecd59c25d4c8bd7e6f400f5f82b96557ac0abafd0ac"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/2d/00/d90b10b962b4277f5e64a78b6609968859ff86889f5b898c1a778c06ec00/lark-1.2.2-py3-none-any.whl",
+          "sha256": "c2276486b02f0f1b90be155f2c8ba4a8e194d42775786db622faccd652d8e80c"
+        },
+        {
+          "platform": "windows-x64",
+          "url": "https://files.pythonhosted.org/packages/31/e2/c2b466924ccbeb874862968ca638051b15a8fd29d994a0e99004a5cbf78e/regex-2026.9.29-cp314-cp314-win_amd64.whl",
+          "sha256": "1c2a0026062abcc321a53db4a185ceba0b59a66b5d37b0808917a88b55a5257f"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/6c/4a/c3b77fc1a24510b08918b43a473410c0168f6e657118807015f1f1edceea/docopt_ng-0.9.0-py3-none-any.whl",
+          "sha256": "bfe4c8b03f9fca424c24ee0b4ffa84bf7391cb18c29ce0f6a8227a3b01b81ff9"
+        },
+        {
+          "platform": "linux-x64",
+          "url": "https://files.pythonhosted.org/packages/88/f9/16491d7ed2a919954993e48aa941b200f38040928474c9e85ea9e64222c3/pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5"
+        },
+        {
+          "platform": "macos-arm64",
+          "url": "https://files.pythonhosted.org/packages/93/1f/d9dc6f02f569625faf67a4daec926cd5023472dcd69bb44286dccd5a5ab3/regex-2026.9.29-cp314-cp314-macosx_10_15_universal2.whl",
+          "sha256": "957bb708e8057ab1649ba566456429d691ec9b90d1c9ad1af1ba7ffbbeaf05f2"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/93/f7/d00d9b4a0313a6be3a3e0818e6375e15da6d7076f4ae47d1324e7ca986a1/radon-6.0.1-py2.py3-none-any.whl",
+          "sha256": "632cc032364a6f8bb1010a2f6a12d0f14bc7e5ede76585ef29dc0cecf4cd8859"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl",
+          "sha256": "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+        },
+        {
+          "platform": "linux-x64",
+          "url": "https://files.pythonhosted.org/packages/a9/4d/041d9458a645fee4fce4d642a89d27271a3cfcd91095104f6dde44da70bf/regex-2026.9.29-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "2f7f7aa47b229f2b39a2ae2596d2ad5625d77b5eb9856fac2dab3eb506cdd0a0"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+          "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+        },
+        {
+          "platform": "macos-arm64",
+          "url": "https://files.pythonhosted.org/packages/bd/9c/4d95bb87eb2063d20db7b60faa3840c1b18025517ae857371c4dd55a6b3a/pyyaml-6.0.3-cp314-cp314-macosx_11_0_arm64.whl",
+          "sha256": "34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+          "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
+        },
+        {
+          "platform": "any",
+          "url": "https://files.pythonhosted.org/packages/d2/f0/834e479e47e499b6478e807fb57b31cc2db696c4db30557bb6f5aea4a90b/mando-0.7.1-py2.py3-none-any.whl",
+          "sha256": "26ef1d70928b6057ee3ca12583d73c63e05c49de8972d620c278a7b206581a8a"
+        }
+      ]
+    }
+  },
+  "webSmokeBootTimeoutMs": 120000,
+  "hosts": {
+    "6db648e8609fb9d0219f28f16f8c8e9b": {
+      "measured": {
+        "flux2-klein": [
+          {
+            "resolution": 512,
+            "jobMs": 19382,
+            "result": "ok"
+          },
+          {
+            "resolution": 1024,
+            "jobMs": 23058,
+            "result": "ok"
+          },
+          {
+            "resolution": 2048,
+            "jobMs": 59004,
+            "result": "ok"
+          }
+        ],
+        "ace-step": [
+          {
+            "durationMs": 30000,
+            "jobMs": 65977,
+            "result": "ok"
+          },
+          {
+            "durationMs": 60000,
+            "jobMs": 73953,
+            "result": "ok"
+          },
+          {
+            "durationMs": 120000,
+            "jobMs": 78028,
+            "result": "ok"
+          },
+          {
+            "durationMs": 240000,
+            "jobMs": 93946,
+            "result": "ok"
+          }
+        ],
+        "moss-sfx": [
+          {
+            "durationMs": 1000,
+            "jobMs": 139673,
+            "result": "ok"
+          },
+          {
+            "durationMs": 3000,
+            "jobMs": 131664,
+            "result": "ok"
+          },
+          {
+            "durationMs": 10000,
+            "jobMs": 171571,
+            "result": "ok"
+          }
+        ],
+        "qwen3-tts": [
+          {
+            "jobMs": 16637,
+            "result": "ok"
+          }
+        ],
+        "trellis2": [
+          {
+            "resolution": 512,
+            "jobMs": 319361,
+            "result": "ok"
+          },
+          {
+            "resolution": 1024,
+            "jobMs": 203996,
+            "result": "ok"
+          }
+        ],
+        "rig-2d": [
+          {
+            "jobMs": 47,
+            "result": "ok"
+          }
+        ],
+        "blender": [
+          {
+            "jobMs": 4607,
+            "result": "ok"
+          }
+        ],
+        "procedural": [
+          {
+            "result": "ok"
+          }
+        ],
+        "font-catalog": [
+          {
+            "result": "ok"
+          }
+        ]
+      },
+      "name": "Jungu-MacBookPro.local",
+      "reviewRunConcurrency": 8,
+      "maxConcurrentInstances": 8
+    }
+  }
+}

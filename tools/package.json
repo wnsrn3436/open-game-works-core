@@ -1,0 +1,38 @@
+{
+  "name": "ogw",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ogw": "bin/ogw"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "node scripts/lint.ts"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "2.1.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "delaunator": "5.1.0",
+    "sharp": "0.35.5",
+    "spdx-license-list": "6.12.0",
+    "tar": "7.5.22",
+    "ws": "8.22.0",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
+    "eslint": "10.12.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1",
+    "vitest": "5.0.3"
+  }
+}

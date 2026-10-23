@@ -1,0 +1,15 @@
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local scratch
+*.local*
+
+# ogw
+tools/node_modules

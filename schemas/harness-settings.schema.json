@@ -1,0 +1,746 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harness-settings.schema.json",
+  "title": "harness settings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "humanLanguage",
+    "agents",
+    "instanceWaitTimeoutMs",
+    "jobWaitTimeoutMs",
+    "paths",
+    "coreReleaseRepository",
+    "useLocalCore",
+    "resourceGeneration",
+    "backgroundRetryLimit",
+    "webSmokeCpuThrottleRate",
+    "webSmokeBootTimeoutMs",
+    "loopStop",
+    "reviewRounds",
+    "codeCheck",
+    "rigCheck",
+    "tools"
+  ],
+  "properties": {
+    "humanLanguage": {
+      "description": "The language of reports and questions to the human, the `--human` file of `ogw loop end-record` and the `--reason` file of `ogw build report`. BCP 47 language tag",
+      "type": "string",
+      "minLength": 2
+    },
+    "$schema": {
+      "type": "string"
+    },
+    "agents": {
+      "description": "Agent CLI, model and effort per role. The lead agent is not here, because it is a session that a human started",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content",
+        "resource",
+        "translation",
+        "play",
+        "judge",
+        "server-hardening",
+        "client-hardening",
+        "core",
+        "review"
+      ],
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/agent"
+        },
+        "resource": {
+          "$ref": "#/$defs/agent"
+        },
+        "translation": {
+          "$ref": "#/$defs/agent"
+        },
+        "play": {
+          "$ref": "#/$defs/agent"
+        },
+        "judge": {
+          "$ref": "#/$defs/agent"
+        },
+        "server-hardening": {
+          "$ref": "#/$defs/agent"
+        },
+        "client-hardening": {
+          "$ref": "#/$defs/agent"
+        },
+        "core": {
+          "$ref": "#/$defs/agent"
+        },
+        "review": {
+          "$ref": "#/$defs/agent"
+        }
+      }
+    },
+    "hosts": {
+      "description": "Values that differ per host. The key is the host id, and `## host` of [ogw](../tools/ogw.md) defines the host id",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[0-9a-f]{32}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/host"
+      }
+    },
+    "instanceWaitTimeoutMs": {
+      "description": "The maximum duration that ogw instance start waits for a slot when the number of concurrent instances is maxConcurrentInstances",
+      "type": "integer",
+      "minimum": 1
+    },
+    "jobWaitTimeoutMs": {
+      "description": "The maximum duration that ogw job wait and ogw agent wait keep waiting without --timeout. It is shorter than the longest time limit that the agent CLI of the lead agent and of agents can give one shell call",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 540000
+    },
+    "paths": {
+      "description": "Path relative to the workspace root. The workspace root is the parent folder of this repo",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coreImpl",
+        "coreReleases",
+        "games",
+        "worktrees"
+      ],
+      "properties": {
+        "coreImpl": {
+          "type": "string"
+        },
+        "coreReleases": {
+          "type": "string"
+        },
+        "games": {
+          "type": "string"
+        },
+        "worktrees": {
+          "description": "The folder of the game repo worktrees that the harness tool creates. Kept outside games",
+          "type": "string"
+        }
+      }
+    },
+    "coreReleaseRepository": {
+      "description": "The GitHub repository that publishes core releases. <owner>/<repo>",
+      "type": "string",
+      "pattern": "^[^/]+/[^/]+$"
+    },
+    "useLocalCore": {
+      "description": "When true, the harness tool uses the core in paths.coreImpl instead of the release of the game's core version. AGENTS.md `## repo` defines the behavior",
+      "type": "boolean",
+      "default": false
+    },
+    "resourceGeneration": {
+      "description": "Generation methods that the resource sub-agent can use",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/generationMethod"
+      }
+    },
+    "backgroundRetryLimit": {
+      "description": "The maximum number of times one failed resource work item or translation work item is given again to a new sub-agent. It is also the maximum number of times `ogw loop evaluate` calls one failed play agent or judge agent again, and the maximum number of times `ogw agent retry` calls a failed content agent again",
+      "type": "integer",
+      "minimum": 0
+    },
+    "webSmokeCpuThrottleRate": {
+      "description": "The CPU throttle factor that build-time check `web smoke` applies to the headless browser. It is the `rate` of Chrome DevTools Protocol `Emulation.setCPUThrottlingRate`. 1 is no throttle",
+      "type": "integer",
+      "minimum": 1
+    },
+    "webSmokeBootTimeoutMs": {
+      "description": "In build-time check `web smoke`, the time limit from opening the page until `boot_stage` of the client becomes `Done`",
+      "type": "integer",
+      "minimum": 1
+    },
+    "loopStop": {
+      "description": "Values of the loop stop judgement. `## stop` of the `game-loop` skill defines their meaning",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repeatedDefect",
+        "oscillation",
+        "plateau",
+        "successJudges"
+      ],
+      "properties": {
+        "repeatedDefect": {
+          "description": "The count of `repeated defect`",
+          "type": "integer",
+          "minimum": 2
+        },
+        "oscillation": {
+          "description": "The count of `oscillation`",
+          "type": "integer",
+          "minimum": 1
+        },
+        "plateau": {
+          "description": "The number of consecutive iterations of `plateau`",
+          "type": "integer",
+          "minimum": 2
+        },
+        "successJudges": {
+          "description": "The number of success confirmation judges",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "reviewRounds": {
+      "description": "The maximum number of review rounds for one target in code review. [core command](../skills/core/command.md) and `## update harness tool` of [ogw](../tools/ogw.md) define the round",
+      "type": "integer",
+      "minimum": 1
+    },
+    "codeCheck": {
+      "description": "Criterion values of `ogw code check` and static check `lint`",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxComplexity"
+      ],
+      "properties": {
+        "maxComplexity": {
+          "description": "Upper limit of the ESLint `complexity` rule of the TypeScript lint",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "rigCheck": {
+      "description": "Pass criterion values of `ogw resource rig-check`. `production.md` of the `resource` skill defines how they are measured",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "iouMin",
+        "colorDiffMax"
+      ],
+      "properties": {
+        "iouMin": {
+          "description": "Lower limit of the alpha IoU between the parts recomposed in rest pose and the source illustration scaled to the canvas of the rig split JSON",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "colorDiffMax": {
+          "description": "Upper limit of the mean RGB channel difference measured on pixels that are opaque in both. 0 to 255",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "tools": {
+      "description": "Pinned versions of the external programs and container images that the harness tool and agents use, other than the engine and the `buildTools` of core release `engine.json`. Programs, images and versions that are not here are not fetched",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blender",
+        "placeholderFont",
+        "postgresql"
+      ],
+      "properties": {
+        "blender": {
+          "$ref": "#/$defs/tool"
+        },
+        "placeholderFont": {
+          "$ref": "#/$defs/tool",
+          "description": "Font of placeholder resources"
+        },
+        "postgresql": {
+          "description": "The Docker Official Image `postgres` of PostgreSQL. Fetched as `postgres:<tag>@<digest>`",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tag",
+            "digest"
+          ],
+          "properties": {
+            "tag": {
+              "description": "Image tag that is the PostgreSQL version. `<major>.<minor>`",
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+$"
+            },
+            "digest": {
+              "description": "The multi-platform image index digest of that tag",
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "chromium": {
+          "$ref": "#/$defs/tool",
+          "description": "The headless browser that build-time check `web smoke` and the browser run of client core tests start. It is `chrome-headless-shell` of Chrome for Testing"
+        },
+        "gdtoolkit": {
+          "$ref": "#/$defs/pythonTool",
+          "description": "The PyPI `gdtoolkit` wheel that holds the GDScript lint `gdlint`, and the wheels it depends on. `ogw` makes an isolated environment of the `python` version with uv, installs only these wheels without dependencies, and runs it"
+        },
+        "ffmpeg": {
+          "$ref": "#/$defs/tool",
+          "description": "The ffmpeg static build that the sound post-processing of `ogw resource finalize`, `ogw resource placeholder`, `ogw frames`, the app icon conversion of `build` and the post-processing of the sprite-gen method use. When the `-encoders` output of the fetched program has no `libvorbis`, `ogw generation install` treats it as not fetched"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "effort"
+      ],
+      "properties": {
+        "cli": {
+          "enum": [
+            "claude-code",
+            "codex"
+          ],
+          "default": "claude-code"
+        },
+        "model": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "description": "The host name of that host. It is the name by which a human recognizes the host",
+          "type": "string"
+        },
+        "maxConcurrentInstances": {
+          "description": "The maximum number of instances started concurrently on this host. The `host-env` skill sets the value. When it is missing, there is no measured value, and the `ogw` commands that start instances, other than `ogw instance measure`, fail without starting an instance",
+          "type": "integer",
+          "minimum": 2
+        },
+        "playInstances": {
+          "description": "The number of instances that play agents play in parallel on this host each iteration",
+          "type": "integer",
+          "minimum": 1,
+          "default": 3
+        },
+        "reviewRunConcurrency": {
+          "description": "The maximum number of review agent jobs, core agent jobs and core test jobs that all `ogw review run` jobs running on this host run together",
+          "type": "integer",
+          "minimum": 1,
+          "default": 12
+        },
+        "testDevices": {
+          "description": "The android devices connected to this host that the check device performance at build uses for android builds",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "platform",
+              "serial"
+            ],
+            "properties": {
+              "platform": {
+                "enum": [
+                  "android"
+                ]
+              },
+              "serial": {
+                "description": "The device serial that adb devices outputs. An emulator also works",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "measured": {
+          "description": "Results per method and per step that `ogw generation measure` measured on this host. The key is the method `name` of `resourceGeneration`. Steps go from the lowest, and stop at the step that fails or exceeds the safety limit. A method that is not present is a method not measured on this host. Only `ogw env propose --apply` writes it",
+          "type": "object",
+          "x-owner": "tool",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/measuredStep"
+            }
+          }
+        }
+      }
+    },
+    "generationMethod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "resourceTypes",
+        "safetyTimeoutMs"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "external-service: a generation service of an outside company. local-model: a generation model that runs on this host. procedural: the agent makes it with code or a program. catalog: chosen from a set of files fetched by pins",
+          "enum": [
+            "external-service",
+            "local-model",
+            "procedural",
+            "catalog"
+          ]
+        },
+        "resourceTypes": {
+          "description": "The resource types that this method makes. They are values of the resource key `<type>` of the `resource` skill",
+          "type": "array",
+          "items": {
+            "enum": [
+              "image",
+              "sprite_sheet",
+              "texture_atlas",
+              "icon",
+              "background",
+              "nine_slice",
+              "model",
+              "rig",
+              "material",
+              "texture",
+              "skybox",
+              "sprite_animation",
+              "rig_animation_2d",
+              "animation_3d",
+              "particle",
+              "shader",
+              "sfx",
+              "bgm",
+              "voice",
+              "haptic",
+              "font",
+              "tileset",
+              "app_icon",
+              "splash"
+            ]
+          }
+        },
+        "secret": {
+          "description": "The harness secret name used for API calls of the external service. Only an external-service without `provider` uses the `secret` of a method",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The image provider of an external-service method. It is the `--provider` value that the method passes to the CLI of the git repository of `pins`, and that CLI uses the login of the provider on this host (`ogw env check` reports it, and whether calls are billed per call). A method with a provider does not use `secret` or `model`",
+          "enum": [
+            "codex",
+            "grok"
+          ]
+        },
+        "pins": {
+          "description": "Pinned information of the files that local-model, catalog and an external-service with `provider` fetch. Except for the packages that a local-model pip pin depends on, repositories, files and packages that are not here are not fetched",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pin"
+          }
+        },
+        "model": {
+          "description": "The exact name of the model that an external-service without `provider` uses. Use a name with the version attached",
+          "type": "string"
+        },
+        "license": {
+          "description": "The license of resources made with this method. An SPDX license expression, and `unknown` when commercial use is not confirmed. Required for kinds other than `catalog`",
+          "type": "string"
+        },
+        "attribution": {
+          "description": "The attribution that must be displayed for resources made with this method. Omitted when there is none",
+          "type": "string"
+        },
+        "safetyTimeoutMs": {
+          "description": "When one standard trial task of `update env` exceeds this duration, it is cut off and recorded as `timeout`",
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "external-service"
+              }
+            }
+          },
+          "then": {
+            "if": {
+              "required": [
+                "provider"
+              ]
+            },
+            "then": {
+              "required": [
+                "pins"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "secret"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "model"
+                    ]
+                  }
+                ]
+              }
+            },
+            "else": {
+              "required": [
+                "model",
+                "secret"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "catalog"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pins"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "not": {
+                  "const": "catalog"
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "license"
+            ]
+          }
+        }
+      ]
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "source"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "git",
+            "hf",
+            "pip",
+            "file",
+            "patch"
+          ],
+          "description": "git: repository. hf: Hugging Face repository. pip: package. file: one model file. patch: a patch file in this repo to apply to the preceding git repository"
+        },
+        "source": {
+          "type": "string",
+          "description": "For git the repository URL, for hf the repository name, for pip a comma list of `name==version` (`name @ git+URL@commit` also works. A name can carry extras `[a,b]`, and the end can carry a PEP 508 marker ` ; <marker>`; commas inside extras and inside the quotes of a marker do not split the list), for file the model name, for patch the path relative to this repo"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "The URL from which the file of a file pin is fetched. Used only for file pins, and required for file pins"
+        },
+        "revision": {
+          "type": "string",
+          "description": "The 40-character commit of git and hf. A git pin without it is not fetched, and `ogw env propose` proposes a revision"
+        },
+        "files": {
+          "type": "string",
+          "description": "For hf a comma list of file patterns to fetch (the whole repository when missing), and when no file matches after removing `exclude`, the method of that pin fails. For file the file name under which to put the fetched file, for git a comma list of paths inside the repository to fetch (the whole repository when missing). An hf pattern matches the whole file path relative to the repository root. `*` matches any string of characters including `/`, `?` matches one character, and any other character matches only itself"
+        },
+        "exclude": {
+          "type": "string",
+          "description": "A comma list of file patterns to exclude from hf. The pattern rules are the same as `files`"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "For file the SHA-256 of that file. For hf the SHA-256 of the UTF-8 text that joins, in the UTF-8 byte order of the paths, one line per fetched file made of `<path relative to repository root> <lowercase hex SHA-256 of that file>` followed by one LF. For patch the SHA-256 of that file. An hf pin without it fetches files without checking them, and `ogw env propose` proposes a revision"
+        },
+        "secret": {
+          "type": "string",
+          "description": "Used only by hf pins. The harness secret name that holds a Hugging Face access token. The token belongs to an account that accepted the license of that repository. `ogw generation install` sends that token with the Hugging Face API requests and downloads of this pin"
+        },
+        "pyproject": {
+          "type": "string",
+          "description": "Used only by git pins. The path, relative to the repository root, of the `pyproject.toml` that the method uses. `pyproject.toml` when missing. `pin:<method>` of `ogw env propose` reads `[project] dependencies` of this file"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "file"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "url",
+              "sha256"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "url"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "hf"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "secret"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "downloads"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "downloads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/download"
+          }
+        }
+      }
+    },
+    "pythonTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "python",
+        "downloads",
+        "dependencies"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "python": {
+          "description": "The CPython version `<major>.<minor>` of the isolated environment. The platform wheels of `downloads` and `dependencies` are wheels of this version",
+          "type": "string",
+          "pattern": "^3\\.[0-9]+$"
+        },
+        "downloads": {
+          "description": "The wheel of that program. Its platform is `any`",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/download"
+          }
+        },
+        "dependencies": {
+          "description": "All wheels that the program wheel depends on (including dependencies of dependencies). `ogw` installs the items for the platform of this host and the `any` items",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/download"
+          }
+        }
+      }
+    },
+    "download": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "url",
+        "sha256"
+      ],
+      "properties": {
+        "platform": {
+          "enum": [
+            "macos-arm64",
+            "linux-x64",
+            "windows-x64",
+            "any"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "measuredStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "resolution": {
+          "description": "The long side of the input or output (px)",
+          "type": "integer",
+          "minimum": 1
+        },
+        "durationMs": {
+          "description": "Output length (ms)",
+          "type": "integer",
+          "minimum": 1
+        },
+        "jobMs": {
+          "description": "The duration that one standard trial task took (ms)",
+          "type": "integer",
+          "minimum": 0
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "failed",
+            "timeout"
+          ]
+        }
+      }
+    }
+  }
+}

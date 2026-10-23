@@ -1,0 +1,50 @@
+diff --git a/moss_soundeffect_v2/diffsynth/models/wan_audio_dit.py b/moss_soundeffect_v2/diffsynth/models/wan_audio_dit.py
+index 4d6f24d..32d4331 100644
+--- a/moss_soundeffect_v2/diffsynth/models/wan_audio_dit.py
++++ b/moss_soundeffect_v2/diffsynth/models/wan_audio_dit.py
+@@ -16,8 +16,8 @@ def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
+ 
+ 
+ def sinusoidal_embedding_1d(dim, position):
+-    sinusoid = torch.outer(position.type(torch.float64), torch.pow(
+-        10000, -torch.arange(dim//2, dtype=torch.float64, device=position.device).div(dim//2)))
++    sinusoid = torch.outer(position.type(torch.float32), torch.pow(
++        10000, -torch.arange(dim//2, dtype=torch.float32, device=position.device).div(dim//2)))
+     x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
+     return x.to(position.dtype)
+ 
+@@ -47,8 +47,8 @@ def precompute_freqs_cis_1d(dim: int, end: int = 16384, theta: float = 10000.0):
+ def precompute_freqs_cis(dim: int, end: int = 16384, theta: float = 10000.0, s: float = 1.0):
+     # 1d rope precompute
+     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)
+-                   [: (dim // 2)].double() / dim))
+-    pos = torch.arange(end, dtype=torch.float64, device=freqs.device) * s
++                   [: (dim // 2)].float() / dim))
++    pos = torch.arange(end, dtype=torch.float32, device=freqs.device) * s
+     freqs = torch.outer(pos, freqs)
+     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+     return freqs_cis
+diff --git a/moss_soundeffect_v2/diffsynth/models/wan_video_dit.py b/moss_soundeffect_v2/diffsynth/models/wan_video_dit.py
+index ca629e2..bd4d6ff 100644
+--- a/moss_soundeffect_v2/diffsynth/models/wan_video_dit.py
++++ b/moss_soundeffect_v2/diffsynth/models/wan_video_dit.py
+@@ -78,8 +78,8 @@ def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
+ 
+ 
+ def sinusoidal_embedding_1d(dim, position):
+-    sinusoid = torch.outer(position.type(torch.float64), torch.pow(
+-        10000, -torch.arange(dim//2, dtype=torch.float64, device=position.device).div(dim//2)))
++    sinusoid = torch.outer(position.type(torch.float32), torch.pow(
++        10000, -torch.arange(dim//2, dtype=torch.float32, device=position.device).div(dim//2)))
+     x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
+     return x.to(position.dtype)
+ 
+@@ -95,7 +95,7 @@ def precompute_freqs_cis_3d(dim: int, end: int = 1024, theta: float = 10000.0):
+ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
+     # 1d rope precompute
+     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)
+-                   [: (dim // 2)].double() / dim))
++                   [: (dim // 2)].float() / dim))
+     freqs = torch.outer(torch.arange(end, device=freqs.device), freqs)
+     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+     return freqs_cis
