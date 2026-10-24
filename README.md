@@ -4,7 +4,9 @@
 
 AI agents make server-client games of commercial quality on top of a prebuilt core.
 
-https://github.com/user-attachments/assets/116aebfd-d82f-42f3-be5e-815e5336c257
+
+https://github.com/user-attachments/assets/9bbe6317-f09e-406b-a6ec-60c538e5f4b8
+
 
 <table>
   <tr>
