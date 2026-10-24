@@ -4,7 +4,7 @@
 
 미리 만들어 둔 코어 위에서 AI 에이전트가 상용 수준의 서버-클라이언트 게임을 만든다.
 
-https://github.com/user-attachments/assets/9bbe6317-f09e-406b-a6ec-60c538e5f4b8
+https://github.com/user-attachments/assets/fb74b4ca-cc63-430d-af79-5b5118ec9c8a
 
 <table>
   <tr>
