@@ -3,7 +3,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { captureScreen } from '../capture/capture.ts';
 import { automationRequest, botControl, type ClientRef } from '../instance/automation.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
-import { readTelemetry } from '../telemetry/api.ts';
+import { playMs, readTelemetry } from '../telemetry/api.ts';
 import type { Telemetry } from '../telemetry/lib/metrics.ts';
 
 type State = Record<string, unknown>;
@@ -62,6 +62,10 @@ interface StepRecord {
   /** Game time advanced by this command up to the end of this step. */
   advancedMs: number;
   clients: ClientRef[];
+  /** `play ms` of the instance after this step, as `ogw telemetry <instance> --summary` reports it. */
+  playMs: number;
+  /** Telemetry marks added during this step, with the `play ms` of each. */
+  marks: { kind: string; playMs: number }[];
   capture?: string;
 }
 
@@ -102,26 +106,40 @@ interface Outcome {
   stopped?: { after: number; reasons: string[] };
 }
 
-/** Step `index` of the plan, its capture, and unless it is the last step, the stop reasons and the next watch. */
+/** Telemetry after a step and the time it was read. */
+async function telemetryNow(ctx: Context, id: string): Promise<{ telemetry: Telemetry; now: number }> {
+  const telemetry = await readTelemetry(ctx, id);
+  return { telemetry, now: Date.now() };
+}
+
+/** Step `index` of the plan, its capture, `play ms` and new marks, and unless it is the last step, the stop reasons and the next watch. */
 async function advance(ctx: Context, plan: Plan, index: number, watch: Watch): Promise<Advance> {
   const targets = await stepTargets(ctx, plan.id, watch.main);
   if (targets.length === 0) throw new OgwError('no client is in step mode');
   const errors = await stepOnce(ctx, plan.id, plan.ms, targets);
   if (errors.length > 0) return { errors };
   const last = index === plan.count;
-  const [path, main, telemetry] = await Promise.all([
+  const [path, main, { telemetry, now }] = await Promise.all([
     plan.capture ? captureScreen(ctx, plan.id) : undefined,
     last ? undefined : state(ctx, plan.id, 'main'),
-    last ? undefined : readTelemetry(ctx, plan.id),
+    telemetryNow(ctx, plan.id),
   ]);
-  const record: StepRecord = { index, advancedMs: index * Number(plan.ms), clients: targets, ...(path ? { capture: path } : {}) };
-  if (main === undefined || telemetry === undefined) return { record, reasons: [], next: null };
-  const reasons = stopReasons(watch.main, main, newMarks(watch.marks, telemetry.marks));
-  return { record, reasons, next: { main, marks: telemetry.marks } };
+  const added = newMarks(watch.marks, telemetry.marks);
+  const record: StepRecord = {
+    index,
+    advancedMs: index * Number(plan.ms),
+    clients: targets,
+    playMs: playMs(telemetry, now),
+    marks: added.map((m) => ({ kind: m.kind, playMs: playMs(telemetry, m.at) })),
+    ...(path ? { capture: path } : {}),
+  };
+  if (main === undefined) return { record, reasons: [], next: null };
+  return { record, reasons: stopReasons(watch.main, main, added), next: { main, marks: telemetry.marks } };
 }
 
 async function runSteps(ctx: Context, plan: Plan): Promise<Outcome> {
-  let watch: Watch = { main: await state(ctx, plan.id, 'main'), marks: plan.count > 1 ? (await readTelemetry(ctx, plan.id)).marks : [] };
+  const [main, telemetry] = await Promise.all([state(ctx, plan.id, 'main'), readTelemetry(ctx, plan.id)]);
+  let watch: Watch = { main, marks: telemetry.marks };
   const steps: StepRecord[] = [];
   for (let index = 1; index <= plan.count; index++) {
     let result: Advance;
@@ -142,8 +160,14 @@ async function runSteps(ctx: Context, plan: Plan): Promise<Outcome> {
 
 function outcomeLines(count: number, outcome: Outcome): string[] {
   const of = (i: number): string => `step ${String(i)}/${String(count)}`;
-  const lines = outcome.steps.map(
-    (s) => `${of(s.index)}: advanced ${String(s.advancedMs)} ms: ${s.clients.join(', ')}${s.capture !== undefined ? `: ${s.capture}` : ''}`,
+  const lines = outcome.steps.map((s) =>
+    [
+      `${of(s.index)}: advanced ${String(s.advancedMs)} ms`,
+      s.clients.join(', '),
+      `play ms ${String(s.playMs)}`,
+      ...s.marks.map((m) => `mark ${m.kind} at play ms ${String(m.playMs)}`),
+      ...(s.capture !== undefined ? [s.capture] : []),
+    ].join(': '),
   );
   const { failed, stopped } = outcome;
   if (failed) lines.push(...failed.errors.map((e) => `${of(failed.index)}: ${e}`));
