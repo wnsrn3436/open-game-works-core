@@ -1,0 +1,130 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { newMarks } from '../../../src/commands/step/step.ts';
+import { ogw } from '../../helpers/workspace.ts';
+import { setupRunner, startFor, stopAll, type Runner } from '../instance/runner.ts';
+
+vi.mock('../../../src/commands/generate/api.ts', async () => (await import('../instance/mocks/apis.ts')).generate);
+vi.mock('../../../src/commands/data/api.ts', async () => (await import('../instance/mocks/apis.ts')).data);
+vi.mock('../../../src/commands/core/api.ts', async () => (await import('../instance/mocks/apis.ts')).core);
+vi.mock('../../../src/commands/env/api.ts', async () => (await import('../instance/mocks/apis.ts')).env);
+vi.mock('../../../src/commands/instance/lib/spawn.ts', () => import('../instance/mocks/spawn.ts'));
+vi.mock('../../../src/commands/instance/lib/launch.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/commands/instance/lib/launch.ts')>();
+  return { ...real, ...(await import('../instance/mocks/apis.ts')).launchOverrides(real) };
+});
+
+let runner: Runner;
+let id: string;
+const stepCount = (): number => runner.requests('main').filter((r) => r.command === 'step').length;
+
+/** Runs `ogw step` with the given step effects of the fake client, and returns the run and the number of steps sent. */
+async function stepWith(effects: unknown[], args: string[]): Promise<{ code: number; stdout: string; stderr: string; steps: number }> {
+  runner.config({ clients: { main: { stepEffects: effects } }, seq: Math.random() });
+  const before = stepCount();
+  const run = await ogw(runner.ws, ['step', id, ...args]);
+  return { ...run, steps: stepCount() - before };
+}
+
+beforeAll(async () => {
+  runner = setupRunner();
+  id = await startFor(runner);
+  expect((await ogw(runner.ws, ['step-mode', id, 'on'])).code).toBe(0);
+});
+
+afterAll(async () => {
+  await stopAll(runner);
+});
+
+describe('ogw step --count --capture', () => {
+  it('advances one step by default and reads no telemetry', async () => {
+    const telemetry = runner.requests('main').filter((r) => r.command === 'get_telemetry').length;
+    const run = await stepWith([], ['100']);
+    expect(run).toMatchObject({ code: 0, stdout: 'step 1/1: advanced 100 ms: main\n', steps: 1 });
+    expect(runner.requests('main').filter((r) => r.command === 'get_telemetry').length).toBe(telemetry);
+  });
+
+  it('advances n steps of ms each', async () => {
+    const run = await stepWith([], ['100', '--count', '3']);
+    expect(run).toMatchObject({
+      code: 0,
+      stdout: 'step 1/3: advanced 100 ms: main\nstep 2/3: advanced 200 ms: main\nstep 3/3: advanced 300 ms: main\n',
+      steps: 3,
+    });
+    expect(runner.requests('main').filter((r) => r.command === 'step').slice(-3).map((r) => r.args)).toEqual([['100'], ['100'], ['100']]);
+  });
+
+  it('captures the screen after each step into captures/', async () => {
+    const run = await stepWith([], ['50', '--count', '3', '--capture', '--json']);
+    expect(run.code).toBe(0);
+    const data = JSON.parse(run.stdout) as { steps: { index: number; advancedMs: number; clients: string[]; capture: string }[] };
+    expect(data.steps.map((s) => [s.index, s.advancedMs, s.clients])).toEqual([
+      [1, 50, ['main']],
+      [2, 100, ['main']],
+      [3, 150, ['main']],
+    ]);
+    const paths = data.steps.map((s) => s.capture);
+    expect(new Set(paths).size).toBe(3);
+    for (const path of paths) {
+      expect(path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+\\.png$`));
+      expect(readFileSync(path, 'utf8')).toBe('PNG-main');
+    }
+    const commands = runner.requests('main').map((r) => r.command);
+    expect(commands.filter((c) => c === 'capture_screen').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('stops when the scene changes', async () => {
+    const run = await stepWith([{}, { state: { scene_key: 'battle' } }], ['100', '--count', '5']);
+    expect(run).toMatchObject({ code: 0, steps: 2 });
+    expect(run.stdout).toBe('step 1/5: advanced 100 ms: main\nstep 2/5: advanced 200 ms: main\nstopped after step 2/5: scene changed:  -> battle\n');
+  });
+
+  it('stops when the popup list or the panel list changes', async () => {
+    const popup = await stepWith([{ state: { popups: ['reward'] } }], ['100', '--count', '5', '--json']);
+    expect(popup.steps).toBe(1);
+    expect(JSON.parse(popup.stdout)).toMatchObject({ stopped: { after: 1, reasons: ['popups changed: [] -> [reward]'] } });
+    const panel = await stepWith([{}, {}, { state: { panels: ['shop'] } }], ['100', '--count', '5']);
+    expect(panel.steps).toBe(3);
+    expect(panel.stdout.split('\n').at(-2)).toBe('stopped after step 3/5: panels changed: [] -> [shop]');
+  });
+
+  it.each(['Fail', 'Reward', 'Goal', 'Restart'])('stops when a %s mark appears', async (kind) => {
+    const run = await stepWith([{}, { marks: [{ at: 5, play_at: 5, kind }] }], ['100', '--count', '4']);
+    expect(run).toMatchObject({ code: 0, steps: 2 });
+    expect(run.stdout.split('\n').at(-2)).toBe(`stopped after step 2/4: mark: ${kind}`);
+  });
+
+  it('does not stop on a Response mark or an unchanged state', async () => {
+    const run = await stepWith([{ marks: [{ at: 5, play_at: 5, kind: 'Response' }] }, { state: { in_transition: false } }], ['100', '--count', '3']);
+    expect(run).toMatchObject({ code: 0, steps: 3 });
+    expect(run.stdout).not.toContain('stopped');
+  });
+
+  it('stops and reports a failed step with exit code 1', async () => {
+    const run = await stepWith([{}, { fail: 'game time is paused' }], ['100', '--count', '4', '--capture']);
+    expect(run.code).toBe(1);
+    expect(run.steps).toBe(2);
+    const lines = run.stdout.trim().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^step 1\/4: advanced 100 ms: main: .+\.png$/);
+    expect(lines[1]).toBe('step 2/4: main: step failed: "game time is paused"');
+  });
+
+  it('rejects an invalid --count', async () => {
+    expect((await ogw(runner.ws, ['step', id, '100', '--count', '0'])).stderr).toContain('invalid --count: 0');
+    expect((await ogw(runner.ws, ['step', id, '100', '--count', '2.5'])).stderr).toContain('invalid --count: 2.5');
+  });
+});
+
+describe('newMarks', () => {
+  const mark = (at: number, kind = 'Goal') => ({ at, play_at: at, kind });
+
+  it('returns the marks added after the earlier list, also when the oldest were dropped', () => {
+    expect(newMarks([mark(1), mark(2)], [mark(1), mark(2), mark(3)])).toEqual([mark(3)]);
+    expect(newMarks([mark(1), mark(2)], [mark(2), mark(3), mark(4)])).toEqual([mark(3), mark(4)]);
+    expect(newMarks([mark(1), mark(1)], [mark(1), mark(1), mark(1)])).toEqual([mark(1)]);
+    expect(newMarks([mark(1)], [mark(1)])).toEqual([]);
+    expect(newMarks([], [mark(1, 'Fail')])).toEqual([mark(1, 'Fail')]);
+  });
+});

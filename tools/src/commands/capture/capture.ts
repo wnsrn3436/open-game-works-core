@@ -38,6 +38,19 @@ export async function captureVideo(ctx: Context, instanceId: string, ms: number)
   return recordVideo(ctx, instanceId, ms, await videoDir(ctx, instanceId));
 }
 
+let lastCaptureAt = 0;
+
+/** `capture_screen` of the client that is not a bot client, written to `captures/<instance id>-<unix ms>.png`; returns the path. */
+export async function captureScreen(ctx: Context, instanceId: string): Promise<string> {
+  const response = await automationRequest(ctx, instanceId, 'capture_screen', [], 'main', { access: 'play' });
+  if (!response.ok) throw new OgwError(`capture_screen failed: ${JSON.stringify(response.result)}`);
+  // two captures of one process in the same ms get different names
+  lastCaptureAt = Math.max(Date.now(), lastCaptureAt + 1);
+  const path = join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, lastCaptureAt)}.png`);
+  await writeFileAtomic(path, response.bytes);
+  return path;
+}
+
 export const capture: CommandDef = {
   name: ['capture'],
   usage: 'ogw capture <instance> [--video <ms>]',
@@ -51,10 +64,7 @@ export const capture: CommandDef = {
       const result = await captureVideo(ctx, instanceId, Number(video));
       return { text: result.dir, data: { path: result.dir, frames: result.frames, result: result.result } };
     }
-    const response = await automationRequest(ctx, instanceId, 'capture_screen', [], 'main', { access: 'play' });
-    if (!response.ok) throw new OgwError(`capture_screen failed: ${JSON.stringify(response.result)}`);
-    const path = join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, Date.now())}.png`);
-    await writeFileAtomic(path, response.bytes);
+    const path = await captureScreen(ctx, instanceId);
     return { text: path, data: { path } };
   },
 };

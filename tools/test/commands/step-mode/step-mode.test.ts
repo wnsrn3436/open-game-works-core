@@ -47,7 +47,7 @@ describe('ogw step-mode and ogw step', () => {
     runner.config({ clients: { default: { commands: ['battle.opponent_step'], delayMs: { step: 400 } } } });
     const before = count('opponent_1', 'battle.opponent_step');
     const run = await ogw(runner.ws, ['step', id, '100']);
-    expect(run).toMatchObject({ code: 0, stdout: 'stepped 100 ms: main, opponent_1\n' });
+    expect(run).toMatchObject({ code: 0, stdout: 'step 1/1: advanced 100 ms: main, opponent_1\n' });
     expect(runner.requests('main').at(-1)).toMatchObject({ command: 'step', args: ['100'] });
     expect(runner.requests('opponent_1').some((r) => r.command === 'step' && r.args[0] === '100')).toBe(true);
     expect(count('opponent_1', 'battle.opponent_step')).toBeGreaterThan(before);
@@ -56,7 +56,7 @@ describe('ogw step-mode and ogw step', () => {
   it('steps only the client in a Playing match', async () => {
     runner.config({ clients: { default: { commands: ['battle.opponent_step'] }, main: { stateNow: { match_state: 'Playing' } } } });
     const steps = count('opponent_1', 'step');
-    expect(await ogw(runner.ws, ['step', id, '50'])).toMatchObject({ code: 0, stdout: 'stepped 50 ms: main\n' });
+    expect(await ogw(runner.ws, ['step', id, '50'])).toMatchObject({ code: 0, stdout: 'step 1/1: advanced 50 ms: main\n' });
     expect(count('opponent_1', 'step')).toBe(steps);
   });
 
@@ -64,7 +64,7 @@ describe('ogw step-mode and ogw step', () => {
     runner.config({ clients: { default: { commands: ['battle.opponent_step'] }, opponent_1: { fail: { step: 'budget' } } } });
     const run = await ogw(runner.ws, ['step', id, '50']);
     expect(run.code).toBe(1);
-    expect(run.stdout).toBe('opponent_1: step failed: "budget"\n');
+    expect(run.stdout).toBe('step 1/1: opponent_1: step failed: "budget"\n');
     expect((await ogw(runner.ws, ['step', id, '0'])).stderr).toContain('invalid ms: 0');
     expect((await ogw(runner.ws, ['step', id, '1.5'])).stderr).toContain('invalid ms: 1.5');
   });
