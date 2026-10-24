@@ -6,10 +6,8 @@ AI agents make server-client games of commercial quality on top of a prebuilt co
 
 <table>
   <tr>
-    <td align="center" colspan="2"><img src=".github/media/iso-survivors.gif" alt="iso-survivors gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-iso-survivors">iso-survivors</a>: isometric 3D horde survival</td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src=".github/media/mana-clash.gif" alt="mana-clash gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-mana-clash">mana-clash</a>: one-on-one card battle</td>
+    <td align="center" width="50%"><img src=".github/media/iso-survivors.gif" alt="iso-survivors gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-iso-survivors">iso-survivors</a>: isometric 3D horde survival</td>
+    <td align="center" width="50%"><img src=".github/media/mana-clash.gif" alt="mana-clash gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-mana-clash">mana-clash</a>: one-on-one card battle</td>
   </tr>
   <tr>
     <td align="center" width="50%"><img src=".github/media/pong.gif" alt="pong gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-pong">pong</a>: paddle game against the CPU</td>
