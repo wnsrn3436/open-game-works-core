@@ -65,6 +65,7 @@ describe('ogw step --count --capture', () => {
   });
 
   it('captures the screen after each step into captures/', async () => {
+    const sent = runner.requests('main').length;
     const run = await stepWith([], ['50', '--count', '3', '--capture', '--json']);
     expect(run.code).toBe(0);
     const data = JSON.parse(run.stdout) as { steps: { index: number; advancedMs: number; clients: string[]; capture: string }[] };
@@ -79,8 +80,13 @@ describe('ogw step --count --capture', () => {
       expect(path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+\\.png$`));
       expect(readFileSync(path, 'utf8')).toBe('PNG-main');
     }
-    const commands = runner.requests('main').map((r) => r.command);
-    expect(commands.filter((c) => c === 'capture_screen').length).toBeGreaterThanOrEqual(3);
+    // each capture comes after the step of its index and before the next step
+    const order = runner
+      .requests('main')
+      .slice(sent)
+      .map((r) => r.command)
+      .filter((c) => c === 'step' || c === 'capture_screen');
+    expect(order).toEqual(['step', 'capture_screen', 'step', 'capture_screen', 'step', 'capture_screen']);
   });
 
   it('stops when the scene changes', async () => {
@@ -140,7 +146,8 @@ describe('ogw step --count --capture', () => {
   });
 
   it('lists on each step the marks added during that step, with their play ms', async () => {
-    const mark = (offset: number, kind: string) => ({ at: startedAt + offset, play_at: offset, kind });
+    // play_at differs from at - started_at, so the play ms printed must come from at
+    const mark = (offset: number, kind: string) => ({ at: startedAt + offset, play_at: offset / 10, kind });
     const run = await stepWith([{ marks: [mark(1000, 'Response'), mark(1200, 'Response')] }, {}, { marks: [mark(3000, 'Goal')] }], ['100', '--count', '4', '--json']);
     expect(run).toMatchObject({ code: 0, steps: 3 });
     const data = JSON.parse(run.stdout) as { steps: { marks: unknown[] }[]; stopped: unknown };
