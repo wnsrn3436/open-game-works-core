@@ -209,6 +209,7 @@ PROD 문제는 최신 main으로 띄운 인스턴스에서, PROD 사용자를 �
 | [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) | 코어 구현: 클라이언트 코어(Godot), 서버 코어(TypeScript), 기본 proto, contract tool, data tool. 코어 릴리스는 이 저장소의 GitHub Releases다 |
 | [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash) | open-game-works로 만든 1대1 카드 배틀 게임 |
 | [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong) | open-game-works로 만든, CPU와 대결하는 패들과 공 게임 |
+| [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | open-game-works로 만든 아이소메트릭 3D 호드 서바이벌 게임 |
 
 ### 코어 릴리스와 게임의 버전 고정
 
@@ -390,6 +391,7 @@ open-game-works로 만든 게임을 `games/`에 클론할 수 있다. 워크스�
 ```sh
 git clone https://github.com/wnsrn3436/open-game-works-game-mana-clash.git games/open-game-works-game-mana-clash
 git clone https://github.com/wnsrn3436/open-game-works-game-pong.git games/open-game-works-game-pong
+git clone https://github.com/wnsrn3436/open-game-works-game-iso-survivors.git games/open-game-works-game-iso-survivors
 ```
 
 `games/` 아래 게임 폴더 이름이 명령에서 쓰는 `<game>` 이름이다. 새로 클론한 저장소에는 ID 레지스트리 브랜치가 `origin/id-registry`로만 있다. `ogw`와 data tool은 로컬 브랜치를 읽으므로 `git -C games/<game> branch id-registry origin/id-registry`로 만든다. 레퍼런스 게임플레이 영상은 git에 없고(`records/setup/reference/`에서 `reference.md`를 뺀 모든 파일이 무시된다), 영상이 없으면 `update game`과 `build`가 시작되지 않는다. 그래서 실행하기 전에 `records/setup/reference/reference.md`에 적힌 영상 파일을 `records/setup/reference/`에 넣어 둔다.
@@ -455,6 +457,25 @@ pbpaste | tr -d '[:space:]' | ogw secret set --harness huggingface
 | `LICENSE` | Apache License 2.0 |
 | `README.md`, `README.ko.md` | 이 소개 문서(영어, 한국어) |
 
+## 기여
+
+기여를 환영한다. 도움이 가장 필요한 곳은 다음과 같다.
+
+- 다른 엔진의 클라이언트 코어. 지금은 Godot뿐이고, 하네스는 Three.js, Phaser, Unity, Unreal을 목표 엔진으로 둔다.
+- 외부 서비스의 실제 어댑터: 스토어 결제, 광고, 푸시, 소셜 로그인. 루프는 가짜 어댑터로 게임을 돌리고, 실제 어댑터는 아직 실제 서비스에 연결해 본 적이 없다.
+- Windows, Android, iOS에서의 `build` 명령. 아직 빌드하거나 배포한 게임이 없다.
+- open-game-works로 만든 게임과, 코어에 부족했던 점의 보고. 콘텐츠 에이전트는 이를 게임의 `records/core-proposals/`에 코어 제안으로 남긴다.
+
+기여하는 방법:
+
+- 질문과 아이디어는 [Discussions](https://github.com/wnsrn3436/open-game-works-core/discussions)에, 버그는 [Issues](https://github.com/wnsrn3436/open-game-works-core/issues)에 올린다.
+- 큰 변경은 코드를 쓰기 전에 Discussions나 이슈를 먼저 열어 방향을 맞춘다.
+- 코어 변경은 이 저장소의 모듈 명세에서 시작하고, [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl)의 구현이 그 명세를 따른다. 하네스에서는 `update core` 명령이 이 일을 한다.
+- 하네스 도구 `ogw`를 고친 변경은 `tools/`의 `npm test`와 `tools/bin/ogw docs check`를 통과해야 한다. 하네스 파일은 `AGENTS.md`의 작성 규칙을 따른다.
+- 하네스 파일, 코드 식별자, 커밋 메시지는 영어로 쓴다.
+
+기여하면 그 기여물이 이 저장소의 라이선스인 Apache License 2.0으로 배포되는 데 동의하는 것으로 본다.
+
 ## 라이선스
 
 하네스는 Apache License 2.0으로 배포한다. 전문은 [LICENSE](LICENSE)에 있다.
@@ -465,4 +486,4 @@ pbpaste | tr -d '[:space:]' | ogw secret set --harness huggingface
 |---|---|
 | [open-game-works-core](https://github.com/wnsrn3436/open-game-works-core) | Apache-2.0 |
 | [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) | Apache-2.0. 서드파티 구성 요소는 `licenses.json`에 있다 |
-| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong) | 게임 자체 콘텐츠는 CC BY-NC-ND 4.0. `client/core/`와 `server/core/` 폴더는 코어 릴리스의 사본이라 Apache-2.0을 유지하고, 함께 들어 있는 폰트(mana-clash는 Noto Sans KR, pong은 Black Han Sans)는 SIL OFL 1.1을 유지하며, 생성한 에셋은 `resource/resources.csv`에 생성 방법과 라이선스를 적어 둔다(모델 라이선스, 제공자의 출력물 약관, 또는 게임 자체의 절차적 생성으로 만들어 게임 콘텐츠에 속하는 `LicenseRef-game-owned`) |
+| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong), [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | 게임 자체 콘텐츠는 CC BY-NC-ND 4.0. `client/core/`와 `server/core/` 폴더는 코어 릴리스의 사본이라 Apache-2.0을 유지하고, 함께 들어 있는 폰트(mana-clash와 iso-survivors는 Noto Sans KR, pong은 Black Han Sans)는 SIL OFL 1.1을 유지하며, 생성한 에셋은 `resource/resources.csv`에 생성 방법과 라이선스를 적어 둔다(모델 라이선스, 제공자의 출력물 약관, 또는 게임 자체의 절차적 생성으로 만들어 게임 콘텐츠에 속하는 `LicenseRef-game-owned`) |

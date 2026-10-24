@@ -209,6 +209,7 @@ A resource whose source cannot be checked is not used, and the screens, resource
 | [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) | the core implementation: client core (Godot), server core (TypeScript), base proto, contract tool, data tool. Core releases are its GitHub Releases |
 | [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash) | a one-on-one card battle game made with open-game-works |
 | [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong) | a paddle-and-ball game against the CPU made with open-game-works |
+| [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | an isometric 3D horde survival game made with open-game-works |
 
 ### Core releases and how a game pins one
 
@@ -390,6 +391,7 @@ The games made with open-game-works can be cloned into `games/`. Run this in the
 ```sh
 git clone https://github.com/wnsrn3436/open-game-works-game-mana-clash.git games/open-game-works-game-mana-clash
 git clone https://github.com/wnsrn3436/open-game-works-game-pong.git games/open-game-works-game-pong
+git clone https://github.com/wnsrn3436/open-game-works-game-iso-survivors.git games/open-game-works-game-iso-survivors
 ```
 
 The folder name of a game under `games/` is the `<game>` name you use in commands. A fresh clone has the ID registry branch only as `origin/id-registry`. `ogw` and the data tool read the local branch, so create it with `git -C games/<game> branch id-registry origin/id-registry`. The reference gameplay videos are not in git (every file in `records/setup/reference/` except `reference.md` is ignored), and `update game` and `build` do not start without them, so before you run them, put the video files that `records/setup/reference/reference.md` names into `records/setup/reference/`.
@@ -455,6 +457,25 @@ The rules that agents actually follow are [AGENTS.md](AGENTS.md), `agents/`, `sk
 | `LICENSE` | Apache License 2.0 |
 | `README.md`, `README.ko.md` | This introduction, in English and Korean |
 
+## Contributing
+
+Contributions are welcome. These are the areas where help is wanted most:
+
+- Client cores for other engines. Godot is the only one so far; the harness lists Three.js, Phaser, Unity and Unreal as target engines.
+- Real adapters for external services: store payments, ads, push and social login. The loop runs games on fake adapters, and the real adapters have not been tried against the live services yet.
+- The `build` command on Windows, Android and iOS. No game has been built or deployed yet.
+- Games made with open-game-works, and reports of where the core fell short. The content agent writes these as core proposals in the game's `records/core-proposals/`.
+
+How to contribute:
+
+- Questions and ideas go to [Discussions](https://github.com/wnsrn3436/open-game-works-core/discussions), and bugs to [Issues](https://github.com/wnsrn3436/open-game-works-core/issues).
+- For a larger change, open a discussion or an issue first, so the approach is agreed before you write code.
+- A core change starts in the module spec in this repository, and the implementation in [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) follows the spec. Through the harness, this is the `update core` command.
+- A change to the harness tool `ogw` passes `npm test` in `tools/` and `tools/bin/ogw docs check`. Harness files follow the writing rules in `AGENTS.md`.
+- Harness files, code identifiers and commit messages are written in English.
+
+By contributing, you agree that your contribution is licensed under the Apache License 2.0, the license of this repository.
+
 ## License
 
 The harness is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
@@ -465,4 +486,4 @@ The gameplay GIFs in `.github/media/` are not covered by the Apache License 2.0.
 |---|---|
 | [open-game-works-core](https://github.com/wnsrn3436/open-game-works-core) | Apache-2.0 |
 | [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) | Apache-2.0. Third-party components are listed in `licenses.json` |
-| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong) | CC BY-NC-ND 4.0 for the game's own content. The `client/core/` and `server/core/` folders are copies of a core release and stay Apache-2.0; the bundled font (Noto Sans KR in mana-clash, Black Han Sans in pong) stays SIL OFL 1.1; generated assets list their method and license in `resource/resources.csv` (the model license, the output terms of the provider, or `LicenseRef-game-owned` for the game's own procedural generation, which is part of the game's content) |
+| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong), [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | CC BY-NC-ND 4.0 for the game's own content. The `client/core/` and `server/core/` folders are copies of a core release and stay Apache-2.0; the bundled font (Noto Sans KR in mana-clash and iso-survivors, Black Han Sans in pong) stays SIL OFL 1.1; generated assets list their method and license in `resource/resources.csv` (the model license, the output terms of the provider, or `LicenseRef-game-owned` for the game's own procedural generation, which is part of the game's content) |
