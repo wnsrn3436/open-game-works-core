@@ -4,6 +4,8 @@
 
 AI agents make server-client games of commercial quality on top of a prebuilt core.
 
+https://github.com/user-attachments/assets/116aebfd-d82f-42f3-be5e-815e5336c257
+
 <table>
   <tr>
     <td align="center" width="50%"><img src=".github/media/iso-survivors.gif" alt="iso-survivors gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-iso-survivors">iso-survivors</a>: isometric 3D horde survival</td>

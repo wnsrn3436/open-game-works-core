@@ -4,6 +4,8 @@
 
 미리 만들어 둔 코어 위에서 AI 에이전트가 상용 수준의 서버-클라이언트 게임을 만든다.
 
+https://github.com/user-attachments/assets/116aebfd-d82f-42f3-be5e-815e5336c257
+
 <table>
   <tr>
     <td align="center" width="50%"><img src=".github/media/iso-survivors.gif" alt="iso-survivors gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-iso-survivors">iso-survivors</a>: 아이소메트릭 3D 호드 서바이벌</td>
