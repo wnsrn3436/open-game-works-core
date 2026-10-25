@@ -11,6 +11,7 @@ import { staticCheck } from '../../../../src/commands/check/static-api.ts';
 import type { Context } from '../../../../src/lib/command.ts';
 import type { GameRepo } from '../../../../src/lib/game.ts';
 import type { GameSettings } from '../../../../src/lib/settings.ts';
+import { mergedCoreSettings } from '../../../../src/commands/generate/api.ts';
 
 vi.mock('../../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/api.ts')>()),
@@ -73,6 +74,13 @@ describe('gameChecks', () => {
     expect(placeholderFailures).not.toHaveBeenCalled();
     expect(rowSimulationCheck).not.toHaveBeenCalled();
     expect(vi.mocked(uiQualityCheck).mock.calls.map((c) => c[3].quality)).toEqual([UI_QUALITY, UI_QUALITY]);
+  });
+
+  it('gives the regression test the run and start limits of the merged core settings of the game', async () => {
+    vi.mocked(mergedCoreSettings).mockResolvedValue({ 'UnitTestCore.runTimeLimitMs': 30_000, 'UnitTestCore.startTimeLimitMs': 120_000 });
+    await names('core try');
+    expect(vi.mocked(regressionTest).mock.calls[0]?.[3]).toMatchObject({ runTimeLimitMs: 30_000, startTimeLimitMs: 120_000 });
+    vi.mocked(mergedCoreSettings).mockResolvedValue({});
   });
 
   it('all also runs no placeholder and row simulation', async () => {

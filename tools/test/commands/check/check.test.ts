@@ -234,6 +234,30 @@ async function checkSummary(values: Record<string, string | boolean>): Promise<u
   return (await check.run(ctx, { positionals: ['g'], values, raw: [] })).summary;
 }
 
+describe('ogw check --regression start limit', () => {
+  it('ends a client run that sends no PUT /started within UnitTestCore.startTimeLimitMs of the game', async () => {
+    setupGame(ws);
+    vi.mocked(mergedCoreSettings).mockResolvedValue({ 'UnitTestCore.runTimeLimitMs': 60_000, 'UnitTestCore.startTimeLimitMs': 300 });
+    const dir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
+    const godot = join(dir, 'godot');
+    // imports at once, then a test run that never starts
+    writeFileSync(godot, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes('--import')) {
+  require('node:fs').mkdirSync(require('node:path').join(args[args.indexOf('--path') + 1], '.godot'), { recursive: true });
+  process.exit(0);
+}
+setInterval(() => undefined, 1000);
+`);
+    chmodSync(godot, 0o755);
+    vi.mocked(requireEngine).mockResolvedValue(godot);
+    const started = Date.now();
+    const run = await ogw(ws, ['check', 'g', '--regression']);
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(run.stdout).toContain('test run did not start within 300 ms (no PUT /started)');
+  }, 60_000);
+});
+
 describe('ogw check run log summary', () => {
   it('gives every mode one name and merged result per check', async () => {
     setupGame(ws, { 'resource/resources.csv': 'key,status\nui/a,placeholder\n' });
