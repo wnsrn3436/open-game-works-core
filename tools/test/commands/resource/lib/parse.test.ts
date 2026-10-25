@@ -40,12 +40,14 @@ describe('spec', () => {
     expect(parseSpec('k', 'nine_slice', 'size=10x20;alpha=true;slice=1,2,3,0')).toMatchObject({ size: [10, 20], alpha: true, slice: [1, 2, 3, 0] });
     expect(parseSpec('k', 'sfx', 'length=300;loop=true;variants=4')).toMatchObject({ lengthMs: 300, loop: true, variants: 4 });
     expect(parseSpec('k', 'model', 'bounds=1.5x2x0.25')).toMatchObject({ bounds: [1.5, 2, 0.25] });
+    expect(parseSpec('k', 'sfx', 'length=300;level=quiet').level).toBe('quiet');
+    expect(parseSpec('k', 'sfx', 'length=300;level=loud').level).toBe('loud');
     expect(parseSpec('k', 'particle', 'space=3D;loop=false')).toMatchObject({ space: '3D', loop: false });
     expect(parseSpec('k', 'sprite_animation', 'size=8x8;animations=idle:800:loop,hit_back:50:once').animations).toEqual([
       { name: 'idle', lengthMs: 800, loop: true },
       { name: 'hit_back', lengthMs: 50, loop: false },
     ]);
-    expect(parseSpec('k', 'material', '')).toEqual({ size: null, alpha: false, slice: null, lengthMs: null, loop: false, animations: null, variants: 1, bounds: null, space: null });
+    expect(parseSpec('k', 'material', '')).toEqual({ size: null, alpha: false, slice: null, lengthMs: null, loop: false, animations: null, variants: 1, level: 'normal', bounds: null, space: null });
   });
 
   it.each([
@@ -56,6 +58,8 @@ describe('spec', () => {
     ['sfx', 'length=0', 'invalid length value 0'],
     ['sfx', 'length=10;loop=1', 'invalid loop value 1'],
     ['sfx', 'length=10;variants=0', 'invalid variants value 0'],
+    ['sfx', 'length=10;level=high', 'invalid level value high'],
+    ['bgm', 'length=10;level=quiet', 'item level is not for type bgm'],
     ['model', 'bounds=1x2', 'invalid bounds value 1x2'],
     ['model', 'bounds=1x0x2', 'invalid bounds value 1x0x2'],
     ['shader', 'space=4D', 'invalid space value 4D'],

@@ -28,10 +28,10 @@ async function stageFor(
   method: GenerationMethod,
   gameName: string,
   key: string,
-): Promise<{ stage: Stage | null; spec: { size: [number, number] | null; lengthMs: number | null } }> {
+): Promise<{ stage: Stage | null; spec: { size: [number, number] | null; lengthMs: number | null; loop: boolean } }> {
   const { type, spec } = await keySpec(await ctx.game(gameName), key);
   const choices = await methodChoices(ctx, await ctx.settings(), type, spec);
-  const sizes = { size: spec.size, lengthMs: spec.lengthMs };
+  const sizes = { size: spec.size, lengthMs: spec.lengthMs, loop: spec.loop };
   const own = choices.find((c) => c.name === method.name);
   if (own) return { stage: own.stage, spec: sizes };
   const viaImage = method.name === IMAGE_METHOD ? choices.find((c) => c.flux2Klein !== undefined) : undefined;

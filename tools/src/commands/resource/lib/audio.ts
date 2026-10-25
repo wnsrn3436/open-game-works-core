@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
 import { LIMITS } from '../../../lib/limits.ts';
@@ -71,9 +71,15 @@ export async function encodeOgg(program: string, wav: Buffer, env: NodeJS.Proces
   });
 }
 
+/**
+ * How a sound is shaped before its loudness is matched (`production.md` `## finalize` step 2). `once`: cut the leading
+ * and trailing parts below -60 dBFS when `trim`, cut to `maxMs`, then fade in and out. `loop`: a loop of whole
+ * `barMs` bars (any length when null) at most `lengthMs` long, whose `seamMs` start is crossfaded with what follows it.
+ */
+export type SoundShape = { kind: 'once'; trim: boolean; maxMs: number | null } | { kind: 'loop'; lengthMs: number; seamMs: number; barMs: number | null };
+
 export interface SoundTarget {
-  /** Cut the leading and trailing parts where every channel's sample is below -60 dBFS. */
-  trim: boolean;
+  shape: SoundShape;
   loudnessLufs: number;
   peakMaxDbtp: number;
   ogg: boolean;
@@ -86,6 +92,132 @@ export interface SoundResult {
 }
 
 const TRIM = 'silenceremove=start_periods=1:start_threshold=-60dB:detection=peak';
+/** Fade in of a sound played once. */
+const FADE_IN_MS = 2;
+/** Longest fade out of a sound played once; a shorter sound fades out over its last quarter. */
+const FADE_OUT_MS = 50;
+/** Fewest bars of a looped `bgm`. */
+const MIN_LOOP_BARS = 4;
+
+/** Interleaved 32-bit float samples, and the WAV chunks other than `fmt ` and `data`, kept as they are. */
+export interface Pcm {
+  channels: number;
+  sampleRate: number;
+  samples: Float32Array;
+  chunks: Buffer;
+}
+
+/** Reads a 32-bit float WAV (the format the `decoded.wav` step writes). */
+export function readWavF32(bytes: Buffer): Pcm {
+  if (bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') throw new OgwError('not a WAV file');
+  let channels = 0;
+  let sampleRate = 0;
+  let bits = 0;
+  let samples: Float32Array | null = null;
+  const chunks: Buffer[] = [];
+  for (let at = 12; at + 8 <= bytes.length; ) {
+    const id = bytes.toString('ascii', at, at + 4);
+    const size = bytes.readUInt32LE(at + 4);
+    const end = Math.min(at + 8 + size + (size % 2), bytes.length);
+    if (id === 'fmt ') {
+      channels = bytes.readUInt16LE(at + 10);
+      sampleRate = bytes.readUInt32LE(at + 12);
+      bits = bytes.readUInt16LE(at + 22);
+    } else if (id === 'data') {
+      if (bits !== 32 || channels < 1) throw new OgwError('WAV data is not 32-bit float');
+      const data = bytes.subarray(at + 8, Math.min(at + 8 + size, bytes.length));
+      samples = new Float32Array(Math.floor(data.length / 4 / channels) * channels);
+      for (let i = 0; i < samples.length; i++) samples[i] = data.readFloatLE(i * 4);
+    } else {
+      chunks.push(bytes.subarray(at, end));
+    }
+    at = end;
+  }
+  if (samples === null) throw new OgwError('WAV file has no data chunk');
+  return { channels, sampleRate, samples, chunks: Buffer.concat(chunks) };
+}
+
+/** A 32-bit float WAV of the samples. */
+export function writeWavF32(pcm: Pcm): Buffer {
+  const data = Buffer.alloc(pcm.samples.length * 4);
+  for (let i = 0; i < pcm.samples.length; i++) data.writeFloatLE(pcm.samples[i] as number, i * 4);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'ascii');
+  header.writeUInt32LE(36 + data.length + pcm.chunks.length, 4);
+  header.write('WAVE', 8, 'ascii');
+  header.write('fmt ', 12, 'ascii');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(3, 20);
+  header.writeUInt16LE(pcm.channels, 22);
+  header.writeUInt32LE(pcm.sampleRate, 24);
+  header.writeUInt32LE(pcm.sampleRate * pcm.channels * 4, 28);
+  header.writeUInt16LE(pcm.channels * 4, 32);
+  header.writeUInt16LE(32, 34);
+  header.write('data', 36, 'ascii');
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data, pcm.chunks]);
+}
+
+function frames(pcm: Pcm, ms: number): number {
+  return Math.round((ms * pcm.sampleRate) / 1000);
+}
+
+/** Cuts to `maxMs`, then fades in over `FADE_IN_MS` and out over `FADE_OUT_MS` or the last quarter, whichever is shorter. */
+function shapeOnce(pcm: Pcm, maxMs: number | null): Pcm {
+  const { channels } = pcm;
+  let count = pcm.samples.length / channels;
+  if (maxMs !== null) count = Math.min(count, frames(pcm, maxMs));
+  const samples = pcm.samples.slice(0, count * channels);
+  const fadeIn = Math.min(frames(pcm, FADE_IN_MS), Math.floor(count / 2));
+  const fadeOut = Math.min(frames(pcm, FADE_OUT_MS), Math.floor(count / 4));
+  for (let f = 0; f < count; f++) {
+    let gain = 1;
+    if (f < fadeIn) gain = f / fadeIn;
+    const fromEnd = count - 1 - f;
+    if (fromEnd < fadeOut) gain = Math.min(gain, fromEnd / fadeOut);
+    if (gain === 1) continue;
+    for (let c = 0; c < channels; c++) samples[f * channels + c] = (samples[f * channels + c] as number) * gain;
+  }
+  return { ...pcm, samples };
+}
+
+/**
+ * The loop: the first L frames, with the first X frames the equal-power crossfade of themselves (fading in) and the X
+ * frames after L (fading out), so that the last frame runs on into the first. For `barMs`, X is one bar and L whole
+ * bars; otherwise X is `seamMs` and L is `lengthMs` or what the file leaves after X.
+ */
+function shapeLoop(pcm: Pcm, shape: { lengthMs: number; seamMs: number; barMs: number | null }, file: string): Pcm {
+  const { channels } = pcm;
+  const count = pcm.samples.length / channels;
+  const want = frames(pcm, shape.lengthMs);
+  let seam: number;
+  let length: number;
+  if (shape.barMs === null) {
+    seam = frames(pcm, shape.seamMs);
+    length = Math.min(want, count - seam);
+    if (length <= seam) throw new OgwError(`${file}: too short for a loop of ${String(shape.lengthMs)} ms with a ${String(shape.seamMs)} ms seam`);
+  } else {
+    const bar = (shape.barMs * pcm.sampleRate) / 1000;
+    seam = Math.round(bar);
+    const bars = Math.floor(Math.min(want, count - seam) / bar);
+    if (bars < MIN_LOOP_BARS) throw new OgwError(`${file}: a loop needs ${String(MIN_LOOP_BARS)} bars of ${shape.barMs.toFixed(1)} ms and a one-bar seam; the file is ${String(Math.round((count * 1000) / pcm.sampleRate))} ms`);
+    length = Math.round(bars * bar);
+  }
+  const samples = pcm.samples.slice(0, length * channels);
+  for (let f = 0; f < seam; f++) {
+    const t = ((f + 0.5) / seam) * (Math.PI / 2);
+    for (let c = 0; c < channels; c++) {
+      const head = pcm.samples[f * channels + c] as number;
+      const tail = pcm.samples[(length + f) * channels + c] as number;
+      samples[f * channels + c] = head * Math.sin(t) + tail * Math.cos(t);
+    }
+  }
+  return { ...pcm, samples };
+}
+
+export function shapeSound(pcm: Pcm, shape: SoundShape, file: string): Pcm {
+  return shape.kind === 'once' ? shapeOnce(pcm, shape.maxMs) : shapeLoop(pcm, shape, file);
+}
 
 function lastJson(text: string): Record<string, string> {
   const start = text.lastIndexOf('{');
@@ -168,7 +300,7 @@ async function loudness(program: string, file: string, looped: boolean): Promise
 }
 
 /**
- * Trims, matches integrated loudness, limits true peak, and measures the result. A sound with integrated loudness goes
+ * Shapes (`SoundShape`), matches integrated loudness, limits true peak, and measures the result. A sound with integrated loudness goes
  * through loudnorm's second pass, with the bus values moved into the ranges loudnorm accepts and a gain for the rest of
  * the loudness. A sound with no integrated loudness (shorter than 400 ms) gets one gain from the measurement of the
  * sound repeated for `SHORT_SOUND_LOOP_MS`: the smaller of the gain to the loudness target and the gain to the true peak
@@ -179,11 +311,11 @@ export async function processSound(program: string, file: string, target: SoundT
   const normI = clamp(target.loudnessLufs, LOUDNORM_I);
   const norm = `loudnorm=I=${String(normI)}:TP=${String(clamp(target.peakMaxDbtp, LOUDNORM_TP))}:LRA=20`;
   return withTemp(env, async (dir) => {
-    let source = file;
-    if (target.trim) {
-      source = join(dir, 'trimmed.wav');
-      await ffmpeg(program, [...input(file), '-af', `${TRIM},areverse,${TRIM},areverse`, '-c:a', 'pcm_f32le', '-f', 'wav', ...BITEXACT, source]);
-    }
+    const decoded = join(dir, 'decoded.wav');
+    const trim = target.shape.kind === 'once' && target.shape.trim ? `${TRIM},areverse,${TRIM},areverse,` : '';
+    await ffmpeg(program, [...input(file), '-af', `${trim}${RESAMPLE}`, '-c:a', 'pcm_f32le', '-f', 'wav', ...BITEXACT, decoded]);
+    const source = join(dir, 'shaped.wav');
+    await writeFile(source, writeWavF32(shapeSound(readWavF32(await readFile(decoded)), target.shape, file)));
     const out = join(dir, target.ogg ? 'out.ogg' : 'out.wav');
     const first = await measure(program, source, false, norm);
     // No true peak: no sample is left (or every sample is 0). Repeating such a file would not end.

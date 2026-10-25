@@ -14,12 +14,13 @@ function text(result: FinalizeResult): string {
 export const finalize: CommandDef = {
   name: ['resource', 'finalize'],
   usage:
-    'ogw resource finalize <game> <key> --method <method> --file <path>... [--inputs <key>...] [--bus <Sfx|Ui>] [--manifest <file>] [--skeleton <file> --split <file>]',
+    'ogw resource finalize <game> <key> --method <method> --file <path>... [--inputs <key>...] [--bus <Sfx|Ui>] [--music <file>] [--manifest <file>] [--skeleton <file> --split <file>]',
   options: {
     method: { type: 'string' },
     file: { type: 'string', multiple: true },
     inputs: { type: 'string', multiple: true },
     bus: { type: 'string' },
+    music: { type: 'string' },
     manifest: { type: 'string' },
     skeleton: { type: 'string' },
     split: { type: 'string' },
@@ -35,6 +36,7 @@ export const finalize: CommandDef = {
       files,
       inputs: list(args, 'inputs'),
       bus: str(args, 'bus') ?? null,
+      music: str(args, 'music') ?? null,
       manifest: str(args, 'manifest') ?? null,
       skeleton: str(args, 'skeleton') ?? null,
       split: str(args, 'split') ?? null,

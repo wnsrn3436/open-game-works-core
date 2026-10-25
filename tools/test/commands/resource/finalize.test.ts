@@ -126,9 +126,9 @@ describe('ogw resource finalize', () => {
     expect(readFileSync(join(f.game, 'resource/sfx/hit.1.wav'), 'utf8')).toBe('RIFF-fake');
     const log = readFileSync(f.ffmpegLog, 'utf8');
     // Every file read names its container, so that ffmpeg does not probe it.
-    expect(log).toContain(`-f wav -i ${a} -af silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse -c:a pcm_f32le -f wav -fflags +bitexact`);
-    expect(log).toMatch(/-f wav -i \S+\/trimmed\.wav -af loudnorm=I=-22:TP=-3:LRA=20:print_format=json -f null -/);
-    expect(log).toMatch(/-f wav -i \S+\/trimmed\.wav -af loudnorm=I=-22:TP=-3:LRA=20:measured_I=-30\.00:measured_TP=-10\.00:measured_LRA=2\.00:measured_thresh=-40\.00:offset=0\.10:linear=true:print_format=summary,aformat=sample_rates=48000 -c:a pcm_s16le -f wav -fflags \+bitexact/);
+    expect(log).toContain(`-f wav -i ${a} -af silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,aformat=sample_rates=48000 -c:a pcm_f32le -f wav -fflags +bitexact`);
+    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af loudnorm=I=-22:TP=-3:LRA=20:print_format=json -f null -/);
+    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af loudnorm=I=-22:TP=-3:LRA=20:measured_I=-30\.00:measured_TP=-10\.00:measured_LRA=2\.00:measured_thresh=-40\.00:offset=0\.10:linear=true:print_format=summary,aformat=sample_rates=48000 -c:a pcm_s16le -f wav -fflags \+bitexact/);
     expect(log).toMatch(/-f wav -i \S+\/out\.wav -af ebur128=peak=true -f null -/);
     expect(log.split('\n').filter((line) => line !== '' && !/-f (wav|ogg) -i /.test(line))).toEqual([]);
     expect(log).not.toContain('aloop');
@@ -138,7 +138,8 @@ describe('ogw resource finalize', () => {
     writeFileSync(bgm, 'M');
     const music = await finalize(f, ['bgm/main', '--method', 'ace-step', '--file', bgm]);
     expect(music.stdout).toContain('resource/bgm/main.ogg integrated loudness -16 LUFS, true peak -9 dBTP');
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-f wav -i ${bgm} -af loudnorm=I=-16:TP=-1:LRA=20:print_format=json`);
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-f wav -i ${bgm} -af aformat=sample_rates=48000 -c:a pcm_f32le -f wav`);
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-f wav -i \S+\/shaped\.wav -af loudnorm=I=-16:TP=-1:LRA=20:print_format=json/);
     expect(readFileSync(f.ffmpegLog, 'utf8')).toContain('-c:a libvorbis -q:a 6 -f ogg');
     expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-f ogg -i \S+\/out\.ogg -af ebur128=peak=true -f null -/);
     expect(readFileSync(join(f.game, 'resource/bgm/main.ogg'), 'utf8')).toBe('OggS-fake');
@@ -147,7 +148,8 @@ describe('ogw resource finalize', () => {
     const loop = work(f, 'l.wav');
     writeFileSync(loop, 'L');
     await finalize(f, ['sfx/loop', '--method', 'moss-sfx', '--file', loop, '--bus', 'Sfx']);
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-i ${loop} -af loudnorm=I=-18:TP=-1.5:LRA=20`);
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-i ${loop} -af aformat=sample_rates=48000 -c:a pcm_f32le -f wav`);
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-i \S+\/shaped\.wav -af loudnorm=I=-18:TP=-1\.5:LRA=20/);
 
     const voice = work(f, 'v.wav');
     writeFileSync(voice, 'V');
@@ -188,6 +190,35 @@ describe('ogw resource finalize', () => {
     expect(readFileSync(join(f.game, 'resource/voice/x.wav'), 'utf8')).toBe('RIFF-fake');
   });
 
+  it('matches an sfx to the bus loudness plus its level offset', async () => {
+    const f = setup([
+      { key: 'sfx/pick', spec: 'length=3000;level=quiet', status: 'requested' },
+      { key: 'sfx/roar', spec: 'length=3000;level=loud', status: 'requested' },
+    ]);
+    await sync(f);
+    await finalize(f, ['sfx/pick', '--method', 'moss-sfx', '--file', touch(f, 'p.wav'), '--bus', 'Sfx']);
+    await finalize(f, ['sfx/roar', '--method', 'moss-sfx', '--file', touch(f, 'r.wav'), '--bus', 'Sfx']);
+    const log = readFileSync(f.ffmpegLog, 'utf8');
+    // Sfx bus -18 LUFS: quiet -8 dB, loud +4 dB
+    expect(log).toContain('loudnorm=I=-26:TP=-1.5:LRA=20:print_format=json');
+    expect(log).toContain('loudnorm=I=-14:TP=-1.5:LRA=20:print_format=json');
+  });
+
+  it('makes a looped bgm of whole bars from the tempo of --music', async () => {
+    const f = setup([{ key: 'bgm/run', spec: 'length=7000;loop=true', status: 'requested' }]);
+    await sync(f);
+    const music = work(f, 'music.json');
+    writeFileSync(music, JSON.stringify({ bpm: 240, beatsPerBar: 4 }));
+    const run = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', touch(f, 'm.wav'), '--music', music]);
+    expect(run.stderr).toBe('');
+    expect(rowOf(f.game, 'bgm/run').status).toBe('final');
+    writeFileSync(music, JSON.stringify({ bpm: 0, beatsPerBar: 4 }));
+    const f2 = setup([{ key: 'bgm/run', spec: 'length=7000;loop=true', status: 'requested' }]);
+    await sync(f2);
+    const bad = await finalize(f2, ['bgm/run', '--method', 'ace-step', '--file', touch(f2, 'm.wav'), '--music', music]);
+    expect(bad.stderr).toContain('bpm must be a number over 0 and beatsPerBar an integer of 1 or more');
+  });
+
   it('gives a sound shorter than one gating block one gain from the sound repeated for 1000 ms', async () => {
     const f = setup([{ key: 'sfx/click', spec: 'length=100', status: 'requested' }]);
     await sync(f);
@@ -198,8 +229,8 @@ describe('ogw resource finalize', () => {
     expect((JSON.parse(run.stdout) as { loudness: unknown[] }).loudness).toEqual([{ file: 'resource/sfx/click.wav', integratedLufs: -23, truePeakDbtp: -3 }]);
     const log = readFileSync(f.ffmpegLog, 'utf8');
     // Repeated: I -30, true peak -10. Ui bus: -22 LUFS, -3 dBTP. Gain min(-22 - -30, -3 - -10) = 7 dB.
-    expect(log).toMatch(/-f wav -i \S+\/trimmed\.wav -af aloop=loop=-1:size=2147483647,atrim=duration=1,loudnorm=I=-22:TP=-3:LRA=20:print_format=json -f null -/);
-    expect(log).toMatch(/-f wav -i \S+\/trimmed\.wav -af volume=7\.00dB,aformat=sample_rates=48000 -c:a pcm_s16le -f wav/);
+    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af aloop=loop=-1:size=2147483647,atrim=duration=1,loudnorm=I=-22:TP=-3:LRA=20:print_format=json -f null -/);
+    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af volume=7\.00dB,aformat=sample_rates=48000 -c:a pcm_s16le -f wav/);
     expect(log).toMatch(/-f wav -i \S+\/out\.wav -af aloop=loop=-1:size=2147483647,atrim=duration=1,ebur128=peak=true -f null -/);
     expect(log).not.toContain('measured_I=-inf');
     expect(readFileSync(join(f.game, 'resource/sfx/click.wav'), 'utf8')).toBe('RIFF-fakeSHORT');
@@ -213,7 +244,7 @@ describe('ogw resource finalize', () => {
     const run = await finalize(f, ['sfx/tick', '--method', 'moss-sfx', '--file', tick, '--bus', 'Ui']);
     expect(run.stderr).toBe('');
     // Repeated: I -30, true peak -30. Ui bus: -22 LUFS, -3 dBTP. Gain min(-22 - -30, -3 - -30) = 8 dB.
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-i \S+\/trimmed\.wav -af volume=8\.00dB,aformat=sample_rates=48000 -c:a pcm_s16le -f wav/);
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-i \S+\/shaped\.wav -af volume=8\.00dB,aformat=sample_rates=48000 -c:a pcm_s16le -f wav/);
   });
 
   it('encodes again with a lower gain while the written true peak is over the bus limit', async () => {
@@ -470,6 +501,9 @@ describe('ogw resource finalize', () => {
     ['an input that is not final', [{ key: 'icon/a', spec: 'size=4x4', status: 'requested' }], (f) => okPng(f, ['icon/a', '--method', 'flux2-klein', '--inputs', 'icon/a', 'icon/q']), '--inputs icon/a is not final\n--inputs icon/q is not in resource/resources.csv'],
     ['sfx without --bus', [{ key: 'sfx/a', spec: 'length=5', status: 'requested' }], (f) => Promise.resolve(['sfx/a', '--method', 'moss-sfx', '--file', touch(f, 'a.wav')]), '--bus Sfx or --bus Ui is required for sfx'],
     ['--bus for another type', [{ key: 'icon/a', spec: 'size=4x4', status: 'requested' }], (f) => okPng(f, ['icon/a', '--method', 'flux2-klein', '--bus', 'Sfx']), '--bus is only for sfx'],
+    ['a looped bgm without --music', [{ key: 'bgm/a', spec: 'length=8000;loop=true', status: 'requested' }], (f) => Promise.resolve(['bgm/a', '--method', 'ace-step', '--file', touch(f, 'a.wav')]), '--music is required for a bgm whose loop is true'],
+    ['--music for a bgm that does not loop', [{ key: 'bgm/a', spec: 'length=8000', status: 'requested' }], (f) => Promise.resolve(['bgm/a', '--method', 'ace-step', '--file', touch(f, 'a.wav'), '--music', touch(f, 'm.json')]), '--music is only for a bgm whose loop is true'],
+    ['a missing --music file', [{ key: 'bgm/a', spec: 'length=8000;loop=true', status: 'requested' }], (f) => Promise.resolve(['bgm/a', '--method', 'ace-step', '--file', touch(f, 'a.wav'), '--music', '/nonexistent/m.json']), '--music /nonexistent/m.json does not exist'],
     ['--manifest for another type', [{ key: 'icon/a', spec: 'size=4x4', status: 'requested' }], (f) => okPng(f, ['icon/a', '--method', 'flux2-klein', '--manifest', 'm.json']), '--manifest is only for sprite_animation'],
     ['--skeleton for another type', [{ key: 'icon/a', spec: 'size=4x4', status: 'requested' }], (f) => okPng(f, ['icon/a', '--method', 'flux2-klein', '--skeleton', 's.json']), '--skeleton and --split are only for rig_animation_2d'],
     ['a sprite animation without --manifest', [{ key: 'sprite_animation/a', spec: 'size=4x4;animations=x:1:loop', status: 'requested' }], (f) => okPng(f, ['sprite_animation/a', '--method', 'sprite-gen-codex']), '--manifest is required for sprite_animation'],

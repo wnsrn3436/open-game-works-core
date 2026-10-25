@@ -79,6 +79,7 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
 | `loop` | `true` for looped playback, otherwise `false`. `false` when omitted | none | `sfx`, `bgm`, `animation_3d`, `particle` |
 | `animations` | Animation list. Each animation is `<name>:<length>:<repeat>`, joined with `,`. `<name>` is snake_case and unique. `<length>` is an ms integer. `<repeat>` is `loop` for looped playback and `once` for playing once. e.g. `idle:800:loop,attack:500:once` | `sprite_animation`, `rig_animation_2d` | none |
 | `variants` | Number of variants. Integer of 1 or more. 1 when omitted | none | `sfx` |
+| `level` | Loudness of a sound effect against the other sound effects of its bus: `quiet`, `normal` or `loud`. `normal` when omitted | none | `sfx` |
 | `bounds` | Model size `<x>x<y>x<z>`. The width (x), height (y, up axis) and depth (z) of the axis-aligned box that encloses the model in its default pose. Decimals in m | `model` | none |
 | `space` | `2D` or `3D` | `particle`, `shader` | none |
 
@@ -93,6 +94,7 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
   - `rig`, `material`, `sprite_animation`, `rig_animation_2d`, `animation_3d`, `particle`, `shader`: the placeholder resource that `## resource type` of the engine defines
 - Placeholder resources are not drawn or edited by hand
 - A sound effect that is heard repeatedly (hits, footsteps, UI presses) gets `variants` of 2 or more in `spec`
+- A sound effect that is heard many times a minute (hits, pickups, footsteps, UI presses) gets `level=quiet`, and a sound effect of a rare event that the player must notice (level up, boss arrival, death) gets `level=loud`
 
 ## resource request
 

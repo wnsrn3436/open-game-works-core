@@ -28,6 +28,8 @@ export interface CallInput {
   size: [number, number] | null;
   /** `spec` `length` of the resource key in ms; null in the standard test job. */
   lengthMs: number | null;
+  /** `spec` `loop` of the resource key; false in the standard test job. */
+  loop: boolean;
   /** The fixed seed of the standard test job; null in `generation run`. */
   seed: number | null;
 }
@@ -54,6 +56,8 @@ export interface StandardJob {
 
 /** The fixed seed of every standard test job. */
 export const STANDARD_SEED = 42;
+/** Song made past the `spec` length of a looped key, so that a loop of whole bars and its one-bar seam fit (`production.md` `## finalize`). */
+export const LOOP_TAIL_MS = 8000;
 /** Resolution of an image or model call without a stage. */
 export const DEFAULT_RESOLUTION = 1024;
 
@@ -81,7 +85,9 @@ export const DRIVERS: Record<string, string> = {
     '',
   ].join('\n'),
   'ace-step': [
+    'import json',
     'import os',
+    'import shutil',
     'import sys',
     'import torch',
     'from acestep.handler import AceStepHandler',
@@ -97,16 +103,34 @@ export const DRIVERS: Record<string, string> = {
     DEVICE,
     'dit = AceStepHandler()',
     'dit.initialize_service(project_root=project, config_path="acestep-v15-turbo", device=device)',
+    'lm = LLMHandler()',
+    'status, ready = lm.initialize(checkpoint_dir=checkpoints, lm_model_path="acestep-5Hz-lm-1.7B", backend="mlx" if device == "mps" else "pt", device=device)',
+    'if not ready:',
+    '    sys.exit(status)',
     'with open(prompt_file, encoding="utf-8") as f:',
     '    caption = f.read().strip()',
-    'params = GenerationParams(caption=caption, instrumental=True, duration=int(duration_ms) / 1000, seed=int(seed), thinking=False, use_cot_metas=False, use_cot_caption=False, use_cot_language=False)',
-    'result = generate_music(dit, LLMHandler(), params, GenerationConfig(batch_size=1, audio_format="wav"), save_dir=out)',
-    'if not result.success:',
+    's = int(seed)',
+    'params = GenerationParams(caption=caption, instrumental=True, duration=int(duration_ms) / 1000, seed=s, thinking=True, use_cot_metas=True, use_cot_caption=False, use_cot_language=False)',
+    'config = GenerationConfig(batch_size=1, audio_format="wav", use_random_seed=s < 0, seeds=None if s < 0 else [s])',
+    'result = generate_music(dit, lm, params, config, save_dir=os.path.join(out, "work"))',
+    'if not result.success or not result.audios:',
     '    sys.exit(str(result.error))',
+    'audio = result.audios[0]',
+    'used = audio.get("params") or {}',
+    'shutil.move(audio["path"], os.path.join(out, "music.wav"))',
+    'shutil.rmtree(os.path.join(out, "work"), ignore_errors=True)',
+    'bpm = used.get("bpm")',
+    'if not isinstance(bpm, (int, float)) or bpm <= 0:',
+    '    sys.exit("the LM chose no bpm")',
+    'beats = used.get("timesignature")',
+    'beats = int(beats) if str(beats).isdigit() and int(beats) > 0 else 4',
+    'with open(os.path.join(out, "music.json"), "w", encoding="utf-8") as f:',
+    '    json.dump({"bpm": bpm, "beatsPerBar": beats}, f)',
     '',
   ].join('\n'),
   'moss-sfx': [
     'import os',
+    'import random',
     'import sys',
     'import torch',
     '',
@@ -118,12 +142,14 @@ export const DRIVERS: Record<string, string> = {
     '',
     'model, prompt_file, duration_ms, target, seed = sys.argv[1:6]',
     DEVICE,
-    'if int(seed) >= 0:',
-    '    torch.manual_seed(int(seed))',
+    's = int(seed) if int(seed) >= 0 else random.SystemRandom().randrange(2**31)',
     'pipe = MossSoundEffectPipeline.from_pretrained(model, torch_dtype=torch.float32 if device == "cpu" else torch.bfloat16, device=device)',
     'with open(prompt_file, encoding="utf-8") as f:',
     '    prompt = f.read().strip()',
-    'audio = pipe(prompt=prompt, seconds=int(duration_ms) / 1000, num_inference_steps=100, cfg_scale=4.0)',
+    'told = max(0.1, round(int(duration_ms) / 1000, 1))',
+    '# The model is told the length; the cut is 1 s later, so that the end of the sound is not cut',
+    'seconds = min(int(duration_ms) / 1000 + 1, pipe.max_inference_seconds)',
+    'audio = pipe(prompt=f"{prompt} duration: {told:.1f}s", seconds=seconds, num_inference_steps=100, cfg_scale=4.0, seed=s, append_duration_suffix=False)',
     'wav = audio.detach().cpu().to(torch.float32)',
     'if wav.ndim == 3:',
     '    wav = wav[0]',
@@ -233,6 +259,13 @@ export function outputLengthMs(input: CallInput): number {
   return stage === undefined ? input.lengthMs : Math.min(input.lengthMs, stage);
 }
 
+/** Loop length: for a looped key, the `spec` length plus `LOOP_TAIL_MS` capped at the stage length; else the output length. */
+export function loopLengthMs(input: CallInput): number {
+  const stage = input.stage?.durationMs;
+  if (!input.loop || input.lengthMs === null) return outputLengthMs(input);
+  return stage === undefined ? input.lengthMs + LOOP_TAIL_MS : Math.min(input.lengthMs + LOOP_TAIL_MS, stage);
+}
+
 function seedArg(input: CallInput): string {
   return String(input.seed ?? -1);
 }
@@ -269,7 +302,7 @@ async function flux2Call(input: CallInput): Promise<Call[]> {
 }
 
 async function aceStepCall(input: CallInput): Promise<Call> {
-  const args = [await driver(input, 'ace-step'), hfDir(input), input.promptFile, String(outputLengthMs(input)), input.out, seedArg(input)];
+  const args = [await driver(input, 'ace-step'), hfDir(input), input.promptFile, String(loopLengthMs(input)), input.out, seedArg(input)];
   gitDir(input);
   return { cmd: pythonOf(input), args, env: await modelEnv(input) };
 }
@@ -318,6 +351,7 @@ export const STANDARD_JOBS: Record<string, StandardJob> = {
     stages: [{ durationMs: 30000 }, { durationMs: 60000 }, { durationMs: 120000 }, { durationMs: 240000 }],
     prompt: 'Upbeat chiptune battle music, 140 BPM, loopable.',
     image: false,
+    outputs: ['music.wav', 'music.json'],
     call: aceStepCall,
   },
   'moss-sfx': {
@@ -439,7 +473,7 @@ async function runStandardStageLocked(ctx: Context, method: GenerationMethod, st
     images.push(image);
   }
   const marker = await methodMarker(ctx, method);
-  const calls = await job.call({ ctx, method, marker, dir, promptFile, images, out, stage, size: null, lengthMs: null, seed: STANDARD_SEED });
+  const calls = await job.call({ ctx, method, marker, dir, promptFile, images, out, stage, size: null, lengthMs: null, loop: false, seed: STANDARD_SEED });
   const run = await runCall(ctx, method, calls, out, method.safetyTimeoutMs, job.outputs);
   return { ...stage, ...run };
 }

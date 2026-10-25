@@ -1,6 +1,9 @@
 import { OgwError } from '../../../lib/errors.ts';
 import { isSnakeCase } from './list.ts';
 
+/** `level` of an `sfx` `spec`: its loudness against the other sound effects of its bus. */
+export type SfxLevel = 'quiet' | 'normal' | 'loud';
+
 export interface SpecAnimation {
   name: string;
   lengthMs: number;
@@ -16,6 +19,7 @@ export interface Spec {
   loop: boolean;
   animations: SpecAnimation[] | null;
   variants: number;
+  level: SfxLevel;
   bounds: [number, number, number] | null;
   space: '2D' | '3D' | null;
 }
@@ -117,6 +121,15 @@ const ITEMS: Record<string, ItemRule> = {
       return true;
     },
   },
+  level: {
+    required: [],
+    optional: ['sfx'],
+    apply(spec, value) {
+      if (value !== 'quiet' && value !== 'normal' && value !== 'loud') return false;
+      spec.level = value;
+      return true;
+    },
+  },
   bounds: {
     required: ['model'],
     optional: [],
@@ -139,7 +152,7 @@ const ITEMS: Record<string, ItemRule> = {
 };
 
 function emptySpec(): Spec {
-  return { size: null, alpha: false, slice: null, lengthMs: null, loop: false, animations: null, variants: 1, bounds: null, space: null };
+  return { size: null, alpha: false, slice: null, lengthMs: null, loop: false, animations: null, variants: 1, level: 'normal', bounds: null, space: null };
 }
 
 /** Problems of a `spec` cell against the `spec` item rules for a type. Empty when it follows them. */

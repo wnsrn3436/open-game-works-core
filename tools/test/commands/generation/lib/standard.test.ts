@@ -8,6 +8,7 @@ import {
   DRIVERS,
   driverFile,
   imageSize,
+  loopLengthMs,
   modelEnv,
   outputLengthMs,
   STANDARD_JOBS,
@@ -65,6 +66,7 @@ function input(name: string, patch: Partial<CallInput> = {}): CallInput {
     stage: null,
     size: null,
     lengthMs: null,
+    loop: false,
     seed: null,
     ...patch,
   };
@@ -82,7 +84,7 @@ describe('standard test jobs', () => {
     expect(DEFAULT_RESOLUTION).toBe(1024);
     expect(STANDARD_JOBS['flux2-klein']).toMatchObject({ stages: [{ resolution: 512 }, { resolution: 1024 }, { resolution: 2048 }], image: false, outputs: ['image.png', 'image-alpha.png'] });
     expect(STANDARD_JOBS['ace-step']).toMatchObject({ stages: [{ durationMs: 30000 }, { durationMs: 60000 }, { durationMs: 120000 }, { durationMs: 240000 }], image: false });
-    expect(STANDARD_JOBS['ace-step']?.outputs).toBeUndefined();
+    expect(STANDARD_JOBS['ace-step']?.outputs).toEqual(['music.wav', 'music.json']);
     expect(STANDARD_JOBS['moss-sfx']).toMatchObject({ stages: [{ durationMs: 1000 }, { durationMs: 3000 }, { durationMs: 10000 }], outputs: ['sound.wav'] });
     expect(STANDARD_JOBS['qwen3-tts']).toMatchObject({ stages: [{}], outputs: ['voice.wav'] });
     expect(JSON.parse(STANDARD_JOBS['qwen3-tts']?.prompt ?? '')).toEqual({ text: 'Welcome back, hero. The gate to the next stage is open.', speaker: 'Ryan', language: 'English' });
@@ -105,6 +107,14 @@ describe('standard test jobs', () => {
     expect(outputLengthMs(input('ace-step', { stage: { durationMs: 30000 }, lengthMs: 90000 }))).toBe(30000);
     expect(outputLengthMs(input('ace-step', { stage: null, lengthMs: 5000 }))).toBe(5000);
     expect(() => outputLengthMs(input('ace-step'))).toThrow('method ace-step has no stage length or spec length');
+  });
+
+  it('adds the loop tail to the spec length of a looped key, capped at the stage length', () => {
+    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 90000, loop: true }))).toBe(98000);
+    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 118000, loop: true }))).toBe(120000);
+    expect(loopLengthMs(input('ace-step', { stage: null, lengthMs: 5000, loop: true }))).toBe(13000);
+    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 90000 }))).toBe(90000);
+    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 30000 } }))).toBe(30000);
   });
 
   it('links hf pins into the Hugging Face cache of the method home', async () => {
@@ -158,6 +168,8 @@ describe('standard test jobs', () => {
   });
 
   it('calls the ace-step, moss-sfx and qwen3-tts drivers', async () => {
+    const looped = await calls('ace-step', { stage: { durationMs: 120000 }, lengthMs: 60000, loop: true });
+    expect(looped.list[0]?.args[3]).toBe('68000');
     const ace = await calls('ace-step', { stage: { durationMs: 30000 }, seed: 42 });
     expect(ace.list).toHaveLength(1);
     expect(ace.list[0]).toMatchObject({ cmd: join(ace.input.dir, 'venv', 'bin', 'python'), args: [join(ace.input.dir, 'drivers', 'ogw_ace-step.py'), join(ace.input.dir, 'hf', '1'), ace.input.promptFile, '30000', ace.input.out, '42'] });
@@ -165,6 +177,12 @@ describe('standard test jobs', () => {
     expect(readFileSync(join(ace.input.dir, 'drivers', 'ogw_ace-step.py'), 'utf8')).toBe(DRIVERS['ace-step']);
     const moss = await calls('moss-sfx', { stage: { durationMs: 3000 }, lengthMs: 800 });
     expect(moss.list[0]?.args).toEqual([join(moss.input.dir, 'drivers', 'ogw_moss-sfx.py'), join(moss.input.dir, 'hf', '1'), moss.input.promptFile, '800', join(moss.input.out, 'sound.wav'), '-1']);
+    // moss-sfx: the seed reaches the pipeline, the model is told the length and the cut is 1 s later
+    expect(DRIVERS['moss-sfx']).toContain('seed=s, append_duration_suffix=False');
+    expect(DRIVERS['moss-sfx']).toContain('seconds = min(int(duration_ms) / 1000 + 1, pipe.max_inference_seconds)');
+    // ace-step: the LM plans the song and its tempo goes to music.json
+    expect(DRIVERS['ace-step']).toContain('thinking=True, use_cot_metas=True');
+    expect(DRIVERS['ace-step']).toContain('json.dump({"bpm": bpm, "beatsPerBar": beats}, f)');
     const qwen = await calls('qwen3-tts');
     expect(qwen.list[0]?.args).toEqual([join(qwen.input.dir, 'drivers', 'ogw_qwen3-tts.py'), join(qwen.input.dir, 'hf', '1'), qwen.input.promptFile, join(qwen.input.out, 'voice.wav'), '-1']);
     await expect(calls('ace-step', { stage: { durationMs: 1 }, marker: marker('/m', { git: [] }) })).rejects.toThrow('method ace-step has no git pin');

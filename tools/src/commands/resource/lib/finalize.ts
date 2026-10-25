@@ -2,11 +2,11 @@ import { readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { exists } from '../../../lib/fsx.ts';
+import { exists, readJson } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { mergedCoreSettings } from '../../generate/api.ts';
 import { catalogEntries, generationMethods } from '../../generation/api.ts';
-import { processSound } from './audio.ts';
+import { processSound, type SoundShape } from './audio.ts';
 import { FileChanges } from './files.ts';
 import { engineOf, gameSettings, lineVoices, sourceLanguageOf, sourceTranslations } from './gamedata.ts';
 import { engineType, rigSceneNames, sceneNodes, spriteFramesFromSheet } from './godot.ts';
@@ -15,7 +15,7 @@ import { COLUMNS, emptyRow, findRow, formatList, keyFiles, keyPath, LIST_PATH, r
 import { hostTools, type Tools } from './placeholder.ts';
 import { readSplit, rigCheck, type RigSplit } from './rig.ts';
 import { readSkeleton, type Point, type Skeleton, type SkeletonBone } from './skeleton.ts';
-import { parseSpec, requireAnimations, requireSize, type Spec } from './spec.ts';
+import { parseSpec, requireAnimations, requireLength, requireSize, type SfxLevel, type Spec } from './spec.ts';
 import { buildSheet, layoutProblems, readFrameLayout } from './sprite.ts';
 import { runSync, writeLineVoices } from './sync.ts';
 
@@ -25,6 +25,8 @@ export interface FinalizeOptions {
   files: string[];
   inputs: string[];
   bus: string | null;
+  /** `music.json` of `ace-step`: the tempo of a looped `bgm`. */
+  music: string | null;
   manifest: string | null;
   skeleton: string | null;
   split: string | null;
@@ -82,12 +84,21 @@ function fileProblems(job: Job): string[] {
   return problems;
 }
 
+/** `--music` is given for a looped `bgm` only, and exists. */
+function musicProblems(job: Job): string[] {
+  const loopBgm = job.parsed.type === 'bgm' && job.spec.loop;
+  const music = job.options.music;
+  if (loopBgm !== (music !== null)) return [loopBgm ? '--music is required for a bgm whose loop is true' : '--music is only for a bgm whose loop is true'];
+  return music !== null && !exists(music) ? [`--music ${music} does not exist`] : [];
+}
+
 function optionProblems(job: Job): string[] {
   const { options, parsed } = job;
   const problems = fileProblems(job);
   const type = parsed.type;
   if (type === 'sfx' && options.bus !== 'Sfx' && options.bus !== 'Ui') problems.push('--bus Sfx or --bus Ui is required for sfx');
   if (type !== 'sfx' && options.bus !== null) problems.push('--bus is only for sfx');
+  problems.push(...musicProblems(job));
   if ((type === 'sprite_animation') !== (options.manifest !== null)) problems.push(type === 'sprite_animation' ? '--manifest is required for sprite_animation' : '--manifest is only for sprite_animation');
   const rig = type === 'rig_animation_2d';
   if (rig && (options.skeleton === null || options.split === null)) problems.push('--skeleton and --split are required for rig_animation_2d');
@@ -219,16 +230,43 @@ function soundBus(job: Job): string {
   return job.options.bus as string;
 }
 
+/** Gain over the bus loudness per `sfx` `level` (`production.md` `## finalize`). */
+const LEVEL_OFFSET_DB: Record<SfxLevel, number> = { quiet: -8, normal: 0, loud: 4 };
+/** Longest seam of a looped `sfx`: the crossfade is this or a quarter of the `spec` length. */
+const SFX_SEAM_MS = 500;
+
+/** Bar length in ms from the `bpm` and `beatsPerBar` of `--music`. */
+async function barMs(file: string): Promise<number> {
+  const music = await readJson<{ bpm?: unknown; beatsPerBar?: unknown }>(file);
+  const { bpm, beatsPerBar } = music;
+  if (typeof bpm !== 'number' || !(bpm > 0) || typeof beatsPerBar !== 'number' || !Number.isInteger(beatsPerBar) || beatsPerBar < 1) {
+    throw new OgwError(`--music ${file}: bpm must be a number over 0 and beatsPerBar an integer of 1 or more`);
+  }
+  return (beatsPerBar * 60000) / bpm;
+}
+
+async function soundShape(job: Job): Promise<SoundShape> {
+  const type = job.parsed.type;
+  if (!job.spec.loop) return { kind: 'once', trim: type !== 'bgm', maxMs: type === 'sfx' ? job.spec.lengthMs : null };
+  const lengthMs = requireLength(job.row.key, job.spec);
+  if (type === 'bgm') {
+    const bar = await barMs(job.options.music as string);
+    return { kind: 'loop', lengthMs, seamMs: bar, barMs: bar };
+  }
+  return { kind: 'loop', lengthMs, seamMs: Math.min(SFX_SEAM_MS, lengthMs / 4), barMs: null };
+}
+
 async function soundPlan(job: Job, plan: Plan): Promise<void> {
   const ffmpeg = await job.tools.ffmpeg();
   const target = await busTarget(job, soundBus(job));
+  const shape = await soundShape(job);
   const ext = engineType(job.engine, job.parsed.type).extensions[0] as string;
   const variants = job.options.files.length > 1;
   plan.loudness = [];
   for (const [i, file] of job.options.files.entries()) {
     const result = await processSound(ffmpeg, file, {
-      trim: job.parsed.type !== 'bgm' && !job.spec.loop,
-      loudnessLufs: target.lufs,
+      shape,
+      loudnessLufs: target.lufs + LEVEL_OFFSET_DB[job.spec.level],
       peakMaxDbtp: target.peak,
       ogg: ext === '.ogg',
     }, job.ctx.env);

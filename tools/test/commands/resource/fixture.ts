@@ -46,7 +46,8 @@ export interface Fixture {
  * `SHORT`, with a true peak of -30 dBTP when repeated), `SILENT` (no sample) or `PEAKY` (a true peak of -0.5 dBTP
  * after encoding) passes that mark on to the output file. An encode writes its `volume=<gain>dB` beside the output
  * (`<output>.vol`); the ebur128 report of that output is the gain plus -16 LUFS and a true peak of -9 dBTP (`PEAKY`:
- * -16 and -0.5, `SHORT`: -30 and -10, `HUSHED`: -30 and -30).
+ * -16 and -0.5, `SHORT`: -30 and -10, `HUSHED`: -30 and -30). A `pcm_f32le` output is a real 32-bit float WAV of
+ * 10 s of silence that carries the mark in a chunk of its own.
  */
 export function fakeFfmpeg(dir: string): { path: string; log: string } {
   const log = join(dir, 'ffmpeg.log');
@@ -98,8 +99,13 @@ esac
 vol=$(echo "$*" | sed -n 's/.*volume=\\(-\\{0,1\\}[0-9.]*\\)dB.*/\\1/p')
 if [ -z "$vol" ]; then vol=0; fi
 echo "$vol" > "$out.vol"
-case "$out" in
-  *.ogg) printf 'OggS-fake%s' "$mark" > "$out";;
+case "$out:$*" in
+  *.ogg:*) printf 'OggS-fake%s' "$mark" > "$out";;
+  *pcm_f32le*)
+    # A 32-bit float mono WAV of 10 s of silence at 48 kHz, with an ogwm chunk of the mark (8 bytes, space padded)
+    { printf 'RIFF\\064\\114\\035\\000WAVEfmt \\020\\000\\000\\000\\003\\000\\001\\000\\200\\273\\000\\000\\000\\356\\002\\000\\004\\000\\040\\000data\\000\\114\\035\\000'
+      head -c 1920000 /dev/zero
+      printf 'ogwm\\010\\000\\000\\000%-8s' "$mark"; } > "$out";;
   *) printf 'RIFF-fake%s' "$mark" > "$out";;
 esac
 `,
