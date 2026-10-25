@@ -301,7 +301,7 @@ none
 | `QACore.statsRefreshMs` | integer | core | content | refresh interval of the performance stats display. 1 or more |
 | `QACore.textMaxChars` | integer | core | content | maximum number of characters of the `text` command string |
 | `QACore.videoFps` | integer | core | human | frames per second of `capture_video`. 1 or more |
-| `QACore.captureJpgQuality` | integer | core | human | quality of the JPEG of `capture_screen` and `capture_video` with `jpg`, in permille. 1 to 1000 |
+| `QACore.captureJpgQuality` | integer | core | human | quality of the JPEG of `capture_screen` and `capture_video` with `jpg`, in permille. 10 to 1000 (the engine takes whole percents) |
 | `QACore.videoMaxMs` | integer | core | human | maximum length of one `capture_video`. 1 or more |
 | `QACore.feedbackWindowMs` | integer | core | human | duration after an input in which response and feedback are counted |
 | `QACore.idleThresholdMs` | integer | core | human | minimum length that makes an idle span |
