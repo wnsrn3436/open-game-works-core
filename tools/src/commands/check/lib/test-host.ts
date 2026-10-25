@@ -20,6 +20,8 @@ export interface TestHost {
   result(): unknown;
   /** The run ID the run sent with `PUT /released` after its `release`, or null. */
   released(): string | null;
+  /** The run ID the run sent with `PUT /started` before its first test, or null. */
+  started(): string | null;
   /** Sets what puts a `POST /input` into the page (the browser run); without it `POST /input` is 404 (the native run). */
   onInput(put: (input: TestInput) => Promise<void>): void;
   /** Why each `POST /input` that could not be put into the page failed, in order. */
@@ -196,6 +198,7 @@ class Host {
   readonly appCutOff: string[] = [];
   private result: unknown = null;
   private releasedRun: string | null = null;
+  private startedRun: string | null = null;
   private readonly appDir: string | null;
   url = '';
 
@@ -211,6 +214,10 @@ class Host {
     return this.releasedRun;
   }
 
+  getStarted(): string | null {
+    return this.startedRun;
+  }
+
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const target = req.url ?? '/';
     const method = req.method ?? 'GET';
@@ -222,21 +229,7 @@ class Host {
       return;
     }
     if (this.relayRequest(method, target, res) || (await this.inputRequest(method, target, body, res))) return;
-    if (method === 'PUT' && target === '/result') {
-      this.result = JSON.parse(body.toString('utf8'));
-      send(res, 204);
-      return;
-    }
-    if (method === 'PUT' && target === '/released') {
-      const runId = (JSON.parse(body.toString('utf8')) as { run_id?: unknown }).run_id;
-      if (typeof runId !== 'string') {
-        send(res, 400);
-        return;
-      }
-      this.releasedRun = runId;
-      send(res, 204);
-      return;
-    }
+    if (this.runSignal(method, target, body, res)) return;
     if (method === 'GET' && target.startsWith('/app/')) {
       // the browser run opens `/app/index.html` with the test run config as its URL query (`client-core` Godot `## test`)
       const path = target.split('?', 1)[0] as string;
@@ -244,6 +237,25 @@ class Host {
       return;
     }
     this.server(req, method, target, body, res);
+  }
+
+  /** `PUT /result`, `PUT /started` and `PUT /released` of the run; false for another request. */
+  private runSignal(method: string, target: string, body: Buffer, res: ServerResponse): boolean {
+    if (method !== 'PUT') return false;
+    if (target === '/result') {
+      this.result = JSON.parse(body.toString('utf8'));
+      send(res, 204);
+      return true;
+    }
+    if (target !== '/started' && target !== '/released') return false;
+    const runId = (JSON.parse(body.toString('utf8')) as { run_id?: unknown }).run_id;
+    if (typeof runId !== 'string') send(res, 400);
+    else {
+      if (target === '/started') this.startedRun = runId;
+      else this.releasedRun = runId;
+      send(res, 204);
+    }
+    return true;
   }
 
   /** `POST /ws-servers` and `DELETE /ws-servers/<n>`; false for another request. */
@@ -371,6 +383,7 @@ export async function startTestHost(appDir: string | null = null): Promise<TestH
     url: host.url,
     result: () => host.getResult(),
     released: () => host.getReleased(),
+    started: () => host.getStarted(),
     onInput: (put) => {
       host.input = put;
     },

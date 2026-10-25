@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { startTestHost } from '../../../../src/commands/check/api.ts';
-import { addOutcomes, appFolder, consoleMessages, gutArgs, judgeRun, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
+import { addOutcomes, appFolder, consoleMessages, gutArgs, gutPass, judgeRun, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import { chmodSync } from 'node:fs';
 import { runModulePool } from '../../../../src/commands/core/lib/ready-queue.ts';
@@ -55,7 +55,7 @@ describe('browser run with no result', () => {
     chmodSync(chromium, 0o755);
     // a workspace env keeps the private temp folders out of the real harness repo
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 1500 });
+    const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 1500, startLimitMs: null });
     expect(outcome.failures).toContain('browser run: no result within 1500 ms');
     expect(outcome.failures).toContain('browser run: browser: ERROR:gpu_init.cc(1)] WebGL2 not available');
   }, 20_000);
@@ -82,10 +82,58 @@ setTimeout(() => undefined, 60000);
     chmodSync(chromium, 0o755);
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const started = Date.now();
-    const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000 });
+    const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: null });
     expect(Date.now() - started).toBeLessThan(30_000);
     expect(outcome.failures).toContain('browser run: the page did not load: the browser closed index.wasm before it was sent to the end');
     expect(readFileSync(join(dir, 'launches'), 'utf8')).toBe('xx');
+  }, 60_000);
+});
+
+describe('a run that does not start', () => {
+  it('ends a browser run that sends no PUT /started within the start limit, opens the page once more, and keeps one that started', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
+    const exportDir = join(dir, 'export');
+    mkdirSync(exportDir);
+    writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
+    const browser = (start: boolean): string => {
+      const path = join(dir, start ? 'starts' : 'stalls');
+      writeFileSync(path, `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(join(dir, start ? 'launches-start' : 'launches-stall'))}, 'x');
+const page = new URL(process.argv[process.argv.length - 1]);
+const host = page.searchParams.get('ogw_test_host');
+const runId = page.searchParams.get('ogw_run_id');
+if (${String(start)}) {
+  fetch(host + '/started', { method: 'PUT', body: JSON.stringify({ run_id: runId }) }).then(() => new Promise((r) => setTimeout(r, 1500)))
+    .then(() => fetch(host + '/result', { method: 'PUT', body: JSON.stringify({ results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }) }));
+}
+setTimeout(() => undefined, 60000);
+`);
+      chmodSync(path, 0o755);
+      return path;
+    };
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const started = Date.now();
+    const stalled = await webModuleTest(ctx, { chromium: browser(false), exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 500 });
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(stalled.failures).toContain('browser run: the page did not start within 500 ms (no PUT /started)');
+    expect(readFileSync(join(dir, 'launches-stall'), 'utf8')).toBe('xx');
+    const ran = await webModuleTest(ctx, { chromium: browser(true), exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 500 });
+    expect(ran.failures.filter((f) => f.includes('did not start'))).toEqual([]);
+    expect(ran.tests).toBe(1);
+    expect(readFileSync(join(dir, 'launches-start'), 'utf8')).toBe('x');
+  }, 60_000);
+
+  it('kills a native run that sends no PUT /started within the start limit', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-native-')));
+    const godot = join(dir, 'godot');
+    writeFileSync(godot, `#!${process.execPath}\nsetTimeout(() => undefined, 60000);\n`);
+    chmodSync(godot, 0o755);
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const started = Date.now();
+    const outcome = await gutPass(ctx, { godot, project: dir, headless: true, gut: [], config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host }), timeoutMs: 60_000, startLimitMs: 500, label: 'headless pass', resultsDir: join(dir, 'results') });
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(outcome.failures).toContain('headless pass: the run did not start within 500 ms (no PUT /started)');
   }, 60_000);
 });
 
@@ -133,7 +181,7 @@ server.on('listening', async () => {
     writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
     // a workspace env keeps the private temp folders out of the real harness repo
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    const outcome = await webModuleTest(ctx, { chromium: fakeBrowser(dir, listPage), exportDir, module: 'SoundCore', resultsDir: join(dir, 'results'), timeoutMs: 15_000 });
+    const outcome = await webModuleTest(ctx, { chromium: fakeBrowser(dir, listPage), exportDir, module: 'SoundCore', resultsDir: join(dir, 'results'), timeoutMs: 15_000, startLimitMs: null });
     return { dir, outcome };
   }
 
@@ -267,7 +315,7 @@ describe('releasedOrDrained', () => {
   it('waits for both the release request and the last console line of that run, and at most the longest time', async () => {
     let released: string | null = null;
     let stderr = '';
-    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], appCutOff: () => [], close: () => Promise.resolve() };
+    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], appCutOff: () => [], started: () => null, close: () => Promise.resolve() };
     const started = Date.now();
     setTimeout(() => {
       released = 'r1';
@@ -289,7 +337,7 @@ describe('releasedOrDrained', () => {
 
   it('does not end on the console line alone when the release request comes later', async () => {
     let released: string | null = null;
-    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], appCutOff: () => [], close: () => Promise.resolve() };
+    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], appCutOff: () => [], started: () => null, close: () => Promise.resolve() };
     const stderr = `[1:INFO:CONSOLE:1] "${releasedLine('r1')}", source: x (1)\n`;
     const started = Date.now();
     setTimeout(() => {

@@ -149,6 +149,12 @@ export async function readCoreSettings(implDir: string): Promise<Record<string, 
  * limit without it) plus a startup allowance. The engine timer of `runTimeLimitMs` starts after engine boot and test
  * framework load and sends the partial result when it ends, so the process limit leaves it that time.
  */
+/** `UnitTestCore.startTimeLimitMs` of the core settings, or null for a core without it (`godot` `## test`). */
+export async function unitTestStartLimit(implDir: string): Promise<number | null> {
+  const value = (await readCoreSettings(implDir))?.['UnitTestCore.startTimeLimitMs'];
+  return typeof value === 'number' ? value : null;
+}
+
 export async function unitTestProcessLimit(implDir: string): Promise<number> {
   const value = (await readCoreSettings(implDir))?.['UnitTestCore.runTimeLimitMs'];
   return (typeof value === 'number' ? value : LIMITS.programMs) + LIMITS.shortMs;

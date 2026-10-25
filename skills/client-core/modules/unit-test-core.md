@@ -78,6 +78,7 @@ Before each test starts, the following runs in order.
   | `PUT /servers/<n>/responses` | `{"path": "<path after base URL>", "status": <int>, "headers": [["<name>", "<value>"], ...], "body": "<base64>"}` | 204. replaces the earlier response of the same path |
   | `GET /servers/<n>/requests` | none | 200. `[{"path": "<path>", "headers": [["<name>", "<value>"], ...], "body": "<base64>"}, ...]` holding the requests that server received, in the order received |
   | `DELETE /servers/<n>` | none | 204. later requests under that base URL get 404 |
+  | `PUT /started` | `{"run_id": "<run ID>"}` | 204 |
   | `PUT /result` | result JSON | 204. the tool writes it as the result file |
   | `PUT /released` | `{"run_id": "<run ID>"}` | 204 |
   | `POST /ws-servers` | none | 201. `{"url": "ws://127.0.0.1:<port>/ws/<n>/client", "control_url": "ws://127.0.0.1:<port>/ws/<n>/control"}`. `n` counts up from 1 within the run |
@@ -133,6 +134,7 @@ Before each test starts, the following runs in order.
 - failure: assert failure, throw, unchecked error log, request with no result to use, time limit exceeded
 - skip: only core tests are skipped. A test is skipped with `require_platform` in a run whose current platform is outside the list, and render tests are skipped in a headless pass. The platform of a browser run is `web`. Regression tests have no skip
 - exit code: 0 when all tests are pass or skip, there is no run failure, and there is at least one test, otherwise 1. A browser run has no exit code, and the tool applies the same rule to the result it receives. The engine timer starts after the engine is up, so when the tool does not receive the result within `UnitTestCore.runTimeLimitMs` plus the boot duration the engine-specific implementation rules set, counted from when it starts the process or opens the page, it treats that run as failed
+- A run sends `PUT /started` with its run ID once, when the engine is up and before its first test. When the tool has not received it within `UnitTestCore.startTimeLimitMs`, counted from when it starts the process or opens the page, the run did not start: the tool ends it without waiting for `UnitTestCore.runTimeLimitMs`. What the tool does next is in the engine-specific implementation rules
 - result: one UTF-8 JSON. At the end of the run it is sent to the test host with `PUT /result`, and the tool writes it as the result file
 - After `release` finishes (for a run whose `init` failed, after sending its result; for a run that exceeded the whole-run time limit, after `release` and before ending), the run sends `PUT /released` and then writes one line `UnitTestCore released run <run ID>` to the engine output. This line is the last line UnitTestCore writes in that run. When the request fails, the test host request failure row of `## error` applies, and the exit code does not change
 
@@ -187,6 +189,7 @@ none
 |---|---|---|---|---|
 | `UnitTestCore.testTimeLimitMs` | integer | core | human | time limit of one test |
 | `UnitTestCore.runTimeLimitMs` | integer | core | human | time limit of a whole test run |
+| `UnitTestCore.startTimeLimitMs` | integer | core | human | time from starting the process or opening the page within which a run sends `PUT /started`. 1 or more |
 
 ## data
 
@@ -232,6 +235,7 @@ The whole module is DEV code. STG and PROD builds do not have UnitTestCore, `cli
 
 ## test
 
+- A run sends `PUT /started` with its run ID once, before the result of its first test, in a native run and in a browser run
 - A test that does not end even after the time limit is fail, the tests after it do not run, and there is one run failure that contains that test name
 - Through a WebSocket relay, open(path, protocols), message(binary, text), and close of a client connection arrive at the control in order. Notices before the control connects arrive when it connects. `send` and `close` of the control reach the client, and a control frame the relay cannot carry out gives an `error` notice. When the test ends, the connections of that relay close with code 1001
 - In a browser run, `put_page_click` and `put_page_key` are `true` and arrive in the page as human input (`navigator.userActivation.isActive` is `true`), and the engine receives the press and release. In a native run they are `false` without an error log

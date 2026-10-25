@@ -9,6 +9,8 @@ export interface RunOptions {
   input?: string | Uint8Array;
   /** Every process has a time limit. The process tree is killed when it passes. */
   timeoutMs: number;
+  /** Read every `SIGNAL_POLL_MS`: when it gives true, the process tree is killed and the result is `stopped`. */
+  stopWhen?: () => boolean;
 }
 
 export interface RunResult {
@@ -19,6 +21,8 @@ export interface RunResult {
   /** stdout as raw bytes, for binary output. */
   stdoutBytes: Buffer;
   timedOut: boolean;
+  /** `stopWhen` gave true and the process tree was killed. */
+  stopped?: boolean;
 }
 
 const KILL_GRACE_MS = 5000;
@@ -176,7 +180,17 @@ export async function run(cmd: string, args: readonly string[], options: RunOpti
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let timedOut = false;
+    let stopped = false;
     let killTimer: NodeJS.Timeout | undefined;
+    const stopWhen = options.stopWhen;
+    const stopPoll =
+      stopWhen === undefined
+        ? undefined
+        : setInterval(() => {
+            if (stopped || timedOut || !stopWhen()) return;
+            stopped = true;
+            killTree(child, 'SIGKILL');
+          }, SIGNAL_POLL_MS);
     const timer = setTimeout(() => {
       timedOut = true;
       killTree(child, 'SIGTERM');
@@ -188,11 +202,13 @@ export async function run(cmd: string, args: readonly string[], options: RunOpti
     child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
     child.on('error', (error) => {
       clearTimeout(timer);
+      if (stopPoll) clearInterval(stopPoll);
       if (killTimer) clearTimeout(killTimer);
       reject(new OgwError(`cannot run ${cmd}: ${error.message}`));
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      if (stopPoll) clearInterval(stopPoll);
       if (killTimer) clearTimeout(killTimer);
       const stdoutBytes = Buffer.concat(out);
       resolvePromise({
@@ -202,6 +218,7 @@ export async function run(cmd: string, args: readonly string[], options: RunOpti
         stdout: stdoutBytes.toString('utf8'),
         stderr: Buffer.concat(err).toString('utf8'),
         timedOut,
+        ...(stopped ? { stopped } : {}),
       });
     });
     child.stdin?.on('error', () => undefined);

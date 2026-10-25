@@ -225,6 +225,8 @@ export interface PassOptions {
   fixturesDir: string;
   resultsDir: string;
   timeoutMs: number;
+  /** `UnitTestCore.startTimeLimitMs` of the core under test; null for a core without it (`godot` `## test`). */
+  startLimitMs: number | null;
   /** One test script of the module (`res://` path) to run alone, in the pass its name belongs to (`test_render_`: render). */
   file?: string;
 }
@@ -264,6 +266,8 @@ export interface GutRun {
   /** The test run config for the run ID and test host URL. */
   config: (runId: string, host: string) => TestRunConfig;
   timeoutMs: number;
+  /** A run that has not sent `PUT /started` within this many ms did not start and is killed (`unit-test-core`). */
+  startLimitMs?: number | null;
 }
 
 /** What a GUT run gave: the result the post-run hook sent (null when none), and the engine process run. */
@@ -286,7 +290,10 @@ export async function gutRun(ctx: Context, gut: GutRun): Promise<GutRunResult> {
     const config = await testRunConfigArg(dataDir, gut.config(runId, host.url));
     const args = [...(gut.headless ? ['--headless'] : []), '--path', gut.project, ...gut.gut, config];
     const env = { ...ctx.env, [godotDataVariable()]: dataDir };
-    const ran = await run(gut.godot, args, { cwd: gut.cwd ?? gut.project, env, timeoutMs: gut.timeoutMs });
+    const startLimit = gut.startLimitMs ?? null;
+    const opened = Date.now();
+    const notStarted = (): boolean => startLimit !== null && host.started() === null && Date.now() - opened >= startLimit;
+    const ran = await run(gut.godot, args, { cwd: gut.cwd ?? gut.project, env, timeoutMs: gut.timeoutMs, ...(startLimit === null ? {} : { stopWhen: notStarted }) });
     return { runId, json: host.result(), ran };
   } finally {
     await host.close();
@@ -300,6 +307,7 @@ export async function gutPass(ctx: Context, pass: GutPass): Promise<ModuleOutcom
   if (json !== null) await writeJsonAtomic(join(pass.resultsDir, `${runId}.json`), json);
   const outcome = judgeRun(json, `${result.stdout}\n${result.stderr}`, result.timedOut ? 1 : result.code ?? 1, pass.label);
   if (result.timedOut) outcome.failures.push(`${pass.label}: time limit ${String(pass.timeoutMs)} ms passed`);
+  if (result.stopped === true) outcome.failures.push(`${pass.label}: the run did not start within ${String(pass.startLimitMs ?? 0)} ms (no PUT /started)`);
   return outcome;
 }
 
@@ -323,6 +331,7 @@ function nativeGutPass(ctx: Context, options: PassOptions, render: boolean): Pro
     label: `${render ? 'render' : 'headless'} pass`,
     resultsDir: options.resultsDir,
     timeoutMs: options.timeoutMs,
+    startLimitMs: options.startLimitMs,
   });
 }
 
@@ -468,6 +477,8 @@ export interface WebOptions {
   module: string;
   resultsDir: string;
   timeoutMs: number;
+  /** `UnitTestCore.startTimeLimitMs` of the core under test; null for a core without it. */
+  startLimitMs: number | null;
 }
 
 /** How many times a browser run opens its page when the page did not load (the browser cut off an `/app/` file). */
@@ -512,16 +523,21 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
     browser.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
-    const json = await waitForResult(host, options.timeoutMs, () => host.appCutOff().length > 0);
-    const cutOff = json === null && host.appCutOff().length > 0;
+    const opened = Date.now();
+    const startLimit = options.startLimitMs;
+    const notStarted = (): boolean => startLimit !== null && host.started() === null && Date.now() - opened >= startLimit;
+    const json = await waitForResult(host, options.timeoutMs, () => host.appCutOff().length > 0 || notStarted());
+    const cutOff = json === null && (host.appCutOff().length > 0 || notStarted());
     // the post-run hook's `release` prints after the result; the run sends `PUT /released` and prints its last line when
     // it has ended (`client-core` Godot `## test`). Without that signal the run reads on at most CONSOLE_DRAIN_MS.
     if (json !== null) await releasedOrDrained(host, () => stderr, runId, CONSOLE_DRAIN_MS);
     if (json !== null) await writeJsonAtomic(join(options.resultsDir, `${runId}.json`), json);
     const outcome = judgeRun(json, consoleMessages(stderr), null, 'browser run');
     for (const failure of host.inputFailures()) outcome.failures.push(`browser run: input: ${failure}`);
-    if (cutOff) {
+    if (cutOff && host.appCutOff().length > 0) {
       outcome.failures.push(`browser run: the page did not load: the browser closed ${host.appCutOff().join(', ')} before it was sent to the end`);
+    } else if (cutOff) {
+      outcome.failures.push(`browser run: the page did not start within ${String(startLimit ?? 0)} ms (no PUT /started)`);
     } else if (json === null) {
       outcome.failures.push(`browser run: no result within ${String(options.timeoutMs)} ms`);
       // the browser's own output tells why the page sent nothing (`godot` `## test`)

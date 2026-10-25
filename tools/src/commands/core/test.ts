@@ -19,7 +19,7 @@ import { writeCoreSpec } from './spec-api.ts';
 import { baseProtoErrors } from './lib/base-proto-check.ts';
 import { fixtureIdErrors, licenseErrors } from './lib/content-checks.ts';
 import { nativeModuleTest, resultsDirOf, setupGodot, webExport, webModuleTest, withGodotProject, type ModuleOutcome } from './lib/godot.ts';
-import { type CoreSpecModule, enginesOf, moduleFolder, readCoreSpecDir, readEngineJson, unitTestProcessLimit } from './lib/impl.ts';
+import { type CoreSpecModule, enginesOf, moduleFolder, readCoreSpecDir, readEngineJson, unitTestProcessLimit, unitTestStartLimit } from './lib/impl.ts';
 import { startPostgres } from './lib/postgres.ts';
 import { runModulePool } from './lib/ready-queue.ts';
 import { specDirErrors } from './lib/spec-dir-check.ts';
@@ -140,16 +140,17 @@ async function engineRunner(ctx: Context, implDir: string, target: Extract<Targe
   if (target.engine !== 'godot') engineAssetRules(target.engine);
   const setup = await setupGodot(ctx, implDir, await readEngineJson(implDir, target.engine));
   const timeoutMs = await unitTestProcessLimit(implDir);
+  const startLimitMs = await unitTestStartLimit(implDir);
   const resultsDir = resultsDirOf(work);
   if (!target.web) {
     const fixturesDir = join(implDir, 'fixtures');
     // the passes run in the shared project as readers: a setup in another process waits for them (`withGodotProject`)
-    return { run: (module) => withGodotProject(ctx, implDir, () => nativeModuleTest(ctx, { setup, module, fixturesDir, resultsDir, timeoutMs, ...(file === undefined ? {} : { file }) })), close: () => Promise.resolve() };
+    return { run: (module) => withGodotProject(ctx, implDir, () => nativeModuleTest(ctx, { setup, module, fixturesDir, resultsDir, timeoutMs, startLimitMs, ...(file === undefined ? {} : { file }) })), close: () => Promise.resolve() };
   }
   const chromium = await toolProgram(ctx, 'chromium');
   if (chromium === null) throw new OgwError('harness settings tools.chromium is not on this host; the browser run stops');
   const exportDir = await webExport(ctx, implDir, setup, work);
-  return { run: (module) => webModuleTest(ctx, { chromium, exportDir, module, resultsDir, timeoutMs }), close: () => Promise.resolve() };
+  return { run: (module) => webModuleTest(ctx, { chromium, exportDir, module, resultsDir, timeoutMs, startLimitMs }), close: () => Promise.resolve() };
 }
 
 async function serverRunner(ctx: Context, implDir: string, work: string, file: string | undefined): Promise<Runner> {
