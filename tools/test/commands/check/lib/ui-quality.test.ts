@@ -414,8 +414,9 @@ describe('uiQualityCheck', () => {
     const base = vi.mocked(automationRequest).getMockImplementation();
     let opens = 0;
     vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) => {
-      if (command === 'shop.open_main' && ++opens === 2) return notOk('gone');
-      return base?.(c, i, command, args, client) ?? ok(null);
+      // the fake records every call, the failing reopen included
+      const answer = (await base?.(c, i, command, args, client)) ?? ok(null);
+      return command === 'shop.open_main' && ++opens === 2 ? notOk('gone') : answer;
     });
     const phone = { name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop' as const, notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 };
     const result = await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], screens: [phone], gamepadSupported: false, maxTextScale: 1400 }));

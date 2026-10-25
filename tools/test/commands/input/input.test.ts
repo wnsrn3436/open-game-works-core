@@ -106,6 +106,17 @@ describe('ogw input', () => {
     expect((JSON.parse(run.stdout) as { videoError: unknown }).videoError).toBeNull();
   });
 
+  it('finds the capture format before the script starts, so the first input is not late by that capture', async () => {
+    runner.config({ clients: { main: { delayMs: { capture_screen: 300 }, videoFrames: 1 } } });
+    const script = join(runner.ws.root, 'timed.json');
+    writeFileSync(script, JSON.stringify({ steps: [{ atMs: 0, command: 'tap', args: ['1', '1'] }, { atMs: 100, command: 'tap', args: ['1', '1'] }] }));
+    const run = await ogw(runner.ws, ['input', id, '--script', script, '--video', '--json']);
+    expect(run.code).toBe(0);
+    const results = (JSON.parse(run.stdout) as { steps: { sentAt: number }[] }).steps;
+    expect((results[1]?.sentAt ?? 0) - (results[0]?.sentAt ?? 0)).toBeGreaterThanOrEqual(80);
+    runner.config({});
+  });
+
   it('records the video in PNG frames from a core that does not take the format', async () => {
     runner.config({ clients: { main: { pngOnly: true, videoFrames: 2 } } });
     const script = join(runner.ws.root, 'old.json');
