@@ -297,7 +297,7 @@ Web account deletion is the web page on which a user requests the withdrawal of 
   3. maintenance: when `admin-api.is_maintenance` is `true`, 503 and `[auth_deletion_retry]`
   4. identity check
      - `code` method: finds the user with `storage.find_user_by_public_code` in `storage.read_db` (a failure of that read is 500 and `[auth_deletion_retry]` with an `error` log), and reads the `auth_deletion_code` row in one `storage.run_user_transaction` of that user. When no user is found, `run_user_transaction` is `WITHDRAWN`, there is no row, or `expires_at` ≤ `clock_now`, it is a failure. Compares the SHA-256 of the `code` changed in 2 with `code_hash` in constant time; when they differ, increments `attempts` by 1, deletes the row when the incremented value is `auth.deletionCodeMaxAttempts`, commits, and it is a failure. When they are equal, does 5 in the same transaction
-     - `google` method: calls `verify` of that adapter outside a transaction. A rejection is a failure, and time limit exceeded and communication failure are 502 and `[auth_deletion_retry]`. When `auth_social_link` has no row (`GOOGLE`, the received provider account ID), it is a failure. When it has, does 5 in one `storage.run_user_transaction` of the user of that row. When `run_user_transaction` is `WITHDRAWN`, it is a failure
+     - `google` method: calls `verify` of that adapter outside a transaction. A rejection is a failure, and time limit exceeded and communication failure are 502 and `[auth_deletion_retry]`. It reads that row of `auth_social_link` with `storage.read_db`, and a failure of that read is 500 and `[auth_deletion_retry]` with an `error` log. When `auth_social_link` has no row (`GOOGLE`, the received provider account ID), it is a failure. When it has, does 5 in one `storage.run_user_transaction` of the user of that row. When `run_user_transaction` is `WITHDRAWN`, it is a failure
      - A failure is 403 and `[auth_deletion_failed]`. A nonexistent user, a withdrawn user, a wrong code, an expired code and an unlinked account get the same page
   5. withdrawal: calls the same operations as `withdraw_user` in the same order, and leaves `reason` `web_deletion`, `method` and the truncated IP in the `audit` log. 200 and `[auth_deletion_done]`. When `remove_user` is `FAILED`, does not call the later operations, the change function returns `INTERNAL` so that transaction is rolled back, and 500 and `[auth_deletion_retry]`
 
@@ -356,7 +356,7 @@ none
 | `POST /account/deletion` during maintenance | HTTP 503, result page | none | none |
 | identity check failure in `POST /account/deletion` | HTTP 403, result page | none | `security` log(`reason` `deletion_identity`). `method` and truncated IP |
 | Google adapter time limit exceeded, communication failure in `POST /account/deletion` | HTTP 502, result page | none | `error` log |
-| the `storage.read_db` lookup of the public code of `POST /account/deletion` fails | HTTP 500 and `[auth_deletion_retry]` | none | `error` log |
+| the `storage.read_db` lookup of the public code or of the `auth_social_link` row of `POST /account/deletion` fails | HTTP 500 and `[auth_deletion_retry]` | none | `error` log |
 
 Added `CoreError`: `UNAUTHORIZED`, `TOKEN_EXPIRED`, `CONSENT_REQUIRED`, `SOCIAL_LOGIN_INVALID`, `ALREADY_LINKED`, `EXTERNAL_SERVICE_FAILED`, `AGE_BELOW_MINIMUM`
 
@@ -510,4 +510,4 @@ core cheat response field
 - `AuthResult` of `Login` and `AutoLogin` has the public code of that user, and the same one at every login
 - `POST /account/deletion` with the `code` method finds the user by `public_code` written in lowercase with `-`; a `public_code` that is not a public code input is 400 and `[auth_deletion_failed]`, and a code no user has is 403 and `[auth_deletion_failed]`
 - `find_user_by_public_code` gives `user_id` and `withdrawn_at` of a user and of a withdrawn user, `not_found` for a code no user has, and `bad_request` for a text that is not a public code input
-- When the `storage.read_db` lookup of the public code of `POST /account/deletion` fails, the response is 500 and `[auth_deletion_retry]` and one `error` log is left
+- When the `storage.read_db` lookup of the public code or of the `auth_social_link` row of `POST /account/deletion` fails, the response is 500 and `[auth_deletion_retry]` and one `error` log is left
