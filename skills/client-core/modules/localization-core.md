@@ -14,7 +14,7 @@
 
 ## purpose
 
-Sets the current language, turns translation keys into text of that language, makes text with format arguments filled in, turns input prompt tokens into the input prompt of the action, and applies the per-language font as the default font.
+Sets the current language, turns translation keys into text of that language, makes text with format arguments filled in, turns input prompt tokens into the input prompt of the action, and applies the per-language font as the default font and as the heading font.
 
 ## dependency
 
@@ -102,11 +102,14 @@ Sets the current language, turns translation keys into text of that language, ma
 ### font
 
 - The font chain is the list of the `font` of the current language followed by the `font` of the languages reached by following `fallback`. The same resource key is added only once
-- `load_fonts` loads the fonts of the font chain into the global scope of `ResourceCore` and applies the chain as the default font. A character is looked up from the first font of the chain onward
+- `load_fonts` loads the fonts of the font chain into the global scope of `ResourceCore` and applies the chain as the default font and as the heading font. A character is looked up from the first font of the chain onward
+- font weight: the OpenType `wght` value a font is drawn with. The default font is drawn with `LocalizationCore.bodyFontWeight` and the heading font with `LocalizationCore.headingFontWeight`. A weight of 0 draws the font at its default weight
+- A font of the chain that has no `wght` axis is drawn at its default weight, and a font whose `wght` axis range does not hold the weight of a text style is drawn at the nearest end of that range. For each such font, `load_fonts` writes one warn log per text style whose weight is greater than 0
+- text style: a UI text element is drawn in the `body` or the `heading` text style. An element whose text style content code did not set is `body`. `body` uses the default font and `heading` uses the heading font. The engine mapping of the text style is in the engine implementation rules
 - When any font of the chain is loaded as a fallback resource, it writes an error log and returns `false`. It applies the chain with the fallback resource in that position
 - When it is called while a `load_fonts` is in progress, it writes an error log and returns `false`
-- Content code does not set a font on a UI text element separately. Decorative lettering is made as an image resource
-- `release` reverts the default font application
+- Content code does not set a font on a UI text element separately. It picks the heading font only by the text style. Decorative lettering is made as an image resource
+- `release` reverts the default font and heading font application
 
 ### text scale
 
@@ -145,6 +148,7 @@ none
 | format error slot, result length exceeded | text with that slot or the exceeding pieces left empty | error |
 | ID value not in the `language` table in `select_language` | `false`. Not saved | error |
 | fallback resource in the font chain | `false` | error |
+| font of the chain with no `wght` axis, or whose `wght` axis range does not hold the weight of a text style greater than 0 | drawn at its default weight, or at the nearest end of the axis range | warn once per font per text style per `load_fonts` |
 | fallback resource for `icon` of `input_prompt` | `load_prompt_icons` returns `false`. That icon is not used as an inline icon | error |
 | input prompt token whose `InputCore.get_prompt` is `false` | text with that slot left empty | error once per action per load |
 | value of `set_text_scale` less than 1 | text scale unchanged | error |
@@ -161,6 +165,8 @@ none
 | `supportedLanguages` | array<string> | game | none | list of the `code` of the languages the game ships |
 | `LocalizationCore.downloadedFileMaxBytes` | integer | core | content | byte size limit of the downloaded translation file |
 | `LocalizationCore.maxFormattedLength` | integer | core | content | limit of the length (number of code points) of `get_text`, `format` results |
+| `LocalizationCore.bodyFontWeight` | integer | core | content | font weight of the default font. 0, or from 1 to 1000 |
+| `LocalizationCore.headingFontWeight` | integer | core | content | font weight of the heading font. 0, or from 1 to 1000 |
 
 ## data
 
@@ -248,6 +254,10 @@ Reads the `icon` column of the `input_prompt` table (`InputCore`)
 - After `format`, the values of `FormatArgs` stay the same
 - `get_text` and `format` whose result length is more than `LocalizationCore.maxFormattedLength` give the text with the pieces from the exceeding one onward dropped, and an error log. A character outside the BMP counts as one code point, and an inline icon as one
 - After `load_fonts`, the character lookup order of the default font equals the font chain, and when two languages have the same `font`, that font is in the chain only once. After `release`, the default font is the same as before `init`
+- With `LocalizationCore.bodyFontWeight` 400, `LocalizationCore.headingFontWeight` 800 and a font chain of a font with a `wght` axis followed by a font without one, after `load_fonts` the default font draws the first font at weight 400 and the heading font draws it at weight 800, both draw the second font at its default weight, and there are two warn logs for the second font
+- With `LocalizationCore.headingFontWeight` 1000 and a font whose `wght` axis range is 100 to 900, after `load_fonts` the heading font draws that font at weight 900, and there is one warn log for it
+- With both font weights 0, after `load_fonts` the default font and the heading font draw every font of the chain at its default weight, and there is no warn log
+- A UI text element in the `heading` text style draws with the heading font, and an element whose text style was not set draws with the default font. The character lookup order of the heading font equals the font chain. After `release`, an element in the `heading` text style draws with the default font of before `init`
 - After `set_text_scale`(1500), the font size of a UI text element set to size 20 is 30, an element made after that is the same, and after `release` it is 20. 0 gives an error log and no change
 - The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string
 - `get_text` with inline icon height 0 of text with an input prompt token gives the display name of the input prompt of `InputCore`, and calling it again after changing the input device with `InputCore.set_test_device` gives the display name for that device. When there is no `input_prompt` row, it is prompt input
