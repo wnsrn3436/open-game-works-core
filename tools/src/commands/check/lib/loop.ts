@@ -80,15 +80,17 @@ export async function slotsOf(ctx: Context): Promise<Slots> {
   return new Slots(max);
 }
 
-/** `ogw check <game> --loop`: every check of iteration step 2, the result file, and `gate`. */
-export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSettings, options: LoopOptions): Promise<LoopOutcome> {
-  const run = await requireOpenRun(game);
-  if (run.iteration < 1) throw new OgwError(`run ${run.name} has no iteration yet`);
-  const records = `records/loops/${run.name}`;
-  const evidenceDir = `${records}/evidence/check-${String(run.iteration)}`;
-  await rm(join(game.root, evidenceDir), { recursive: true, force: true });
-  const commit = await head(game.root, { env: ctx.env });
-  const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
+/** Checks of `gameChecks`: every check of iteration step 2. `no blocker` and `full flow` come from one bot playtest. */
+export type CheckSet = 'all' | 'core try';
+
+/** Checks `ogw core try` runs (`core` command.md `update core`). */
+const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality'];
+
+/**
+ * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
+ * `core try` leaves out `no placeholder` and `row simulation`.
+ */
+export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSettings, options: LoopOptions, evidence: Evidence, set: CheckSet): Promise<CheckResult[]> {
   const instance: InstanceCheckOptions = { evidence, slots: await slotsOf(ctx), db: options.db, pollMs: options.pollMs };
   const modules = await gameModules(ctx, game);
   const scenario = await readScenario(game.root);
@@ -118,16 +120,30 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const imported = importFailure === null ? { imported: true } : { importFailure };
   const db = options.db ? { db: options.db } : {};
   const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), ...imported, ...db };
+  const all = set === 'all';
   const tasks: Promise<CheckResult | CheckResult[]>[] = [
     guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client)),
     guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })),
     botPlaytest(ctx, game.name, scenario, instance),
     ...profiles.map((p) => performanceCheck(ctx, game.name, p, scenario, performance)),
     ...profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui)),
-    guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game))),
-    rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance),
+    ...(all ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
+    ...(all ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),
   ];
   const checks = (await Promise.all(tasks)).flat().sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
+  return all ? checks : checks.filter((c) => CORE_TRY_CHECKS.includes(c.name));
+}
+
+/** `ogw check <game> --loop`: every check of iteration step 2, the result file, and `gate`. */
+export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSettings, options: LoopOptions): Promise<LoopOutcome> {
+  const run = await requireOpenRun(game);
+  if (run.iteration < 1) throw new OgwError(`run ${run.name} has no iteration yet`);
+  const records = `records/loops/${run.name}`;
+  const evidenceDir = `${records}/evidence/check-${String(run.iteration)}`;
+  await rm(join(game.root, evidenceDir), { recursive: true, force: true });
+  const commit = await head(game.root, { env: ctx.env });
+  const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
+  const checks = await gameChecks(ctx, game, settings, options, evidence, 'all');
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
   await writeJsonAtomic(join(game.root, file), { commit, checks, gate });

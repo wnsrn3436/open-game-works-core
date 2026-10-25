@@ -7,12 +7,14 @@ import { proposalReleasedCommand } from './proposal-released.ts';
 import { releaseCommand } from './release.ts';
 import { spec } from './spec.ts';
 import { testCommand } from './test.ts';
+import { tryCommand } from './try.ts';
 import { upgradeCommand } from './upgrade.ts';
 
 export const commands: CommandDef[] = [
   releaseCommand,
   fetchCommand,
   upgradeCommand,
+  tryCommand,
   proposalReleasedCommand,
   testCommand,
   spec,

@@ -8,7 +8,8 @@ import { binaryBuild } from '../data/lib/binary-build.ts';
 import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
 import { gameEngine } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
-import { loopCheck, runTimeLimitMs } from './lib/loop.ts';
+import { gameChecks, loopCheck, runTimeLimitMs } from './lib/loop.ts';
+import type { Evidence } from './lib/evidence.ts';
 import { regressionTargets, regressionTest } from './lib/regression.ts';
 import { staticCheck } from './static-api.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
@@ -91,6 +92,18 @@ async function loop(ctx: Context, game: GameRepo, settings: GameSettings, godot:
     data: { file: outcome.file, commit: outcome.commit, checks: outcome.checks, gate: outcome.gate },
     summary: summary(outcome.checks),
   };
+}
+
+/**
+ * The checks `ogw core try` runs on a checkout (`core` command.md `update core`), with the data tool binary build and
+ * the engine of the core the checkout's context gives, and their output lines.
+ */
+export async function coreTryChecks(ctx: Context, game: GameRepo, evidence: Evidence): Promise<{ checks: CheckResult[]; lines: string[] }> {
+  const settings = await gameSettings(ctx, game);
+  const godot = await gameEngine(ctx, game, settings);
+  await binaryData(ctx, game);
+  const checks = await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, 'core try');
+  return { checks, lines: checks.flatMap(checkText) };
 }
 
 async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult> {
