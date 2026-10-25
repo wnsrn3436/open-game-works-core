@@ -34,6 +34,7 @@ Handles the tween, which changes a property value of one object over time, and p
 | `stop_tag` | tween tag | number of tweens ended | `0` | core, content code |
 | `skip_tag_to_end` | tween tag | number of tweens ended | `0` | core, content code |
 | `is_playing` | tween handle | whether it is playing | `false` | core, content code |
+| `get_finite_playing_count` | none | number of playing tweens whose definition has a repeat count other than 0 (`play_value` tweens included). does not allocate memory | `0` | `QACore` |
 | `wait_end` | tween handle | async operation. `TweenEndReason` | `None` | core, content code |
 | `copy_definition` | source `TweenDefinition`, copy `TweenDefinition` | success flag | `false` | core, content code |
 | `get_preset_kind` | none | `ResourceCore` resource kind of the tween preset | invalid kind | core, content code |
@@ -196,6 +197,7 @@ none
 
 ## test
 
+- `get_finite_playing_count` counts a playing tween of repeat count 1 and a playing `play_value` tween, does not count a tween of infinite repeat, and goes down by one in the frame a counted tween ends
 - A `Position` change to (10, 0) of a UI element in a parent that lines up its children horizontally ends with the element drawn 10 to the right of the place the parent gives it. After the parent arranges its children again, it is still drawn there and the place the parent gives it is unchanged. A `Scale` change of that element to (1.2, 1.2) also stays after the parent arranges its children again
 - In a definition with two changes of duration 100ms and 200ms in step 1 and one change in step 2, the two values of step 1 start changing in the same frame, the value of step 2 does not change before 200ms after the start, and after completion the three values are the target values
 - A change that does not use the start value and has a delay starts from the property value changed during the delay

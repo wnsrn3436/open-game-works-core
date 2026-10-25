@@ -157,6 +157,7 @@ At build, the client hardening agent finds and fixes the items below based on th
 - The system popup (confirms, notices, errors) and the loading icon are prefabs of the game drawn with the theme: content sets core settings `UICore.systemPopupResource` to a popup frame prefab and `UICore.loadingIconResource` to a loading icon prefab. The frame holds no body or buttons, because `UICore` puts them in it
 - popup: a title band at the top, the content, and the buttons at the bottom with the main action on the right
 - result: the outcome as a title, the numbers of the play counting up, the rewards, then the retry and leave buttons
+- A tween or screen effect that shows a play event (a hit, a miss, a perfect drop) uses `GameTime`, so that it holds during a game time pause and advances with the steps of step mode. Menus, popups and scene transitions use `RealTime`
 - A button has normal, pressed and disabled art, and a press plays a sound and a scale tween. Panels and popups open and close with tween presets, and the items of a list or a reward appear one after another
 - The positions of screen elements are based on the visible game area of `ResolutionCore` and the safe area of `SafeAreaCore`
 - A text input element is placed so that it is fully visible above the on-screen keyboard even after the keyboard shift moves it. The keyboard capture of the UI quality check checks this

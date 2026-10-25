@@ -335,6 +335,7 @@ none
 | rejection, failure, time limit exceeded of `revoke` after `Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age | none. The result stays as it is | none | `error` log |
 | unknown login token | `UNAUTHORIZED` | `UNAUTHORIZED` | `security` log. The raw token is not kept |
 | `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin` is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
+| `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin`, or the ban login transaction, is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
 | no login token row when it is read again inside the transaction of `AutoLogin`, `RefreshToken` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
 | failure of `session.check_current`, `session.verify_signature` in `RefreshToken` | the failure value of that operation | that failure value | `security` log |
 | access token verification failure | `UNAUTHORIZED` | `UNAUTHORIZED` | `security` log by `routing` |
@@ -347,6 +348,7 @@ none
 | `chat`, `friend`, `guild.remove_user` is `FAILED` in `Withdraw` or `ConfirmAge` under the minimum age | `FAILED`. Rolls back | `INTERNAL` | `error` log by `routing` |
 | `chat`, `friend`, `guild.remove_user` is `FAILED` in `withdraw_user` | 500 `internal`. Rolls back | none | error rules of `admin-api` |
 | `chat`, `friend`, `guild.remove_user` is `FAILED` in `POST /account/deletion` | HTTP 500, result page. Rolls back | none | `error` log |
+| `run_game_transaction` of step 1 or `run_user_transaction` of step 4 of `POST /account/deletion` is `FAILED` | HTTP 500 and `[auth_deletion_retry]` | none | `error` log |
 | `find_user_by_social_account` for a social account without a linked user | 404 `not_found` | none | `audit` |
 | `find_user_by_social_account` with an empty `provider_account_id` | 400 `bad_request` | none | `audit` |
 | a secret cannot be read, terms URL format violation, age band boundary rule violation | server start failure | none | `error` log |

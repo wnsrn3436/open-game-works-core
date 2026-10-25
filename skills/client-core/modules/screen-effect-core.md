@@ -24,9 +24,9 @@ Handles the color overlay that covers the whole visible game area with a solid c
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `fade` | `ScreenEffectChannel`, owner object, color, start opacity, target opacity, duration (ms) | effect handle | effect handle settled as `Failed` | caller per channel |
-| `flash` | `ScreenEffectChannel`, owner object, color, maximum opacity, rise duration, hold duration, fall duration (ms) | effect handle | effect handle settled as `Failed` | caller per channel |
-| `play_preset` | `ScreenEffectChannel`, owner object, loaded `TweenDefinition` | effect handle | effect handle settled as `Failed` | caller per channel |
+| `fade` | `ScreenEffectChannel`, owner object, color, start opacity, target opacity, duration (ms), `TweenCore` `TimeBasis` (optional, `RealTime` when omitted) | effect handle | effect handle settled as `Failed` | caller per channel |
+| `flash` | `ScreenEffectChannel`, owner object, color, maximum opacity, rise duration, hold duration, fall duration (ms), `TweenCore` `TimeBasis` (optional, `RealTime` when omitted) | effect handle | effect handle settled as `Failed` | caller per channel |
+| `play_preset` | `ScreenEffectChannel`, owner object, loaded `TweenDefinition`, `TweenCore` `TimeBasis` (optional, `RealTime` when omitted) | effect handle | effect handle settled as `Failed` | caller per channel |
 | `wait_result` | effect handle | async operation. `ScreenEffectResult` | `Failed` | code that has the effect handle |
 | `skip_to_end` | effect handle | none | none | code that has the effect handle |
 | `clear_handle` | effect handle | none | none | code that has the effect handle |
@@ -75,7 +75,7 @@ Handles the color overlay that covers the whole visible game area with a solid c
 - The definition of `play_preset` must be a finite-repeat definition that changes only the overlay's `Color` and `Opacity`. A definition that does not change `Color` plays with the overlay's current color
 - The input check of `play_preset` includes `TweenCore.check_definition` (the definition, that channel's overlay)
 - A request that passes the input check sends `ScreenEffectStartedEvent` when playback starts
-- Playback runs through `TweenCore` and progresses by real elapsed time. Game time pause and time scale do not change the end time
+- Playback runs through `TweenCore` with the `TimeBasis` of the request. With `RealTime`, game time pause and time scale do not change the end time. With `GameTime`, playback holds during a game time pause and advances with game time, so in step mode it advances only with the steps
 - A request whose durations are all 0 applies the end value to the overlay within the operation and ends with `Completed`
 - `skip_to_end` applies the end value and ends with `Completed`
 - A finished fade or preset keeps the end value. A finished flash is at opacity 0
@@ -132,6 +132,7 @@ none
 - The overlay of a fade that kept its end value is at opacity 0 and hidden after the owner is destroyed
 - Requests with an out-of-range color, opacity or duration, and preset requests with infinite repeat, that change `Position`, or that have a step without a change, are `Failed`; the effect in progress stays as it is and there is no `ScreenEffectStartedEvent`. For each request that passes, the event of that channel comes once
 - Even with game time pause and time scale 2000, a fade ends after its duration in real elapsed time
+- With `GameTime`, a fade keeps its opacity over 1000 ms of real elapsed time after `TimeCore.set_paused`(true), and after `set_paused`(false) it ends after the rest of its duration in game time. A flash with `GameTime` in step mode changes opacity only in the frames of a step
 - When the visible game area changes, the rectangles of the three channel overlays equal the new visible game area
 - The three overlays are in the `WorldEffect`, `CutsceneEffect` and `TransitionEffect` layers obtained with `UICore.get_layer`
 - While an overlay is visible, UI elements under it receive pointer input

@@ -157,6 +157,7 @@ none
 | `is_step_mode` | none | whether step mode | `false` | `QACore`, `RealtimeCore` |
 | `add_step_budget` | ms | none | none | `QACore`, `RealtimeCore` |
 | `get_step_budget` | none | remaining step budget (ms) | `0` | `QACore`, `RealtimeCore` |
+| `is_engine_running` | none | whether the engine features (physics, animation, timer) run in the current frame | `false` | `InputCore` |
 
 - A test clock is an object that gives monotonic time and device time. `set_test_clock` is called only before `init`. `release` deletes it
 - `set_test_clock_read_step`: while TimeCore reads the test clock, each time it reads monotonic time, it moves the test clock's monotonic time by ms after the read. With 0, it does not move it. `release` sets it to 0
@@ -164,6 +165,7 @@ none
 - `step_test_frame` is called after moving the test clock. Without background progress, it runs one frame whose real frame increase is the progress ms, and the day check of that frame. With background progress, it handles background entering and returning in order, sets the background elapsed time to the progress ms, and sets the monotonic time difference between entering and returning to 0 when the device sleeps and to the progress ms otherwise. When the progress ms is negative, it leaves an `error` log and does nothing
 - step mode: a DEV mode that advances game time only by the step budget. In step mode, the per-frame game time increase is the smaller of the increase with time scale and pause applied and the remaining step budget, and the budget decreases by that much. An increase cut off by the budget does not carry over
 - In step mode, while the budget is 0, engine features (physics, animation, timer) stop as during pause. When the budget is greater than 0 or step mode is off, engine features follow the pause set with `set_paused`. Engine features in the frame where the budget becomes 0 run to the end of that frame, so engine features can advance up to one frame more than game time. `is_paused` returns only the value set with `set_paused`
+- `is_engine_running` is `false` in a frame in which the engine features stop as during pause (the pause set with `set_paused`, or step mode with budget 0 after the frame in which the budget became 0), and `true` in any other frame
 - `set_step_mode` turns step mode on or off and sets the budget to 0. When it is turned off, game time returns to the normal rules
 - `add_step_budget` adds ms to the budget. When not in step mode or when ms is less than 1, it leaves an `error` log and the call is ignored
 - Step mode and the budget do not change server time, device time, monotonic time or real elapsed time. `release` turns step mode off
@@ -191,5 +193,6 @@ none
 - After a sync, with background progress d while the device sleeps, when `AppForegroundReturnedEvent` is received, `get_server_time` is the value right after the sync + d. With background progress d while the device does not sleep, it is also the value right after the sync + d
 - In step mode with budget 0, advancing frames leaves game time as it is while real elapsed time increases. After `add_step_budget`(100), seven 16 ms frames increase game time by 100 and the budget is 0
 - When not in step mode, `add_step_budget` gives an `error` log and is ignored. After `set_step_mode`(false), game time increases every frame again
+- In step mode with budget 0, `is_engine_running` is `false`. After `add_step_budget`(100), it is `true` in every frame up to and including the frame in which the budget becomes 0, and `false` in the frame after it. With `set_paused`(true) and step mode off, it is `false`
 - After `set_step_mode`(true), engine features stop as during pause and `is_paused` is `false`. After `add_step_budget`(100), engine features run again, and they stop again after the frame in which the budget becomes 0. With `set_paused`(true), they stay stopped even when budget remains. After `set_step_mode`(false), engine features follow the pause set with `set_paused`
 - In step mode, while `set_paused`(true) is in effect, advancing frames after `add_step_budget`(100) leaves game time as it is and `get_step_budget` is 100. After `set_paused`(false), seven 16 ms frames increase game time by 100 and the budget is 0

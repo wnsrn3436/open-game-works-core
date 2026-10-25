@@ -53,8 +53,8 @@ A command marked setup is not real input. Bot playtest records that step as setu
 | `get_stats` | none | performance stats lookup | stats JSON object | none |
 | `get_telemetry` | none | telemetry lookup | telemetry JSON object | none |
 | `clear_telemetry` | none | empties telemetry and sets its start time to now | none | none |
-| `capture_screen` | none | screen PNG without the debug layer. Even when the engine does not draw the window (e.g. a window fully covered by other windows), draws one frame and captures it. Fails when headless | none. PNG in `bytes` | none |
-| `capture_video` | ms (integer from 1 to `QACore.videoMaxMs`) | captures ⌊ms × `QACore.videoFps` ÷ 1000⌋ PNGs, the same as `capture_screen`, and sends them as frame messages of the automation channel. Fails when headless or when there is no automation channel connection | `frame_count` (number of frame messages sent), `fps` (`QACore.videoFps`) | `ms` |
+| `capture_screen` | format (`png` or `jpg`, `png` when omitted) | screen image without the debug layer: PNG, or JPEG of quality `QACore.captureJpgQuality` with `jpg`. Even when the engine does not draw the window (e.g. a window fully covered by other windows), draws one frame and captures it. Fails when headless or with another format | none. The image in `bytes` | `format` |
+| `capture_video` | ms (integer from 1 to `QACore.videoMaxMs`), format (`png` or `jpg`, `png` when omitted) | captures ⌊ms × `QACore.videoFps` ÷ 1000⌋ images of that format, the same as `capture_screen`, and sends them as frame messages of the automation channel. Fails when headless or when there is no automation channel connection | `frame_count` (number of frame messages sent), `fps` (`QACore.videoFps`) | `ms` |
 | `list_ui` | none | lookup of visible UI elements | JSON array | none |
 | `get_anchor` | anchor name, anchor key (when omitted, finds without a key) | `UICore.get_anchor_rect` | `found`, `visible`, `rect` (window pixels) of `AnchorResult` | `anchor`, `key` |
 | `tap` | x, y (real numbers) | input. touch press, release on the next frame | none | `x`, `y` |
@@ -133,7 +133,7 @@ A command marked setup is not real input. Bot playtest records that step as setu
 - For UI quality check, the tool runs `capture_screen` and `list_ui` through the automation channel for each combination in the order below
   1. For each language of game settings `supportedLanguages`, calls `set_language` and waits until `boot_stage` becomes `Done`
   2. For each item of game settings `uiCheckScreens` whose orientation equals the orientation of game settings `baseResolution`, calls `set_test_screen`(`window`, `fillMode`) and `set_virtual_notch`(`notch`). The orientation is `Landscape` when the width is greater than the height, otherwise `Portrait`
-  3. For each content command of `list_commands` whose name is `<feature>.open_<screen>`, calls that command and then waits `uiQuality.settleMs` of game settings in real time, so that the opening presentation of the screen has ended. When it fails, the UI quality check of that screen fails
+  3. For each content command of `list_commands` whose name is `<feature>.open_<screen>`, calls that command and then reads `get_state` until `ui_flow` is `false` and `finite_tweens` is 0, at most `uiQuality.settleLimitMs` of game settings in real time, so that the opening presentation of the screen has ended. When it fails, the UI quality check of that screen fails
   4. For text scale 1000 and for the largest value of `AccessibilityCore.textScales`, calls `set_text_scale`. When `AccessibilityCore` is not in the module list, does not call it and captures once
 - keyboard capture: when `keyboard` of the item of 2 is 1 or more, for each capture of 4, for each element of that `list_ui` whose `text_input` is `true` and `modal_covered` is `false`, in turn: puts in a `tap` at the center of the element's `rect`, calls `set_virtual_keyboard`(`keyboard`), runs `capture_screen` and `list_ui`, then calls `set_virtual_keyboard`(`none`) and the command of 3
 - gamepad focus check: when game settings `gamepadSupported` is `true`, after all captures above end, with the first language of 1, the first item of 2 and text scale 1000, does the following for each screen of 3. Elements are told apart by `path`
@@ -165,6 +165,8 @@ QAState is a JSON object with the fields below as keys. A rectangle is a number 
 | `boot_stage` | `BootstrapCore.boot_stage` | element name string | |
 | `scene_key` | `SceneCore.current_scene_key` | string | empty string |
 | `in_transition` | `SceneCore.is_transitioning` | boolean | `false` |
+| `ui_flow` | `UICore.is_flow_in_progress` | boolean | `false` |
+| `finite_tweens` | `TweenCore.get_finite_playing_count` | integer | 0 |
 | `panels` | `UICore.get_panel_stack` | array of panel key strings, from the bottom | `[]` |
 | `popups` | `UICore.get_open_popups` | array of popup key strings, from the bottom | `[]` |
 | `input_blocks` | `InputBlockCore.list_active` | array with `{"reason": <reason tag>, "caller_location": <caller location>, "elapsed_ms": <block elapsed time>}` per active block | `[]` |
@@ -186,7 +188,7 @@ QAState is a JSON object with the fields below as keys. A rectangle is a number 
 
 - A game has one callback of `set_content_state`, and calling it again replaces the callback. So only one registration function of the game calls `set_content_state`, and that callback holds the values of several features with the feature name as key
 - When the callback throws or returns a value that is not a JSON object, `content` is `{}`, and an error log is written the first time for each such callback
-- `content` holds the values that the conditions of bot playtest and the metrics of design targets read (item, quantity, HP, progress). It does not hold values that change only by the passing of time (recovery amount grown with time, remaining duration); it holds the saved values those values are calculated from (saved amount, recovery start time)
+- `content` holds the values that the conditions of bot playtest and the metrics of design targets read (item, quantity, HP, progress). It does not hold values that change only by the passing of time (recovery amount grown with time, remaining duration); it holds the saved values those values are calculated from (saved amount, recovery start time). As an exception, it holds the values that decide when an input lands in a scene played in step mode (e.g. the position of a moving target)
 - The tutorial ID names of `tutorial`, `completed_tutorials` and the match mode ID name of `room_mode` are found from ID values with `find_id_name`, the DEV accessor of the data tool
 - stats: `fps`, `frame_ms`, `static_memory_bytes`, `video_memory_bytes`, `draw_calls`, `primitives`, `object_count`, `last_scene_load_ms` (`duration_ms` of the last `SceneCore.SceneStartedEvent`), `boot_ms` (`duration_ms` of `EventCore.BootCompletedEvent`), `quality_level` (element name of `QualityCore.get_level`. Empty string when the module is missing). The reading method is in the per-engine implementation rules
 
@@ -298,6 +300,7 @@ none
 | `QACore.statsRefreshMs` | integer | core | content | refresh interval of the performance stats display. 1 or more |
 | `QACore.textMaxChars` | integer | core | content | maximum number of characters of the `text` command string |
 | `QACore.videoFps` | integer | core | human | frames per second of `capture_video`. 1 or more |
+| `QACore.captureJpgQuality` | integer | core | human | quality of the JPEG of `capture_screen` and `capture_video` with `jpg`, in permille. 1 to 1000 |
 | `QACore.videoMaxMs` | integer | core | human | maximum length of one `capture_video`. 1 or more |
 | `QACore.feedbackWindowMs` | integer | core | human | duration after an input in which response and feedback are counted |
 | `QACore.idleThresholdMs` | integer | core | human | minimum length that makes an idle span |
@@ -312,7 +315,7 @@ none
 | `baseResolution` | array<integer> | game | none | base resolution that `set_test_screen` passes to `ResolutionCore.set_test_screen` |
 | `uiCheckScreens` | array<object> | game | none | list of screens UI quality check captures. An item is `name` (snake_case), `window` (window width, height in pixels), `fillMode` (`Crop`, `Letterbox`), `notch` (left, top, right, bottom in integer window pixels), `keyboard` (on-screen keyboard height for keyboard capture, in window pixels. 0 means no keyboard capture) |
 | `gamepadSupported` | boolean | game | none | When `true`, UI quality check runs gamepad focus check |
-| `uiQuality` | object | game | none | the numbers of UI quality check: `settleMs` and the presentation conditions `maxFontSizes`, `minFontPx`, `minContrast`, `maxFlatShare`, `maxEmptyShare`. The defaults are in the game settings schema |
+| `uiQuality` | object | game | none | the numbers of UI quality check: `settleLimitMs` and the presentation conditions `maxFontSizes`, `minFontPx`, `minContrast`, `maxFlatShare`, `maxEmptyShare`. The defaults are in the game settings schema |
 | `supportedLanguages` | array<string> | game | none | list of languages UI quality check runs through |
 
 ## data
@@ -334,6 +337,8 @@ The whole module is DEV code. STG·PROD builds have no QACore, no DEV registrati
 
 ## test
 
+- `capture_screen` with `jpg` gives JPEG bytes (starting with `FF D8`) of the window size, with `png` and without an argument PNG bytes, and with another format fails. `capture_video` with `jpg` sends JPEG frames
+- During the open tween of a popup, `get_state` has `ui_flow` `true` and `finite_tweens` 1 or more, and after the open flow ended with no other tween, `ui_flow` is `false` and `finite_tweens` is 0
 - Of two commands put in one after another, handling of the second starts after the first ends. A `tap` put in right after `capture_video`(1000) ends before `capture_video` ends, and a second `capture_video` put in meanwhile is `ok` = `false`
 - An unknown name, a wrong argument count, `0`·`-1`·`1e3`·`.5`·`QACore.timeScaleMaxPermille` + 1 for `set_time_scale`, `1.5`·`+5`·a leading space·19 digits for `set_server_time_offset`, `set_language` with a language that is not supported, `-1 0 0 0`·`NONE` for `set_virtual_notch`, `0`·`QACore.videoMaxMs` + 1 for `capture_video`, `-1`·`others` for `drop_peer` give `ok` = `false` and a warn log without the target operation
 - Each command has one info log with the name and `ok`, and arguments are not in the log
