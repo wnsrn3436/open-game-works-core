@@ -465,7 +465,7 @@ Frame code of core does none of the following.
 - Creating an `Array`, `Dictionary`, or Packed array: literal, constructor, `duplicate()`, functions that return a new array (`keys()`, `values()`, `get_children()`, `split()`)
 - Changing a collection size: `append()`, `push_back()`, `insert()`, `remove_at()`, `erase()`, `clear()`, `resize()`, adding a `Dictionary` key
 - Creating a `Callable`: lambda, method reference, `bind()`
-- Creating a `String`: `+`, `%`, `str()`, `String.num()`, `format()`
+- Creating a `String`: `+`, `%`, `str()`, `String.num()`, `format()`. As an exception, frame code creates the message of a `LogCore.log_warn` or `LogCore.log_error` call on a path that runs only when that log is written
 - Finding a node: `get_node()`, `$`, `%`, `find_child()`
 - `await`
 - Calling an async operation (`## API`). Frame code starts an async operation with `call_deferred()` of a `Callable` created in `init` or `_ready()`
