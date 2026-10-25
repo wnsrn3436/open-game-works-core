@@ -1,12 +1,5 @@
 {
   "target": "loop end-record",
   "nextId": 3,
-  "items": [
-    {
-      "id": "D2",
-      "location": "tools/src/commands/loop/lib/record.ts:122",
-      "problem": "`test evidence` of `ogw loop record` (not this target). The `r.iteration < run.iteration` condition of `newTemporary` has no test. `game-loop` SKILL.md:153 has `ogw loop record` rewrite the files of an iteration that is redone with the same number, and then `iterationRecords` already returns this iteration's own `iteration-<n>.md`. Without the condition, `previous` becomes this iteration's own instance commit, and `## temporary resources` of the rewritten record is `none`. Defect restored in a `git archive HEAD` copy under the scratchpad (with its own `git init`, the harness `tools/node_modules` linked): the condition `r.iteration < run.iteration && ` was deleted. `npx vitest run test/commands/loop/record.test.ts -t \"became temporary\"` still passed (1 passed). tools/test/commands/loop/record.test.ts:253 records each iteration only once",
-      "foundBy": "loop end-record round 3"
-    }
-  ]
+  "items": []
 }
