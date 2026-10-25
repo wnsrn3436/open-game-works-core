@@ -8,7 +8,7 @@ import { binaryBuild } from '../data/lib/binary-build.ts';
 import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
 import { gameEngine } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
-import { gameChecks, loopCheck, runTimeLimitMs } from './lib/loop.ts';
+import { gameChecks, loopCheck, runTimeLimitMs, startTimeLimitMs } from './lib/loop.ts';
 import type { Evidence } from './lib/evidence.ts';
 import { regressionTargets, regressionTest } from './lib/regression.ts';
 import { staticCheck } from './static-api.ts';
@@ -71,11 +71,12 @@ function single(check: CheckResult): CommandResult {
 async function regression(ctx: Context, game: GameRepo, godot: string, path: string | undefined, db: 'postgresql' | undefined): Promise<CommandResult> {
   const targets = await regressionTargets(game.root, path);
   const limit = await runTimeLimitMs(ctx, game);
+  const startLimit = await startTimeLimitMs(ctx, game);
   const dir = await newPrivateTempFolder('ogw-check-', ctx.env);
   const evidence = { root: dir, dir: '.', relative: false };
   let result: CheckResult | null = null;
   try {
-    result = await regressionTest(ctx, game.root, targets, { godot, evidence, runTimeLimitMs: limit, ...(db ? { db } : {}) });
+    result = await regressionTest(ctx, game.root, targets, { godot, evidence, runTimeLimitMs: limit, startTimeLimitMs: startLimit, ...(db ? { db } : {}) });
   } finally {
     // the evidence folder is done when no failure the output prints points into it (a passing run points at none)
     if (result === null || !result.failures.some((f) => f.evidence.length > 0)) await rm(dir, { recursive: true, force: true });

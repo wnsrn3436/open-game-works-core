@@ -86,6 +86,9 @@ const fail = process.env.FAKE_GODOT_FAIL === prefix;
 const results = files.map((f) => ({ name: f + ':' + generated, status: fail ? 'fail' : 'pass', message: fail ? 'decoded differs' : '' }));
 const cfg = JSON.parse(fs.readFileSync(get('-gconfig='), 'utf8'));
 fs.appendFileSync(process.env.FAKE_LOG, 'config ' + JSON.stringify(cfg) + '\\n');
+// a run that never starts: no PUT /started, no result
+if (process.env.FAKE_GODOT_STALL) setInterval(() => undefined, 1000);
+else
 fetch(cfg.ogw_test_host + '/result', { method: 'PUT', body: JSON.stringify({ run_id: cfg.ogw_run_id, results, run_failures: [] }) }).then(() => process.exit(fail ? 1 : 0));
 `;
 
@@ -271,7 +274,13 @@ describe('runToolTest', () => {
       'godot round trip: test_data_roundtrip.gd:contract-tool.js,data-tool.js: decoded differs',
       'godot round trip: exit code 1',
     ]);
-  });
+    // with the start limit in the core settings, a round trip run that never starts ends at that limit
+    const settingsPath = join(ws.coreImpl, 'settings', 'core-settings.json');
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+    writeFiles(ws.coreImpl, { 'settings/core-settings.json': { ...settings, 'UnitTestCore.startTimeLimitMs': 300 } });
+    const stalled = await runToolTest(context(ws, { ...ctx.env, FAKE_GODOT_STALL: '1' }), ws.coreImpl, 'data-tool');
+    expect(stalled.failures).toContain('godot round trip: the run did not start within 300 ms (no PUT /started)');
+  }, 60_000);
 
   it('builds only the tool it tests while every engine round trip is left out', async () => {
     const { ws, ctx, log } = setup({}, true);

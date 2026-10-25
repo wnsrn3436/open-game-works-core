@@ -119,7 +119,7 @@ export interface ClientRunOptions {
   godot: string;
   evidence: Evidence;
   /** `UnitTestCore.startTimeLimitMs`, or null when the merged core settings do not have it (`unit-test-core` `PUT /started`). */
-  startTimeLimitMs?: number | null;
+  startTimeLimitMs: number | null;
   /** `UnitTestCore.runTimeLimitMs`, or null when the merged core settings do not have it. */
   runTimeLimitMs: number | null;
   /** `--db postgresql`: the server regression test gets a throwaway PostgreSQL. */
