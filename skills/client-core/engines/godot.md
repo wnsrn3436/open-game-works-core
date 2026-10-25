@@ -465,11 +465,12 @@ Frame code of core does none of the following.
 - Creating an `Array`, `Dictionary`, or Packed array: literal, constructor, `duplicate()`, functions that return a new array (`keys()`, `values()`, `get_children()`, `split()`)
 - Changing a collection size: `append()`, `push_back()`, `insert()`, `remove_at()`, `erase()`, `clear()`, `resize()`, adding a `Dictionary` key
 - Creating a `Callable`: lambda, method reference, `bind()`
-- Creating a `String`: `+`, `%`, `str()`, `String.num()`, `format()`. As an exception, frame code creates the message of a `LogCore.log_warn` or `LogCore.log_error` call on a path that runs only when that log is written
+- Creating a `String`: `+`, `%`, `str()`, `String.num()`, `format()`
 - Finding a node: `get_node()`, `$`, `%`, `find_child()`
 - `await`
 - Calling an async operation (`## API`). Frame code starts an async operation with `call_deferred()` of a `Callable` created in `init` or `_ready()`
 
+- As an exception, on a path that runs only when a `LogCore.log_warn` or `LogCore.log_error` call is written, frame code creates the message `String` of that call and adds the one `Dictionary` key that records that this log was written, so that the log is written once per cause
 - A reused collection is sized once to its maximum size with `resize()` outside frame code, and the count in use is kept in an `int` field. Emptying it sets only the count to 0
 - An operation that returns a result list fills the buffer the caller gave from index 0 and returns the number filled. It does not change the buffer size. On overflow it fills only up to the buffer size and leaves an error log. The buffer of a list of enum values is `PackedInt32Array`. e.g. `AuthCore.list_linked_providers` (`LoginProvider` values)
 - A `Callable` is created in `init` or `_ready()` and kept in a field
