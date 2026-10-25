@@ -69,6 +69,20 @@ describe('ogw resource request', () => {
     expect(requestFiles(f, 'records/loops/loop-1/resource-requests')).toHaveLength(3);
   });
 
+  it('refuses a nine_slice whose long side is under 256', async () => {
+    const f = makeFixture({
+      'resource/resources.csv': listCsv([
+        { key: 'nine_slice/small', spec: 'size=128x128;slice=8,8,8,8', status: 'placeholder' },
+        { key: 'nine_slice/wide', spec: 'size=512x64;slice=8,8,8,8', status: 'placeholder' },
+      ]),
+    });
+    await openRun(f, {});
+    const run = await ogw(f.ws, ['resource', 'request', 'g', '--pending']);
+    expect(run).toMatchObject({ code: 1, stderr: 'nine_slice/small: the long side of a nine_slice size is 256 or more\n' });
+    expect(rowOf(f.game, 'nine_slice/small').status).toBe('placeholder');
+    expect((await ogw(f.ws, ['resource', 'request', 'g', 'nine_slice/wide'])).code).toBe(0);
+  });
+
   it('requests a temporary row once per run and keeps its status and file', async () => {
     const f = makeFixture({
       'resource/resources.csv': listCsv([

@@ -166,7 +166,7 @@ Completeness is judged by the five elements below, and all of them are checked b
 | performance | Target FPS holds, and loading time ends within the limit | runtime profiling |
 | no placeholder | There is no placeholder resource, missing translation or stale translation | project check |
 | full flow | From first launch through tutorial, main loop, save and reconnect, play continues without a break. Reconnect is recovery after a server communication failure, and for a realtime game it also includes reconnection after a peer disconnect during a match, a matchmaker disconnect and an app restart. It also includes room match for a realtime game that starts matches through rooms, and the flow of exchanges with other users for a game that uses `friend`, `guild` or `chat` | bot playtest |
-| UI quality | In every supported resolution, safe area and language, UI is not clipped and does not overlap, and the on-screen keyboard does not cover the text input that has focus. When gamepad is supported, the buttons of every screen can be pressed with the gamepad | capture per resolution, language and on-screen keyboard, and gamepad focus check |
+| UI quality | In every supported resolution, safe area and language, UI is not clipped and does not overlap, and the on-screen keyboard does not cover the text input that has focus. Text keeps to a few sizes, is not too small and stands out from what is behind it, and panels and popups are neither one flat color nor mostly empty. When gamepad is supported, the buttons of every screen can be pressed with the gamepad | capture per resolution, language and on-screen keyboard, and gamepad focus check |
 
 ## hardening and build
 

@@ -67,7 +67,7 @@ describe('staticCheck', () => {
   it('lists the static checks except data check and debug text', () => {
     expect(STATIC_CHECKS.map((c) => c.NAME)).toEqual([
       'core diff', 'generated diff', 'contract', 'DEV reference', 'type check', 'lint', 'data literal', 'resource hash', 'block token', 'test input',
-      'frame polling', 'haptic format', 'embedded script', 'system clock', 'game state lock', 'shared formula', 'bot scenario', 'option entry',
+      'frame polling', 'haptic format', 'embedded script', 'theme only', 'system clock', 'game state lock', 'shared formula', 'bot scenario', 'option entry',
       'game settings owner', 'design target', 'simulation target', 'feature boundary', 'forbidden GDScript API', 'settings access',
       'resource load', 'engine random', 'data mutation', 'frame code', 'literal timing', 'object destroy', 'determinism',
       'virtual pad layout', 'format args', 'action reference', 'anchor reference',

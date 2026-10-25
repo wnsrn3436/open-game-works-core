@@ -10,7 +10,7 @@ import { processSound, type SoundShape } from './audio.ts';
 import { FileChanges } from './files.ts';
 import { engineOf, gameSettings, lineVoices, sourceLanguageOf, sourceTranslations } from './gamedata.ts';
 import { engineType, rigSceneNames, sceneNodes, spriteFramesFromSheet } from './godot.ts';
-import { alphaBox, coverCropped, crop, decodeRgba, encodePng, fitCentered } from './image.ts';
+import { alphaBox, coverCropped, crop, decodeRgba, encodePng, fitCentered, type Rgba } from './image.ts';
 import { COLUMNS, emptyRow, findRow, formatList, keyFiles, keyPath, LIST_PATH, readList, requireKey, SOUND_TYPES, type ParsedKey, type ResourceRow } from './list.ts';
 import { hostTools, type Tools } from './placeholder.ts';
 import { readSplit, rigCheck, type RigSplit } from './rig.ts';
@@ -112,6 +112,10 @@ function rowProblems(job: Job, methods: readonly string[]): string[] {
   // a temporary row was requested again: its new resource replaces the temporary one
   const problems: string[] = [];
   if (job.row.status !== 'requested' && job.row.status !== 'temporary') problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  const kit = findRow(job.rows, UI_KIT);
+  if ((job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') && kit?.status === 'final' && !job.options.inputs.includes(UI_KIT)) {
+    problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
+  }
   if (!methods.includes(job.options.method)) problems.push(`method ${job.options.method} is not in ogw generation methods for ${job.row.key}: ${methods.join(', ') || 'none'}`);
   for (const key of job.options.inputs) {
     const input = findRow(job.rows, key);
@@ -279,11 +283,20 @@ async function soundPlan(job: Job, plan: Plan): Promise<void> {
   }
 }
 
+function hasTransparency(image: Rgba): boolean {
+  for (let i = 3; i < image.data.length; i += 4) if ((image.data[i] as number) < 255) return true;
+  return false;
+}
+
+/** The UI kit sheet that every `nine_slice` and `icon` key is made from (`production.md` `## making`). */
+const UI_KIT = 'image/ui_kit';
+
 async function imagePlan(job: Job, plan: Plan): Promise<void> {
   const file = job.options.files[0] as string;
   const size = requireSize(job.row.key, job.spec);
   let image = await decodeRgba(file, file);
   if (job.spec.alpha) {
+    if (!hasTransparency(image)) throw new OgwError(`${file}: every pixel is opaque; the background is baked in`);
     const box = alphaBox(image, 0);
     if (!box) throw new OgwError(`${file}: every pixel has alpha 0`);
     image = await fitCentered(crop(image, box[0], box[1], box[2] - box[0], box[3] - box[1]), size[0], size[1]);

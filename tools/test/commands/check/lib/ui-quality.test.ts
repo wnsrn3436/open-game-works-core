@@ -8,6 +8,9 @@ import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import {
   keyboardProblem,
   layoutProblems,
+  panelBodies,
+  presentationProblems,
+  rectContrast,
   screensOfOrientation,
   toElements,
   uiQualityCheck,
@@ -15,6 +18,7 @@ import {
   type UiQualityOptions,
 } from '../../../../src/commands/check/lib/ui-quality.ts';
 import { fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
+import type { Rgba } from '../../../../src/commands/resource/lib/image.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
@@ -24,6 +28,11 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.f
 
 const ctx = fakeContext();
 
+/** Limits no capture breaks, for the tests of the other conditions. */
+const NO_LIMITS = { maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxFlatShare: 2, maxEmptyShare: 2 };
+/** A 1 × 1 white PNG, as capture_screen gives it. */
+const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
+
 function el(path: string, extra: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return { path, rect: [0, 0, 10, 10], text: '', clipped: false, owner: 'lobby', button: false, pad_action: false, modal_covered: false, text_input: false, focused: false, ...extra };
 }
@@ -32,10 +41,74 @@ function elements(list: Record<string, unknown>[]): UiElement[] {
   return toElements(list);
 }
 
+/** An image of one color, with `paint` drawing rectangles of other colors on it. */
+function canvas(width: number, height: number, color: [number, number, number], paint: [number, number, number, number, [number, number, number]][] = []): Rgba {
+  const data = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i++) data.set([...color, 255], i * 4);
+  for (const [x, y, w, h, c] of paint) {
+    for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) data.set([...c, 255], (yy * width + xx) * 4);
+  }
+  return { width, height, data };
+}
+
+const LIMITS = { maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
+
+describe('UI quality presentation conditions', () => {
+  it('counts text sizes, finds small text and low contrast', () => {
+    // 1080 high: font_size is in pixels at 1080
+    const image = canvas(200, 1080, [20, 20, 40], [[0, 0, 100, 40, [240, 240, 240]], [100, 100, 100, 40, [30, 30, 50]]]);
+    const list = elements([
+      el('hud/title', { text: 'T', font_size: 40, rect: [0, 0, 120, 40], owner: 'run' }),
+      el('hud/body', { text: 'B', font_size: 20, rect: [100, 100, 100, 40], owner: 'run' }),
+      el('hud/tiny', { text: 'x', font_size: 12, rect: [0, 200, 10, 10], owner: 'run' }),
+    ]);
+    expect(presentationProblems(list, image, 'run', LIMITS).map((p) => p.message)).toEqual([
+      '3 text sizes (12, 20, 40 px), more than 2',
+      'low contrast hud/body: 1.00:1',
+      'small text hud/tiny: 12.0 px at 1080 high',
+      'low contrast hud/tiny: 1.00:1',
+    ]);
+    // half the pixels of a rect bright: the 98th percentile is bright, the 2nd dark
+    expect(rectContrast(canvas(10, 10, [0, 0, 0], [[0, 0, 10, 5, [255, 255, 255]]]), { x: 0, y: 0, w: 10, h: 10 })).toBeCloseTo(21, 5);
+  });
+
+  it('takes the top non-text, non-input, non-window elements of a popup or panel as panel bodies', () => {
+    const list = elements([
+      el('root', { owner: 'shop', rect: [0, 0, 100, 100] }),
+      el('root/dim', { owner: 'shop', rect: [0, 0, 100, 100] }),
+      el('root/frame', { owner: 'shop', rect: [10, 10, 50, 50] }),
+      el('root/frame/inset', { owner: 'shop', rect: [15, 15, 40, 40] }),
+      el('root/frame/ok', { owner: 'shop', rect: [20, 50, 20, 10], button: true }),
+      el('hud/plate', { owner: 'run', rect: [0, 0, 10, 10] }),
+    ]);
+    expect(panelBodies(list, 'run', 100 * 100).map((e) => e.path)).toEqual(['root/frame']);
+  });
+
+  it('finds a flat panel and an empty panel, and passes a textured, filled one', () => {
+    const big = { ...LIMITS, maxFontSizes: 10, minFontPx: 0, minContrast: 1 };
+    const flat = canvas(100, 100, [0, 0, 0], [[10, 10, 80, 80, [30, 30, 60]]]);
+    const list = elements([
+      el('p', { owner: 'pop', rect: [10, 10, 80, 80] }),
+      el('p/label', { owner: 'pop', text: 'Hi', font_size: 20, rect: [20, 20, 20, 10] }),
+    ]);
+    expect(presentationProblems(list, flat, 'scene', big).map((p) => p.message)).toEqual(['flat panel p: 100% one color', 'empty panel p: 97% empty']);
+    // stripes every other row in two colors 40 apart, and children covering most of it
+    const stripes: [number, number, number, number, [number, number, number]][] = [];
+    for (let y = 10; y < 90; y += 2) stripes.push([10, y, 80, 1, [70, 70, 100]]);
+    const textured = canvas(100, 100, [0, 0, 0], [[10, 10, 80, 80, [30, 30, 60]], ...stripes]);
+    const filled = elements([
+      el('p', { owner: 'pop', rect: [10, 10, 80, 80] }),
+      el('p/a', { owner: 'pop', rect: [10, 10, 80, 40] }),
+      el('p/b', { owner: 'pop', rect: [10, 50, 80, 30] }),
+    ]);
+    expect(presentationProblems(filled, textured, 'scene', big)).toEqual([]);
+  });
+});
+
 describe('UI quality rules', () => {
   it('toElements reads [x, y, w, h] rects and defaults', () => {
     expect(toElements([{ path: 'a', rect: [1, 2, 3, 4], text: 5, owner: 'o' }])).toEqual([
-      { path: 'a', rect: { x: 1, y: 2, w: 3, h: 4 }, text: '', clipped: false, owner: 'o', button: false, padAction: false, modalCovered: false, textInput: false, focused: false },
+      { path: 'a', rect: { x: 1, y: 2, w: 3, h: 4 }, text: '', fontSize: 0, clipped: false, owner: 'o', button: false, padAction: false, modalCovered: false, textInput: false, focused: false },
     ]);
     expect(toElements([el('b', { rect: [1, 2, 'x'], button: true, pad_action: true, modal_covered: true, text_input: true, focused: true, clipped: true })])[0]).toMatchObject({
       rect: { x: 1, y: 2, w: 0, h: 0 }, button: true, padAction: true, modalCovered: true, textInput: true, focused: true, clipped: true,
@@ -143,7 +216,7 @@ function fakeUi(): { calls: string[] } {
       case 'get_state':
         return state();
       case 'capture_screen':
-        return ok(null, Buffer.from('PNG'));
+        return ok(null, PNG_1X1);
       case 'list_ui':
         return ok(ui());
       default:
@@ -167,6 +240,7 @@ function options(evidenceRoot: string, extra: Partial<UiQualityOptions> = {}): U
     baseResolution: [1080, 1920],
     gamepadSupported: true,
     maxTextScale: 1400,
+    quality: NO_LIMITS,
     ...extra,
   };
 }
@@ -198,7 +272,7 @@ describe('uiQualityCheck', () => {
       'lobby | gamepad focus does not reach bag/sort after inv.open_bag in lobby (ko, phone, gamepad)',
     ]);
     expect(result.failures[1]?.evidence).toEqual(['ev/ui-ios/0003-ko-phone-shop.open_main-1400.png', 'ev/ui-ios/0003-ko-phone-shop.open_main-1400.json']);
-    expect(readFileSync(join(root, 'ev/ui-ios/0003-ko-phone-shop.open_main-1400.png'), 'utf8')).toBe('PNG');
+    expect(readFileSync(join(root, 'ev/ui-ios/0003-ko-phone-shop.open_main-1400.png'), 'utf8')).toBe(PNG_1X1.toString('utf8'));
     expect(existsSync(join(root, 'ev/ui-ios/0002-ko,_phone,_shop.open_main,_text_scale_1000-keyboard.png'))).toBe(true);
     expect(calls).toContain('set_test_screen 1080 1920 Crop');
     expect(calls).toContain('set_virtual_notch 0 80 0 0');

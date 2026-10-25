@@ -41,7 +41,7 @@ It has the headings below in this order. Under a heading not decided yet, write 
 | `## new user` | The initial state of a new user and the server request that makes it |
 | `## feel targets` | The target table of presentation and response |
 | `## tuning targets` | The target table of balance and pacing |
-| `## art direction` | Style, hex palette, outline, proportions, screen density, representative resource keys. Style, palette and mood follow `records/setup/art-direction.md` |
+| `## art direction` | Style, hex palette with a role per color (background, panel, accent, danger, reward, text), outline, proportions, light direction, camera view, screen density, representative resource keys, and the style block: one English paragraph that every image prompt starts with. Style, palette, mood and character models follow `records/setup/art-direction.md` |
 | `## audio direction` | Mood of BGM and sound effects, BGM per scene, list of events that make sound |
 | `## terms` | The core nouns the game uses and the words it does not use. Terms to put in the glossary |
 | `## core usage` | Registered hooks. The core modules used are kept in game settings `coreModules` |

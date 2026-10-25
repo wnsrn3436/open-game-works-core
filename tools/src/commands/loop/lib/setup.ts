@@ -69,6 +69,8 @@ export interface ReferenceMoment {
 
 export interface Reference {
   name: string;
+  /** `## presentation game`: the game the screen moments are from; `name` when the file has none. */
+  presentation: string;
   /** Absolute paths of the gameplay videos in `## video` order. */
   videos: string[];
   /** File names in `## video` that are not in the folder. */
@@ -125,6 +127,7 @@ export async function readReference(game: GameRepo): Promise<Reference | null> {
   const pathOf = (name: string): string => join(game.root, REFERENCE_DIR, name);
   return {
     name: sectionText(text, 'game') ?? '',
+    presentation: sectionText(text, 'presentation game') ?? sectionText(text, 'game') ?? '',
     videos: names.map(pathOf),
     missingVideos: names.filter((name) => !exists(pathOf(name))),
     moments: referenceMoments(text, names).map((moment) => ({ ...moment, video: moment.video === null ? null : pathOf(moment.video) })),

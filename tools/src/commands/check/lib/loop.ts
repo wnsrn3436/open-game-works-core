@@ -18,7 +18,7 @@ import { Slots } from './instances.ts';
 import { performanceCheck, platformProfiles } from './performance.ts';
 import { regressionTest } from './regression.ts';
 import { rowSimulationCheck } from './row-simulation.ts';
-import { uiQualityCheck, type UiCheckScreen } from './ui-quality.ts';
+import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
 export { CHECK_ORDER };
 
@@ -109,6 +109,7 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
     baseResolution: (settings.baseResolution ?? [0, 0]) as [number, number],
     gamepadSupported: settings.gamepadSupported === true,
     maxTextScale: await maxTextScale(ctx, game, modules.client),
+    quality: settings.uiQuality as UiQualityLimits,
   };
   // One import before the checks run together: an instance skips its import once `client/.godot/` exists, so no import
   // may still be writing it when the instances start. A failed import removed `client/.godot/` (each instance start then

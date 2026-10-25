@@ -1,4 +1,5 @@
 import type { Context } from '../../../lib/command.ts';
+import { decodeRgba, type Rgba } from '../../resource/lib/image.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { automationRequest, restartClient, type AutomationResponse } from '../../instance/automation.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
@@ -22,6 +23,17 @@ export interface UiQualityOptions extends InstanceCheckOptions {
   gamepadSupported: boolean;
   /** Max of `AccessibilityCore.textScales`, or null when `AccessibilityCore` is not in the module list. */
   maxTextScale: number | null;
+  /** Game settings `uiQuality`. */
+  quality: UiQualityLimits;
+}
+
+/** Game settings `uiQuality`: the numbers of the presentation conditions (`qa-core` UI quality check). */
+export interface UiQualityLimits {
+  maxFontSizes: number;
+  minFontPx: number;
+  minContrast: number;
+  maxFlatShare: number;
+  maxEmptyShare: number;
 }
 
 interface Rect {
@@ -36,6 +48,7 @@ export interface UiElement {
   path: string;
   rect: Rect;
   text: string;
+  fontSize: number;
   clipped: boolean;
   owner: string;
   button: boolean;
@@ -61,6 +74,7 @@ export function toElements(result: unknown): UiElement[] {
     path: String(e.path),
     rect: toRect(e.rect),
     text: typeof e.text === 'string' ? e.text : '',
+    fontSize: num(e.font_size),
     clipped: e.clipped === true,
     owner: String(e.owner),
     button: e.button === true,
@@ -90,6 +104,127 @@ export function layoutProblems(elements: readonly UiElement[]): { owner: string;
       if (a.owner !== b.owner || isAncestor(a.path, b.path) || isAncestor(b.path, a.path)) continue;
       if (overlapArea(a.rect, b.rect) >= 1) problems.push({ owner: a.owner, message: `overlap ${a.path} ${b.path}` });
     }
+  }
+  return problems;
+}
+
+/** Relative luminance (sRGB) of an 8-bit color. */
+function luminance(r: number, g: number, b: number): number {
+  const lin = (c: number): number => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** Integer pixel bounds of a rect clipped to the image: [x0, y0, x1, y1), or null when nothing is left. */
+function bounds(rect: Rect, image: Rgba): [number, number, number, number] | null {
+  const x0 = Math.max(0, Math.round(rect.x));
+  const y0 = Math.max(0, Math.round(rect.y));
+  const x1 = Math.min(image.width, Math.round(rect.x + rect.w));
+  const y1 = Math.min(image.height, Math.round(rect.y + rect.h));
+  return x1 > x0 && y1 > y0 ? [x0, y0, x1, y1] : null;
+}
+
+function inside(rect: Rect, width: number, height: number): boolean {
+  return rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= width && rect.y + rect.h <= height;
+}
+
+/** Contrast ratio of the 2nd and 98th percentile relative luminance of the pixels in a rect. */
+export function rectContrast(image: Rgba, rect: Rect): number | null {
+  const b = bounds(rect, image);
+  if (b === null) return null;
+  const values: number[] = [];
+  for (let y = b[1]; y < b[3]; y++) {
+    for (let x = b[0]; x < b[2]; x++) {
+      const i = (y * image.width + x) * 4;
+      values.push(luminance(image.data[i] as number, image.data[i + 1] as number, image.data[i + 2] as number));
+    }
+  }
+  values.sort((p, q) => p - q);
+  const at = (q: number): number => values[Math.min(values.length - 1, Math.floor(q * values.length))] as number;
+  return (at(0.98) + 0.05) / (at(0.02) + 0.05);
+}
+
+/** Panel bodies: elements of a popup, panel or system popup that hold no text, take no input and are not window-sized, with no such ancestor. */
+export function panelBodies(elements: readonly UiElement[], sceneKey: string, windowArea: number): UiElement[] {
+  const candidates = elements.filter(
+    (e) => e.owner !== sceneKey && e.text === '' && !e.button && !e.textInput && e.rect.w > 0 && e.rect.h > 0 && e.rect.w * e.rect.h <= 0.9 * windowArea,
+  );
+  return candidates.filter((e) => !candidates.some((o) => o !== e && o.owner === e.owner && isAncestor(o.path, e.path)));
+}
+
+/** A mask of the pixels of `area` covered by any of `rects`. */
+function covered(area: [number, number, number, number], rects: readonly Rect[]): Uint8Array {
+  const [x0, y0, x1, y1] = area;
+  const w = x1 - x0;
+  const mask = new Uint8Array(w * (y1 - y0));
+  for (const r of rects) {
+    const rx0 = Math.max(x0, Math.round(r.x));
+    const ry0 = Math.max(y0, Math.round(r.y));
+    const rx1 = Math.min(x1, Math.round(r.x + r.w));
+    const ry1 = Math.min(y1, Math.round(r.y + r.h));
+    for (let y = ry0; y < ry1; y++) mask.fill(1, (y - y0) * w + (rx0 - x0), (y - y0) * w + (rx1 - x0));
+  }
+  return mask;
+}
+
+/** Share of the uncovered pixels of `area` that lie within 8 (each of R, G, B) of their most common color; null with none uncovered. */
+function flatShare(image: Rgba, area: [number, number, number, number], mask: Uint8Array): number | null {
+  const [x0, y0, x1, y1] = area;
+  const w = x1 - x0;
+  const counts = new Map<number, number>();
+  const pixels: number[] = [];
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      if (mask[(y - y0) * w + (x - x0)] === 1) continue;
+      const i = (y * image.width + x) * 4;
+      const color = ((image.data[i] as number) << 16) | ((image.data[i + 1] as number) << 8) | (image.data[i + 2] as number);
+      pixels.push(color);
+      counts.set(color, (counts.get(color) ?? 0) + 1);
+    }
+  }
+  if (pixels.length === 0) return null;
+  let mode = 0;
+  let best = -1;
+  for (const [color, n] of counts) if (n > best) [mode, best] = [color, n];
+  const near = (c: number): boolean =>
+    Math.abs(((c >> 16) & 255) - ((mode >> 16) & 255)) <= 8 && Math.abs(((c >> 8) & 255) - ((mode >> 8) & 255)) <= 8 && Math.abs((c & 255) - (mode & 255)) <= 8;
+  return pixels.filter(near).length / pixels.length;
+}
+
+/**
+ * The presentation conditions of one capture (`qa-core` UI quality check): text sizes, small text, contrast, flat
+ * panels and empty panels, each with the `owner` of the problem.
+ */
+export function presentationProblems(
+  elements: readonly UiElement[],
+  image: Rgba,
+  sceneKey: string,
+  limits: UiQualityLimits,
+): { owner: string; message: string }[] {
+  const problems: { owner: string; message: string }[] = [];
+  const texts = elements.filter((e) => e.text !== '');
+  const sizes = [...new Set(texts.map((e) => Math.round(e.fontSize)))].sort((a, b) => a - b);
+  if (sizes.length > limits.maxFontSizes) problems.push({ owner: sceneKey, message: `${String(sizes.length)} text sizes (${sizes.join(', ')} px), more than ${String(limits.maxFontSizes)}` });
+  for (const e of texts) {
+    const at1080 = (e.fontSize * 1080) / image.height;
+    if (at1080 < limits.minFontPx) problems.push({ owner: e.owner, message: `small text ${e.path}: ${at1080.toFixed(1)} px at 1080 high` });
+    if (!inside(e.rect, image.width, image.height)) continue;
+    const contrast = rectContrast(image, e.rect);
+    if (contrast !== null && contrast < limits.minContrast) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1` });
+  }
+  for (const body of panelBodies(elements, sceneKey, image.width * image.height)) {
+    const area = bounds(body.rect, image);
+    if (area === null) continue;
+    const textRects = texts.map((e) => e.rect);
+    const flat = flatShare(image, area, covered(area, textRects));
+    if (flat !== null && flat >= limits.maxFlatShare) problems.push({ owner: body.owner, message: `flat panel ${body.path}: ${(flat * 100).toFixed(0)}% one color` });
+    const size = body.rect.w * body.rect.h;
+    const parts = elements.filter((e) => isAncestor(body.path, e.path) && e.rect.w * e.rect.h < 0.9 * size).map((e) => e.rect);
+    const mask = covered(area, parts);
+    const empty = mask.filter((v) => v === 0).length / mask.length;
+    if (empty >= limits.maxEmptyShare) problems.push({ owner: body.owner, message: `empty panel ${body.path}: ${(empty * 100).toFixed(0)}% empty` });
   }
   return problems;
 }
@@ -177,7 +312,7 @@ class UiRun {
     await this.setup('set_virtual_notch', item.notch.map(String));
   }
 
-  async capture(label: string): Promise<{ elements: UiElement[]; evidence: (string | null)[] }> {
+  async capture(label: string): Promise<{ elements: UiElement[]; evidence: (string | null)[]; png: Buffer }> {
     this.captures++;
     const name = `ui-${this.platform}/${String(this.captures).padStart(4, '0')}-${label}`;
     const png = await this.setup('capture_screen', []);
@@ -186,7 +321,7 @@ class UiRun {
       await writeEvidence(this.evidence, `${name}.png`, png.bytes),
       await writeEvidence(this.evidence, `${name}.json`, `${JSON.stringify(list.result, null, 2)}\n`),
     ];
-    return { elements: toElements(list.result), evidence };
+    return { elements: toElements(list.result), evidence, png: png.bytes };
   }
 
   /** A failure of the screen being checked, at its scene; `owner` is the panel or popup key (`qa-core` `list_ui`), when known. */
@@ -237,13 +372,19 @@ async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheck
   }
 }
 
-async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[]): Promise<void> {
+async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits): Promise<void> {
   if (!(await run.open(command, `${language}, ${item.name}`))) return;
   for (const scale of scales) {
     if (scale !== null) await run.setup('set_text_scale', [String(scale)]);
     const context = `${language}, ${item.name}, ${command}, text scale ${String(scale ?? 1000)}`;
     const shot = await run.capture(`${language}-${item.name}-${command}-${String(scale ?? 1000)}`);
     for (const p of layoutProblems(shot.elements)) run.report(p.message, context, shot.evidence, p.owner);
+    // the conditions look at the capture only through the elements of list_ui
+    if ((scale ?? 1000) === 1000 && shot.elements.length > 0) {
+      const image = await decodeRgba(shot.png, 'capture_screen').catch(() => null);
+      if (image === null) run.report('capture_screen gave no PNG image', context, shot.evidence);
+      else for (const p of presentationProblems(shot.elements, image, run.where, quality)) run.report(p.message, context, shot.evidence, p.owner);
+    }
     if ((item.keyboard ?? 0) >= 1) await keyboardCaptures(run, shot.elements, item, command, context);
   }
 }
@@ -309,7 +450,7 @@ async function inspect(ctx: Context, id: string, platform: string, options: UiQu
       await run.language(language);
       for (const item of screens) {
         await run.screen(item);
-        for (const command of commands) await screenCaptures(run, language, item, command, scales);
+        for (const command of commands) await screenCaptures(run, language, item, command, scales, options.quality);
       }
     }
     if (options.gamepadSupported) await gamepadCheck(run, options, screens, commands);

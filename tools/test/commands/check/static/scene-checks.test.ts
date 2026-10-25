@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as actionReference from '../../../../src/commands/check/static/action-reference.ts';
 import * as anchorReference from '../../../../src/commands/check/static/anchor-reference.ts';
+import * as themeOnly from '../../../../src/commands/check/static/theme-only.ts';
 import * as virtualPadLayout from '../../../../src/commands/check/static/virtual-pad-layout.ts';
 import { instanceChain } from '../../../../src/commands/check/static/lib/scene-classes.ts';
 import type { SceneNode, TextScene } from '../../../../src/commands/check/static/lib/tscn.ts';
@@ -254,5 +255,32 @@ describe('instance chain', () => {
     const sc = memContext({ 'resource/prefab/loop.tscn': inst('L', 'loop') });
     const s = await sc.scene('resource/prefab/loop.tscn');
     expect(await instanceChain(sc, s, rootOf(s))).toHaveLength(8);
+  });
+});
+
+describe('theme only', () => {
+  it('finds style overrides, theme properties and StyleBoxFlat in scenes and prefabs only', async () => {
+    const scene = [
+      '[gd_scene format=3]',
+      '[sub_resource type="StyleBoxFlat" id="s"]',
+      '[node name="Root" type="Control"]',
+      'theme = ExtResource("t")',
+      '[node name="Title" type="Label" parent="."]',
+      'theme_type_variation = &"TitleLabel"',
+      'theme_override_font_sizes/font_size = 40',
+      'theme_override_styles/panel = SubResource("s")',
+    ].join('\n');
+    const sc = memContext({
+      'resource/scene/lobby/main.tscn': scene,
+      'resource/prefab/common/card.tscn': '[gd_scene format=3]\n[node name="Card" type="PanelContainer"]\ntheme_type_variation = &"Card"\n',
+      'client/common/theme.tres': '[gd_resource type="Theme" format=3]\n[sub_resource type="StyleBoxFlat" id="x"]\n',
+      'resource/rig_animation_2d/hero.tscn': '[gd_scene format=3]\ntheme_override_constants/x = 1\n',
+    });
+    expect(lines(await themeOnly.run(sc))).toEqual([
+      'resource/scene/lobby/main.tscn:2 | theme only: StyleBoxFlat; panel and button styles are StyleBoxTexture of the theme',
+      'resource/scene/lobby/main.tscn:4 | theme only: theme property; the theme of the game applies to every node',
+      'resource/scene/lobby/main.tscn:7 | theme only: theme_override_font_sizes/font_size sets a style of its own; give the node a theme_type_variation of the theme',
+      'resource/scene/lobby/main.tscn:8 | theme only: theme_override_styles/panel sets a style of its own; give the node a theme_type_variation of the theme',
+    ]);
   });
 });

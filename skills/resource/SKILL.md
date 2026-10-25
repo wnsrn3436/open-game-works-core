@@ -95,6 +95,8 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
   - `rig`, `material`, `sprite_animation`, `rig_animation_2d`, `animation_3d`, `particle`, `shader`: the placeholder resource that `## resource type` of the engine defines
 - Placeholder resources are not drawn or edited by hand
 - A sound effect that is heard repeatedly (hits, footsteps, UI presses) gets `variants` of 2 or more in `spec`
+- The long side of `size` of a `nine_slice` is 256 or more, so that a stretched frame keeps its detail. `ogw resource request` refuses a smaller one
+- A game with UI art adds `image/ui_kit` (`spec` `size=1024x1024`) and requests it before its first `nine_slice` and `icon` keys, which are requested with `--see image/ui_kit`
 - A sound effect that is heard many times a minute (hits, pickups, footsteps, UI presses) gets `level=quiet`, and a sound effect of a rare event that the player must notice (level up, boss arrival, death) gets `level=loud`
 
 ## resource request

@@ -533,6 +533,22 @@ describe('ogw resource finalize', () => {
     expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'sprite-gen-codex' });
   });
 
+  it('refuses a fully opaque file for an alpha image and a UI piece made without the UI kit sheet', async () => {
+    const f = setup([
+      { key: 'image/hero', spec: 'size=4x4;alpha=true', status: 'requested' },
+      { key: 'image/ui_kit', spec: 'size=4x4', status: 'final', method: 'flux2-klein' },
+      { key: 'icon/coin', spec: 'size=4x4', status: 'requested' },
+    ]);
+    await png(join(f.game, 'resource/image/ui_kit.png'), 4, 4, [9, 9, 9, 255]);
+    await sync(f);
+    const opaque = await finalize(f, await okPng(f, ['image/hero', '--method', 'flux2-klein']));
+    expect(opaque.stderr).toContain('every pixel is opaque; the background is baked in');
+    const bare = await finalize(f, await okPng(f, ['icon/coin', '--method', 'flux2-klein']));
+    expect(bare.stderr).toContain('--inputs needs image/ui_kit: icon keys are made from the UI kit sheet');
+    const kit = await finalize(f, await okPng(f, ['icon/coin', '--method', 'flux2-klein', '--inputs', 'image/ui_kit']));
+    expect(kit.stderr).toBe('');
+  });
+
   it('removes the other files of the key', async () => {
     const f = setup([{ key: 'texture/wall', spec: 'size=4x4', status: 'requested' }]);
     await png(join(f.game, 'resource/texture/wall.1.png'), 4, 4, [1, 1, 1, 255]);

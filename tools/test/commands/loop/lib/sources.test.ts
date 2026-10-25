@@ -41,6 +41,7 @@ describe('setup records', () => {
     const dir = `${g.root}/records/setup/reference`;
     expect(await readReference(g.repo)).toEqual({
       name: 'Hollow Run',
+      presentation: 'Hollow Run',
       videos: [`${dir}/hollow.mp4`],
       missingVideos: [],
       moments: [
@@ -53,6 +54,7 @@ describe('setup records', () => {
     write(g.root, 'records/setup/reference/reference.md', `## game\n\nX\n\n## video\n\n  hollow.mp4  \nmy run, 2.mp4\n\n${moments}| m | my run, 2.mp4 | 1 | 2 |\n`);
     expect(await readReference(g.repo)).toEqual({
       name: 'X',
+      presentation: 'X',
       videos: [`${dir}/hollow.mp4`, `${dir}/my run, 2.mp4`],
       missingVideos: ['my run, 2.mp4'],
       moments: [{ name: 'm', video: `${dir}/my run, 2.mp4`, startMs: 1, endMs: 2 }],
@@ -64,6 +66,14 @@ describe('setup records', () => {
     write(g.root, 'records/setup/reference/reference.md', `## game\n\nX\n\n${moments}`);
     await expect(readReference(g.repo)).rejects.toThrow('`## video` is not');
   });
+  it('reads the presentation game, or the reference game when there is none', async () => {
+    const g = setupGame();
+    const path = `${g.root}/records/setup/reference/reference.md`;
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('## video', '## presentation game\n\nShiny Quest\n\n## video'));
+    expect((await readReference(g.repo))?.presentation).toBe('Shiny Quest');
+  });
+
 });
 
 describe('finding sources', () => {

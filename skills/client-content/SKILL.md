@@ -145,6 +145,17 @@ At build, the client hardening agent finds and fixes the items below based on th
 - Scenes and prefabs reference other resources by resource key
 - The background, border and decoration of UI elements visible on screen (e.g. panel, popup, button, card and item frames, HUD, icon) are drawn with art resources (`nine_slice`, `icon`, `image`). The engine's default look and single-color boxes made in code are not left on screen as they are. Those resources are put in as placeholder resources of [`resource`](../resource/SKILL.md) and handed off with a resource request. The judge agent looks at this as `presentation`
 - Animations of `sprite_animation` and `rig_animation_2d` are played by the `animations` names in `spec` of that resource row
+
+### UI composition
+
+- One theme gives every screen its colors, fonts, text sizes and the look of panels, popups, plates and buttons. Scenes and prefabs pick a style of the theme and do not set their own (the theme of `engines/<engine>.md`)
+- Text sizes are the steps of the theme: title, heading, body, caption and number. The UI quality check fails a screen with more text sizes than game settings `uiQuality.maxFontSizes` or with text smaller than `uiQuality.minFontPx`, and text whose contrast with what is behind it is under `uiQuality.minContrast`
+- A panel or popup is drawn in layers: a frame, a header band that holds its title, an inner inset behind its content, and a divider between its groups. Its background is not one flat color, and its content fills it. The UI quality check fails a panel or popup whose background is mostly one color or that is mostly empty (game settings `uiQuality`)
+- lobby: the logo or title and the playable character or key art in the middle, the start button as the largest button at the bottom center, currencies at the top right, other menus at the sides
+- HUD: health and level at the top left, time or goal at the top center, resources at the top right, abilities at the bottom. A HUD plate is the size of what it holds
+- popup: a title band at the top, the content, and the buttons at the bottom with the main action on the right
+- result: the outcome as a title, the numbers of the play counting up, the rewards, then the retry and leave buttons
+- A button has normal, pressed and disabled art, and a press plays a sound and a scale tween. Panels and popups open and close with tween presets, and the items of a list or a reward appear one after another
 - The positions of screen elements are based on the visible game area of `ResolutionCore` and the safe area of `SafeAreaCore`
 - A text input element is placed so that it is fully visible above the on-screen keyboard even after the keyboard shift moves it. The keyboard capture of the UI quality check checks this
 - Information distinguished only by color is also shown with shape or text

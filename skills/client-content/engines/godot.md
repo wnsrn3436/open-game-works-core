@@ -48,6 +48,7 @@ client/
   - `rendering/anti_aliasing/`
   - `rendering/lights_and_shadows/`
   - `rendering/environment/defaults/`
+  - `gui/theme/custom`, only with the value `"res://common/theme.tres"`
 - Action names under `input/` are snake_case. Events use only `InputEventKey`, `InputEventMouseButton`, `InputEventJoypadButton` and `InputEventJoypadMotion`. Core actions (`back`, `cutscene_advance`, `cutscene_skip`) and engine default actions starting with `ui_` are not put there. When they are, the tool blocks them with an error. An action name starting with `menu_` or `cutscene_` sets the binding context of `InputCore`. When two actions that are overlapping actions of `InputCore` have the same key, mouse button, gamepad button or gamepad axis direction, the tool blocks it with an error. A `Gameplay` action can have the same key or gamepad button as `back`
 - The renderer that the harness tool writes
 
@@ -72,6 +73,8 @@ client/
 - `ext_resource` of a `.tscn` points only to files under `res://resource/`, `res://features/<own feature>/`, `res://common/` and `res://core/`. A `.tscn` of `prefab/common/` does not point to `res://features/`
 - A script is not put inside a `.tscn` or `.tres` (`type="GDScript"`). A script goes in a `.gd` file. An automated check blocks it
 - The script of a node with a script attached goes in the feature folder of that scene or prefab or in `client/common/`
+- The theme of the game is `client/common/theme.tres`: a `Theme` with a type variation per UI role (e.g. `PanelFrame`, `PopupFrame`, `HudPlate`, `Card`, `ButtonPrimary`, `ButtonSecondary`, `TitleLabel`, `HeadingLabel`, `BodyLabel`, `CaptionLabel`, `NumberLabel`). Its panel and button styles are `StyleBoxTexture` of `nine_slice` resources, and its text sizes are its font size constants. `client/boot/project_settings.cfg` sets `gui/theme/custom` to `"res://common/theme.tres"`
+- A node takes its look with `theme_type_variation`. A `.tscn` of a scene or prefab holds no `theme_override_*` property, no `theme` property and no `StyleBoxFlat`. Static check `theme only` blocks them
 - `sprite_animation` goes in `sprite_frames` of an `AnimatedSprite2D` of a scene or prefab and is played with that `AnimatedSprite2D`. `rig_animation_2d` goes in a scene or prefab as an instance and is played with the `AnimationPlayer` child of its root. Nodes inside the rig are not edited
 - Presentation durations and animation values go in `AnimationPlayer` of the `.tscn` and in tween presets. Code does not pass literal values to `AnimationPlayer.speed_scale`, `custom_speed` and `custom_blend` of `play()`, `SceneTree.create_timer()` or `Timer.wait_time`
 

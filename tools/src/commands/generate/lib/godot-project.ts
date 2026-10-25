@@ -87,9 +87,14 @@ function inputAction(entry: CfgEntry): string | undefined {
   return name.startsWith(INPUT_PREFIX) ? name.slice(INPUT_PREFIX.length) : undefined;
 }
 
+/** Keys `client/boot/project_settings.cfg` may set only to one value (`client-content` Godot `## engine settings`). */
+export const ALLOWED_VALUES: Readonly<Record<string, string>> = { 'gui/theme/custom': '"res://common/theme.tres"' };
+
 function entryErrors(entry: CfgEntry, file: string): string[] {
   const name = settingName(entry);
   const where = `${file}:${String(entry.line)}`;
+  const only = ALLOWED_VALUES[name];
+  if (only !== undefined) return entry.value.trim() === only ? [] : [`${where}: key ${name} is only allowed with the value ${only}`];
   if (!ALLOWED_PREFIXES.some((prefix) => name.startsWith(prefix))) return [`${where}: key ${name} is not allowed`];
   const action = inputAction(entry);
   if (action === undefined) return [];

@@ -199,6 +199,46 @@
         }
       }
     },
+    "uiQuality": {
+      "description": "The numbers of the presentation conditions of the UI quality check (`qa-core` UI quality check)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxFontSizes": {
+          "description": "The most distinct text sizes on one screen",
+          "type": "integer",
+          "minimum": 1,
+          "default": 6
+        },
+        "minFontPx": {
+          "description": "The smallest text size, in pixels of a window 1080 pixels high",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 18
+        },
+        "minContrast": {
+          "description": "The smallest contrast ratio of a text element with the pixels of its rectangle",
+          "type": "number",
+          "minimum": 1,
+          "default": 3
+        },
+        "maxFlatShare": {
+          "description": "The share of a panel body background in its most common color at which the panel counts as one flat color",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.85
+        },
+        "maxEmptyShare": {
+          "description": "The share of a panel body that nothing covers at which the panel counts as empty",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.6
+        }
+      },
+      "default": {}
+    },
     "gamepadSupported": {
       "description": "Whether every screen can be operated with a gamepad. When true, the UI quality check does the gamepad focus check",
       "type": "boolean",

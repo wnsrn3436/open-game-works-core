@@ -144,6 +144,13 @@ A command marked setup is not real input. Bot playtest records that step as setu
   - No capture has an element whose `clipped` is `true` or an overlap. An overlap is two elements whose `text` is not an empty string and whose `owner` is the same, whose `rect`s overlap with an area of 1 or more, and neither of whose `path` is an ancestor of the other's `path`
   - In each `list_ui` of a keyboard capture, there is one element whose `text_input` and `focused` are `true`, and its `rect` lies fully between the top edge of the window and the top edge of the keyboard (window height − `keyboard`)
   - When `gamepadSupported` is `true`, gamepad focus check is `pass` on every screen
+  - In each capture of 4 at text scale 1000 that is not a keyboard capture, with the values of game settings `uiQuality`:
+    - text sizes: the distinct `font_size` values, rounded to whole pixels, of the elements whose `text` is not an empty string number at most `maxFontSizes`
+    - small text: no element whose `text` is not an empty string has `font_size` × 1080 ÷ window height under `minFontPx`
+    - contrast: for each element whose `text` is not an empty string and whose `rect` is fully in the window, the relative luminances (sRGB) of the capture pixels in its `rect`, at the 2nd and the 98th percentile, give a contrast ratio (lighter + 0.05) ÷ (darker + 0.05) of at least `minContrast`
+    - panel body: an element whose `owner` is a popup, panel or system popup key, whose `text` is an empty string, whose `button` and `text_input` are `false`, whose `rect` is at most 90% of the window area, and none of whose ancestors is such an element of the same `owner`
+    - flat panel: in the `rect` of each panel body, out of the capture pixels outside the `rect`s of the elements whose `text` is not an empty string, less than `maxFlatShare` lie within 8 (each of R, G, B) of the most common color of those pixels
+    - empty panel: in the `rect` of each panel body, less than `maxEmptyShare` of its area is outside the `rect`s of its descendant elements whose `rect` is smaller than 90% of the panel body `rect`
 
 ### QAState
 
@@ -305,6 +312,7 @@ none
 | `baseResolution` | array<integer> | game | none | base resolution that `set_test_screen` passes to `ResolutionCore.set_test_screen` |
 | `uiCheckScreens` | array<object> | game | none | list of screens UI quality check captures. An item is `name` (snake_case), `window` (window width, height in pixels), `fillMode` (`Crop`, `Letterbox`), `notch` (left, top, right, bottom in integer window pixels), `keyboard` (on-screen keyboard height for keyboard capture, in window pixels. 0 means no keyboard capture) |
 | `gamepadSupported` | boolean | game | none | When `true`, UI quality check runs gamepad focus check |
+| `uiQuality` | object | game | none | the numbers of the presentation conditions of UI quality check: `maxFontSizes`, `minFontPx`, `minContrast`, `maxFlatShare`, `maxEmptyShare`. The defaults are in the game settings schema |
 | `supportedLanguages` | array<string> | game | none | list of languages UI quality check runs through |
 
 ## data

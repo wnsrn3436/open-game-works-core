@@ -302,6 +302,7 @@ describe('ogw loop evaluate', () => {
     ]);
     expect(mainInput.reference).toEqual({
       name: 'Hollow Run',
+      presentation: 'Hollow Run',
       moments: [
         { name: 'first 30000ms', video: join(g.root, 'records/setup/reference/hollow.mp4'), startMs: 0, endMs: 30000 },
         { name: 'core action', video: join(g.root, 'records/setup/reference/hollow.mp4'), startMs: 1000, endMs: 4000 },

@@ -284,7 +284,7 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
     A: guide(a),
     B: guide(b),
     fixtures,
-    reference: { name: plan.reference.name, moments: plan.reference.moments },
+    reference: { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments },
   });
   await startJob(state, slot, input);
 }

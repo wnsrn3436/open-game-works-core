@@ -87,6 +87,12 @@ describe('checkContentSettings', () => {
     expect(checkContentSettings(text, 'p.cfg')).toHaveLength(2);
   });
 
+  it('takes gui/theme/custom only with the theme path', () => {
+    expect(checkContentSettings('[gui]\ntheme/custom="res://common/theme.tres"\n', 'p.cfg')).toHaveLength(1);
+    expect(() => checkContentSettings('[gui]\ntheme/custom="res://features/x/t.tres"\n', 'p.cfg')).toThrow('p.cfg:2: key gui/theme/custom is only allowed with the value "res://common/theme.tres"');
+    expect(() => checkContentSettings('[gui]\ntheme/default_font_antialiasing=1\n', 'p.cfg')).toThrow('key gui/theme/default_font_antialiasing is not allowed');
+  });
+
   it('reports every violation', () => {
     const text = [
       'config_version=5',
