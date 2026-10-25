@@ -68,6 +68,12 @@ async function maxTextScale(ctx: Context, game: GameRepo, client: readonly strin
   return numbers.length > 0 ? Math.max(...numbers) : 1000;
 }
 
+/** Core settings `UnitTestCore.startTimeLimitMs` of the game, or null when the merged core settings do not have it. */
+export async function startTimeLimitMs(ctx: Context, game: GameRepo): Promise<number | null> {
+  const value = coreSetting(await mergedCoreSettings(ctx, game), 'UnitTestCore.startTimeLimitMs');
+  return typeof value === 'number' ? value : null;
+}
+
 /** Core settings `UnitTestCore.runTimeLimitMs` of the game, or null when the merged core settings do not have it. */
 export async function runTimeLimitMs(ctx: Context, game: GameRepo): Promise<number | null> {
   const value = coreSetting(await mergedCoreSettings(ctx, game), 'UnitTestCore.runTimeLimitMs');
@@ -119,7 +125,7 @@ export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSet
   const importFailure = await importClient(ctx, options.godot, game.root);
   const imported = importFailure === null ? { imported: true } : { importFailure };
   const db = options.db ? { db: options.db } : {};
-  const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), ...imported, ...db };
+  const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...imported, ...db };
   const all = set === 'all';
   const tasks: Promise<CheckResult | CheckResult[]>[] = [
     guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client)),

@@ -118,6 +118,8 @@ export async function serverRegression(ctx: Context, root: string, path: string,
 export interface ClientRunOptions {
   godot: string;
   evidence: Evidence;
+  /** `UnitTestCore.startTimeLimitMs`, or null when the merged core settings do not have it (`unit-test-core` `PUT /started`). */
+  startTimeLimitMs?: number | null;
   /** `UnitTestCore.runTimeLimitMs`, or null when the merged core settings do not have it. */
   runTimeLimitMs: number | null;
   /** `--db postgresql`: the server regression test gets a throwaway PostgreSQL. */
@@ -187,6 +189,7 @@ export async function clientRegression(ctx: Context, root: string, path: string,
     ],
     config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host, ogw_shared_fixture_dir: join(root, 'data', 'fixtures') }),
     timeoutMs,
+    startLimitMs: options.startTimeLimitMs ?? null,
   });
   const result = ran.ran;
   const output = `${result.stdout}${result.stderr}`;
@@ -197,6 +200,7 @@ export async function clientRegression(ctx: Context, root: string, path: string,
   ];
   const failures: CheckFailure[] = [];
   if (result.timedOut) failures.push(failure(where, `test run did not end within ${String(timeoutMs)} ms`, evidence));
+  if (result.stopped === true) failures.push(failure(where, `test run did not start within ${String(options.startTimeLimitMs ?? 0)} ms (no PUT /started)`, evidence));
   if (received === null) failures.push(failure(where, 'the test run sent no result', evidence));
   else failures.push(...(await resultFailures(root, received, where, evidence)));
   if (result.code !== 0 && !result.timedOut) failures.push(failure(where, `exit code ${String(result.code ?? result.signal)}`, evidence));

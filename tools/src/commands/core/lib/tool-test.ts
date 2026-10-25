@@ -11,7 +11,7 @@ import { exists } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { runOk } from '../../../lib/proc.ts';
 import { addOutcomes, copyGodotProject, gutArgs, gutPass, resultsDirOf, type ModuleOutcome } from './godot.ts';
-import { enginesOf, readEngineJson, unitTestProcessLimit } from './impl.ts';
+import { enginesOf, readEngineJson, unitTestProcessLimit, unitTestStartLimit } from './impl.ts';
 import { buildTestData } from './test-data.ts';
 import { passedEngines } from './test-records.ts';
 import { buildTool, implementedTools, runVitest, TOOLS, withBuiltTool, type ToolName } from './tools.ts';
@@ -54,6 +54,7 @@ async function godotRoundTrip(ctx: Context, implDir: string, tool: ToolName, wor
     label,
     resultsDir: resultsDirOf(work),
     timeoutMs,
+    startLimitMs: await unitTestStartLimit(implDir),
   });
 }
 

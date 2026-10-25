@@ -163,6 +163,55 @@ setTimeout(() => undefined, 60000);
     expect(readFileSync(join(dir, 'launches-start'), 'utf8')).toBe('x');
   }, 60_000);
 
+  it('keeps a native run that sent PUT /started past the start limit', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-native-')));
+    const godot = join(dir, 'godot');
+    // reads the test host and run ID from the test run config file of its last argument, starts, and sends its result after 1500 ms
+    writeFileSync(godot, `#!${process.execPath}
+const fs = require('node:fs');
+const arg = process.argv[process.argv.length - 1];
+const config = JSON.parse(fs.readFileSync(arg.slice(arg.indexOf('=') + 1), 'utf8'));
+const put = (path, body) => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
+put('/started', { run_id: config.ogw_run_id })
+  .then(() => new Promise((r) => setTimeout(r, 1500)))
+  .then(() => put('/result', { results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }));
+`);
+    chmodSync(godot, 0o755);
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const outcome = await gutPass(ctx, { godot, project: dir, headless: true, gut: [], config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host }), timeoutMs: 60_000, startLimitMs: 500, label: 'headless pass', resultsDir: join(dir, 'results') });
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.tests).toBe(1);
+  }, 60_000);
+
+  it('gives the load slot back for runs that never started, so a later run still loads', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
+    const exportDir = join(dir, 'export');
+    mkdirSync(exportDir);
+    writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
+    const browser = (start: boolean): string => {
+      const path = join(dir, start ? 'starts' : 'stalls');
+      writeFileSync(path, `#!${process.execPath}
+const page = new URL(process.argv[process.argv.length - 1]);
+const host = page.searchParams.get('ogw_test_host');
+const runId = page.searchParams.get('ogw_run_id');
+if (${String(start)}) {
+  fetch(host + '/started', { method: 'PUT', body: JSON.stringify({ run_id: runId }) })
+    .then(() => fetch(host + '/result', { method: 'PUT', body: JSON.stringify({ results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }) }));
+}
+setTimeout(() => undefined, 60000);
+`);
+      chmodSync(path, 0o755);
+      return path;
+    };
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const options = { exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 300 };
+    await Promise.all(Array.from({ length: WEB_LOADING_PAGES }, () => webModuleTest(ctx, { ...options, chromium: browser(false) })));
+    const started = Date.now();
+    const outcome = await webModuleTest(ctx, { ...options, chromium: browser(true) });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(outcome.tests).toBe(1);
+  }, 60_000);
+
   it('loads at most WEB_LOADING_PAGES pages at once and runs the started pages together', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
     const exportDir = join(dir, 'export');
