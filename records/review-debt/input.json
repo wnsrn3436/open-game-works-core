@@ -1,0 +1,12 @@
+{
+  "target": "input",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/check/lib/ui-quality.ts:438",
+      "problem": "skills/client-core/modules/qa-core.md:137 (changed in this range) says that when a later call of the open command (keyboard capture) fails, the rest of that screen's captures and keyboard captures are skipped, but `keyboardCaptures` only returns (ui-quality.ts:421) and `screenCaptures` goes on with the next text scale of its loop (ui-quality.ts:427-438): with `keyboard` 1 or more and `AccessibilityCore` in the module list, a reopen that fails after the text scale 1000 captures is followed by `set_text_scale` of the largest scale, `capture_screen`, `list_ui` and the layout and keyboard judgements on a screen that did not open",
+      "foundBy": "input round 2"
+    }
+  ]
+}

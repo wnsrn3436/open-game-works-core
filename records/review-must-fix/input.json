@@ -1,13 +1,5 @@
 {
   "target": "input",
   "nextId": 2,
-  "items": [
-    {
-      "id": "M1",
-      "severity": "high",
-      "location": "tools/src/commands/capture/capture.ts:45",
-      "problem": "`captureScreen` sends `capture_screen` with the argument `jpg`; every released core (open-game-works-core-releases/0.3.0/client-godot/core/qa_core/dev/qa_builtins.gd:38 `capture_screen\\|\\|`, zero arguments; qa_core.gd:448-449) fails it with `wrong argument count`, so `ogw capture <instance>` and `ogw step ... --capture` (tools/src/commands/step/step.ts:129,156) fail on every game whose core is before 0.3.1, although skills/game-loop/instance.md:27 defines `.png` from such a core",
-      "foundBy": "input round 1"
-    }
-  ]
+  "items": []
 }
