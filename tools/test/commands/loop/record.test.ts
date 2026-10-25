@@ -270,6 +270,8 @@ describe('ogw loop record', () => {
     expect(await section(1, { 'icon/old': 'temporary', 'icon/a': 'temporary', 'icon/b': 'requested', 'icon/c': 'requested' })).toBe('- `icon/a`');
     // icon/a became temporary in iteration 1; icon/b after the instance commit of iteration 1
     expect(await section(2, { 'icon/old': 'temporary', 'icon/a': 'temporary', 'icon/b': 'temporary', 'icon/c': 'requested' })).toBe('- `icon/b`');
+    // recording iteration 2 again compares with iteration 1, not with its own earlier record
+    expect(await section(2, null)).toBe('- `icon/b`');
     // an iteration without a check file has no instance commit
     write(g.root, 'resource/resources.csv', list({ 'icon/old': 'temporary', 'icon/a': 'temporary', 'icon/b': 'temporary', 'icon/c': 'temporary' }));
     commit(g.root, 'icon/c');
