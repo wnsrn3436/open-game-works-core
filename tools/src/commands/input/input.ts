@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { flag, positional, str, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { readText } from '../../lib/fsx.ts';
-import { recordVideo, videoDir, type VideoCapture } from '../capture/capture.ts';
+import { recordVideo, takesFormat, type VideoCapture, videoDir } from '../capture/capture.ts';
 import { automationRequest } from '../instance/automation.ts';
 import { inputHelp, inputHoldMs, isInputCommand } from '../instance/lib/qa.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
@@ -80,7 +80,7 @@ async function mainStepMode(ctx: Context, instanceId: string): Promise<boolean> 
 }
 
 /** Length and folder of the script video, checked against `QACore.videoMaxMs` before any input is put in. */
-async function prepareVideo(ctx: Context, instanceId: string, steps: readonly ScriptStep[], targetFps: number): Promise<{ ms: number; dir: string }> {
+async function prepareVideo(ctx: Context, instanceId: string, steps: readonly ScriptStep[], targetFps: number): Promise<{ ms: number; dir: string; format: boolean }> {
   const access = await readPlayAccess(instanceId, ctx.env);
   const windowMs = access.feedbackWindowMs;
   const maxMs = access.videoMaxMs;
@@ -90,7 +90,8 @@ async function prepareVideo(ctx: Context, instanceId: string, steps: readonly Sc
   if (ms > maxMs) {
     throw new OgwError(`the video of the script is ${String(ms)} ms, over QACore.videoMaxMs ${String(maxMs)}; split the script`);
   }
-  return { ms, dir: await videoDir(ctx, instanceId) };
+  // found before the script starts, so that the first input is not late by a capture
+  return { ms, dir: await videoDir(ctx, instanceId), format: await takesFormat(ctx, instanceId) };
 }
 
 export interface ScriptRun {
@@ -119,7 +120,7 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
     if (wait > 0) await sleep(wait);
     if (prepared !== null && recording === null) {
       const sent = Promise.withResolvers<null>();
-      recording = recordVideo(ctx, instanceId, prepared.ms, prepared.dir, () => {
+      recording = recordVideo(ctx, instanceId, prepared.ms, prepared.dir, prepared.format, () => {
         sent.resolve(null);
       });
       // the first input goes after the capture_video request, so the video starts before it

@@ -408,7 +408,8 @@ class UiRun {
   }
 }
 
-async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheckScreen, command: string, context: string): Promise<void> {
+/** Keyboard captures of one capture; false when a reopen of the screen failed, which fails the rest of that screen. */
+async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheckScreen, command: string, context: string): Promise<boolean> {
   const keyboard = item.keyboard ?? 0;
   for (const input of elements.filter((e) => e.textInput && !e.modalCovered)) {
     await run.setup('tap', [point(input.rect.x + input.rect.w / 2), point(input.rect.y + input.rect.h / 2)]);
@@ -418,8 +419,9 @@ async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheck
     const problem = keyboardProblem(shot.elements, item.window[1], keyboard);
     if (problem !== null) run.report(problem, context, shot.evidence, input.owner);
     await run.setup('set_virtual_keyboard', ['none']);
-    if (!(await run.open(command, context))) return;
+    if (!(await run.open(command, context))) return false;
   }
+  return true;
 }
 
 async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits): Promise<void> {
@@ -435,7 +437,7 @@ async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen,
       if (image === null) run.report('capture_screen gave no PNG image', context, shot.evidence);
       else for (const p of presentationProblems(shot.elements, image, run.where, quality)) run.report(p.message, context, shot.evidence, p.owner);
     }
-    if ((item.keyboard ?? 0) >= 1) await keyboardCaptures(run, shot.elements, item, command, context);
+    if ((item.keyboard ?? 0) >= 1 && !(await keyboardCaptures(run, shot.elements, item, command, context))) return;
   }
 }
 

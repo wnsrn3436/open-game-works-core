@@ -22,7 +22,7 @@ async function withFormat(args: string[], send: (args: string[]) => Promise<Auto
 }
 
 /** Whether the core of the instance takes the format argument of the capture commands: one `capture_screen` asked with it. */
-async function takesFormat(ctx: Context, instanceId: string): Promise<boolean> {
+export async function takesFormat(ctx: Context, instanceId: string): Promise<boolean> {
   return (await automationRequest(ctx, instanceId, 'capture_screen', [AGENT_CAPTURE_FORMAT], 'main', { access: 'play' })).ok;
 }
 
@@ -31,11 +31,13 @@ export async function videoDir(ctx: Context, instanceId: string): Promise<string
   return join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, Date.now())}-video`);
 }
 
-/** `capture_video` of `ms` into `dir` (from `videoDir`); the folder is removed when it fails. */
-export async function recordVideo(ctx: Context, instanceId: string, ms: number, dir: string, onSent?: () => void): Promise<VideoCapture> {
+/**
+ * `capture_video` of `ms` into `dir` (from `videoDir`); the folder is removed when it fails. `format` is whether the core
+ * takes the format argument (`takesFormat`), found before, so that the request goes at once.
+ */
+export async function recordVideo(ctx: Context, instanceId: string, ms: number, dir: string, format: boolean, onSent?: () => void): Promise<VideoCapture> {
   try {
-    // one request, so that `onSent` comes once: the format is asked only of a core that takes it
-    const args = (await takesFormat(ctx, instanceId)) ? [String(ms), AGENT_CAPTURE_FORMAT] : [String(ms)];
+    const args = format ? [String(ms), AGENT_CAPTURE_FORMAT] : [String(ms)];
     const response = await automationRequest(ctx, instanceId, 'capture_video', args, 'main', { access: 'play', framesDir: dir, ...(onSent ? { onSent } : {}) });
     if (!response.ok) throw new OgwError(`capture_video failed: ${JSON.stringify(response.result)}`);
     return { dir, frames: response.framePaths ?? [], result: response.result };
@@ -47,7 +49,7 @@ export async function recordVideo(ctx: Context, instanceId: string, ms: number, 
 
 /** `capture_video` of `ms` into a new folder `<stem>-video/` of `captures/`; the folder is removed when it fails. */
 export async function captureVideo(ctx: Context, instanceId: string, ms: number): Promise<VideoCapture> {
-  return recordVideo(ctx, instanceId, ms, await videoDir(ctx, instanceId));
+  return recordVideo(ctx, instanceId, ms, await videoDir(ctx, instanceId), await takesFormat(ctx, instanceId));
 }
 
 let lastCaptureAt = 0;

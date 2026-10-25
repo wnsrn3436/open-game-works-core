@@ -169,7 +169,7 @@ none
 
 | condition | failure value | log |
 |---|---|---|
-| the `TweenOptions` `TimeBasis` of `play`, `play_preset` or `play_value` is not a member | invalid handle. No callback and no input block | error |
+| the `TweenOptions` `TimeBasis` of `play` or `play_preset` is not a member | invalid handle. No callback and no input block | error |
 | the `Easing` of `evaluate_easing` is not a member | `0` | error |
 | the target object of `play` or `play_preset` is missing or destroyed | invalid handle. No callback and no input block | error |
 | definition check failure | plays with a definition with no steps | error |

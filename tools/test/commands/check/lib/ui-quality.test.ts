@@ -408,6 +408,24 @@ describe('uiQualityCheck', () => {
     ]);
   });
 
+  it('a reopen of a keyboard capture that fails fails that screen and skips its other text scales', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
+    const { calls } = fakeUi();
+    const base = vi.mocked(automationRequest).getMockImplementation();
+    let opens = 0;
+    vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) => {
+      if (command === 'shop.open_main' && ++opens === 2) return notOk('gone');
+      return base?.(c, i, command, args, client) ?? ok(null);
+    });
+    const phone = { name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop' as const, notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 };
+    const result = await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], screens: [phone], gamepadSupported: false, maxTextScale: 1400 }));
+    expect(result.failures.some((f) => f.message.startsWith('shop.open_main failed: "gone"'))).toBe(true);
+    // after the failed reopen, no text scale of shop.open_main is set before the next screen opens
+    const reopen = calls.findIndex((c, k) => c === 'shop.open_main' && calls.slice(0, k).includes('shop.open_main'));
+    const next = calls.findIndex((c, k) => k > reopen && c.includes('.open_'));
+    expect(calls.slice(reopen + 1, next).some((c) => c.startsWith('set_text_scale'))).toBe(false);
+  });
+
   it('an open command whose request throws fails that screen and stops the run', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
     const { calls } = fakeUi();
