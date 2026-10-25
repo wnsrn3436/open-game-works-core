@@ -1,6 +1,6 @@
 import { readdir, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { expectPositionals, positional, type CommandDef, type Context } from '../../lib/command.ts';
+import { join, resolve } from 'node:path';
+import { expectPositionals, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { writeFileAtomic } from '../../lib/fsx.ts';
 import { commitPaths, currentBranch, git, gitRaw, head, revParse, statusLines, tagExists } from '../../lib/git.ts';
@@ -65,7 +65,7 @@ async function releaseAfterFailure(ctx: Context, repo: string, tag: string): Pro
 /** git options that make a push to github.com use the `gh` login, which `gh release create` uses too. */
 const GH_CREDENTIAL = ['-c', 'credential.https://github.com.helper=', '-c', 'credential.https://github.com.helper=!gh auth git-credential'];
 
-async function publish(ctx: Context, implDir: string, settings: HarnessSettings, release: { tag: string; commit: string; previousHead: string; files: string[] }): Promise<void> {
+async function publish(ctx: Context, implDir: string, settings: HarnessSettings, release: { tag: string; commit: string; previousHead: string; files: string[]; notes: string }): Promise<void> {
   const repo = settings.coreReleaseRepository;
   const remote = `https://github.com/${repo}.git`;
   let pushed = false;
@@ -73,7 +73,7 @@ async function publish(ctx: Context, implDir: string, settings: HarnessSettings,
     await git(implDir, ['tag', release.tag, release.commit], { env: ctx.env });
     await git(implDir, [...GH_CREDENTIAL, 'push', remote, `refs/tags/${release.tag}`], { env: ctx.env, timeoutMs: LIMITS.programMs });
     pushed = true;
-    await createRelease(ctx, repo, release.tag, release.files);
+    await createRelease(ctx, repo, release.tag, release.files, release.notes);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const exists = pushed ? await releaseAfterFailure(ctx, repo, release.tag) : false;
@@ -97,14 +97,29 @@ async function publish(ctx: Context, implDir: string, settings: HarnessSettings,
   }
 }
 
+/** The text of the `--notes` file: the release notes of the GitHub release, which the release does not make without. */
+async function releaseNotes(ctx: Context, path: string | undefined, usage: string): Promise<string> {
+  if (path === undefined) throw new OgwError(`--notes <file> is required: the release notes of the GitHub release\nusage: ${usage}`);
+  let text: string;
+  try {
+    text = await readFile(resolve(ctx.cwd, path), 'utf8');
+  } catch (error) {
+    throw new OgwError(`cannot read the release notes file ${path}: ${(error as Error).message}`);
+  }
+  if (text.trim() === '') throw new OgwError(`the release notes file ${path} is empty`);
+  return text;
+}
+
 /** `ogw core release <version>` (`core` command.md `## version and release`). */
 export const releaseCommand: CommandDef = {
   name: ['core', 'release'],
-  usage: 'ogw core release <version>',
+  usage: 'ogw core release <version> --notes <file>',
+  options: { notes: { type: 'string' } },
   background: { timeLimitMs: () => LIMITS.jobMs },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, this.usage);
     const version = requireVersion(positional(args, 0, 'version'));
+    const notes = await releaseNotes(ctx, str(args, 'notes'), this.usage);
     const settings = await ctx.settings();
     const implDir = (await ctx.workspace()).coreImpl;
     const tag = releaseTag(version);
@@ -131,7 +146,7 @@ export const releaseCommand: CommandDef = {
         await requireUnmoved(ctx, implDir, previousHead);
         const changed = await writeEngineJson(implDir, built.engineJson);
         const made = (await commitPaths(implDir, changed, `core release ${version}: plugin URLs and SHA-256`, { env: ctx.env })) ?? previousHead;
-        await publish(ctx, implDir, settings, { tag, commit: made, previousHead, files });
+        await publish(ctx, implDir, settings, { tag, commit: made, previousHead, files, notes });
         return made;
       });
       const left = (await clearReviews(ctx, 'core')).map((what) => `not removed: ${what}`);

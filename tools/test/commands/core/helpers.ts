@@ -24,6 +24,8 @@ export interface FakeGh {
   calls(): string[][];
   /** Releases created with `gh release create`: tag to asset file names. */
   created(): Record<string, string[]>;
+  /** The `--notes` text of each release created with `gh release create`. */
+  notes(): Record<string, string>;
 }
 
 /**
@@ -34,7 +36,7 @@ export interface FakeGh {
  */
 export function fakeGh(ws: TestWorkspace, releases: Record<string, string>, compare: Record<string, string | { total: number; pages: string[][] }> = {}): FakeGh {
   const state = join(ws.root, 'gh-state.json');
-  writeFileSync(state, JSON.stringify({ releases, calls: [], created: {}, compare }));
+  writeFileSync(state, JSON.stringify({ releases, calls: [], created: {}, notes: {}, compare }));
   fakeBin(ws, 'gh', `
 const fs = require('node:fs'); const path = require('node:path');
 const statePath = ${JSON.stringify(state)};
@@ -65,7 +67,7 @@ if (args[1] === 'download') {
 }
 if (args[1] === 'create') {
   const files = []; for (let i = 3; i < args.length && !args[i].startsWith('--'); i++) files.push(path.basename(args[i]));
-  s.created[tag] = files; save();
+  s.created[tag] = files; s.notes[tag] = opt('--notes'); save();
   if (process.env.FAKE_GH_CREATE_THEN_FAIL) { process.stderr.write('upload interrupted'); process.exit(4); }
   process.exit(0);
 }
@@ -75,6 +77,7 @@ process.exit(9);
     env: pathEnv(ws),
     calls: () => (JSON.parse(readFileSync(state, 'utf8')) as { calls: string[][] }).calls,
     created: () => (JSON.parse(readFileSync(state, 'utf8')) as { created: Record<string, string[]> }).created,
+    notes: () => (JSON.parse(readFileSync(state, 'utf8')) as { notes: Record<string, string> }).notes,
   };
 }
 

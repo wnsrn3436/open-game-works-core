@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCodeCheck } from '../../../src/commands/code/api.ts';
@@ -47,6 +48,11 @@ vi.mock('../../../src/commands/core/lib/github.ts', async (importOriginal) => {
 });
 vi.mock('../../../src/commands/core/lib/base-proto-compat.ts', () => ({ baseProtoBreaks: vi.fn(() => Promise.resolve([])) }));
 
+const NOTES_TEXT = '## Summary\n\nA release.\n';
+/** The release notes file the releases of these tests get. */
+const NOTES = join(mkdtempSync(join(tmpdir(), 'ogw-notes-')), 'notes.md');
+writeFileSync(NOTES, NOTES_TEXT);
+
 function specFiles(impl: string): Map<string, unknown> {
   const map = new Map<string, unknown>();
   for (const name of ['LogCore', 'UICore', 'routing']) map.set(name, readJsonFile(join(impl, 'core-spec', `${name}.json`)));
@@ -92,7 +98,7 @@ describe('ogw core release', () => {
     const { ws, env, gh } = await setup();
     // what the clear of the core reviews could not remove is in the output
     vi.mocked(clearReviews).mockResolvedValueOnce(['/w/_core/agent-x', 'agent/x']);
-    const run = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
@@ -108,7 +114,8 @@ describe('ogw core release', () => {
       'core-settings.schema.json', 'core-spec.json', 'data-tool.tgz', 'licenses.json', 'manifest.json', 'server.tgz',
     ]);
     const create = gh.calls().find((c) => c[1] === 'create') ?? [];
-    expect(create.slice(-7)).toEqual(['--repo', 'wnsrn3436/open-game-works-core-impl', '--verify-tag', '--title', 'v1.2.0', '--notes', '']);
+    expect(create.slice(-7)).toEqual(['--repo', 'wnsrn3436/open-game-works-core-impl', '--verify-tag', '--title', 'v1.2.0', '--notes', NOTES_TEXT]);
+    expect(gh.notes()['v1.2.0']).toBe(NOTES_TEXT);
     expect(clearReviews).toHaveBeenCalledWith(expect.anything(), 'core');
     expect(runCodeCheck).toHaveBeenCalledWith(expect.anything(), 'core', ws.coreImpl);
     expect(baseProtoBreaks).toHaveBeenCalledWith(expect.anything(), ws.coreImpl, '1.1.0');
@@ -130,7 +137,7 @@ describe('ogw core release', () => {
     vi.mocked(runCodeCheck).mockResolvedValue([{ name: 'lint', result: 'fail', failures: ['a.gd:1 x', 'b.gd:2 y'] }, { name: 'secret', result: 'fail', failures: [] }]);
     vi.mocked(baseProtoBreaks).mockResolvedValue(['CoreError.X removed']);
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    const run = await ogw(ws, ['core', 'release', '1.2.0', '--json'], { env });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES, '--json'], { env });
     expect(run.code).toBe(1);
     const { data } = JSON.parse(run.stdout) as { data: { violations: string[] } };
     expect(data.violations).toEqual([
@@ -159,7 +166,7 @@ describe('ogw core release', () => {
     expect(clearReviews).not.toHaveBeenCalled();
 
     vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), errors: [] });
-    const major = await ogw(ws, ['core', 'release', '2.0.0', '--json'], { env });
+    const major = await ogw(ws, ['core', 'release', '2.0.0', '--notes', NOTES, '--json'], { env });
     expect((JSON.parse(major.stdout) as { data: { violations: string[] } }).data.violations.some((v) => v.startsWith('base proto'))).toBe(false);
   });
 
@@ -174,37 +181,48 @@ describe('ogw core release', () => {
     });
     commitAll(ws.coreImpl, 'lists');
     await recordAllPass(ws.coreImpl);
-    const refused = await ogw(ws, ['core', 'release', '1.2.0', '--json'], { env });
+    const refused = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES, '--json'], { env });
     expect(refused.code).toBe(1);
     expect((JSON.parse(refused.stdout) as { data: { violations: string[] } }).data.violations).toEqual(['review must fix routing: M1 high server/core/routing/a.ts:3: p']);
     writeFiles(ws.coreImpl, { 'records/review-must-fix/routing.json': { target: 'routing', nextId: 2, items: [] } });
     commitAll(ws.coreImpl, 'fixed');
     await recordAllPass(ws.coreImpl);
-    const run = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.stderr).toBe('');
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
     expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nreview debt routing: 2\nreview debt spec UICore: 1\n`);
   });
 
+  it('refuses a release without a notes file, with a missing one or with an empty one, before it checks anything', async () => {
+    const { ws, env, gh } = await setup();
+    const empty = join(ws.root, 'empty.md');
+    writeFileSync(empty, ' \n');
+    expect((await ogw(ws, ['core', 'release', '1.2.0'], { env })).stderr).toContain('--notes <file> is required: the release notes of the GitHub release');
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', join(ws.root, 'none.md')], { env })).stderr).toContain('cannot read the release notes file');
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', empty], { env })).stderr).toContain(`the release notes file ${empty} is empty`);
+    expect(gh.calls()).toEqual([]);
+    expect(sh(ws.coreImpl, 'git', ['tag']).trim()).toBe('');
+  });
+
   it('refuses a dirty checkout, another branch, an existing tag or release', async () => {
     const { ws, env } = await setup();
-    expect((await ogw(ws, ['core', 'release', '1.x'], { env })).stderr).toContain('invalid core version: 1.x');
+    expect((await ogw(ws, ['core', 'release', '1.x', '--notes', NOTES], { env })).stderr).toContain('invalid core version: 1.x');
     writeFileSync(join(ws.coreImpl, 'dirty.txt'), '');
-    expect((await ogw(ws, ['core', 'release', '1.2.0'], { env })).stderr).toContain('open-game-works-core-impl/ has uncommitted changes:\n?? dirty.txt');
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).stderr).toContain('open-game-works-core-impl/ has uncommitted changes:\n?? dirty.txt');
     sh(ws.coreImpl, 'rm', ['dirty.txt']);
     sh(ws.coreImpl, 'git', ['checkout', '--quiet', '-b', 'agent/x']);
-    expect((await ogw(ws, ['core', 'release', '1.2.0'], { env })).stderr).toContain('must have main checked out to release (now agent/x)');
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).stderr).toContain('must have main checked out to release (now agent/x)');
     sh(ws.coreImpl, 'git', ['checkout', '--quiet', 'main']);
     sh(ws.coreImpl, 'git', ['tag', 'v1.2.0']);
-    expect((await ogw(ws, ['core', 'release', '1.2.0'], { env })).stderr).toContain('tag v1.2.0 already exists in open-game-works-core-impl/');
-    expect((await ogw(ws, ['core', 'release', '1.1.0'], { env })).stderr).toContain('release v1.1.0 already exists in wnsrn3436/open-game-works-core-impl');
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).stderr).toContain('tag v1.2.0 already exists in open-game-works-core-impl/');
+    expect((await ogw(ws, ['core', 'release', '1.1.0', '--notes', NOTES], { env })).stderr).toContain('release v1.1.0 already exists in wnsrn3436/open-game-works-core-impl');
   });
 
   it('runs the code check on open-game-works-core-impl/ also from inside a core worktree', async () => {
     const { ws, env } = await setup();
     const worktree = join(ws.worktrees, '_core', 'w1');
     sh(ws.coreImpl, 'git', ['worktree', 'add', '--quiet', '-b', 'w1', worktree]);
-    expect((await ogw(ws, ['core', 'release', '1.2.0'], { env, cwd: worktree })).code).toBe(0);
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env, cwd: worktree })).code).toBe(0);
     expect(runCodeCheck).toHaveBeenCalledWith(expect.anything(), 'core', ws.coreImpl);
   });
 
@@ -216,7 +234,7 @@ describe('ogw core release', () => {
       commitAll(ws.coreImpl, 'merge');
       return Promise.resolve([{ name: 'type check', result: 'pass', failures: [] }]);
     });
-    const run = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.code).toBe(1);
     const moved = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
     expect(run.stderr).toContain(`open-game-works-core-impl/ main moved from ${before} to ${moved} during the release`);
@@ -229,7 +247,7 @@ describe('ogw core release', () => {
     const { ws, env } = await setup();
     writeFiles(ws.coreImpl, { 'core-spec/Old.json': '{"name":"Old"}', 'settings/core-settings.json': '{}' });
     commitAll(ws.coreImpl, 'stale');
-    const run = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('core-spec/Old.json is not a module');
     expect(run.stderr).toContain('is not recorded at');
@@ -246,7 +264,7 @@ describe('ogw core release', () => {
     };
     try {
       const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-      const run = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
       expect(run.code).toBe(1);
       const moved = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
       expect(run.stderr).toContain(`open-game-works-core-impl/ main moved from ${before} to ${moved} during the release`);
@@ -269,7 +287,7 @@ describe('ogw core release', () => {
       held = await withWriterLock(lock, () => Promise.resolve(false)).catch(() => true);
     };
     try {
-      const run = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
       expect(run.code).toBe(0);
       expect(held).toBe(true);
     } finally {
@@ -280,7 +298,7 @@ describe('ogw core release', () => {
   it('undoes the tag and the commit when the GitHub release fails', async () => {
     const { ws, env } = await setup();
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    const run = await ogw(ws, ['core', 'release', '1.2.0'], { env: { ...env, FAKE_GH_FAIL: 'create' } });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env: { ...env, FAKE_GH_FAIL: 'create' } });
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('gh release create v1.2.0');
     expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
@@ -291,7 +309,7 @@ describe('ogw core release', () => {
     const remote = join(ws.root, 'remotes', 'wnsrn3436', 'open-game-works-core-impl.git');
     expect(sh(remote, 'git', ['tag'])).toBe('');
     // The same version can be released again: no tag is left on the remote.
-    const again = await ogw(ws, ['core', 'release', '1.2.0'], { env });
+    const again = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(again.stderr).toBe('');
     expect(again.code).toBe(0);
     expect(sh(remote, 'git', ['tag']).trim()).toBe('v1.2.0');
@@ -301,7 +319,7 @@ describe('ogw core release', () => {
   it('keeps the tag and the commit when gh fails after it made the release', async () => {
     const { ws, env, gh } = await setup();
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    const run = await ogw(ws, ['core', 'release', '1.2.0'], { env: { ...env, FAKE_GH_CREATE_THEN_FAIL: '1' } });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env: { ...env, FAKE_GH_CREATE_THEN_FAIL: '1' } });
     expect(run.code).toBe(1);
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
     expect(head).not.toBe(before);
@@ -320,14 +338,14 @@ describe('ogw core release', () => {
       'v1.1.0': makeReleaseDir(join(ws.root, 'r110'), '1.1.0', { 'a.json': '1' }),
     });
     const env = { ...base, ...gh.env };
-    expect((await ogw(ws, ['core', 'release', '1.2.0'], { env })).code).toBe(0);
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).code).toBe(0);
     expect(baseProtoBreaks).toHaveBeenCalledTimes(1);
     expect(baseProtoBreaks).toHaveBeenCalledWith(expect.anything(), ws.coreImpl, '1.1.0');
   });
 
   it('skips the base proto comparison when no release is below the version', async () => {
     const { ws, env } = await setup();
-    expect((await ogw(ws, ['core', 'release', '0.1.0'], { env })).code).toBe(0);
+    expect((await ogw(ws, ['core', 'release', '0.1.0', '--notes', NOTES], { env })).code).toBe(0);
     expect(baseProtoBreaks).not.toHaveBeenCalled();
   });
 });

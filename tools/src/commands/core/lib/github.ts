@@ -67,8 +67,8 @@ export async function downloadRelease(ctx: Context, repo: string, tag: string, d
   await runOk('gh', ['release', 'download', tag, '--repo', repo, '--dir', dir], { env: ctx.env, timeoutMs: LIMITS.programMs });
 }
 
-export async function createRelease(ctx: Context, repo: string, tag: string, files: readonly string[]): Promise<void> {
-  await runOk('gh', ['release', 'create', tag, ...files, '--repo', repo, '--verify-tag', '--title', tag, '--notes', ''], {
+export async function createRelease(ctx: Context, repo: string, tag: string, files: readonly string[], notes: string): Promise<void> {
+  await runOk('gh', ['release', 'create', tag, ...files, '--repo', repo, '--verify-tag', '--title', tag, '--notes', notes], {
     env: ctx.env,
     timeoutMs: LIMITS.programMs,
   });
