@@ -28,11 +28,12 @@ Builds the profile that other users see (nickname, the `PublicProfile` message t
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
 | `GetPublicProfiles` (core rpc, `silent`). changes: none | `user_ids` | `profiles`: list of `PublicProfileEntry` | `INVALID_REQUEST` | `routing`. Client content code sends it |
+| `FindUserByPublicCode` (core rpc, `silent`). changes: none | `public_code` | `profile`: `PublicProfileEntry` of that user | `INVALID_REQUEST`, `USER_NOT_FOUND`, `RATE_LIMITED` | `routing`. Client content code sends it |
 | `get_public_profiles` | ctx, list of user IDs | list of `PublicProfileEntry` | none | content handler, hook, `friend`, `block-report`, `guild`, `chat` |
 | `is_active_user` | ctx, user ID | `true` when the `user` row exists and the user is not a withdrawn user | `false` | content handler, hook, `friend`, `block-report`, `chat` |
 | `on_request_start` | user ID | async operation. none | none. A failure is an `error` log | `routing`, `auth` |
 
-- `PublicProfileEntry`(base proto message): `int64 user_id`, `string nickname` (empty string when there is no nickname), `bytes profile` (bytes of the game `PublicProfile` message; empty bytes when there is no hook `build_public_profile`), `int64 last_active_at` (last access time; 0 when there is no record)
+- `PublicProfileEntry`(base proto message): `int64 user_id`, `string nickname` (empty string when there is no nickname), `bytes profile` (bytes of the game `PublicProfile` message; empty bytes when there is no hook `build_public_profile`), `int64 last_active_at` (last access time; 0 when there is no record), `string public_code` (the public code of `storage`)
 - The output list is in ascending order of user ID and leaves out users for whom `is_active_user` is `false`
 
 core `rpc` request field
@@ -40,12 +41,14 @@ core `rpc` request field
 | message | field | type | `(ogw.v)` |
 |---|---|---|---|
 | `GetPublicProfilesRequest` | `user_ids` | `repeated int64` | `min`: 1, `max`: 2^63−1, `min_count`: 1, `max_count_key`: `public-profile.maxRequestCount`, `unique`: `true` |
+| `FindUserByPublicCodeRequest` | `public_code` | `string` | `max_len`: 32 |
 
 core `rpc` response field
 
 | message | field | type |
 |---|---|---|
 | `GetPublicProfilesResponse` | `profiles` | `repeated PublicProfileEntry` |
+| `FindUserByPublicCodeResponse` | `profile` | `PublicProfileEntry` |
 
 ## behavior
 
@@ -55,6 +58,16 @@ core `rpc` response field
 - `PublicProfile` is a module message, and the game that registers hook `build_public_profile` defines it
 - There is no cache. Each call builds the profiles and writes nothing
 - `is_active_user` judges with `storage.get_user_record`(`storage.db`(ctx), user ID)
+- profile build fills `public_code` with `public_code` of `storage.get_user_record`
+
+### find by public code
+
+| table | scope | column | key | expiry column |
+|---|---|---|---|---|
+| `public_profile_find_counter` | `user` | `user_id`, `window_start`, `count`, `expires_at` | `user_id` | `expires_at` |
+
+- `public_profile_find_counter` is registered with snapshot flag `false`
+- `FindUserByPublicCode`: in the user transaction of the request, sets the requester's `public_profile_find_counter` row to the current minute window of `server-time` (`count` 0 when the row is of another window, `expires_at` the window end) and increments `count` by 1. When the incremented value exceeds `public-profile.findPerMinute`, fails with `RATE_LIMITED` and keeps the incremented row. Otherwise finds the user with `storage.find_user_by_public_code`; when it is not a public code input, `INVALID_REQUEST`; when no user is found or `is_active_user` of that user is `false`, `USER_NOT_FOUND`. Otherwise the response is the profile of that user, built as `GetPublicProfiles` builds it. A failed find also counts, so codes are not found by trying many
 
 ### last active
 
@@ -84,6 +97,8 @@ none
 | condition | failure value | error code | log |
 |---|---|---|---|
 | `(ogw.v)` violation of `user_ids` (count, element less than 1, duplicate) | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
+| `public_code` of `FindUserByPublicCode` that is not a public code input | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
+| more `FindUserByPublicCode` of one user than `public-profile.findPerMinute` in one minute window | `RATE_LIMITED` | `RATE_LIMITED` | none |
 | throw of the hook, output in a wrong format, write inside the hook | throw. The message of the throw holds the target user ID | `INTERNAL` | `error` log by `routing` |
 | transaction failure of `on_request_start` | none. The request continues to be handled | none | `error` log |
 
@@ -97,6 +112,7 @@ Added `CoreError`: `USER_NOT_FOUND`. A core `rpc` that points to another user re
 | `public-profile.maxProfileBytes` | integer | core | content | maximum bytes of one hook output |
 | `nickname.maxLookupCount` | integer | core | content | upper bound of `public-profile.maxRequestCount` |
 | `public-profile.lastActiveGranularityMs` | integer | core | content | unit that `last_active_at` is rounded down to. 0 means no record |
+| `public-profile.findPerMinute` | integer | core | content | most `FindUserByPublicCode` requests of one user in one minute window. 1 or more |
 
 settings constraint
 
@@ -127,3 +143,7 @@ none
 - `last_active_at` of a user without a record is 0. When `public-profile.lastActiveGranularityMs` is 0, it is 0 also after a request
 - Even when the transaction of `on_request_start` fails, the handler is called and one `error` log is left
 - After `Withdraw`, that user has no `public_profile_activity` row
+- `PublicProfileEntry` of `GetPublicProfiles` has the public code of each user
+- `FindUserByPublicCode` with a user's public code (also lowercase with `-`) gives that user's profile; a code no user has and the code of a withdrawn user are `USER_NOT_FOUND`; a text that is not a public code input is `INVALID_REQUEST`
+- With `public-profile.findPerMinute` 3, the 4th `FindUserByPublicCode` in one minute window is `RATE_LIMITED` also when the earlier ones were `USER_NOT_FOUND`, and the first one of the next window is handled
+- After `Withdraw`, that user has no `public_profile_find_counter` row

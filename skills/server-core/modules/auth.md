@@ -105,6 +105,7 @@ core `rpc` response field
 | `AuthResult` | `linked_providers` | `repeated LoginProvider` |
 | `AuthResult` | `consent` | `ConsentUserState` |
 | `AuthResult` | `remote_config` | `GetRemoteConfigResponse` |
+| `AuthResult` | `public_code` | `string` |
 | `TermsDocument` | `item` | `TermsItem` |
 | `TermsDocument` | `version` | `int32` |
 | `TermsDocument` | `url` | `string` |
@@ -115,8 +116,9 @@ admin operation. `routing` collects them and passes them to `admin-api`, and the
 |---|---|---|---|---|
 | `withdraw_user` | `user_id` | empty object | `not_found`, `internal` | operator |
 | `find_user_by_social_account` | `provider`, `provider_account_id` | `user_id`, `linked_at` | `bad_request`, `not_found` | operator |
+| `find_user_by_public_code` | `public_code` | `user_id`, `withdrawn_at` | `bad_request`, `not_found` | operator |
 
-- field types of the admin operations: `provider` is `enum{APPLE, GOOGLE}`, `provider_account_id` is `string`
+- field types of the admin operations: `provider` is `enum{APPLE, GOOGLE}`, `provider_account_id` and `public_code` are `string`
 
 ## behavior
 
@@ -127,6 +129,8 @@ admin operation. `routing` collects them and passes them to `admin-api`, and the
 - A social account `(provider, provider account ID)` is linked to only one user. One user has only one link per provider
 - When `iap` is in the server module list, passes the function `has_social_link`(DB handle, user ID) with `iap.register_account_lookup` at server start. It returns whether that user has an `auth_social_link` row
 - An account link row is inserted with an insert that does not insert when a row with the same `(provider, provider_account_id)` exists, and then the user of that key is read again. In `LinkAccount`, when that user is not the requesting user, `ALREADY_LINKED`
+
+- `public_code` of `AuthResult` is `public_code` of `storage.get_user_record` of that user. The public code is what a person sees and types to point to a user; the user ID is not shown to a person
 
 ### Login
 
@@ -271,6 +275,8 @@ admin operation. `routing` collects them and passes them to `admin-api`, and the
 - When `provider_account_id` is the empty string, `bad_request`
 - Used when an operator finds a user ID by a provider account ID that a player gave
 
+- `find_user_by_public_code` has no `user_target`, and its role is `read`. In the game tx that `admin-api` opened, finds the user with `storage.find_user_by_public_code`. When the input is not a public code input, `bad_request`; when no user is found, `not_found`. Otherwise outputs that `user_id` and `withdrawn_at` of `storage.get_user_record` (null when none)
+
 ### web account deletion
 
 Web account deletion is the web page on which a user requests the withdrawal of their own account outside the app. The page address is the current environment's `serverUrl` with one trailing `/` removed and `/account/deletion` appended, and for LOCAL it is `http://127.0.0.1:<port the server listens on>/account/deletion`. The user proves that the account is theirs with a deletion code or a linked Google account.
@@ -280,17 +286,17 @@ Web account deletion is the web page on which a user requests the withdrawal of 
 - `GET /account/deletion` returns with HTTP 200 the HTML page that auth makes in code
   - page language: looks at the language ranges of `Accept-Language` in descending order of q value, and in written order when equal. It is the tag of the first range for which game settings `supportedLanguages` has the same tag, ignoring case. When there is none, it is, from the first range for which a supported language with the same primary subtag exists, the first supported language with that primary subtag. When that also does not exist, it is game settings `sourceLanguage`
   - The page text is the text found by reading the page language translation binary of `server/build/data/` with `GameData.load_translation`, by the translation key that the `ReservedString` accessor of `DataSet` returned
-  - deletion code form: `[auth_deletion_title]`, `[auth_deletion_body]`, user ID input `[auth_deletion_user_id]`, deletion code input `[auth_deletion_code]`, confirmation checkbox `[auth_deletion_confirm]`, submit button `[auth_deletion_submit]`
+  - deletion code form: `[auth_deletion_title]`, `[auth_deletion_body]`, public code input `[auth_deletion_user_id]`, deletion code input `[auth_deletion_code]`, confirmation checkbox `[auth_deletion_confirm]`, submit button `[auth_deletion_submit]`
   - Google form: present only when `adapters.login-google` of the current environment is not `null`. `[auth_deletion_google]`, confirmation checkbox `[auth_deletion_confirm]`, sign-in. When the adapter is `login-google`, the sign-in is the Google Identity Services sign-in button with client ID `loginGoogle.serverClientId`, and its callback puts the received ID token into field `credential` and sends the form. When the adapter is `fake`, the sign-in is a text input of field `credential` and submit button `[auth_deletion_submit]`
-  - Both forms send to `POST /account/deletion` as `application/x-www-form-urlencoded`. The fields are `method`(`code` or `google`), `confirm`(`yes` when the checkbox is on), and `user_id`, `code` of the `code` method and `credential` of the `google` method
+  - Both forms send to `POST /account/deletion` as `application/x-www-form-urlencoded`. The fields are `method`(`code` or `google`), `confirm`(`yes` when the checkbox is on), and `public_code`, `code` of the `code` method and `credential` of the `google` method
 - result page: one text found in the page language and a link `[auth_deletion_back]` to the page address
 - headers of the page and the result page: `Content-Type: text/html; charset=utf-8`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; script-src 'nonce-<nonce>' https://accounts.google.com/gsi/client; style-src 'nonce-<nonce>' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; connect-src https://accounts.google.com/gsi/; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`. `<nonce>` is the standard base64 of 16 byte secure random made per response, and the `script` and `style` elements of the page carry that nonce
 - `POST /account/deletion` processing order. When a step fails, ends with that step's HTTP status and result page. When `run_game_transaction` of step 1 or `run_user_transaction` of step 4 is `FAILED`, 500 and `[auth_deletion_retry]`
   1. IP limit: one `storage.run_game_transaction` increments by 1 and reads the `count` of the `auth_deletion_ip_counter` row of the client IP and the current minute window of `server-time`, and commits. `window_start` is the window start of that minute window, and `expires_at` is the window end. When the incremented value exceeds `auth.deletionAttemptsPerMinute`, 429 and `[auth_deletion_rate_limited]`
-  2. body: 400 and `[auth_deletion_failed]` when any of the following holds. `Content-Type` is not `application/x-www-form-urlencoded`. The accumulated body exceeds `routing.maxBodyBytes` or the total body read duration exceeds `routing.bodyReadTimeoutMs`. There is an unknown field or two fields of the same name. `confirm` is not `yes`. `method` is neither `code` nor `google`, or a field of that method is missing. `user_id` is not a decimal string of an `int64` of 1 or more. `code`, with whitespace and `-` removed and changed to uppercase, is not `auth.deletionCodeLength` deletion code characters. `credential` exceeds `auth.maxCredentialBytes`. The method is `google` and `adapters.login-google` of the current environment is `null`
+  2. body: 400 and `[auth_deletion_failed]` when any of the following holds. `Content-Type` is not `application/x-www-form-urlencoded`. The accumulated body exceeds `routing.maxBodyBytes` or the total body read duration exceeds `routing.bodyReadTimeoutMs`. There is an unknown field or two fields of the same name. `confirm` is not `yes`. `method` is neither `code` nor `google`, or a field of that method is missing. `public_code` is not a public code input of `storage`. `code`, with whitespace and `-` removed and changed to uppercase, is not `auth.deletionCodeLength` deletion code characters. `credential` exceeds `auth.maxCredentialBytes`. The method is `google` and `adapters.login-google` of the current environment is `null`
   3. maintenance: when `admin-api.is_maintenance` is `true`, 503 and `[auth_deletion_retry]`
   4. identity check
-     - `code` method: reads the `auth_deletion_code` row in one `storage.run_user_transaction` of `user_id`. When `run_user_transaction` is `WITHDRAWN`, there is no row, or `expires_at` ≤ `clock_now`, it is a failure. Compares the SHA-256 of the `code` changed in 2 with `code_hash` in constant time; when they differ, increments `attempts` by 1, deletes the row when the incremented value is `auth.deletionCodeMaxAttempts`, commits, and it is a failure. When they are equal, does 5 in the same transaction
+     - `code` method: finds the user with `storage.find_user_by_public_code` in `storage.read_db`, and reads the `auth_deletion_code` row in one `storage.run_user_transaction` of that user. When no user is found, `run_user_transaction` is `WITHDRAWN`, there is no row, or `expires_at` ≤ `clock_now`, it is a failure. Compares the SHA-256 of the `code` changed in 2 with `code_hash` in constant time; when they differ, increments `attempts` by 1, deletes the row when the incremented value is `auth.deletionCodeMaxAttempts`, commits, and it is a failure. When they are equal, does 5 in the same transaction
      - `google` method: calls `verify` of that adapter outside a transaction. A rejection is a failure, and time limit exceeded and communication failure are 502 and `[auth_deletion_retry]`. When `auth_social_link` has no row (`GOOGLE`, the received provider account ID), it is a failure. When it has, does 5 in one `storage.run_user_transaction` of the user of that row. When `run_user_transaction` is `WITHDRAWN`, it is a failure
      - A failure is 403 and `[auth_deletion_failed]`. A nonexistent user, a withdrawn user, a wrong code, an expired code and an unlinked account get the same page
   5. withdrawal: calls the same operations as `withdraw_user` in the same order, and leaves `reason` `web_deletion`, `method` and the truncated IP in the `audit` log. 200 and `[auth_deletion_done]`. When `remove_user` is `FAILED`, does not call the later operations, the change function returns `INTERNAL` so that transaction is rolled back, and 500 and `[auth_deletion_retry]`
@@ -500,3 +506,6 @@ core cheat response field
 - During maintenance, `POST /account/deletion` is 503 and saved state stays unchanged, and `GET /account/deletion` is 200
 - When `Accept-Language` matches a supported language only in the primary subtag, the page is in that supported language, and when no language matches, the page is in `sourceLanguage`
 - The page and the result page have the `Content-Security-Policy` header, and the `script` element of the page carries the nonce of that header
+- `AuthResult` of `Login` and `AutoLogin` has the public code of that user, and the same one at every login
+- `POST /account/deletion` with the `code` method finds the user by `public_code` written in lowercase with `-`; a `public_code` that is not a public code input is 400 and `[auth_deletion_failed]`, and a code no user has is 403 and `[auth_deletion_failed]`
+- `find_user_by_public_code` gives `user_id` and `withdrawn_at` of a user and of a withdrawn user, `not_found` for a code no user has, and `bad_request` for a text that is not a public code input

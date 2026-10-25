@@ -217,7 +217,7 @@ none
 | `GameError` of a core `rpc` handler that is not in `(ogw.core_errors)` of that core `rpc` | rolls back | `INTERNAL` | `error` log. request name, `GameError` value |
 
 - Every request, except the HTTP 404 of an unknown path or method and the HTTP 403 of an origin that is not allowed, leaves one `request` log line regardless of the result
-- `ServerError.ban` of a `BANNED` error response is base proto message `BanDetail` (`int64 user_id`, `int64 until_at`, `string deletion_url`, `string access_token`, `string session_signing_key`). `until_at` is the time the ban ends, and 0 when it does not end. `deletion_url` is the address of the web account deletion page of `auth`. Only the ban login of `auth` fills `access_token` and `session_signing_key`, and in step 6 they are empty strings
+- `ServerError.ban` of a `BANNED` error response is base proto message `BanDetail` (`int64 user_id`, `int64 until_at`, `string deletion_url`, `string access_token`, `string session_signing_key`, `string public_code`). `public_code` is the public code of that user from `storage.get_user_record`. `until_at` is the time the ban ends, and 0 when it does not end. `deletion_url` is the address of the web account deletion page of `auth`. Only the ban login of `auth` fills `access_token` and `session_signing_key`, and in step 6 they are empty strings
 
 Added `CoreError`: `INVALID_REQUEST`, `RATE_LIMITED`, `MAINTENANCE`, `BANNED`, `FEATURE_DISABLED`, `APP_UPDATE_REQUIRED`, `DATA_UPDATE_REQUIRED`, `INTERNAL`
 

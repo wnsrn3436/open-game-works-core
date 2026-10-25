@@ -42,6 +42,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
 | `is_provider_supported` | `LoginProvider` | whether it can be used in this build and platform | `false` | `PaymentCore`, content code |
 | `is_logged_in` | none | whether there is a session | `false` | core, content code |
 | `get_user_id` | none | user ID | `0` | core, content code |
+| `get_public_code` | none | public code of the user, the text that a person sees and types to point to that user | empty string | core, content code |
 | `get_access_token` | none | async operation. success flag, access token, `RequestFailure` on failure | `false`, empty token, `RequestFailure` | `RealtimeCore` |
 | `refresh_access_token` | none | async operation. success flag, access token, `RequestFailure` on failure | `false`, empty token, `RequestFailure` | `RealtimeCore` |
 | `get_login_remote_config` | none | `remote_config` of `AuthResult` of the last login success response (`GetRemoteConfigResponse`: `entries`, `assignments`) | `GetRemoteConfigResponse` with empty `entries`, `assignments` | `RemoteConfigCore` |
@@ -58,7 +59,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
 |---|---|
 | `LoginProvider` | enum of base proto. `GUEST`, `APPLE`, `GOOGLE` |
 | `TermsStatus` | `Agreed`, `Refused`, `Failed` |
-| `LoginResult` | `LoginStatus`, user ID (only for `Success`, `Banned`), ban end time (only for `Banned`. 0 when the ban does not end), deletion page address (only for `Banned`. Otherwise an empty string), error code (only when `Failed` is a server error. Otherwise `0`) |
+| `LoginResult` | `LoginStatus`, user ID and public code (only for `Success`, `Banned`), ban end time (only for `Banned`. 0 when the ban does not end), deletion page address (only for `Banned`. Otherwise an empty string), error code (only when `Failed` is a server error. Otherwise `0`) |
 | `LoginStatus` | `Success`, `NoToken`, `Cancelled`, `Rejected`, `ConsentRequired`, `Banned`, `AgeBlocked`, `Failed` |
 | `LinkStatus` | `Success`, `Cancelled`, `AlreadyLinked`, `Failed` |
 | `ConsentInfo` | `age_confirmed`(whether `age_confirmed_at` is not 0), `age_from`, `age_to`, `child`, `below_consent_age`, `ad_personalization_allowed`, `analytics_allowed`, `tracking`(`TrackingStatus` of this device), `push_ad`, `push_night` |
@@ -117,8 +118,9 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
   4. Emits `LoginCompletedEvent`
 - When 1 fails, `login` returns `Failed` and keeps the previous session and storage item. `switch_account` follows the `switch_account` rules. Auto login does 2 to 4 and returns `Success`. It then keeps the new token in memory as a pending token, together with the login token that the `AutoLogin` sent, and writes it again on `AppBackgroundEnteredEvent`, `AppForegroundReturnedEvent`, `AppQuitEvent`, `release` and token refresh success until a write succeeds. When the write succeeds, it deletes the login token kept with the pending token. In the other cases that delete the pending token, it also deletes the login token kept with it
 - `NetworkCore` passes the UserState delta of the response to `UserStateCore`
-- The user ID, ban end time and deletion page address of `Banned` are `user_id`, `until_at`, `deletion_url` of the ban detail of `RequestFailure`. When there is no ban detail, they are 0, 0 and an empty string
-- ban session: when there is no session, `Login` or `AutoLogin` ends with `BANNED`, and `access_token` of the ban detail is not an empty string, it keeps that user ID, `access_token` and `session_signing_key` in memory as a ban session. A ban session is not a session. It is not passed to `NetworkCore.set_session_provider`, and `is_logged_in` is `false`. It is deleted on login success and on `release`
+- The user ID, public code, ban end time and deletion page address of `Banned` are `user_id`, `public_code`, `until_at`, `deletion_url` of the ban detail of `RequestFailure`. When there is no ban detail, they are 0, an empty string, 0 and an empty string
+- `get_public_code` gives `public_code` of the `AuthResult` of the session, or `public_code` of the ban detail of the ban session
+- ban session: when there is no session, `Login` or `AutoLogin` ends with `BANNED`, and `access_token` of the ban detail is not an empty string, it keeps that user ID, `public_code`, `access_token` and `session_signing_key` in memory as a ban session. A ban session is not a session. It is not passed to `NetworkCore.set_session_provider`, and `is_logged_in` is `false`. It is deleted on login success and on `release`
 
 ### login token storage
 
@@ -279,6 +281,7 @@ none
 | `SessionProvider` query without a session | `RequestFailure` whose `FailureKind` is `ConnectionFailed` | error |
 | `RefreshToken` failure of a refresh | `RequestFailure` of that `RefreshToken` | `NetworkCore` leaves it |
 | `get_user_id` called without a session | `0` | error |
+| `get_public_code` called without a session and without a ban session | empty string | error |
 | `prepare_consent`, `open_privacy_choices`, `get_consent`, `update_push_consent`, `report_ad_consent` without a session. `issue_deletion_code` without a session and without a ban session | failure value | error |
 | age popup, privacy popup or push consent popup cannot be opened, `ConfirmAge`, `UpdateConsent`, `UpdatePushConsent` failure | failure value | error. `NetworkCore` leaves request failures |
 | `update_push_consent` when `pushConsent.adPush` is `false`, `CONSENT_CHOICE_UNSPECIFIED` value | `false`. no request | error |
@@ -407,3 +410,4 @@ format argument
 - `[auth_web_link_google]` of the link prompt popup sends `LinkAccount` once, and on `ALREADY_LINKED` there is one `[auth_web_link_failed]` toast. `[auth_web_link_later]` and back input close the popup without a request. In every case, `boot_login` is `Success`
 - `issue_deletion_code` sends `IssueDeletionCode` once and returns `code`, `expires_at`, `url` of the response. Without a session and a ban session, it fails without a request, and when the request fails, it fails. After `AutoLogin` ends with `BANNED` with a ban detail that has `access_token`, `is_logged_in` is `false`, and `issue_deletion_code` sends `IssueDeletionCode` once with `send_auth`, with the access token of the ban session and a signature made with its session signing key. After login success and after `release`, there is no ban session
 - `is_privacy_choices_enabled` and `is_ad_push_enabled` return game settings `consent.privacyChoices` and `pushConsent.adPush` as they are, for each of `true` and `false`
+- After a `Login` success, `get_public_code` is `public_code` of that `AuthResult`. With a ban session, it is `public_code` of the ban detail. Without either, it is an empty string and leaves an error log

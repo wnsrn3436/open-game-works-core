@@ -54,9 +54,10 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 | `run_user_changes` | none | async operation. number of applied rows | `FAILED` | `routing` |
 | `db` | ctx or game tx | DB handle | an invalid ctx or tx throws | core module |
 | `read_db` | none | read-only DB handle | none | core module |
-| `create_user` | game tx | new user ID | none | `auth` |
+| `create_user` | game tx | new user ID and its public code | none | `auth` |
 | `delete_user` | ctx | none | none | `auth` |
-| `get_user_record` | DB handle, user ID | `created_at`, `withdrawn_at`, or none | none | `admin-api`, `auth`, `item-ledger`, `public-profile`, `guild`, `user-snapshot-clone` |
+| `get_user_record` | DB handle, user ID | `public_code`, `created_at`, `withdrawn_at`, or none | none | `admin-api`, `auth`, `item-ledger`, `public-profile`, `guild`, `user-snapshot-clone` |
+| `find_user_by_public_code` | DB handle, public code input | user ID, or none | none | `auth`, `public-profile` |
 | `set_user_created_at` | ctx, time | none | none | `user-snapshot-clone` |
 | `scan_users` | DB handle, above this user ID, maximum count, contract version v (optional) | list of user IDs of users that are not withdrawn users, in ascending order | none | `migration`, `auth` |
 | `sample_users` | DB handle, maximum count | list of user IDs picked from users that are not withdrawn users, in ascending order | none | `user-snapshot-clone` |
@@ -231,7 +232,7 @@ A user change is a change of the saved state of another user by the transaction 
 
 | table | scope | column | key |
 |---|---|---|---|
-| `user` | `game` | `user_id`(`int64`. issued from 1), `created_at`(`int64`), `withdrawn_at`(`int64?`. null when none) | `user_id` |
+| `user` | `game` | `user_id`(`int64`), `public_code`(`string?`. null only in a row made by an earlier core version until server start fills it), `created_at`(`int64`), `withdrawn_at`(`int64?`. null when none) | `user_id` |
 | `user_state` | `user` | `user_id`(`int64`), `kind`(`string`), `item_id`(`int64`), `value`(`bytes`), `contract_version`(`int64`), `updated_at`(`int64`) | `(user_id, kind, item_id)` |
 | `server_state` | `user` | `user_id`(`int64`), `kind`(`string`), `item_id`(`int64`), `value`(`bytes`), `contract_version`(`int64`), `updated_at`(`int64`) | `(user_id, kind, item_id)` |
 | `pending_delta` | `user` | `user_id`(`int64`), `seq`(`int64`), `delta`(`bytes`), `created_at`(`int64`) | `(user_id, seq)` |
@@ -245,6 +246,9 @@ A user change is a change of the saved state of another user by the transaction 
 - A module table name is `<module name with - replaced by _>_<name>`. e.g. `item_ledger_history`. A table not registered with `register_table` is not used
 - `delete_user` deletes the rows of that user from the registered `user` scope tables and the `user` scope tables among the base tables, and writes the request time to `user.withdrawn_at`. The `user` row stays
 - After `delete_user`, `take_response_delta` of that ctx returns an empty response delta
+- user ID and public code: `create_user` picks the user ID with secure random from the integers of 1 or more and below 2^53, and the public code as 8 characters of `0123456789ABCDEFGHJKMNPQRSTVWXYZ` with secure random. When either is already in a `user` row (a withdrawn user's included), it picks that one again. So the user ID tells neither the number of users nor the order they came in, and is not found by trying numbers. `user` has a unique index on `public_code`
+- public code input: a text that, with whitespace and `-` removed, changed to uppercase, `O` changed to `0` and `I` and `L` changed to `1`, is 8 characters of the public code characters. `find_user_by_public_code` returns the user ID of the `user` row (a withdrawn user's included) whose `public_code` is that text, and none for a text that is not a public code input or has no row
+- At server start, each `user` row whose `public_code` is null gets a public code picked as `create_user` picks it, in one game transaction per row
 - `get_user_record` is none when there is no `user` row. When v is given, `scan_users` returns only users that have a row with contract version < v in `user_state` or `server_state`
 - `sample_users` picks with one query, by secure random and without duplicates, up to the maximum count of users from the users that are not withdrawn users. When there are fewer users than the maximum count, all of them
 - `set_user_created_at` changes `created_at` of the `user` row of the ctx user to that time. It makes no delta and no pending delta
@@ -447,3 +451,6 @@ none
 - `send_user_change` with a change name that is not registered, a target that is the user's own user ID, or a payload over the limit throws
 - The `ItemChange` source of an item that content changed inside the apply function is `UserChange`, and ref is `<change name>:<change_id>`
 - When the converter function returns bytes for a row of a contract version higher than the current one, that value is read, and the saved row and contract version stay unchanged
+- 1000 `create_user` calls give user IDs of 1 or more and below 2^53 that are all different and do not come one after another (no two IDs differ by 1), and public codes of 8 public code characters that are all different
+- `find_user_by_public_code` finds a user by its public code, by the same code in lowercase with `-` after 4 characters, and with `O`, `I`, `L` for `0`, `1`; it finds a withdrawn user; it gives none for a 7-character text, a text with `U`, and a code no user has
+- A `user` row whose `public_code` is null has a public code after server start, and a row with one keeps it

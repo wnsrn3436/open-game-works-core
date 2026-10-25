@@ -60,6 +60,7 @@ Admin operations that other modules export and `routing` passes with `register_a
 |---|---|---|
 | `auth` | `withdraw_user` | `ops` |
 | `auth` | `find_user_by_social_account` | `read` |
+| `auth` | `find_user_by_public_code` | `read` |
 | `logging` | `list_client_errors`, `list_client_events`, `list_server_events` | `read` |
 | `game-update` | `get_deploy_list`, `get_update_signing_key` | `read` |
 | `game-update` | `put_update_file`, `publish_deploy_list`, `prune_update_files` | `release` |

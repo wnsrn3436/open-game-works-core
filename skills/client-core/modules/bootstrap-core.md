@@ -91,8 +91,8 @@ The boot entry scene that the engine opens first calls only `start_boot`. A stag
 
 - When the result of `boot_login` is not `Success`, it sets the boot order to `Halted` and opens the login failure popup
 - login failure popup: a `UICore` system popup. The body is the ban body for `Banned`, `[bootstrap_age_blocked]` for `AgeBlocked`, otherwise `[bootstrap_login_failed]`. The buttons are `[bootstrap_banned_deletion]` and `[bootstrap_restart]` for `Banned`, otherwise the one button `[bootstrap_restart]`. It does not close on back input. `[bootstrap_restart]` and a close without a button start a restart. When it cannot be opened, it is handled as a fatal error
-- ban body: `[bootstrap_banned]` when the ban end time of `LoginResult` is not 0, `[bootstrap_banned_permanent]` when it is 0. `FormatArgs` are `user_id`(the decimal string of the user ID, `set_string`), `until_at`(ban end time, `set_int`), `url`(deletion page address, `set_string`)
-- `[bootstrap_banned_deletion]`: waits for `AuthCore.issue_deletion_code`, then opens the deletion code popup. The deletion code popup is a `UICore` system popup. On success the body is `[bootstrap_banned_deletion_code]` and `FormatArgs` are `user_id`, `code`(`set_string`), `expires_at`(`set_int`), `url`(the received `url`, `set_string`). On failure it is `[bootstrap_banned_deletion_failed]`. Buttons, back input, close and failure to open are the same as the login failure popup for a result other than `Banned`. When it receives a restart request, fatal report, exit request or `shutdown` while waiting for `issue_deletion_code`, it discards that result and does not open the deletion code popup
+- ban body: `[bootstrap_banned]` when the ban end time of `LoginResult` is not 0, `[bootstrap_banned_permanent]` when it is 0. `FormatArgs` are `public_code`(the public code of `LoginResult`, `set_string`), `until_at`(ban end time, `set_int`), `url`(deletion page address, `set_string`)
+- `[bootstrap_banned_deletion]`: waits for `AuthCore.issue_deletion_code`, then opens the deletion code popup. The deletion code popup is a `UICore` system popup. On success the body is `[bootstrap_banned_deletion_code]` and `FormatArgs` are `public_code`, `code`(`set_string`), `expires_at`(`set_int`), `url`(the received `url`, `set_string`). On failure it is `[bootstrap_banned_deletion_failed]`. Buttons, back input, close and failure to open are the same as the login failure popup for a result other than `Banned`. When it receives a restart request, fatal report, exit request or `shutdown` while waiting for `issue_deletion_code`, it discards that result and does not open the deletion code popup
 
 ### content entry
 
@@ -190,9 +190,9 @@ format argument
 
 | text | arguments |
 |---|---|
-| `[bootstrap_banned]` | `{user_id}`(`string`), `{until_at}`(`integer`), `{url}`(`string`) |
-| `[bootstrap_banned_permanent]` | `{user_id}`(`string`), `{url}`(`string`) |
-| `[bootstrap_banned_deletion_code]` | `{user_id}`(`string`), `{code}`(`string`), `{expires_at}`(`integer`), `{url}`(`string`) |
+| `[bootstrap_banned]` | `{public_code}`(`string`), `{until_at}`(`integer`), `{url}`(`string`) |
+| `[bootstrap_banned_permanent]` | `{public_code}`(`string`), `{url}`(`string`) |
+| `[bootstrap_banned_deletion_code]` | `{public_code}`(`string`), `{code}`(`string`), `{expires_at}`(`integer`), `{url}`(`string`) |
 
 ## DEV
 
@@ -248,7 +248,7 @@ format argument
 - A restart after an update reboot makes the new boot apply the same update set and call `check_update`, and when the received files are the same there is no update reboot
 - When `check_update` is `false`, `ContentInit` is called without `ApplyUpdate`
 - When `boot_login` is not `Success`, there is no `AfterLogin` or `FirstScene`, `boot_stage` is `Halted`, and one login failure popup opens. For `AgeBlocked` the body is `[bootstrap_age_blocked]`. Pressing `[bootstrap_restart]` starts a restart
-- For `Banned`, the body is `[bootstrap_banned]` when there is a ban end time and `[bootstrap_banned_permanent]` when it is 0, `user_id`, `until_at`, `url` of `FormatArgs` are the values of `LoginResult`, and the buttons are `[bootstrap_banned_deletion]`, `[bootstrap_restart]`. Pressing `[bootstrap_banned_deletion]` calls `AuthCore.issue_deletion_code` once; on success the `[bootstrap_banned_deletion_code]` popup holding `code`, `expires_at`, `url` opens, on failure the `[bootstrap_banned_deletion_failed]` popup opens, and `[bootstrap_restart]` of that popup starts a restart. When a restart is reported while waiting for `issue_deletion_code`, the deletion code popup does not open even when that result returns, and when a fatal is reported, only one fatal popup opens
+- For `Banned`, the body is `[bootstrap_banned]` when there is a ban end time and `[bootstrap_banned_permanent]` when it is 0, `public_code`, `until_at`, `url` of `FormatArgs` are the values of `LoginResult`, and the buttons are `[bootstrap_banned_deletion]`, `[bootstrap_restart]`. Pressing `[bootstrap_banned_deletion]` calls `AuthCore.issue_deletion_code` once; on success the `[bootstrap_banned_deletion_code]` popup holding `code`, `expires_at`, `url` opens, on failure the `[bootstrap_banned_deletion_failed]` popup opens, and `[bootstrap_restart]` of that popup starts a restart. When a restart is reported while waiting for `issue_deletion_code`, the deletion code popup does not open even when that result returns, and when a fatal is reported, only one fatal popup opens
 - Without `select_first_scene`, it goes to game settings `firstScene`
 - `get_first_scene` returns game settings `firstScene`
 - For each fatal condition of the error table, there is no next stage and an error log is left
