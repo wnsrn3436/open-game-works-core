@@ -1,0 +1,12 @@
+{
+  "target": "loop end-record",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/loop/lib/record.ts:120",
+      "problem": "`test evidence` of `ogw loop record` (not this target). `newTemporary` (the `## temporary resources` of the loop iteration record, `game-loop` `## loop iteration record`) has no test. tools/test/commands/loop/lib/records.test.ts only renders a given `temporary` array, and tools/test/commands/loop/record.test.ts has no `temporary` row. If the previous-commit selection (the previous iteration's instance commit, or the base commit for iteration 1) or the `before` filter is removed, no test fails",
+      "foundBy": "loop end-record round 1"
+    }
+  ]
+}
