@@ -210,9 +210,10 @@ The host secret store where `ogw` keeps secret values.
 
 ## core upgrade
 
-The behavior of `ogw core upgrade <game>`.
+The behavior of `ogw core upgrade <game> [--check]`.
 
 - When the highest release version of harness settings `coreReleaseRepository` is higher than game settings `coreVersion`, it changes `coreVersion` to that version, runs `ogw core fetch`, `ogw env install-engines` and `ogw generate`, commits, and outputs the new version
+- With `--check`, it changes nothing and commits nothing. It prints the current `coreVersion`, the version it would change to (or that there is none), the skipped versions, the first lines of the commit messages of the core release repository between the tags `v<current>` and `v<that version>` (GitHub compare) other than those of the commits that `ogw` itself makes for agent records, review lists and releases (first lines starting with `ogw agent `, `ogw: review lists ` or `core release `), and the released core proposals of the game whose version is above the current and at most that version
 - The only failures of `ogw env install-engines` that make `ogw core upgrade` fail are failures of the engines and programs that `engine.json` of the core version release of that game lists, and the failure to read that `engine.json`. Failures that come from `engine.json` of other games and of `open-game-works-core-impl` are ignored
 - For a game with a PROD tag, starting from the highest version, it compares the game contract and the base proto of that version with the last PROD build by the backward compatibility of [`contract`](../skills/contract/SKILL.md), with the contract tool of that version, changes to the highest version that keeps compatibility, and also outputs the skipped versions. A backward compatibility violation is a violation line that appears only in a run given `--previous`; a version that has only other violations is not skipped
 

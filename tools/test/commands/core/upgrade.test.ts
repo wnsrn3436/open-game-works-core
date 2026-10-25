@@ -114,6 +114,42 @@ describe('ogw core upgrade', () => {
     expect((await listRuns(await ctx.game('g')))[0]?.data['core upgrade']).toEqual({ version: null, skipped: [] });
   });
 
+  it('with --check prints the version, the changes and the released proposals, and changes nothing', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(
+      ws,
+      { 'v1.0.0': await release(ws, '1.0.0', 'a', {}), 'v1.1.0': await release(ws, '1.1.0', 'b', {}) },
+      { 'v1.0.0...v1.1.0': 'UICore: add theme\nogw agent m1: result file\nogw agent merge m1\nogw: review lists of UICore round 1\nSoundCore: duck music under voice\ncore release 1.1.0: plugin URLs and SHA-256\n' },
+    );
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
+      'records/core-proposals/1-theme.md': 'status: released\nversion: 1.1.0\n',
+      'records/core-proposals/2-old.md': 'status: released\nversion: 1.0.0\n',
+    });
+    const head = sh(dir, 'git', ['rev-parse', 'HEAD']);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--check'], { env: gh.env });
+    expect(run).toMatchObject({ code: 0 });
+    expect(run.stdout).toBe(
+      [
+        'coreVersion: 1.0.0',
+        'would raise to: 1.1.0',
+        `changes (${(JSON.parse(readFileSync(join(ws.harness, 'settings.json'), 'utf8')) as { coreReleaseRepository: string }).coreReleaseRepository} v1.0.0...v1.1.0):`,
+        '- UICore: add theme',
+        '- SoundCore: duck music under voice',
+        'released core proposals: records/core-proposals/1-theme.md',
+        '',
+      ].join('\n'),
+    );
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0', engine: 'godot' });
+    expect(sh(dir, 'git', ['rev-parse', 'HEAD'])).toBe(head);
+    expect(installEngines).not.toHaveBeenCalled();
+    expect(generateCheckout).not.toHaveBeenCalled();
+    const none = makeWorkspace();
+    const ghNone = fakeGh(none, { 'v1.0.0': await release(none, '1.0.0', 'a', {}) });
+    makeGame(none, 'g', { 'settings.json': { coreVersion: '1.0.0' } });
+    expect((await ogw(none, ['core', 'upgrade', 'g', '--check'], { env: ghNone.env })).stdout).toBe('coreVersion: 1.0.0\nno version to raise to\n');
+  });
+
   it('does not touch settings.json with uncommitted changes', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'b', {}) });

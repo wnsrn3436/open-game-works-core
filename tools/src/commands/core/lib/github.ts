@@ -34,6 +34,15 @@ export async function releaseExists(ctx: Context, repo: string, tag: string): Pr
   throw new OgwError(`gh release view ${tag} --repo ${repo} failed: ${(result.stderr || result.stdout).trim()}`);
 }
 
+/** First lines of the commit messages between two tags of a repository, oldest first (GitHub compare). */
+export async function compareSubjects(ctx: Context, repo: string, from: string, to: string): Promise<string[]> {
+  const result = await runOk('gh', ['api', `repos/${repo}/compare/${from}...${to}`, '--jq', '.commits[].commit.message | split("\n")[0]'], {
+    env: ctx.env,
+    timeoutMs: LIMITS.httpMs,
+  });
+  return result.stdout.split('\n').filter((line) => line.trim() !== '');
+}
+
 export async function downloadRelease(ctx: Context, repo: string, tag: string, dir: string): Promise<void> {
   await runOk('gh', ['release', 'download', tag, '--repo', repo, '--dir', dir], { env: ctx.env, timeoutMs: LIMITS.programMs });
 }

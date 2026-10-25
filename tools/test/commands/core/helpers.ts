@@ -28,11 +28,12 @@ export interface FakeGh {
 
 /**
  * A fake `gh`: `releases` maps a tag to a folder whose files are its assets. Supports `release list`,
- * `release view`, `release download`, `release create`. `FAKE_GH_FAIL=<subcommand>` makes that call fail.
+ * `release view`, `release download`, `release create`, and `api repos/<repo>/compare/<a>...<b>`, which prints
+ * `compare["<a>...<b>"]`. `FAKE_GH_FAIL=<subcommand>` makes that call fail.
  */
-export function fakeGh(ws: TestWorkspace, releases: Record<string, string>): FakeGh {
+export function fakeGh(ws: TestWorkspace, releases: Record<string, string>, compare: Record<string, string> = {}): FakeGh {
   const state = join(ws.root, 'gh-state.json');
-  writeFileSync(state, JSON.stringify({ releases, calls: [], created: {} }));
+  writeFileSync(state, JSON.stringify({ releases, calls: [], created: {}, compare }));
   fakeBin(ws, 'gh', `
 const fs = require('node:fs'); const path = require('node:path');
 const statePath = ${JSON.stringify(state)};
@@ -43,6 +44,7 @@ const save = () => fs.writeFileSync(statePath, JSON.stringify(s));
 const opt = (name) => args[args.indexOf(name) + 1];
 save();
 if (process.env.FAKE_GH_FAIL === args[1]) { process.stderr.write('boom'); process.exit(4); }
+if (args[0] === 'api' && args[1].includes('/compare/')) { process.stdout.write((s.compare || {})[args[1].split('/compare/')[1]] || ''); process.exit(0); }
 if (args[0] !== 'release') process.exit(9);
 if (args[1] === 'list') { process.stdout.write(JSON.stringify(Object.keys(s.releases).map((tagName) => ({ tagName })))); process.exit(0); }
 const tag = args[2];

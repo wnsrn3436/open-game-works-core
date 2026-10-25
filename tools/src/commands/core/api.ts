@@ -1,5 +1,5 @@
 import { rmSync } from 'node:fs';
-import { readFile, rename, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
@@ -16,7 +16,7 @@ import { buildAssets } from './lib/assets.ts';
 export { compareVersions, isVersion } from './lib/version.ts';
 import { downloadRelease, releaseTags } from './lib/github.ts';
 import { verifyRelease } from './lib/manifest.ts';
-import { RELEASE_TAG, releaseTag, requireVersion, sortVersions } from './lib/version.ts';
+import { compareVersions, isVersion, RELEASE_TAG, releaseTag, requireVersion, sortVersions } from './lib/version.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 
 /** Folder of a core release: `open-game-works-core-releases/<version>/` with the release assets as files. */
@@ -325,4 +325,18 @@ export async function releasePendingProposals(ctx: Context, repo: GameRepo): Pro
     else await writeJsonAtomic(pendingProposalsPath(repo), { proposals: kept });
     return results;
   });
+}
+
+/** Released core proposals whose version is above `from` and at most `to`. */
+export async function releasedProposals(game: GameRepo, from: string, to: string): Promise<string[]> {
+  const dir = join(game.root, 'records', 'core-proposals');
+  const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.md')).sort();
+  const out: string[] = [];
+  for (const name of names) {
+    const [first, second] = (await readFile(join(dir, name), 'utf8')).split(/\r?\n/);
+    const version = /^version:\s*(\S+)\s*$/.exec(second ?? '')?.[1];
+    if (first?.trim() !== 'status: released' || version === undefined || !isVersion(version)) continue;
+    if (compareVersions(version, from) > 0 && compareVersions(version, to) <= 0) out.push(`records/core-proposals/${name}`);
+  }
+  return out;
 }

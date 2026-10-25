@@ -1,6 +1,6 @@
 import { cp, mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { expectPositionals, positional, type CommandDef, type Context } from '../../lib/command.ts';
+import { expectPositionals, flag, positional, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { readJson, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
@@ -13,7 +13,9 @@ import { lastProdTagName } from '../build/lib/names.ts';
 import { callContractTool, contractPrevious, type ContractRun } from '../contract/api.ts';
 import { generateCheckout } from '../generate/api.ts';
 import { CORE_UPGRADE_KEY } from '../loop/lib/api.ts';
-import { fetchCoreRelease, gameCoreVersion, publishedRelease, remoteReleaseVersions } from './api.ts';
+import { fetchCoreRelease, gameCoreVersion, publishedRelease, releasedProposals, remoteReleaseVersions } from './api.ts';
+import { compareSubjects } from './lib/github.ts';
+import { releaseTag } from './lib/version.ts';
 import { changedPaths } from './lib/gitx.ts';
 import { workingFiles } from './lib/impl.ts';
 import { compareVersions } from './lib/version.ts';
@@ -137,10 +139,33 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
   }
 }
 
-/** `ogw core upgrade <game>` (`tools/ogw.md` `## core upgrade`). */
+/** First lines of the commits `ogw` makes for agent records, review lists and releases: not changes of core. */
+const TOOL_COMMITS = /^(?:ogw agent |ogw: review lists |core release )/;
+
+/**
+ * `ogw core upgrade <game> --check`: what an upgrade would do, with the commit subjects of the core release repository
+ * and the released core proposals of the game between the two versions. Changes nothing.
+ */
+async function check(ctx: Context, game: GameRepo, from: string, choice: Choice): Promise<{ text: string; data: Record<string, unknown> }> {
+  const lines = [`coreVersion: ${from}`];
+  if (choice.skipped.length > 0) lines.push(`skipped: ${choice.skipped.join(', ')}`);
+  if (choice.version === null) {
+    lines.push('no version to raise to');
+    return { text: lines.join('\n'), data: { from, version: null, skipped: choice.skipped, changes: [], proposals: [] } };
+  }
+  const repo = (await ctx.settings()).coreReleaseRepository;
+  const changes = (await compareSubjects(ctx, repo, releaseTag(from), releaseTag(choice.version))).filter((c) => !TOOL_COMMITS.test(c));
+  const proposals = await releasedProposals(game, from, choice.version);
+  lines.push(`would raise to: ${choice.version}`, `changes (${repo} ${releaseTag(from)}...${releaseTag(choice.version)}):`, ...changes.map((c) => `- ${c}`));
+  lines.push(proposals.length > 0 ? `released core proposals: ${proposals.join(', ')}` : 'released core proposals: none');
+  return { text: lines.join('\n'), data: { from, version: choice.version, skipped: choice.skipped, changes, proposals } };
+}
+
+/** `ogw core upgrade <game> [--check]` (`tools/ogw.md` `## core upgrade`). */
 export const upgradeCommand: CommandDef = {
   name: ['core', 'upgrade'],
-  usage: 'ogw core upgrade <game>',
+  usage: 'ogw core upgrade <game> [--check]',
+  options: { check: { type: 'boolean' } },
   background: {
     game: (args) => args.positionals[0] ?? null,
     timeLimitMs: () => LIMITS.jobMs,
@@ -151,6 +176,7 @@ export const upgradeCommand: CommandDef = {
     const from = await gameCoreVersion(game);
     const settings = JSON.parse(await readFile(gameSettingsPath(game.root), 'utf8')) as GameSettings;
     const choice = await chooseVersion(ctx, game, from, settings);
+    if (flag(args, 'check')) return check(ctx, game, from, choice);
     const commit = choice.version === null ? null : await applyVersion(ctx, game, from, choice.version);
     const run = await openRun(game);
     if (run?.kind === 'loop') {
