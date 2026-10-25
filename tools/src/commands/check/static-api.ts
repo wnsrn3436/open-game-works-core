@@ -16,6 +16,7 @@ import * as determinism from './static/determinism.ts';
 import * as devReference from './static/dev-reference.ts';
 import * as embeddedScript from './static/embedded-script.ts';
 import * as themeOnly from './static/theme-only.ts';
+import * as sceneLinks from './static/scene-links.ts';
 import * as engineRandom from './static/engine-random.ts';
 import * as featureBoundary from './static/feature-boundary.ts';
 import * as forbiddenApi from './static/forbidden-api.ts';
@@ -49,7 +50,7 @@ export interface StaticCheckModule {
 /** The checks that `ogw check --static` runs, in report order. */
 export const STATIC_CHECKS: readonly StaticCheckModule[] = [
   coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, blockToken, testInput, framePolling,
-  hapticFormat, embeddedScript, themeOnly, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
+  hapticFormat, embeddedScript, themeOnly, sceneLinks, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
   literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference,
 ];

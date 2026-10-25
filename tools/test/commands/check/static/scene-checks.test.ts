@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as actionReference from '../../../../src/commands/check/static/action-reference.ts';
 import * as anchorReference from '../../../../src/commands/check/static/anchor-reference.ts';
+import * as sceneLinks from '../../../../src/commands/check/static/scene-links.ts';
 import * as themeOnly from '../../../../src/commands/check/static/theme-only.ts';
 import * as virtualPadLayout from '../../../../src/commands/check/static/virtual-pad-layout.ts';
 import { instanceChain } from '../../../../src/commands/check/static/lib/scene-classes.ts';
@@ -281,6 +282,43 @@ describe('theme only', () => {
       'resource/scene/lobby/main.tscn:4 | theme only: theme property; the theme of the game applies to every node',
       'resource/scene/lobby/main.tscn:7 | theme only: theme_override_font_sizes/font_size sets a style of its own; give the node a theme_type_variation of the theme',
       'resource/scene/lobby/main.tscn:8 | theme only: theme_override_styles/panel sets a style of its own; give the node a theme_type_variation of the theme',
+    ]);
+  });
+});
+
+describe('scene links', () => {
+  it('finds a path of another letter case, missing and twice-declared ids, roots, parents and connections', async () => {
+    const scene = [
+      '[gd_scene format=3]',
+      '[ext_resource type="Texture2D" path="res://resource/icon/Coin.png" id="1"]',
+      '[ext_resource type="Texture2D" path="res://resource/icon/gem.png" id="2"]',
+      '[ext_resource type="Texture2D" path="res://resource/icon/gem.png" id="2"]',
+      '[ext_resource type="PackedScene" path="res://resource/prefab/lobby/card.tscn" id="3"]',
+      '[ext_resource type="Script" path="res://core/ui_core/ui_button.gd" id="4"]',
+      '[node name="Root" type="Control"]',
+      '[node name="Icon" type="TextureRect" parent="."]',
+      'texture = ExtResource("1")',
+      'material = SubResource("m")',
+      '[node name="Card" parent="." instance=ExtResource("3")]',
+      '[node name="Inner" type="Label" parent="Card/Body"]',
+      '[node name="Lost" type="Label" parent="Gone"]',
+      '[node name="Second" type="Control"]',
+      '[connection signal="pressed" from="Icon" to="." method="on_press"]',
+      '[connection signal="pressed" from="Nope" to="." method="on_press"]',
+    ].join('\n');
+    const sc = memContext({
+      'resource/scene/lobby/main.tscn': scene,
+      'resource/icon/coin.png': 'x',
+      'resource/prefab/lobby/card.tscn': '[gd_scene format=3]\n[node name="Card" type="Control"]\n',
+    });
+    expect(lines(await sceneLinks.run(sc))).toEqual([
+      'resource/scene/lobby/main.tscn:2 | scene links: ext_resource res://resource/icon/Coin.png: the file is resource/icon/coin.png: the letter case differs',
+      'resource/scene/lobby/main.tscn:4 | scene links: ext_resource id "2" is declared twice',
+      'resource/scene/lobby/main.tscn:4 | scene links: ext_resource res://resource/icon/gem.png: no such file',
+      'resource/scene/lobby/main.tscn:8 | scene links: SubResource("m") is not declared',
+      'resource/scene/lobby/main.tscn:13 | scene links: parent "Gone" of node Lost is not a node of the scene',
+      'resource/scene/lobby/main.tscn:14 | scene links: the scene has 2 root nodes, not 1',
+      'resource/scene/lobby/main.tscn:16 | scene links: connection from "Nope" is not a node of the scene',
     ]);
   });
 });
