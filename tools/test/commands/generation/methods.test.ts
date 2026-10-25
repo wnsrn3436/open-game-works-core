@@ -237,6 +237,19 @@ describe('ogw generation check', () => {
     expect(made.stdout).toContain('total time ms: 310\n');
   });
 
+  it('counts flux2-klein for an image type only when it is the temporary method', async () => {
+    const own = [
+      { name: 'sub', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'failed' }] },
+      { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X' },
+    ];
+    const ws = makeWorkspace({ resourceGeneration: own, imageMethod: 'sub' });
+    makeGame(ws, 'g');
+    const run = await ogw(ws, ['generation', 'check', 'g', '--types', 'image']);
+    expect(run).toMatchObject({ code: 0 });
+    // an unmeasured flux2-klein is not usable, so ogw generation methods gives it no image key
+    expect(run.stdout).toContain('| image | missing | - | - | - | - |\n');
+  });
+
   it('writes a dash total when no ok type has a count', async () => {
     const ws = makeWorkspace({ resourceGeneration: settingsMethods });
     const root = makeGame(ws, 'g');

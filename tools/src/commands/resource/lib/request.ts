@@ -27,6 +27,11 @@ export interface RequestResult {
   leftOut: string[];
 }
 
+/** The line `ogw resource request --pending` and `ogw loop dispatch` print for a key `--pending` left out. */
+export function leftOutLine(key: string): string {
+  return `left out ${key}: the long side of a nine_slice size is under ${String(MIN_NINE_SLICE_SIDE)}`;
+}
+
 /** Where the run's request files are: a folder relative to the checkout and a file name prefix. */
 export function requestPlace(run: RunState): { dir: string; prefix: string } {
   if (run.kind === 'loop') return { dir: `records/loops/${run.name}/resource-requests`, prefix: '' };

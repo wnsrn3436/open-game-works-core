@@ -387,6 +387,10 @@ describe('ogw resource finalize', () => {
     const sheetFile = join(f.game, 'resource/sprite_sheet/coin.png');
     const made = readFileSync(sheetFile);
     const madeSha = rowOf(f.game, 'sprite_sheet/coin').sha256;
+    // the file is the packed sheet scaled to the 8x8 cells, not the placeholder of a sync that ran inside finalize
+    const madePixels = await pixels(sheetFile);
+    const madeAt = (x: number, y: number): number[] => [...madePixels.data.subarray((y * 16 + x) * 4, (y * 16 + x) * 4 + 4)];
+    expect([madePixels.width, madePixels.height, madeAt(4, 4), madeAt(11, 4), madeAt(4, 11), madeAt(12, 12)[3]]).toEqual([16, 16, [255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], 0]);
     commitAll(f.game, 'temporary');
     await sync(f);
     expect(readFileSync(sheetFile).equals(made)).toBe(true);

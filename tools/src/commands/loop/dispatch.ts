@@ -8,7 +8,7 @@ import type { JobRecord } from '../../lib/jobs.ts';
 import type { RunState } from '../../lib/runstate.ts';
 import { startAgentJob } from '../agent/api.ts';
 import { placeholderFailures } from '../check/api.ts';
-import { isRequestFileName, requestPendingResources, requestPlace } from '../resource/api.ts';
+import { isRequestFileName, leftOutLine, requestPendingResources, requestPlace } from '../resource/api.ts';
 import { agentJobsOf, failWhenContentRunning, inputOf, runJobs } from './lib/jobs.ts';
 import { abs, loopData, openTarget, runRel } from './lib/run.ts';
 
@@ -93,12 +93,10 @@ export const loopDispatch: CommandDef = {
     expectPositionals(args, 1, 1, USAGE);
     const { game, run } = await openTarget(ctx, positional(args, 0, 'game'));
     failWhenContentRunning(await runJobs(ctx, game, run));
-    await requestPendingResources(ctx, game);
+    const { leftOut } = await requestPendingResources(ctx, game);
     const jobs = await runJobs(ctx, game, run);
     const started = [...(await startResources(ctx, game, run, jobs)), ...(await startTranslations(ctx, game, run, jobs))];
-    return {
-      text: started.length > 0 ? started.map((s) => `${s.job} ${s.role} ${s.input}`).join('\n') : 'nothing to dispatch',
-      data: { started },
-    };
+    const lines = [...started.map((s) => `${s.job} ${s.role} ${s.input}`), ...leftOut.map(leftOutLine)];
+    return { text: lines.length > 0 ? lines.join('\n') : 'nothing to dispatch', data: { started, leftOut } };
   },
 };

@@ -89,6 +89,20 @@ describe('harness settings host values', () => {
     });
   });
 
+  it('refuses removing the method that another host entry names as its imageMethod', async () => {
+    writeHosts({ [OTHER]: { ...OTHER_ENTRY, imageMethod: 'sprite-gen-codex' } });
+    const before = readFileSync(path, 'utf8');
+    const methods = (JSON.parse(before) as { resourceGeneration: { name: string }[] }).resourceGeneration;
+    const without = JSON.stringify(methods.filter((m) => m.name !== 'sprite-gen-codex'));
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without)).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: `hosts.${OTHER}.imageMethod: sprite-gen-codex is not the name of a resourceGeneration method whose resourceTypes has image\n`,
+    });
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    expect(await settingsCmd('set', 'harness', `hosts.${OTHER}.imageMethod`, '"sprite-gen-codx"')).toMatchObject({ code: 1, stderr: `hosts.${OTHER}.imageMethod: sprite-gen-codx is not the name of a resourceGeneration method whose resourceTypes has image\n` });
+  });
+
   it('gives commands the values of this host', async () => {
     const none = await loadHarnessSettings(ws.env);
     expect(none.maxConcurrentInstances).toBeNull();

@@ -9,7 +9,7 @@ import { exists } from '../../lib/fsx.ts';
 import { providerCliChecks } from '../env/lib/hostcheck.ts';
 import { LIST_PATH, readList } from '../resource/lib/list.ts';
 import { emptySpec } from '../resource/lib/spec.ts';
-import { gameImageMethod, IMAGE_METHOD, IMAGE_TYPES, methodChoices } from './lib/select.ts';
+import { gameImageMethod, IMAGE_METHOD, IMAGE_TYPES, methodChoices, takesTemporary } from './lib/select.ts';
 
 export type TypeStatus = 'ok' | 'unmeasured' | 'missing';
 
@@ -52,9 +52,13 @@ export function typeRow(type: string, methods: readonly GenerationMethod[], coun
   return { type, status, methods: withOk, count: status === 'ok' ? count : null, timeMs, use: [] };
 }
 
-/** The methods that can make a key of an image type in a game (`production.md` `## method`): its image method and the temporary method. */
-export function imageTypeMakers(imageMethod: string): string[] {
-  return [...new Set([imageMethod, IMAGE_METHOD])];
+/**
+ * The methods that can make a key of an image type in a game (`production.md` `## method`): its image method, and
+ * `flux2-klein` when it is the temporary method of the type.
+ */
+export function imageTypeMakers(type: string, imageMethod: string, methods: readonly GenerationMethod[]): string[] {
+  const image = methods.find((m) => m.name === IMAGE_METHOD);
+  return image && takesTemporary(type, imageMethod, image) ? [imageMethod, IMAGE_METHOD] : [imageMethod];
 }
 
 function methodCell(m: { name: string; step: MeasuredStep }): string {
@@ -127,7 +131,7 @@ export const checkCommand: CommandDef = {
     const settings = await ctx.settings();
     const list = exists(join(game.root, LIST_PATH)) ? await readList(game.root) : [];
     const imageMethod = gameImageMethod(settings, list);
-    const rows = types.map((t) => typeRow(t, settings.resourceGeneration, counts.get(t) ?? null, IMAGE_TYPES.includes(t) ? imageTypeMakers(imageMethod) : undefined));
+    const rows = types.map((t) => typeRow(t, settings.resourceGeneration, counts.get(t) ?? null, IMAGE_TYPES.includes(t) ? imageTypeMakers(t, imageMethod, settings.resourceGeneration) : undefined));
     await addUse(ctx, settings, imageMethod, rows);
     const path = join(game.root, 'records', 'setup', 'host-check.md');
     const markdown = hostCheckMarkdown(rows);

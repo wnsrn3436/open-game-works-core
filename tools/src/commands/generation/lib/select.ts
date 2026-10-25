@@ -118,7 +118,7 @@ export async function methodChoices(ctx: Context, settings: HarnessSettings, typ
 }
 
 /** Whether `flux2-klein` is the temporary method of the type: usable, and an image type it lists that another method makes, or `sprite_animation`. */
-function takesTemporary(type: string, imageMethod: string, image: GenerationMethod): boolean {
+export function takesTemporary(type: string, imageMethod: string, image: GenerationMethod): boolean {
   if (!usable(image)) return false;
   if (type === 'sprite_animation') return true;
   return IMAGE_TYPES.includes(type) && imageMethod !== IMAGE_METHOD && image.resourceTypes.includes(type);

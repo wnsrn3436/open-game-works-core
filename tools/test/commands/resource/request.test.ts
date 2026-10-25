@@ -91,6 +91,8 @@ describe('ogw resource request', () => {
       code: 0,
       stdout: 'no pending resource\nleft out nine_slice/small: the long side of a nine_slice size is under 256\nleft out nine_slice/thin: the long side of a nine_slice size is under 256\n',
     });
+    const ctx = createContext({ cwd: f.ws.root, env: f.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    expect(await requestPendingResources(ctx, repo(f))).toEqual({ path: null, leftOut: ['nine_slice/small', 'nine_slice/thin'] });
     const named = await ogw(f.ws, ['resource', 'request', 'g', 'nine_slice/small', 'nine_slice/thin', 'nine_slice/edge']);
     expect(named).toMatchObject({
       code: 1,
@@ -168,10 +170,10 @@ describe('ogw resource request', () => {
     });
     await openRun(f, { name: 'build-stg-1.2.0', kind: 'build', env: 'STG', version: '1.2.0' });
     const ctx = createContext({ cwd: f.ws.root, env: f.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    const path = await requestPendingResources(ctx, repo(f));
+    const { path } = await requestPendingResources(ctx, repo(f));
     expect(path).toMatch(/^records\/hardening\/stg-1\.2\.0-resource-[0-9]+\.md$/);
     expect(requestFileKeys(readFileSync(join(f.game, path as string), 'utf8'))).toEqual(['icon/a', 'icon/d']);
-    expect(await requestPendingResources(ctx, repo(f))).toBeNull();
+    expect(await requestPendingResources(ctx, repo(f))).toEqual({ path: null, leftOut: [] });
   });
 
   it('does not reuse a request file name', async () => {

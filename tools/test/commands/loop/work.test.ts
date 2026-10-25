@@ -36,7 +36,7 @@ beforeEach(() => {
   for (const m of Object.values(mocks)) m.mockReset();
   mocks.startAgentJob.mockImplementation(() => Promise.resolve(`new${String(++started)}`));
   mocks.placeholderFailures.mockResolvedValue([]);
-  mocks.requestPendingResources.mockResolvedValue(null);
+  mocks.requestPendingResources.mockResolvedValue({ path: null, leftOut: [] });
   syncDeps.pollMs = 0;
 });
 
@@ -266,11 +266,24 @@ describe('ogw loop dispatch', () => {
     mocks.requestPendingResources.mockImplementation(() => {
       write(g.root, rel, '## keys\n\nicon/a\n');
       commit(g.root);
-      return Promise.resolve(rel);
+      return Promise.resolve({ path: rel, leftOut: [] });
     });
     const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
     expect(out).toMatchObject({ code: 0, stdout: `new1 resource ${join(g.root, rel)}\n` });
     expect(mocks.startAgentJob).toHaveBeenCalledWith(expect.anything(), { role: 'resource', game: 'g', input: join(g.root, rel) });
+  });
+
+  it('prints and returns the nine_slice keys the pending resource request left out', async () => {
+    const g = setupGame();
+    await openLoopRun(g);
+    mocks.requestPendingResources.mockResolvedValue({ path: null, leftOut: ['nine_slice/small', 'nine_slice/thin'] });
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    expect(out).toMatchObject({
+      code: 0,
+      stdout: 'left out nine_slice/small: the long side of a nine_slice size is under 256\nleft out nine_slice/thin: the long side of a nine_slice size is under 256\n',
+    });
+    const json = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
+    expect(JSON.parse(json.stdout)).toEqual({ started: [], leftOut: ['nine_slice/small', 'nine_slice/thin'] });
   });
 
   it('fails for a build run without an environment', async () => {
