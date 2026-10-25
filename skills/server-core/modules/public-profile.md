@@ -69,7 +69,7 @@ core `rpc` response field
 
 - `public_profile_find_counter` is registered with snapshot flag `false`
 - `count_find_attempt`: in its own `storage.run_user_transaction`, sets that user's `public_profile_find_counter` row to the current minute window of `server-time` (`count` 0 when the row is of another window, `expires_at` the window end), increments `count` by 1 and commits, whatever the find gives later. When the incremented value exceeds `public-profile.findPerMinute`, the result is `RATE_LIMITED`. When `run_user_transaction` is `WITHDRAWN`, the result is `UNAUTHORIZED`; when it is `FAILED`, `INTERNAL`; and the count does not increase. `routing` calls it before the request transaction (request prepare)
-- `FindUserByPublicCode`: finds the user with `storage.find_user_by_public_code`; when it is not a public code input, `INVALID_REQUEST`; when no user is found or `is_active_user` of that user is `false`, `USER_NOT_FOUND`. Otherwise the response is the profile of that user, built as `GetPublicProfiles` builds it. A failed find also counts, so codes are not found by trying many
+- `FindUserByPublicCode`: when `storage.is_public_code_input` of `public_code` is `false`, `INVALID_REQUEST`; otherwise finds the user with `storage.find_user_by_public_code`; when no user is found or `is_active_user` of that user is `false`, `USER_NOT_FOUND`. Otherwise the response is the profile of that user, built as `GetPublicProfiles` builds it. A failed find also counts, so codes are not found by trying many
 
 ### last active
 
