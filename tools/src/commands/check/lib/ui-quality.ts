@@ -117,6 +117,9 @@ function luminance(r: number, g: number, b: number): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
+/** The shortest side of a panel body, in pixels of a window 1080 high: a thinner element is a bar, not a panel. */
+const PANEL_MIN_SIDE = 64;
+
 /** Integer pixel bounds of a rect clipped to the image: [x0, y0, x1, y1), or null when nothing is left. */
 function bounds(rect: Rect, image: Rgba): [number, number, number, number] | null {
   const x0 = Math.max(0, Math.round(rect.x));
@@ -130,7 +133,10 @@ function inside(rect: Rect, width: number, height: number): boolean {
   return rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= width && rect.y + rect.h <= height;
 }
 
-/** Contrast ratio of the 2nd and 98th percentile relative luminance of the pixels in a rect. */
+/**
+ * Contrast ratio between the background of a text rect (the median relative luminance of its pixels) and its text
+ * (the luminance whose distance from the median is at the 99.9th percentile of the distances of its pixels).
+ */
 export function rectContrast(image: Rgba, rect: Rect): number | null {
   const b = bounds(rect, image);
   if (b === null) return null;
@@ -142,14 +148,30 @@ export function rectContrast(image: Rgba, rect: Rect): number | null {
     }
   }
   values.sort((p, q) => p - q);
-  const at = (q: number): number => values[Math.min(values.length - 1, Math.floor(q * values.length))] as number;
-  return (at(0.98) + 0.05) / (at(0.02) + 0.05);
+  const background = values[Math.floor(values.length / 2)] as number;
+  const byDistance = [...values].sort((p, q) => Math.abs(p - background) - Math.abs(q - background));
+  const text = byDistance[Math.min(byDistance.length - 1, Math.floor(0.999 * byDistance.length))] as number;
+  return (Math.max(background, text) + 0.05) / (Math.min(background, text) + 0.05);
 }
 
-/** Panel bodies: elements of a popup, panel or system popup that hold no text, take no input and are not window-sized, with no such ancestor. */
-export function panelBodies(elements: readonly UiElement[], sceneKey: string, windowArea: number): UiElement[] {
+/**
+ * Panel bodies: elements of a popup, panel or system popup that hold no text, take no input, are not window-sized, are
+ * not thinner than `PANEL_MIN_SIDE` (a bar), and have a descendant element, with no such ancestor.
+ */
+export function panelBodies(elements: readonly UiElement[], sceneKey: string, window: { width: number; height: number }): UiElement[] {
+  const windowArea = window.width * window.height;
+  const minSide = (PANEL_MIN_SIDE * window.height) / 1080;
   const candidates = elements.filter(
-    (e) => e.owner !== sceneKey && e.text === '' && !e.button && !e.textInput && e.rect.w > 0 && e.rect.h > 0 && e.rect.w * e.rect.h <= 0.9 * windowArea,
+    (e) =>
+      e.owner !== sceneKey &&
+      e.text === '' &&
+      !e.button &&
+      !e.textInput &&
+      e.rect.w > 0 &&
+      e.rect.h > 0 &&
+      e.rect.w * e.rect.h <= 0.9 * windowArea &&
+      Math.min(e.rect.w, e.rect.h) >= minSide &&
+      elements.some((d) => isAncestor(e.path, d.path)),
   );
   return candidates.filter((e) => !candidates.some((o) => o !== e && o.owner === e.owner && isAncestor(o.path, e.path)));
 }
@@ -214,7 +236,7 @@ export function presentationProblems(
     const contrast = rectContrast(image, e.rect);
     if (contrast !== null && contrast < limits.minContrast) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1` });
   }
-  for (const body of panelBodies(elements, sceneKey, image.width * image.height)) {
+  for (const body of panelBodies(elements, sceneKey, image)) {
     const area = bounds(body.rect, image);
     if (area === null) continue;
     const textRects = texts.map((e) => e.rect);

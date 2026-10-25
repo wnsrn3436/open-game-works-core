@@ -81,7 +81,16 @@ describe('UI quality presentation conditions', () => {
       el('root/frame/ok', { owner: 'shop', rect: [20, 50, 20, 10], button: true }),
       el('hud/plate', { owner: 'run', rect: [0, 0, 10, 10] }),
     ]);
-    expect(panelBodies(list, 'run', 100 * 100).map((e) => e.path)).toEqual(['root/frame']);
+    expect(panelBodies(list, 'run', { width: 100, height: 100 }).map((e) => e.path)).toEqual(['root/frame']);
+    // a bar thinner than 64 px at 1080 high and a leaf are not panel bodies
+    const bars = elements([
+      el('hud/xp', { owner: 'hud', rect: [0, 0, 800, 20] }),
+      el('hud/xp/fill', { owner: 'hud', rect: [0, 0, 10, 20] }),
+      el('hud/plate', { owner: 'hud', rect: [0, 100, 300, 80] }),
+      el('hud/plate/label', { owner: 'hud', rect: [0, 100, 50, 20], text: 'x' }),
+      el('hud/leaf', { owner: 'hud', rect: [0, 300, 300, 300] }),
+    ]);
+    expect(panelBodies(bars, 'run', { width: 1920, height: 1080 }).map((e) => e.path)).toEqual(['hud/plate']);
   });
 
   it('finds a flat panel and an empty panel, and passes a textured, filled one', () => {
