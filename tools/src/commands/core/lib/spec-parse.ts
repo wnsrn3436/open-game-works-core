@@ -99,7 +99,7 @@ export interface ParsedSpec {
   invariants: Record<string, string>[];
   reserved: (ReservedName & { n: number })[];
   formatArguments: (FormatArgument & { n: number })[];
-  settings: SettingRow[];
+  settings: (SettingRow & { n: number })[];
   settingsConstraints: (SettingsConstraint & { n: number })[];
   collectedData: CollectedDataRow[];
   adapters: string[];
@@ -505,7 +505,7 @@ class SpecReader {
     for (const row of table.rows) {
       const parsed = settingRow(row.cells, this.moduleNames);
       if (typeof parsed === 'string') this.issue(row.n, parsed);
-      else this.spec.settings.push(parsed);
+      else this.spec.settings.push({ ...parsed, n: row.n });
     }
   }
 

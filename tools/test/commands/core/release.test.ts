@@ -76,7 +76,7 @@ async function setup(): Promise<{ ws: TestWorkspace; env: NodeJS.ProcessEnv; gh:
   writeImpl(ws.coreImpl);
   await recordAllPass(ws.coreImpl);
   const gh = fakeGh(ws, { 'v1.1.0': makeReleaseDir(join(ws.root, 'r110'), '1.1.0', { 'a.json': '1' }) });
-  vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), errors: [] });
+  vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), errors: [] });
   return { ws, gh, env: { ...gh.env, ...remoteEnv(ws) } };
 }
 
@@ -125,7 +125,7 @@ describe('ogw core release', () => {
     modules.set('UICore', { changed: true });
     modules.set('NewCore', {});
     modules.delete('routing');
-    vi.mocked(buildCoreSpec).mockResolvedValue({ modules, errors: ['skills/x.md:3: bad dependency line'] });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules, settingTypes: new Map(), errors: ['skills/x.md:3: bad dependency line'] });
     vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'fix'], ['data-tool', null]]));
     vi.mocked(runCodeCheck).mockResolvedValue([{ name: 'lint', result: 'fail', failures: ['a.gd:1 x', 'b.gd:2 y'] }, { name: 'secret', result: 'fail', failures: [] }]);
     vi.mocked(baseProtoBreaks).mockResolvedValue(['CoreError.X removed']);
@@ -158,7 +158,7 @@ describe('ogw core release', () => {
     expect(gh.created()).toEqual({});
     expect(clearReviews).not.toHaveBeenCalled();
 
-    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), errors: [] });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), errors: [] });
     const major = await ogw(ws, ['core', 'release', '2.0.0', '--json'], { env });
     expect((JSON.parse(major.stdout) as { data: { violations: string[] } }).data.violations.some((v) => v.startsWith('base proto'))).toBe(false);
   });

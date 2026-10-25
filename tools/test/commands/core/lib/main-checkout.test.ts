@@ -66,10 +66,10 @@ describe('main checkout lock', () => {
     expect(await withCoreMain(ws.coreImpl, ws.env, () => Promise.resolve('merged'), { readers: true })).toBe('merged');
   });
 
-  it('names the generated files: core-spec/ and the committed generation targets of the core test data', () => {
-    for (const path of ['core-spec/a.json', 'server/generated/data/x.ts', 'server/dev/generated/data/y.ts', 'client/godot/generated/data/z.gd', 'client/godot/dev/generated/data/w.gd']) {
+  it('names the generated files: core-spec/, the settings type table and the committed generation targets of the core test data', () => {
+    for (const path of ['core-spec/a.json', 'server/core/testing/dev/setting_types.ts', 'server/generated/data/x.ts', 'server/dev/generated/data/y.ts', 'client/godot/generated/data/z.gd', 'client/godot/dev/generated/data/w.gd']) {
       expect(isGeneratedPath(path)).toBe(true);
     }
-    for (const path of ['server/core/a.ts', 'server/build/data/x.bin', 'client/godot/core/a.gd', 'core-spec.json', 'README']) expect(isGeneratedPath(path)).toBe(false);
+    for (const path of ['server/core/a.ts', 'server/core/testing/dev/index.ts', 'server/build/data/x.bin', 'client/godot/core/a.gd', 'core-spec.json', 'README']) expect(isGeneratedPath(path)).toBe(false);
   });
 });

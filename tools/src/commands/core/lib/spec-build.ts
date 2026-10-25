@@ -2,12 +2,15 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
+import { byteCompare } from '../../../lib/order.ts';
 import { mdLines, section, tableAt, type MdLine } from './spec-md.ts';
 import { readModuleEntries, type ModuleEntry } from './spec-modules.ts';
 import { readSpec, type CollectedDataVocabulary, type ParsedSpec } from './spec-parse.ts';
 
 export interface CoreSpecResult {
   modules: Map<string, unknown>;
+  /** The settings type table: the `type` of every distinct settings `key` of all modules, in byte order of `key`. */
+  settingTypes: Map<string, string>;
   errors: string[];
   entries: ModuleEntry[];
   specs: ParsedSpec[];
@@ -56,7 +59,7 @@ function moduleObject(spec: ParsedSpec, ownTables: ReadonlySet<string>): Record<
     dependencies: unique(deps.filter((d) => d.label !== 'optional' && !dev.has(d.name)).map((d) => d.name)),
     optionalDependencies: unique(deps.filter((d) => d.label === 'optional' && !d.devOnly).map((d) => d.name)),
     devDependencies: unique(deps.filter((d) => d.devOnly).map((d) => d.name)),
-    settings: spec.settings,
+    settings: spec.settings.map(({ key, type, source, owner }) => ({ key, type, source, owner })),
     settingsConstraints: spec.settingsConstraints.map(({ left, factor, right }) => ({ left, factor, right })),
     tables: spec.tables.map((t) => ({ name: t.name, columns: t.columns })),
     usedTables: unique(spec.uses.map((u) => u.table).filter((t) => !ownTables.has(t))),
@@ -76,7 +79,10 @@ interface Issue {
   reason: string;
 }
 
-/** Checks that need every spec: tables named by used table lines and `→`, format argument texts, duplicate constraints. */
+/**
+ * Checks that need every spec: tables named by used table lines and `→`, format argument texts, duplicate constraints,
+ * one settings `key` with two types.
+ */
 function crossIssues(specs: readonly ParsedSpec[]): Issue[] {
   const columns = new Map<string, Set<string>>();
   for (const spec of specs) {
@@ -87,6 +93,7 @@ function crossIssues(specs: readonly ParsedSpec[]): Issue[] {
   );
   const issues: Issue[] = [];
   const constraints = new Map<string, string>();
+  const settingTypes = new Map<string, { type: string; at: string }>();
   for (const spec of specs) {
     for (const use of spec.uses) {
       if (use.checked && !columns.has(use.table)) {
@@ -103,6 +110,13 @@ function crossIssues(specs: readonly ParsedSpec[]): Issue[] {
       const first = constraints.get(key);
       if (first === undefined) constraints.set(key, `${spec.entry.specRel}:${String(c.n)}`);
       else issues.push({ spec, n: c.n, reason: `the same settings constraint is also in ${first}` });
+    }
+    for (const row of spec.settings) {
+      const first = settingTypes.get(row.key);
+      if (first === undefined) settingTypes.set(row.key, { type: row.type, at: `${spec.entry.specRel}:${String(row.n)}` });
+      else if (first.type !== row.type) {
+        issues.push({ spec, n: row.n, reason: `settings key \`${row.key}\` has type "${row.type}", and type "${first.type}" in ${first.at}` });
+      }
     }
   }
   return issues;
@@ -133,5 +147,8 @@ export async function buildFromHarness(harness: string): Promise<CoreSpecResult>
   const errors = all.map((i) => `${i.spec.entry.specRel}:${String(i.n)}: ${i.reason}`);
   const modules = new Map<string, unknown>();
   for (const spec of specs) modules.set(spec.entry.name, moduleObject(spec, new Set(spec.tables.map((t) => t.name))));
-  return { modules, errors, entries, specs };
+  const settingTypes = new Map<string, string>();
+  const rows = specs.flatMap((spec) => spec.settings).sort((a, b) => byteCompare(a.key, b.key));
+  for (const row of rows) if (!settingTypes.has(row.key)) settingTypes.set(row.key, row.type);
+  return { modules, settingTypes, errors, entries, specs };
 }

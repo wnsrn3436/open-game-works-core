@@ -22,13 +22,16 @@ export async function withCoreMain<T>(coreImpl: string, env: NodeJS.ProcessEnv, 
   return options.readers === true ? withWriter(lock, fn) : withWriterLock(lock, fn);
 }
 
+/** The settings type table of `testing`, a generated file (`core` command.md `## core spec file`). */
+export const SETTING_TYPES_FILE = 'server/core/testing/dev/setting_types.ts';
+
 /**
- * Whether a checkout path is a generated file: `core-spec/`, or a committed generation target of the core test data
- * build (`data` SKILL.md `## data tool` and tool.md: `server/` as is, the engine project `client/<engine>/` for `client/`),
- * and the core test data files its matching run changes.
+ * Whether a checkout path is a generated file: `core-spec/`, the settings type table of `testing`, a committed generation
+ * target of the core test data build (`data` SKILL.md `## data tool` and tool.md: `server/` as is, the engine project
+ * `client/<engine>/` for `client/`), and the core test data files its matching run changes.
  */
 export function isGeneratedPath(path: string): boolean {
-  return path.startsWith('core-spec/') || path.startsWith('test-data/data/') || /^server\/(dev\/)?generated\//.test(path) || /^client\/[^/]+\/(dev\/)?generated\//.test(path) || /^client\/[^/]+\/project\.godot$/.test(path);
+  return path.startsWith('core-spec/') || path === SETTING_TYPES_FILE || path.startsWith('test-data/data/') || /^server\/(dev\/)?generated\//.test(path) || /^client\/[^/]+\/(dev\/)?generated\//.test(path) || /^client\/[^/]+\/project\.godot$/.test(path);
 }
 
 /** Generated files whose working tree differs from HEAD: changed, deleted or untracked (both paths of a rename). */

@@ -176,7 +176,7 @@ function setup(): Setup {
 }
 
 beforeEach(() => {
-  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), errors: [], dir: '', written: [], deleted: [] });
+  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
   vi.mocked(baseProtoErrors).mockReset().mockResolvedValue([]);
   vi.mocked(serverModuleTest).mockReset();
   vi.mocked(runToolTest).mockReset();
@@ -621,9 +621,9 @@ describe('ogw core test passing results of the same key', () => {
 describe('ogw core test preflight', () => {
   it('stops before the tests when a step fails', async () => {
     const { ws, env, log } = setup();
-    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), errors: ['skills/a.md:1: bad'], dir: '', written: [], deleted: [] });
+    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: ['skills/a.md:1: bad'], dir: '', written: [], deleted: [], settingTypesWritten: false });
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stderr).toContain('ogw core spec failed; no test ran:\nskills/a.md:1: bad');
-    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), errors: [], dir: '', written: [], deleted: [] });
+    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
     vi.mocked(baseProtoErrors).mockResolvedValue(['x.md:3: CoreError Y differs']);
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stderr).toContain('base proto check failed; no test ran:\nx.md:3: CoreError Y differs');
     vi.mocked(baseProtoErrors).mockResolvedValue([]);
@@ -796,7 +796,7 @@ describe('ogw core test server and tools', () => {
     vi.mocked(writeCoreSpec).mockImplementation(() => {
       const file = join(ws.coreImpl, 'core-spec', 'routing.json');
       writeFileSync(file, `${JSON.stringify({ ...(JSON.parse(readFileSync(file, 'utf8')) as object), regenerated: true })}\n`);
-      return Promise.resolve({ modules: new Map(), errors: [], dir: '', written: [], deleted: [] });
+      return Promise.resolve({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
     });
     vi.mocked(serverModuleTest).mockResolvedValue({ tests: 1, passed: 1, failures: [] });
     const ran = await ogw(ws, ['core', 'test', 'server'], { env });
