@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { startTestHost } from '../../../../src/commands/check/api.ts';
-import { addOutcomes, appFolder, consoleMessages, gutArgs, gutPass, judgeRun, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
+import { addOutcomes, appFolder, consoleMessages, gutArgs, gutPass, judgeRun, WEB_LOADING_PAGES, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import { chmodSync } from 'node:fs';
 import { runModulePool } from '../../../../src/commands/core/lib/ready-queue.ts';
@@ -122,6 +122,46 @@ setTimeout(() => undefined, 60000);
     expect(ran.failures.filter((f) => f.includes('did not start'))).toEqual([]);
     expect(ran.tests).toBe(1);
     expect(readFileSync(join(dir, 'launches-start'), 'utf8')).toBe('x');
+  }, 60_000);
+
+  it('loads at most WEB_LOADING_PAGES pages at once and runs the started pages together', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
+    const exportDir = join(dir, 'export');
+    mkdirSync(exportDir);
+    writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
+    const log = join(dir, 'log');
+    // loads for 300 ms, sends PUT /started, then runs its tests for 1000 ms
+    const chromium = join(dir, 'chromium');
+    writeFileSync(chromium, `#!${process.execPath}
+const fs = require('node:fs');
+const page = new URL(process.argv[process.argv.length - 1]);
+const host = page.searchParams.get('ogw_test_host');
+const runId = page.searchParams.get('ogw_run_id');
+const put = (path, body) => fetch(host + path, { method: 'PUT', body: JSON.stringify(body) });
+fs.appendFileSync(${JSON.stringify(log)}, 'open ' + Date.now() + '\\n');
+setTimeout(async () => {
+  fs.appendFileSync(${JSON.stringify(log)}, 'started ' + Date.now() + '\\n');
+  await put('/started', { run_id: runId });
+  setTimeout(() => put('/result', { results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }), 1000);
+}, 300);
+setTimeout(() => undefined, 60000);
+`);
+    chmodSync(chromium, 0o755);
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const runs = Array.from({ length: WEB_LOADING_PAGES + 3 }, () =>
+      webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 30_000 }),
+    );
+    const outcomes = await Promise.all(runs);
+    expect(outcomes.every((o) => o.tests === 1)).toBe(true);
+    const events = readFileSync(log, 'utf8').trim().split('\n').map((l) => { const [kind, at] = l.split(' '); return { kind, at: Number(at) }; }).sort((a, b) => a.at - b.at);
+    let loadingNow = 0;
+    let most = 0;
+    for (const e of events) {
+      loadingNow += e.kind === 'open' ? 1 : -1;
+      most = Math.max(most, loadingNow);
+    }
+    expect(most).toBeLessThanOrEqual(WEB_LOADING_PAGES);
+    expect(most).toBeGreaterThan(1);
   }, 60_000);
 
   it('kills a native run that sends no PUT /started within the start limit', async () => {

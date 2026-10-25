@@ -15,6 +15,7 @@ import { requireEngine } from '../../env/api.ts';
 import { SCREEN_LOCKED_SKIP } from './test-records.ts';
 import { hostPlatform, moduleFolder, type EngineJson } from './impl.ts';
 import { startTestHost, type TestHost } from '../../check/api.ts';
+import { Slots } from '../../check/lib/instances.ts';
 import { gutPackage, installPackage, isCorePlugin, pluginsFor } from './engine-packages.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { renderCoreProjectGodot } from '../../generate/lib/godot-project.ts';
@@ -485,6 +486,14 @@ export interface WebOptions {
 export const WEB_LOAD_ATTEMPTS = 2;
 
 /**
+ * How many browser runs of this process may be loading their page at once: from opening the page to its `PUT /started`.
+ * Loading puts the whole export (tens of MB) into the cache of the service worker, and many pages that load at once
+ * failed there with `network error`; the tests of started pages run together without this limit.
+ */
+export const WEB_LOADING_PAGES = 4;
+const webLoading = new Slots(WEB_LOADING_PAGES);
+
+/**
  * Browser run of one module in headless Chromium against the test host's `/app/index.html`. A page whose load the
  * browser cut off sends no result, so it is ended at once and opened again, up to `WEB_LOAD_ATTEMPTS` times.
  */
@@ -509,6 +518,14 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
   // a test's `POST /input` goes into the page through DevTools (`unit-test-core` `### test host`)
   const input = pageInput(profile, `${host.url}/app/index.html`, () => browserEnded);
   host.onInput(input.put);
+  // only a core that sends `PUT /started` tells when its page has loaded
+  let loading = options.startLimitMs !== null;
+  const loaded = (): void => {
+    if (!loading) return;
+    loading = false;
+    webLoading.release();
+  };
+  if (loading) await webLoading.acquire();
   try {
     await appFolder(options.exportDir, appDir, args);
     browser = spawnTracked(options.chromium, [
@@ -526,7 +543,10 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
     const opened = Date.now();
     const startLimit = options.startLimitMs;
     const notStarted = (): boolean => startLimit !== null && host.started() === null && Date.now() - opened >= startLimit;
-    const json = await waitForResult(host, options.timeoutMs, () => host.appCutOff().length > 0 || notStarted());
+    const json = await waitForResult(host, options.timeoutMs, () => {
+      if (host.started() !== null) loaded();
+      return host.appCutOff().length > 0 || notStarted();
+    });
     const cutOff = json === null && (host.appCutOff().length > 0 || notStarted());
     // the post-run hook's `release` prints after the result; the run sends `PUT /released` and prints its last line when
     // it has ended (`client-core` Godot `## test`). Without that signal the run reads on at most CONSOLE_DRAIN_MS.
@@ -546,6 +566,7 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
     }
     return { outcome, cutOff };
   } finally {
+    loaded();
     input.close();
     if (browser) killTree(browser, 'SIGKILL');
     await host.close();
