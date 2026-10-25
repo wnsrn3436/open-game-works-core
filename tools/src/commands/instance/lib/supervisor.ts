@@ -40,6 +40,7 @@ import {
   type InstanceRecord,
 } from './records.ts';
 import { FixtureError, getState, runStep, waitBootDone, type Requester } from './steps.ts';
+import { imageExtension } from './captures.ts';
 
 /** Time limit of everything `instance start` does: server, populate, clients, boot, fixture. */
 export const START_LIMIT_MS = LIMITS.programMs;
@@ -250,9 +251,9 @@ export class Supervisor {
     let onFrame: FrameHandler | null = null;
     if (framesDir !== null) {
       mkdirSync(framesDir, { recursive: true });
-      onFrame = (n, png) => {
-        const path = join(framesDir, `frame-${String(n).padStart(5, '0')}.png`);
-        writeFileSync(path, png);
+      onFrame = (n, image) => {
+        const path = join(framesDir, `frame-${String(n).padStart(5, '0')}${imageExtension(image)}`);
+        writeFileSync(path, image);
         framePaths.push(path);
       };
     }

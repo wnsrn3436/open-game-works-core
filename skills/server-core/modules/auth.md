@@ -334,8 +334,8 @@ none
 | social adapter time limit exceeded, communication failure | `EXTERNAL_SERVICE_FAILED` | `EXTERNAL_SERVICE_FAILED` | `error` log |
 | rejection, failure, time limit exceeded of `revoke` after `Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age | none. The result stays as it is | none | `error` log |
 | unknown login token | `UNAUTHORIZED` | `UNAUTHORIZED` | `security` log. The raw token is not kept |
-| `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin` is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
-| `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin`, or the ban login transaction, is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
+| `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin`, or the ban login transaction, is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
+| the game transaction of `storage.create_user`, `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin`, or the ban login transaction, is `FAILED` | `INTERNAL`. A user that an earlier game transaction of the same request made stays | `INTERNAL` | `error` log |
 | no login token row when it is read again inside the transaction of `AutoLogin`, `RefreshToken` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
 | failure of `session.check_current`, `session.verify_signature` in `RefreshToken` | the failure value of that operation | that failure value | `security` log |
 | access token verification failure | `UNAUTHORIZED` | `UNAUTHORIZED` | `security` log by `routing` |

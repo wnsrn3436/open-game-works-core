@@ -29,12 +29,23 @@ afterAll(async () => {
 });
 
 describe('ogw capture', () => {
-  it('writes the screen PNG into captures/ of the instance checkout and prints its path', async () => {
+  it('asks the screen as JPEG, writes it into captures/ of the instance checkout and prints its path', async () => {
+    runner.config({});
     const run = await ogw(runner.ws, ['capture', id]);
     expect(run.code).toBe(0);
     const path = run.stdout.trim();
-    expect(path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+\\.png$`));
+    expect(path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+\\.jpg$`));
+    expect(readFileSync(path).subarray(2).toString()).toBe('JPG-main');
+    expect(runner.requests('main').at(-1)).toMatchObject({ command: 'capture_screen', args: ['jpg'] });
+  });
+
+  it('names the capture and the video frames .png when the core sends PNG', async () => {
+    runner.config({ clients: { main: { pngOnly: true, videoFrames: 1 } } });
+    const path = (await ogw(runner.ws, ['capture', id])).stdout.trim();
+    expect(path.endsWith('.png')).toBe(true);
     expect(readFileSync(path, 'utf8')).toBe('PNG-main');
+    const video = JSON.parse((await ogw(runner.ws, ['capture', id, '--video', '100', '--json'])).stdout) as { path: string; frames: string[] };
+    expect(video.frames).toEqual([join(video.path, 'frame-00000.png')]);
   });
 
   it('writes the video frames of --video into a folder', async () => {
@@ -42,9 +53,9 @@ describe('ogw capture', () => {
     const run = await ogw(runner.ws, ['capture', id, '--video', '500', '--json']);
     const data = JSON.parse(run.stdout) as { path: string; frames: string[]; result: unknown };
     expect(data.path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+-video$`));
-    expect(data.frames).toEqual([join(data.path, 'frame-00000.png'), join(data.path, 'frame-00001.png')]);
+    expect(data.frames).toEqual([join(data.path, 'frame-00000.jpg'), join(data.path, 'frame-00001.jpg')]);
     expect(data.result).toEqual({ frame_count: 2, fps: 30 });
-    expect(runner.requests('main').at(-1)).toMatchObject({ command: 'capture_video', args: ['500'] });
+    expect(runner.requests('main').at(-1)).toMatchObject({ command: 'capture_video', args: ['500', 'jpg'] });
     expect((await ogw(runner.ws, ['capture', id, '--video', '0'])).stderr).toContain('invalid --video: 0');
   });
 

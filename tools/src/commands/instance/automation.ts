@@ -7,13 +7,14 @@ import { writeFileAtomic } from '../../lib/fsx.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { msArgument } from './lib/qa.ts';
 import { readPlayAccess, readRecord } from './lib/records.ts';
+import { imageExtension } from './lib/captures.ts';
 
 export interface AutomationResponse {
   ok: boolean;
   result: unknown;
   /** Decoded `bytes` of the response; empty when none. */
   bytes: Buffer;
-  /** `capture_video` frames (PNG bytes) in order; empty when `framesDir` took them. */
+  /** `capture_video` frames (image bytes) in order; empty when `framesDir` took them. */
   frames: Buffer[];
   /** Files the frames were written to when `framesDir` was given, in order. */
   framePaths?: string[];
@@ -32,7 +33,7 @@ export type Access = 'full' | 'play';
 export interface AutomationOptions {
   /** Default `full`. */
   access?: Access;
-  /** Write `capture_video` frames as `frame-NNNNN.png` files (`n` in 5 digits) into this folder instead of returning them. */
+  /** Write `capture_video` frames as `frame-NNNNN.<jpg or png>` files (`n` in 5 digits) into this folder instead of returning them. */
   framesDir?: string;
   /** Time limit of the request; default from `QACore.commandTimeoutMs` and the ms argument. */
   timeoutMs?: number;
@@ -148,13 +149,13 @@ export async function automationRequest(
   return { ...response, frames: [], framePaths: await writeFrames(options.framesDir, response.frames) };
 }
 
-/** Writes frames as `frame-NNNNN.png` (`n` in 5 digits) into `dir` and returns their paths in order. */
+/** Writes frames as `frame-NNNNN.jpg` or `.png` by their bytes (`n` in 5 digits) into `dir` and returns their paths in order. */
 async function writeFrames(dir: string, frames: readonly Buffer[]): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   const paths: string[] = [];
-  for (const [n, png] of frames.entries()) {
-    const path = join(dir, `frame-${String(n).padStart(5, '0')}.png`);
-    await writeFileAtomic(path, png);
+  for (const [n, image] of frames.entries()) {
+    const path = join(dir, `frame-${String(n).padStart(5, '0')}${imageExtension(image)}`);
+    await writeFileAtomic(path, image);
     paths.push(path);
   }
   return paths;

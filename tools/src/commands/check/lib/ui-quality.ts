@@ -30,8 +30,8 @@ export interface UiQualityOptions extends InstanceCheckOptions {
 
 /** Game settings `uiQuality`: the numbers of the presentation conditions (`qa-core` UI quality check). */
 export interface UiQualityLimits {
-  /** Real time waited after an open command before the capture. */
-  settleMs: number;
+  /** The longest real time waited after an open command for the opening presentation to end. */
+  settleLimitMs: number;
   maxFontSizes: number;
   minFontPx: number;
   minContrast: number;
@@ -304,14 +304,16 @@ class UiRun {
   private readonly id: string;
   private readonly platform: string;
   private readonly evidence: Evidence;
-  private readonly settleMs: number;
+  private readonly settleLimitMs: number;
+  private readonly pollMs: number;
 
   constructor(ctx: Context, id: string, platform: string, options: UiQualityOptions) {
     this.ctx = ctx;
     this.id = id;
     this.platform = platform;
     this.evidence = options.evidence;
-    this.settleMs = options.quality.settleMs;
+    this.settleLimitMs = options.quality.settleLimitMs;
+    this.pollMs = options.pollMs;
   }
 
   request(command: string, args: string[]): Promise<AutomationResponse> {
@@ -383,9 +385,26 @@ class UiRun {
       this.report(`${command} failed: ${JSON.stringify(opened.result)}`, context, []);
       return false;
     }
-    // the opening presentation of the screen ends before the screen is looked at
-    if (this.settleMs > 0) await sleep(this.settleMs);
+    await this.settle();
     return true;
+  }
+
+  /**
+   * Waits until `get_state` has `ui_flow` false and `finite_tweens` 0, at most `settleLimitMs` (`qa-core` UI quality
+   * check 3), so that the opening presentation of the screen has ended. A core whose state has neither field is
+   * waited for the whole limit.
+   */
+  private async settle(): Promise<void> {
+    const until = Date.now() + this.settleLimitMs;
+    for (;;) {
+      const response = await this.request('get_state', []).catch(() => null);
+      const state = response?.ok === true && typeof response.result === 'object' && response.result !== null ? (response.result as Record<string, unknown>) : null;
+      const known = state !== null && 'ui_flow' in state && 'finite_tweens' in state;
+      if (known && state.ui_flow === false && state.finite_tweens === 0) return;
+      const left = until - Date.now();
+      if (left <= 0) return;
+      await sleep(known ? Math.min(this.pollMs, left) : left);
+    }
   }
 }
 

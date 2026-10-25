@@ -47,7 +47,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 | `get_open_popup_count` | none | number of visible popups. includes system popups. does not allocate memory | 0 | core, content code |
 | `is_system_popup_visible` | none | whether a visible system popup exists. equals whether the system popup root is visible. does not allocate memory | `false` | `TutorialCore` |
 | `is_panel_transitioning` | none | flag | `false` | core, content code |
-| `is_flow_in_progress` | none | whether a panel transition, a popup open flow or close, or a system popup open flow or close is in progress. does not allocate memory | `false` | `QACore` |
+| `is_flow_in_progress` | none | whether a panel transition, a popup request waiting in the popup queue, a popup open flow or close, or a system popup open flow or close is in progress. does not allocate memory | `false` | `QACore` |
 | `get_block_pass_list` | none | `BlockPassList` of `InputBlockCore`. `elements` is the system popup root alone, and `actions` is `back` alone. Returns the one UICore holds, and the caller does not change it | none | core, content code |
 | `get_anchor_rect` | anchor name, anchor key(optional. default none) | `AnchorResult` | `found` and `visible` are `false` | `TutorialCore`, `QACore`, `UnitTestCore`, content code |
 | `is_modal_covered` | UI element | whether modal covered | `false` | `QACore` |
@@ -415,7 +415,7 @@ none
 
 ## test
 
-- `is_flow_in_progress` is `true` from `open_popup` until its open flow ends (its open tween included), from `close_popup` until the close ends, from `open_system_popup` until its open flow ends, and during a panel transition, and `false` when none of these is in progress
+- `is_flow_in_progress` is `true` from `open_popup` until its open flow ends (its open tween and its wait in the popup queue included), from `close_popup` until the close ends, from `open_system_popup` until its open flow ends, and during a panel transition, and `false` when none of these is in progress
 - All UI layers are drawn in the order of the behavior table, and a lower layer does not receive pointer input that a UI element of a higher layer received. During camera shake the screen position of UI elements stays the same
 - During a game time pause, a popup `UIButton` still calls its click callback and the open tween finishes
 - Opening B from panel A gives stack A, B, A is destroyed and its scope released, and `on_closed(Covered)` and `on_opened(New)` are each called once

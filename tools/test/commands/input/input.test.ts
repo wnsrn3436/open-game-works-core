@@ -84,10 +84,10 @@ describe('ogw input', () => {
     expect(lines[1]).toMatch(/^100 [0-9]+ tap_anchor failed "anchor not found"$/);
     const dir = (lines[2] ?? '').replace('video: ', '');
     expect(dir.startsWith(join(runner.root, 'captures', `${id}-`))).toBe(true);
-    expect(readdirSync(dir)).toEqual(['frame-00000.png', 'frame-00001.png', 'frame-00002.png']);
-    expect(readFileSync(join(dir, 'frame-00001.png'), 'utf8')).toBe('FRAME-1');
+    expect(readdirSync(dir)).toEqual(['frame-00000.jpg', 'frame-00001.jpg', 'frame-00002.jpg']);
+    expect(readFileSync(join(dir, 'frame-00001.jpg')).subarray(2).toString()).toBe('FRAME-1');
     // 100 ms between the steps, no ms argument on the last step, QACore.feedbackWindowMs 400 of the mock core settings
-    expect(runner.requests('main').find((r) => r.command === 'capture_video')?.args).toEqual(['500']);
+    expect(runner.requests('main').find((r) => r.command === 'capture_video')?.args).toEqual(['500', 'jpg']);
   });
 
   it('starts the video before the first input and covers the ms of the last input', async () => {
@@ -101,7 +101,7 @@ describe('ogw input', () => {
     expect(run.code).toBe(0);
     const sent = runner.requests('main').slice(before);
     expect(sent.map((r) => r.command)).toEqual(['get_state', 'capture_video', 'tap', 'drag']);
-    expect(sent[1]?.args).toEqual(['750']);
+    expect(sent[1]?.args).toEqual(['750', 'jpg']);
     expect((JSON.parse(run.stdout) as { videoError: unknown }).videoError).toBeNull();
   });
 
@@ -113,7 +113,7 @@ describe('ogw input', () => {
     const run = await ogw(runner.ws, ['input', id, '--script', script, '--video']);
     expect(run.code).toBe(0);
     // 30 characters at 60 fps (500 ms) and QACore.feedbackWindowMs 400
-    expect(runner.requests('main').slice(before).find((r) => r.command === 'capture_video')?.args).toEqual(['900']);
+    expect(runner.requests('main').slice(before).find((r) => r.command === 'capture_video')?.args).toEqual(['900', 'jpg']);
   });
 
   it('refuses a video longer than QACore.videoMaxMs before putting any input in', async () => {

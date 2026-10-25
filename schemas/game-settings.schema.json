@@ -204,11 +204,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "settleMs": {
-          "description": "The real time UI quality check waits after the command that opens a screen before it captures, so that the opening presentation has ended",
+        "settleLimitMs": {
+          "description": "The longest real time UI quality check reads `get_state` after the command that opens a screen, waiting for `ui_flow` `false` and `finite_tweens` 0 so that the opening presentation has ended. A core whose `get_state` has neither field is waited for this whole time",
           "type": "integer",
           "minimum": 0,
-          "default": 1000
+          "default": 3000
         },
         "maxFontSizes": {
           "description": "The most distinct text sizes on one screen",

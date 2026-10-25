@@ -66,6 +66,9 @@ function log(entry) {
   appendFileSync(join(logDir, `${name}.jsonl`), `${JSON.stringify(entry)}\n`);
 }
 
+/** Bytes that start like a JPEG file (`FF D8`) followed by `text`. */
+const jpeg = (text) => Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.from(text)]);
+
 function answer(command, args) {
   if (mine.fail?.[command] !== undefined) return { ok: false, result: mine.fail[command] };
   switch (command) {
@@ -98,6 +101,8 @@ function answer(command, args) {
     case 'extract_logs':
       return { ok: true, result: config.logs ?? [] };
     case 'capture_screen':
+      // a core before the format argument (`pngOnly`) sends PNG whatever it is asked
+      if (args[0] === 'jpg' && mine.pngOnly !== true) return { ok: true, result: null, bytes: jpeg(`JPG-${name}`).toString('base64') };
       return { ok: true, result: null, bytes: Buffer.from(`PNG-${name}`).toString('base64') };
     default:
       break;
@@ -124,7 +129,11 @@ function connect() {
     if (mine.exitOn?.[request.command] !== undefined) process.exit(mine.exitOn[request.command]);
     if (request.command === 'capture_video' && mine.fail?.capture_video === undefined) {
       const n = mine.videoFrames ?? 3;
-      for (let i = 0; i < n; i++) socket.send(JSON.stringify({ id: request.id, frame: i, bytes: Buffer.from(`FRAME-${i}`).toString('base64') }));
+      const asJpeg = request.args[1] === 'jpg' && mine.pngOnly !== true;
+      for (let i = 0; i < n; i++) {
+        const frame = asJpeg ? jpeg(`FRAME-${i}`) : Buffer.from(`FRAME-${i}`);
+        socket.send(JSON.stringify({ id: request.id, frame: i, bytes: frame.toString('base64') }));
+      }
       socket.send(JSON.stringify({ id: request.id, ok: true, result: { frame_count: n, fps: 30 }, bytes: '' }));
       return;
     }

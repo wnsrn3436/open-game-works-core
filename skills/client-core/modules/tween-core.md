@@ -34,7 +34,7 @@ Handles the tween, which changes a property value of one object over time, and p
 | `stop_tag` | tween tag | number of tweens ended | `0` | core, content code |
 | `skip_tag_to_end` | tween tag | number of tweens ended | `0` | core, content code |
 | `is_playing` | tween handle | whether it is playing | `false` | core, content code |
-| `get_finite_playing_count` | none | number of playing tweens whose definition has a repeat count other than 0 (`play_value` tweens included). does not allocate memory | `0` | `QACore` |
+| `get_finite_playing_count` | none | number of playing tweens that do not repeat without end: every `play_value` tween, a `play_preset` tween waiting for loading, and a tween whose played definition has a repeat count other than 0 (the definition without steps played after a definition check failure has repeat count 1). does not allocate memory | `0` | `QACore` |
 | `wait_end` | tween handle | async operation. `TweenEndReason` | `None` | core, content code |
 | `copy_definition` | source `TweenDefinition`, copy `TweenDefinition` | success flag | `false` | core, content code |
 | `get_preset_kind` | none | `ResourceCore` resource kind of the tween preset | invalid kind | core, content code |
@@ -168,6 +168,7 @@ none
 
 | condition | failure value | log |
 |---|---|---|
+| a `TweenOptions` `TimeBasis` or a `TweenChange` `Easing` that is not a member | `play`, `play_preset`, `play_value`: invalid handle. No callback and no input block. `evaluate_easing`: `0` | error |
 | the target object of `play` or `play_preset` is missing or destroyed | invalid handle. No callback and no input block | error |
 | definition check failure | plays with a definition with no steps | error |
 | the receiver or definition of `play_value` is missing, there is no first change, the duration of the first change is out of range, or the start value or end value is not a finite number | invalid handle | error |
@@ -197,7 +198,7 @@ none
 
 ## test
 
-- `get_finite_playing_count` counts a playing tween of repeat count 1 and a playing `play_value` tween, does not count a tween of infinite repeat, and goes down by one in the frame a counted tween ends
+- `get_finite_playing_count` counts a playing tween of repeat count 1, a playing `play_value` tween whose definition has repeat count 0, a `play_preset` tween waiting for loading, and the tween of a definition that failed the definition check, does not count a tween of infinite repeat, and goes down by one in the frame a counted tween ends
 - A `Position` change to (10, 0) of a UI element in a parent that lines up its children horizontally ends with the element drawn 10 to the right of the place the parent gives it. After the parent arranges its children again, it is still drawn there and the place the parent gives it is unchanged. A `Scale` change of that element to (1.2, 1.2) also stays after the parent arranges its children again
 - In a definition with two changes of duration 100ms and 200ms in step 1 and one change in step 2, the two values of step 1 start changing in the same frame, the value of step 2 does not change before 200ms after the start, and after completion the three values are the target values
 - A change that does not use the start value and has a delay starts from the property value changed during the delay

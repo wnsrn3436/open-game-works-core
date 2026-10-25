@@ -4,7 +4,7 @@ import { expectPositionals, positional, str, type CommandDef, type Context } fro
 import { OgwError } from '../../lib/errors.ts';
 import { writeFileAtomic } from '../../lib/fsx.ts';
 import { automationRequest } from '../instance/automation.ts';
-import { captureStem, capturesDir } from '../instance/lib/captures.ts';
+import { AGENT_CAPTURE_FORMAT, captureStem, capturesDir, imageExtension } from '../instance/lib/captures.ts';
 
 export interface VideoCapture {
   dir: string;
@@ -20,7 +20,7 @@ export async function videoDir(ctx: Context, instanceId: string): Promise<string
 /** `capture_video` of `ms` into `dir` (from `videoDir`); the folder is removed when it fails. */
 export async function recordVideo(ctx: Context, instanceId: string, ms: number, dir: string, onSent?: () => void): Promise<VideoCapture> {
   try {
-    const response = await automationRequest(ctx, instanceId, 'capture_video', [String(ms)], 'main', {
+    const response = await automationRequest(ctx, instanceId, 'capture_video', [String(ms), AGENT_CAPTURE_FORMAT], 'main', {
       access: 'play',
       framesDir: dir,
       ...(onSent ? { onSent } : {}),
@@ -40,13 +40,13 @@ export async function captureVideo(ctx: Context, instanceId: string, ms: number)
 
 let lastCaptureAt = 0;
 
-/** `capture_screen` of the client that is not a bot client, written to `captures/<instance id>-<unix ms>.png`; returns the path. */
+/** `capture_screen` of the client that is not a bot client, written to `captures/<instance id>-<unix ms>.jpg` (`.png` from a core that sends PNG); returns the path. */
 export async function captureScreen(ctx: Context, instanceId: string): Promise<string> {
-  const response = await automationRequest(ctx, instanceId, 'capture_screen', [], 'main', { access: 'play' });
+  const response = await automationRequest(ctx, instanceId, 'capture_screen', [AGENT_CAPTURE_FORMAT], 'main', { access: 'play' });
   if (!response.ok) throw new OgwError(`capture_screen failed: ${JSON.stringify(response.result)}`);
   // two captures of one process in the same ms get different names
   lastCaptureAt = Math.max(Date.now(), lastCaptureAt + 1);
-  const path = join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, lastCaptureAt)}.png`);
+  const path = join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, lastCaptureAt)}${imageExtension(response.bytes)}`);
   await writeFileAtomic(path, response.bytes);
   return path;
 }

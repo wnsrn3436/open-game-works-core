@@ -29,7 +29,7 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.f
 const ctx = fakeContext();
 
 /** Limits no capture breaks, for the tests of the other conditions. */
-const NO_LIMITS = { settleMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxFlatShare: 2, maxEmptyShare: 2 };
+const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxFlatShare: 2, maxEmptyShare: 2 };
 /** A 1 × 1 white PNG, as capture_screen gives it. */
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
 
@@ -51,7 +51,7 @@ function canvas(width: number, height: number, color: [number, number, number], 
   return { width, height, data };
 }
 
-const LIMITS = { settleMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
+const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
 
 describe('UI quality presentation conditions', () => {
   it('counts text sizes, finds small text and low contrast', () => {
@@ -168,13 +168,18 @@ describe('UI quality rules', () => {
 });
 
 /** A fake client with two screens: `shop.open_main` (a text input; overlap at text scale 1400) and `inv.open_bag`. */
-function fakeUi(): { calls: string[]; times: { command: string; at: number }[] } {
+/**
+ * A fake client of the UI quality check. After an open command, `settleReads` reads of `get_state` give `ui_flow` true and
+ * one finite tween; `legacy` leaves both fields out, as a core before them.
+ */
+function fakeUi(flow: { settleReads?: number; legacy?: boolean } = {}): { calls: string[]; times: { command: string; at: number }[] } {
   const calls: string[] = [];
   const times: { command: string; at: number }[] = [];
   let screen = '';
   let scale = 1000;
   let focus = '';
   let booting = 0;
+  let settling = 0;
   const ui = (): Record<string, unknown>[] => {
     if (screen === 'shop.open_main') {
       return [
@@ -193,7 +198,10 @@ function fakeUi(): { calls: string[]; times: { command: string; at: number }[] }
       if (booting === 1) throw new Error('restarting');
       return ok({ boot_stage: 'Login' });
     }
-    return ok({ boot_stage: 'Done', scene_key: 'lobby' });
+    if (flow.legacy === true) return ok({ boot_stage: 'Done', scene_key: 'lobby' });
+    const busy = settling > 0;
+    if (busy) settling--;
+    return ok({ boot_stage: 'Done', scene_key: 'lobby', ui_flow: busy, finite_tweens: busy ? 1 : 0 });
   };
   /** Commands that only change the fake's state and answer null. */
   const change = (command: string, args: string[]): void => {
@@ -205,6 +213,7 @@ function fakeUi(): { calls: string[]; times: { command: string; at: number }[] }
       case 'inv.open_bag':
         screen = command;
         focus = command === 'shop.open_main' ? 'shop/buy' : '';
+        settling = flow.settleReads ?? 0;
         break;
       case 'set_text_scale':
         scale = Number(args[0]);
@@ -264,17 +273,28 @@ beforeEach(() => {
 });
 
 describe('uiQualityCheck', () => {
-  it('waits uiQuality.settleMs after every open command, keyboard reopens and the gamepad check included, before the screen is looked at', async () => {
-    const { times } = fakeUi();
+  it('after every open command, keyboard reopens and the gamepad check included, reads get_state until the UI flow and finite tweens end', async () => {
+    const { times } = fakeUi({ settleReads: 2 });
     const root = mkdtempSync(join(tmpdir(), 'ui-settle-'));
-    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], quality: { ...NO_LIMITS, settleMs: 30 } }));
+    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], quality: { ...NO_LIMITS, settleLimitMs: 60_000 } }));
     const opens = times.map((t, i) => ({ ...t, i })).filter((t) => t.command.includes('.open_'));
     // the first open, the keyboard reopens and the open of the gamepad check
     expect(opens.length).toBeGreaterThan(2);
     for (const open of opens) {
+      const after = times.slice(open.i + 1);
+      const next = after.findIndex((t) => t.command !== 'get_state');
+      // the two busy reads (the read for the scene of the failures is one of them) and the settled read
+      expect(next === -1 ? after.length : next).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('waits the whole uiQuality.settleLimitMs after an open command for a core whose state has no UI flow fields', async () => {
+    const { times } = fakeUi({ legacy: true });
+    const root = mkdtempSync(join(tmpdir(), 'ui-settle-'));
+    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], gamepadSupported: false, quality: { ...NO_LIMITS, settleLimitMs: 30 } }));
+    for (const open of times.map((t, i) => ({ ...t, i })).filter((t) => t.command.includes('.open_'))) {
       const next = times.slice(open.i + 1).find((t) => t.command !== 'get_state');
-      if (next === undefined) continue;
-      expect(next.at - open.at).toBeGreaterThanOrEqual(30);
+      if (next !== undefined) expect(next.at - open.at).toBeGreaterThanOrEqual(30);
     }
   });
 

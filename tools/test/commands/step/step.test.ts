@@ -77,8 +77,8 @@ describe('ogw step --count --capture', () => {
     const paths = data.steps.map((s) => s.capture);
     expect(new Set(paths).size).toBe(3);
     for (const path of paths) {
-      expect(path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+\\.png$`));
-      expect(readFileSync(path, 'utf8')).toBe('PNG-main');
+      expect(path).toMatch(new RegExp(`^${join(runner.root, 'captures', id)}-[0-9]+\\.jpg$`));
+      expect(readFileSync(path).subarray(2).toString()).toBe('JPG-main');
     }
     // each capture comes after the step of its index and before the next step
     const order = runner
@@ -132,7 +132,7 @@ describe('ogw step --count --capture', () => {
     expect(run.steps).toBe(2);
     const lines = run.stdout.trim().split('\n');
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^step 1\/4: advanced 100 ms: main: play ms [0-9]+: .+\.png$/);
+    expect(lines[0]).toMatch(/^step 1\/4: advanced 100 ms: main: play ms [0-9]+: .+\.jpg$/);
     expect(lines[1]).toBe('step 2/4: main: step failed: "game time is paused"');
   });
 
@@ -146,7 +146,7 @@ describe('ogw step --count --capture', () => {
       [1, 100, false],
       [2, 100, true],
     ]);
-    expect(data.steps[1]?.capture).toMatch(/\.png$/);
+    expect(data.steps[1]?.capture).toMatch(/\.jpg$/);
     // the fake keeps its state between tests, so the list before the change is whatever the last test left
     expect(data.stopped).toEqual({
       after: 2,

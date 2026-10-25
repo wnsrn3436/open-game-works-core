@@ -24,6 +24,18 @@ export async function capturesDir(ctx: Context, instanceId: string | null): Prom
   return join((await readRecord(instanceId, ctx.env)).root, 'captures');
 }
 
+/**
+ * The format the play and judge agents' captures and video frames are asked in (`QACore` `capture_screen`): JPEG,
+ * which the engine encodes in a few ms where a PNG of the same screen takes hundreds. A core that does not know the
+ * format argument sends PNG.
+ */
+export const AGENT_CAPTURE_FORMAT = 'jpg';
+
+/** File extension of an image the client sent: `.jpg` for JPEG bytes, else `.png`. */
+export function imageExtension(data: Uint8Array): '.jpg' | '.png' {
+  return data[0] === 0xff && data[1] === 0xd8 ? '.jpg' : '.png';
+}
+
 /** File name stem of a capture: the instance id and the Unix ms of the capture. */
 export function captureStem(instanceId: string, at: number): string {
   return `${instanceId}-${String(at)}`;

@@ -102,6 +102,7 @@ none
 
 | condition | failure value | log |
 |---|---|---|
+| a `ScreenEffectChannel` or a `TimeBasis` that is not a member | effect handle settled as `Failed`. The effect in progress on every channel stays as it is, and there is no `ScreenEffectStartedEvent` | error |
 | owner object missing or destroyed | `Failed` handle. Current handle kept | error |
 | color component or opacity is not a finite number of at least 0 and at most 1 | `Failed` handle. Current handle kept | error |
 | duration less than 0 or more than `TweenCore.maxDurationMs` | `Failed` handle. Current handle kept | error |
