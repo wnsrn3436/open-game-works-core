@@ -594,11 +594,18 @@
           {
             "result": "ok"
           }
+        ],
+        "sprite-gen-codex": [
+          {
+            "jobMs": 61098,
+            "result": "ok"
+          }
         ]
       },
       "name": "Jungu-MacBookPro.local",
       "reviewRunConcurrency": 8,
-      "maxConcurrentInstances": 8
+      "maxConcurrentInstances": 8,
+      "imageMethod": "sprite-gen-codex"
     }
   }
 }
