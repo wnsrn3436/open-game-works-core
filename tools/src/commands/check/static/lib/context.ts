@@ -8,7 +8,7 @@ import { harnessRoot } from '../../../../lib/paths.ts';
 import type { GameSettings } from '../../../../lib/settings.ts';
 import type { CsvTable } from '../../../data/lib/csv.ts';
 import { translationTable } from '../../../data/lib/translation-state.ts';
-import { gameModules } from '../../../generate/api.ts';
+import { gameModules, mergedCoreSettings } from '../../../generate/api.ts';
 import { parseDataTable, type DataTable } from './csv.ts';
 import type { GdFile } from './gd-ast.ts';
 import { parseGd } from './gd-parser.ts';
@@ -189,4 +189,6 @@ export class StaticContext {
   });
 
   readonly modules = memo(() => gameModules(this.ctx, this.game));
+  /** Merged core settings values: the core settings of the release of the game overlaid with game settings `core`. */
+  readonly coreSettings = memo(() => mergedCoreSettings(this.ctx, this.game));
 }
