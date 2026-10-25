@@ -342,10 +342,11 @@ class Host {
       send(res, 404);
       return;
     }
-    const content = await readFile(file).catch(() => null);
+    // listened to before the read, so that a connection the browser closes during the read is recorded too
     res.on('close', () => {
       if (!res.writableFinished) this.appCutOff.push(path);
     });
+    const content = await readFile(file).catch(() => null);
     if (content === null) send(res, 404);
     else res.writeHead(200, { 'content-type': contentTypeOf(file) }).end(content); // a browser checks the type of module scripts and audio worklets
   }

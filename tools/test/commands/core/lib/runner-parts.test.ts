@@ -89,6 +89,45 @@ setTimeout(() => undefined, 60000);
   }, 60_000);
 });
 
+describe('browser run whose second page loads', () => {
+  it('takes the result of the second page when the first was cut off', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
+    const exportDir = join(dir, 'export');
+    mkdirSync(exportDir);
+    writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
+    writeFileSync(join(exportDir, 'index.wasm'), Buffer.alloc(64 * 1024 * 1024));
+    // the first launch drops the wasm right after its request is sent, while the host still reads the file; the second sends a passing result and the release signal
+    const chromium = join(dir, 'chromium');
+    writeFileSync(chromium, `#!${process.execPath}
+const fs = require('node:fs');
+const http = require('node:http');
+const file = ${JSON.stringify(join(dir, 'launches'))};
+fs.appendFileSync(file, 'x');
+const page = new URL(process.argv[process.argv.length - 1]);
+const host = page.searchParams.get('ogw_test_host');
+const runId = page.searchParams.get('ogw_run_id');
+if (fs.readFileSync(file, 'utf8').length === 1) {
+  const req = http.get(new URL('/app/index.wasm', page.origin));
+  req.on('finish', () => setTimeout(() => req.destroy(), 1));
+  req.on('error', () => undefined);
+} else {
+  (async () => {
+    await fetch(host + '/result', { method: 'PUT', body: JSON.stringify({ results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }) });
+    await fetch(host + '/released', { method: 'PUT', body: JSON.stringify({ run_id: runId }) });
+    process.stderr.write('[1:INFO:CONSOLE:1] "UnitTestCore released run ' + runId + '", source: x (1)\\n');
+  })();
+}
+setTimeout(() => undefined, 60000);
+`);
+    chmodSync(chromium, 0o755);
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: null });
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.tests).toBe(1);
+    expect(readFileSync(join(dir, 'launches'), 'utf8')).toBe('xx');
+  }, 60_000);
+});
+
 describe('a run that does not start', () => {
   it('ends a browser run that sends no PUT /started within the start limit, opens the page once more, and keeps one that started', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
