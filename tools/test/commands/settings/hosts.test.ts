@@ -82,9 +82,25 @@ describe('harness settings host values', () => {
     expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({ code: 1, stdout: '', stderr: byDefault(OTHER) });
     // and so does this host without an entry
     writeHosts({ [OTHER]: { ...OTHER_ENTRY, imageMethod: 'sprite-gen-grok' } });
-    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({ code: 1, stdout: '', stderr: byDefault(TEST_HOST_ID) });
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: 'imageMethod (schema default): flux2-klein is not the name of a resourceGeneration method whose resourceTypes has image\n',
+    });
     expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-codex"')).toMatchObject({ code: 0 });
     expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toMatchObject({ code: 0 });
+  });
+
+  it('refuses removing the schema default imageMethod while hosts is empty', async () => {
+    writeFileSync(path, JSON.stringify({ ...(JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>), hosts: {} }));
+    const before = readFileSync(path, 'utf8');
+    const methods = (JSON.parse(before) as { resourceGeneration: { name: string }[] }).resourceGeneration;
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', JSON.stringify(methods.filter((m) => m.name !== 'flux2-klein')))).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: 'imageMethod (schema default): flux2-klein is not the name of a resourceGeneration method whose resourceTypes has image\n',
+    });
+    expect(readFileSync(path, 'utf8')).toBe(before);
   });
 
   it('refuses removing the method that another host entry names as its imageMethod', async () => {

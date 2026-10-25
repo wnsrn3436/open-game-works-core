@@ -55,28 +55,28 @@ async function withHostName(target: Target, next: JsonObject): Promise<JsonObjec
 }
 
 /**
- * The condition of harness settings `imageMethod`: the value of every `hosts` entry, the schema default for an entry
- * that has none and for this host when it has no entry, is the `name` of a `resourceGeneration` method whose
- * `resourceTypes` has `image`.
+ * The condition of harness settings `imageMethod`: the value each host takes, as `loadHarnessSettings` gives it (the
+ * value of its `hosts` entry, else the schema default), is the `name` of a `resourceGeneration` method whose
+ * `resourceTypes` has `image`. The hosts are every `hosts` entry and this host, also when it has no entry or `hosts`
+ * is empty.
  */
 async function imageMethodIssues(target: Target, value: JsonObject): Promise<Issue[]> {
   const hosts = isPlainObject(value.hosts) ? value.hosts : {};
   const id = await target.hostEntryId(value.hosts);
   const methods = Array.isArray(value.resourceGeneration) ? value.resourceGeneration : [];
   const makesImage = (name: string): boolean => methods.some((m) => isPlainObject(m) && m.name === name && Array.isArray(m.resourceTypes) && m.resourceTypes.includes('image'));
-  const message = (path: string, name: string): Issue => ({ message: `${path}: ${name} is not the name of a resourceGeneration method whose resourceTypes has image` });
   const fallback = hostDefaults(target.schema).imageMethod;
-  const issues: Issue[] = [];
-  const entries = Object.entries(hosts);
-  if (id !== null && !(id in hosts)) entries.push([id, {}]);
-  for (const [entryId, entry] of entries) {
+  const taken: { path: string; name: unknown }[] = Object.entries(hosts).map(([entryId, entry]) => {
     const own = isPlainObject(entry) ? entry.imageMethod : undefined;
-    // a value that is not a string is a schema issue
-    const name = own === undefined ? fallback : own;
-    const path = own === undefined ? `${display(['hosts', entryId, 'imageMethod'])} (schema default)` : display(['hosts', entryId, 'imageMethod']);
-    if (typeof name === 'string' && !makesImage(name)) issues.push(message(path, name));
-  }
-  return issues;
+    const path = display(['hosts', entryId, 'imageMethod']);
+    return own === undefined ? { path: `${path} (schema default)`, name: fallback } : { path, name: own };
+  });
+  // this host without an entry, or without a host id while hosts is empty, takes the schema default
+  if (id === null || !(id in hosts)) taken.push({ path: 'imageMethod (schema default)', name: fallback });
+  // a value that is not a string is a schema issue
+  return taken
+    .filter((t): t is { path: string; name: string } => typeof t.name === 'string' && !makesImage(t.name))
+    .map((t) => ({ message: `${t.path}: ${t.name} is not the name of a resourceGeneration method whose resourceTypes has image` }));
 }
 
 /**
