@@ -97,7 +97,7 @@ describe('ogw resource placeholder and sync', () => {
     const hits = [1, 2, 3].map((n) => file(f, `resource/sfx/hit.${String(n)}.wav`));
     expect(hits[0]?.subarray(0, 4).toString()).toBe('RIFF');
     expect(hits[0]?.readUInt32LE(40)).toBe(Math.round(0.2 * 48000) * 2);
-    expect(hits[0]?.equals(hits[1] as Buffer)).toBe(false);
+    expect(hits[0]?.equals(hits[1] as Buffer)).toBe(true);
     expect(existsSync(join(f.game, 'resource/sfx/hit.wav'))).toBe(false);
     expect(rowOf(f.game, 'sfx/hit').sha256).toBe(sha(hits.map((h) => sha(h)).join('')));
     expect(file(f, 'resource/sfx/click.wav').readUInt32LE(24)).toBe(48000);

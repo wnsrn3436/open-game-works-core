@@ -88,7 +88,7 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
 
 - When the content agent needs a resource, it adds a row to `resources.csv` as `placeholder` and runs `ogw resource placeholder <game>`. The tool makes the placeholder resource as `spec` says
   - `image`, `sprite_sheet`, `texture_atlas`, `icon`, `background`, `nine_slice`, `texture`, `skybox`, `tileset`, `app_icon`, `splash`: a solid-color PNG of the `spec` size with the last word of the resource key in it as text
-  - `sfx`, `bgm`, `voice`: a tone of the `spec` length. Variant files are tones of a different pitch per variant
+  - `sfx`, `bgm`, `voice`: silence of the `spec` length, one file per variant
   - `model`: a box of the `spec` size
   - `haptic`: a haptic pattern JSON with one segment of the `spec` length (`delay_ms` 0, `intensity` 1000)
   - `font`: harness settings `tools.placeholderFont`

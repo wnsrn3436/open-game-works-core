@@ -3,7 +3,7 @@ import { extname } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { toolProgram } from '../../env/api.ts';
-import { encodeOgg, toneWav, variantFrequency } from './audio.ts';
+import { encodeOgg, silentWav } from './audio.ts';
 import {
   engineType,
   placeholderAnimation3d,
@@ -62,10 +62,10 @@ function text(value: string): Buffer {
 
 async function soundFiles(key: string, type: string, spec: Spec, ext: string, tools: Tools): Promise<FileData[]> {
   const length = requireLength(key, spec);
-  if (type === 'bgm') return [{ path: keyPath(key, ext), data: await encodeOgg(await tools.ffmpeg(), toneWav(length, variantFrequency(1)), tools.env) }];
-  if (spec.variants < 2) return [{ path: keyPath(key, ext), data: toneWav(length, variantFrequency(1)) }];
+  if (type === 'bgm') return [{ path: keyPath(key, ext), data: await encodeOgg(await tools.ffmpeg(), silentWav(length), tools.env) }];
+  if (spec.variants < 2) return [{ path: keyPath(key, ext), data: silentWav(length) }];
   const files: FileData[] = [];
-  for (let n = 1; n <= spec.variants; n++) files.push({ path: keyPath(key, ext, n), data: toneWav(length, variantFrequency(n)) });
+  for (let n = 1; n <= spec.variants; n++) files.push({ path: keyPath(key, ext, n), data: silentWav(length) });
   return files;
 }
 

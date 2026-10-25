@@ -7,17 +7,10 @@ import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
 export const SAMPLE_RATE = 48000;
 
-/** 16-bit PCM mono WAV of a sine tone. */
-export function toneWav(lengthMs: number, frequency: number): Buffer {
+/** 16-bit PCM mono WAV of silence of the length. */
+export function silentWav(lengthMs: number): Buffer {
   const samples = Math.max(1, Math.round((lengthMs * SAMPLE_RATE) / 1000));
-  const fade = Math.min(Math.floor(samples / 2), Math.round(SAMPLE_RATE * 0.005));
   const data = Buffer.alloc(samples * 2);
-  for (let i = 0; i < samples; i++) {
-    const edge = Math.min(i, samples - 1 - i);
-    const gain = fade > 0 && edge < fade ? edge / fade : 1;
-    const value = Math.round(Math.sin((2 * Math.PI * frequency * i) / SAMPLE_RATE) * 0.3 * gain * 32767);
-    data.writeInt16LE(value, i * 2);
-  }
   const header = Buffer.alloc(44);
   header.write('RIFF', 0, 'ascii');
   header.writeUInt32LE(36 + data.length, 4);
@@ -33,11 +26,6 @@ export function toneWav(lengthMs: number, frequency: number): Buffer {
   header.write('data', 36, 'ascii');
   header.writeUInt32LE(data.length, 40);
   return Buffer.concat([header, data]);
-}
-
-/** Tone frequency of variant `n` (1-based); variant files differ in pitch. */
-export function variantFrequency(n: number): number {
-  return 440 + 110 * (n - 1);
 }
 
 const BITEXACT = ['-fflags', '+bitexact', '-flags:a', '+bitexact', '-map_metadata', '-1'];

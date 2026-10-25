@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toneWav, variantFrequency } from '../../../../src/commands/resource/lib/audio.ts';
+import { silentWav } from '../../../../src/commands/resource/lib/audio.ts';
 import { formatCsv, parseCsv, parseTable } from '../../../../src/commands/resource/lib/csv.ts';
 import { classProblem, engineType, godotFloat, rigSceneNames, tresClass, tscnRootType } from '../../../../src/commands/resource/lib/godot.ts';
 import { listSha, parseKey, sha256Hex } from '../../../../src/commands/resource/lib/list.ts';
@@ -134,13 +134,11 @@ describe('request file', () => {
 });
 
 describe('audio', () => {
-  it('writes a 16-bit mono PCM WAV of the length with faded ends', () => {
-    const wav = toneWav(10, 440);
+  it('writes a 16-bit mono PCM WAV of silence of the length', () => {
+    const wav = silentWav(10);
     expect(wav.length).toBe(44 + 480 * 2);
     expect([wav.toString('ascii', 0, 4), wav.toString('ascii', 8, 12), wav.readUInt16LE(20), wav.readUInt16LE(22), wav.readUInt16LE(34)]).toEqual(['RIFF', 'WAVE', 1, 1, 16]);
     expect(wav.readUInt32LE(4)).toBe(36 + 960);
-    expect(wav.readInt16LE(44)).toBe(0);
-    expect(Math.max(...Array.from({ length: 480 }, (_, i) => Math.abs(wav.readInt16LE(44 + i * 2))))).toBeLessThanOrEqual(Math.round(0.3 * 32767));
-    expect([variantFrequency(1), variantFrequency(3)]).toEqual([440, 660]);
+    expect(Array.from({ length: 480 }, (_, i) => wav.readInt16LE(44 + i * 2)).every((v) => v === 0)).toBe(true);
   });
 });
