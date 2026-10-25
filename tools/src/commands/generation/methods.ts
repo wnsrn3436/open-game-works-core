@@ -2,7 +2,7 @@ import { expectPositionals, positional, type CommandDef } from '../../lib/comman
 import { chooseMethods, IMAGE_METHOD, stageText, type MethodChoice } from './lib/select.ts';
 
 export function choiceText(choice: MethodChoice): string {
-  const lines = [`${choice.name} ${choice.kind} ${stageText(choice.stage)}`];
+  const lines = [`${choice.name} ${choice.kind} ${stageText(choice.stage)}${choice.temporary ? ' temporary' : ''}`];
   if (choice.skill !== undefined) lines.push(`  skill ${choice.skill ?? 'not installed'}`);
   if (choice.cli !== undefined) lines.push(`  cli ${choice.cli ?? 'not installed'}`);
   if (choice.flux2Klein !== undefined) lines.push(`  ${IMAGE_METHOD} ${stageText(choice.flux2Klein)}`);

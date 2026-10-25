@@ -1,7 +1,8 @@
 import { OgwError } from '../../../lib/errors.ts';
 import { readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
-import { commitPaths } from '../../../lib/git.ts';
+import { commitPaths, showFile } from '../../../lib/git.ts';
+import { LIST_PATH, temporaryKeys } from '../../resource/lib/list.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import {
   evidenceChecks,
@@ -15,7 +16,7 @@ import {
 } from './defects.ts';
 import { checkNames, checkResult, type CheckFile, type EvaluateFile, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
-import { renderIterationRecord, type RecordJudge, type RecordPlay } from './iteration-record.ts';
+import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
 import { abs, confirmOf, iterationResults, readGameText, runRel, type IterationResults } from './run.ts';
@@ -110,6 +111,19 @@ async function playsOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordPl
   return out;
 }
 
+async function temporaryAt(game: GameRepo, commit: string): Promise<string[]> {
+  const bytes = await showFile(game.root, commit, LIST_PATH);
+  return bytes === null ? [] : temporaryKeys(bytes.toString('utf8'));
+}
+
+/** Keys `temporary` at the instance commit and not at that of the previous iteration (the base commit for iteration 1). */
+async function newTemporary(game: GameRepo, run: RunState, commit: string | null): Promise<string[]> {
+  if (commit === null) return [];
+  const previous = (await iterationRecords(game, run)).filter((r) => r.iteration < run.iteration && r.commit !== null).at(-1)?.commit ?? run.baseCommit;
+  const before = new Set(await temporaryAt(game, previous));
+  return (await temporaryAt(game, commit)).filter((key) => !before.has(key));
+}
+
 async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[]): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
@@ -127,6 +141,7 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
     load: performanceFailed
       ? check.checks.filter((c) => c.name === 'performance').map((c) => ({ platform: c.platform, hostLoad: c.hostLoad ?? null }))
       : null,
+    temporary: await newTemporary(game, run, check?.commit ?? null),
   }));
   return rel;
 }

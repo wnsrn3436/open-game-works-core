@@ -78,7 +78,7 @@ function headerRows(text: string, path: string): { rows: CsvRow[] } | { error: s
 }
 
 /**
- * Rows of `resource/resources.csv` whose `status` is not `final` hold a placeholder resource. An unreadable file is one
+ * Rows of `resource/resources.csv` whose `status` is neither `final` nor `temporary` hold a placeholder resource. An unreadable file is one
  * failure at its line 1: no row of it can be shown final.
  */
 async function placeholderResources(game: GameRepo): Promise<CheckFailure[]> {
@@ -87,7 +87,7 @@ async function placeholderResources(game: GameRepo): Promise<CheckFailure[]> {
   const read = headerRows(text, RESOURCES);
   if ('error' in read) return [failure(`${RESOURCES}:1`, `placeholder resource list unreadable: ${read.error}`)];
   return read.rows
-    .filter((row) => row.values.status !== 'final')
+    .filter((row) => row.values.status !== 'final' && row.values.status !== 'temporary')
     .map((row) => failure(`${RESOURCES}:${String(row.line)}`, `placeholder ${row.values.key ?? ''}`));
 }
 

@@ -64,6 +64,8 @@ interface Job {
   tools: Tools;
   skeleton: Skeleton | null;
   split: RigSplit | null;
+  /** `final`, or `temporary` when `ogw generation methods` gives the method as the temporary method of the key. */
+  status: 'final' | 'temporary';
 }
 
 const IMAGE_POST = ['image', 'icon', 'background', 'texture', 'app_icon', 'splash'];
@@ -107,8 +109,9 @@ function optionProblems(job: Job): string[] {
 }
 
 function rowProblems(job: Job, methods: readonly string[]): string[] {
+  // a temporary row was requested again: its new resource replaces the temporary one
   const problems: string[] = [];
-  if (job.row.status !== 'requested') problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  if (job.row.status !== 'requested' && job.row.status !== 'temporary') problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
   if (!methods.includes(job.options.method)) problems.push(`method ${job.options.method} is not in ogw generation methods for ${job.row.key}: ${methods.join(', ') || 'none'}`);
   for (const key of job.options.inputs) {
     const input = findRow(job.rows, key);
@@ -398,7 +401,7 @@ async function textHash(job: Job): Promise<string> {
 function writeRows(job: Job, plan: Plan, cells: { source: string; license: string; attribution: string; textHash: string }): ResourceRow[] {
   const rows = job.rows.filter((r) => !plan.removedDependents.includes(r.key));
   const row = findRow(rows, job.row.key) as ResourceRow;
-  Object.assign(row, { status: 'final', method: job.options.method, source: cells.source, license: cells.license, attribution: cells.attribution });
+  Object.assign(row, { status: job.status, method: job.options.method, source: cells.source, license: cells.license, attribution: cells.attribution });
   if (job.parsed.type === 'voice' && row.text_key !== '') row.text_hash = cells.textHash;
   for (const dep of plan.dependents) {
     let depRow = findRow(rows, dep.key);
@@ -406,7 +409,7 @@ function writeRows(job: Job, plan: Plan, cells: { source: string; license: strin
       depRow = emptyRow(dep.key);
       rows.push(depRow);
     }
-    Object.assign(depRow, { description: dep.description, spec: dep.spec, status: 'final', method: row.method, source: row.source, license: row.license, attribution: row.attribution });
+    Object.assign(depRow, { description: dep.description, spec: dep.spec, status: job.status, method: row.method, source: row.source, license: row.license, attribution: row.attribution });
   }
   return rows;
 }
@@ -417,8 +420,10 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
   const row = findRow(rows, options.key);
   if (!row) throw new OgwError(`${options.key} is not in ${LIST_PATH}`);
   const parsed = requireKey(options.key);
-  const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null };
-  const methods = (await generationMethods(ctx, game, options.key)).map((m) => m.name);
+  const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final' };
+  const choices = await generationMethods(ctx, game, options.key);
+  const methods = choices.map((m) => m.name);
+  if (choices.find((m) => m.name === options.method)?.temporary === true) job.status = 'temporary';
   const problems = [...rowProblems(job, methods), ...optionProblems(job)];
   if (problems.length > 0) throw new OgwError(problems.join('\n'));
   if (parsed.type === 'rig_animation_2d') {
@@ -446,9 +451,9 @@ export async function finalizeResource(ctx: Context, game: GameRepo, options: Fi
   try {
     const synced = await runSync(ctx, game, tools);
     after = findRow(await readList(game.root), options.key) as ResourceRow;
-    if (after.status !== 'final') {
+    if (after.status !== job.status) {
       await synced.undo();
-      throw new OgwError(`${options.key}: ogw resource sync made the row ${after.status}, not final`);
+      throw new OgwError(`${options.key}: ogw resource sync made the row ${after.status}, not ${job.status}`);
     }
   } catch (error) {
     await undo();

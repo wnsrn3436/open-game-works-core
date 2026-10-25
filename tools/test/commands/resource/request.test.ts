@@ -69,6 +69,21 @@ describe('ogw resource request', () => {
     expect(requestFiles(f, 'records/loops/loop-1/resource-requests')).toHaveLength(3);
   });
 
+  it('requests a temporary row once per run and keeps its status and file', async () => {
+    const f = makeFixture({
+      'resource/resources.csv': listCsv([
+        { key: 'icon/t', spec: 'size=8x8', status: 'temporary', method: 'flux2-klein' },
+        { key: 'icon/u', spec: 'size=8x8', status: 'temporary', method: 'flux2-klein' },
+      ]),
+      'records/loops/loop-1/resource-requests/100.md': '## keys\n\nicon/u\n\n## see\n\nnone\n\n## base\n\nnone\n',
+    });
+    await openRun(f, {});
+    const run = await ogw(f.ws, ['resource', 'request', 'g', '--pending', '--json']);
+    expect((JSON.parse(run.stdout) as { keys: string[] }).keys).toEqual(['icon/t']);
+    expect(rowOf(f.game, 'icon/t').status).toBe('temporary');
+    expect(await ogw(f.ws, ['resource', 'request', 'g', '--pending'])).toMatchObject({ code: 0, stdout: 'no pending resource\n' });
+  });
+
   it('asks again for requested rows whose request jobs all finished, up to backgroundRetryLimit request files', async () => {
     const keys = (list: string): string => `## keys\n\n${list}\n\n## see\n\nnone\n\n## base\n\nnone\n`;
     const f = makeFixture({

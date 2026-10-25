@@ -23,10 +23,12 @@ export const COLUMNS = [
 
 export type Column = (typeof COLUMNS)[number];
 export type ResourceRow = Record<Column, string>;
-export type Status = 'placeholder' | 'requested' | 'final';
+export type Status = 'placeholder' | 'requested' | 'final' | 'temporary';
 
 export const LIST_PATH = 'resource/resources.csv';
-export const STATUSES: readonly string[] = ['placeholder', 'requested', 'final'];
+export const STATUSES: readonly string[] = ['placeholder', 'requested', 'final', 'temporary'];
+/** Statuses of a row whose file is a made resource, not the tool's placeholder. */
+export const MADE: readonly string[] = ['final', 'temporary'];
 
 /** Resource types (`resource` skill `## resource key`). */
 export const TYPES: readonly string[] = [
@@ -118,6 +120,15 @@ export function unknownLicenseKeys(text: string): string[] {
   const license = header?.indexOf('license') ?? -1;
   if (license < 0) return [];
   return rows.filter((row) => row[license] === 'unknown').map((row) => row[key] ?? '');
+}
+
+/** Keys of the rows of a `resource/resources.csv` text whose `status` is `temporary`, in file order. */
+export function temporaryKeys(text: string): string[] {
+  const [header, ...rows] = parseCsv(text, LIST_PATH);
+  const key = header?.indexOf('key') ?? -1;
+  const status = header?.indexOf('status') ?? -1;
+  if (status < 0) return [];
+  return rows.filter((row) => row[status] === 'temporary').map((row) => row[key] ?? '');
 }
 
 export function formatList(rows: readonly ResourceRow[]): string {

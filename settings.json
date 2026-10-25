@@ -242,7 +242,16 @@
       "name": "sprite-gen-codex",
       "kind": "external-service",
       "resourceTypes": [
-        "sprite_animation"
+        "sprite_animation",
+        "image",
+        "sprite_sheet",
+        "icon",
+        "background",
+        "nine_slice",
+        "texture",
+        "skybox",
+        "app_icon",
+        "splash"
       ],
       "provider": "codex",
       "safetyTimeoutMs": 600000,
@@ -263,7 +272,16 @@
       "name": "sprite-gen-grok",
       "kind": "external-service",
       "resourceTypes": [
-        "sprite_animation"
+        "sprite_animation",
+        "image",
+        "sprite_sheet",
+        "icon",
+        "background",
+        "nine_slice",
+        "texture",
+        "skybox",
+        "app_icon",
+        "splash"
       ],
       "provider": "grok",
       "safetyTimeoutMs": 600000,

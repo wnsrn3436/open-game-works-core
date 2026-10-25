@@ -9,7 +9,7 @@ import type { RunState } from '../../lib/runstate.ts';
 import { placeholderFailures } from '../check/api.ts';
 import { needsHumanLines } from './lib/assumptions.ts';
 import { addedCoreProposals } from '../build/lib/report-sections.ts';
-import { LIST_PATH, unknownLicenseKeys } from '../resource/lib/list.ts';
+import { LIST_PATH, temporaryKeys, unknownLicenseKeys } from '../resource/lib/list.ts';
 import type { DefectsFile } from './lib/defects.ts';
 import { checkResult, COMPLETENESS_CHECKS, mainJudge, type CheckFile, type EvaluateFile } from './lib/files.ts';
 import { iterationRecords, mainOf } from './lib/iteration-record.ts';
@@ -79,6 +79,12 @@ async function unknownLicenses(game: GameRepo): Promise<string[]> {
   return unknownLicenseKeys(await readFile(resources, 'utf8')).map((key) => `license unknown: ${key}`);
 }
 
+async function temporaryResources(game: GameRepo): Promise<string[]> {
+  const resources = join(game.root, LIST_PATH);
+  if (!exists(resources)) return [];
+  return temporaryKeys(await readFile(resources, 'utf8')).map((key) => `temporary resource (the next update game makes it again): ${key}`);
+}
+
 /** Languages of the `data check banned_word_missing` warnings of the last check file. */
 function bannedWordLines(check: CheckFile | null): string[] {
   const warnings = check?.checks.filter((c) => c.name === 'static check').flatMap((c) => c.warnings) ?? [];
@@ -93,6 +99,7 @@ async function humanSection(game: GameRepo, run: RunState, humanFile: string | n
   if (exists(assumptions)) lines.push(...needsHumanLines(await readFile(assumptions, 'utf8')));
   lines.push(...(await addedCoreProposals(game, run.baseCommit, run.branch)).map((p) => `core proposal: ${p}`));
   lines.push(...(await unknownLicenses(game)));
+  lines.push(...(await temporaryResources(game)));
   lines.push(...(coreUpgrade(run)?.skipped ?? []).map((v) => `skipped core version: ${v}`));
   lines.push(...bannedWordLines(await lastCheck(game, run)));
   // One bullet per line, so a line neither joins the item above it nor becomes a heading.

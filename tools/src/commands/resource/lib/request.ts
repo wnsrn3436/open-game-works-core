@@ -123,12 +123,18 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
       const w = written.get(key);
       return w === undefined || (w.finished && w.files <= options.retryLimit);
     };
-    keys = rows.filter((r) => r.status === 'placeholder' || (r.status === 'requested' && again(r.key))).map((r) => r.key);
+    keys = rows
+      .filter((r) => r.status === 'placeholder' || (r.status === 'requested' && again(r.key)) || (r.status === 'temporary' && !written.has(r.key)))
+      .map((r) => r.key);
   } else {
     keys = [...new Set(options.keys)];
   }
   if (keys.length === 0) return { path: null, keys };
-  for (const key of keys) (findRow(rows, key) as ResourceRow).status = 'requested';
+  for (const key of keys) {
+    const row = findRow(rows, key) as ResourceRow;
+    // a temporary row keeps its file until finalize replaces it
+    if (row.status !== 'temporary') row.status = 'requested';
+  }
   const path = requestPath(game.root, place);
   const changes = new FileChanges();
   changes.write(path, requestFileText(keys, options.see, options.base));

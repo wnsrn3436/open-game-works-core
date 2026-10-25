@@ -3,7 +3,14 @@ import { expectPositionals, positional, str, type CommandDef } from '../../lib/c
 import { OgwError } from '../../lib/errors.ts';
 import { writeFileAtomic } from '../../lib/fsx.ts';
 import type { GenerationMethod, MeasuredStep } from '../../lib/settings.ts';
-import { loadSchema, schemaPath } from '../../lib/settings.ts';
+import { loadSchema, schemaPath, type HarnessSettings } from '../../lib/settings.ts';
+import type { Context } from '../../lib/command.ts';
+import { exists } from '../../lib/fsx.ts';
+import type { GameRepo } from '../../lib/game.ts';
+import { providerCliChecks } from '../env/lib/hostcheck.ts';
+import { LIST_PATH, readList } from '../resource/lib/list.ts';
+import { emptySpec } from '../resource/lib/spec.ts';
+import { gameImageMethod, methodChoices } from './lib/select.ts';
 
 export type TypeStatus = 'ok' | 'unmeasured' | 'missing';
 
@@ -13,6 +20,8 @@ export interface TypeRow {
   methods: { name: string; step: MeasuredStep }[];
   count: number | null;
   timeMs: number | null;
+  /** The methods that will make the type and their billing, as `ogw generation methods` gives them (`ok` types). */
+  use: string[];
 }
 
 /** Resource type values of harness settings schema `resourceTypes`. */
@@ -36,7 +45,7 @@ export function typeRow(type: string, methods: readonly GenerationMethod[], coun
   });
   const status: TypeStatus = withOk.length > 0 ? 'ok' : own.some((m) => m.measured === undefined) ? 'unmeasured' : 'missing';
   const timeMs = status === 'ok' && count !== null ? Math.min(...withOk.map((m) => count * (m.step.jobMs ?? 0))) : null;
-  return { type, status, methods: withOk, count: status === 'ok' ? count : null, timeMs };
+  return { type, status, methods: withOk, count: status === 'ok' ? count : null, timeMs, use: [] };
 }
 
 function methodCell(m: { name: string; step: MeasuredStep }): string {
@@ -49,14 +58,34 @@ function methodCell(m: { name: string; step: MeasuredStep }): string {
 }
 
 export function hostCheckMarkdown(rows: TypeRow[]): string {
-  const lines = ['| type | status | methods | count | time ms |', '|---|---|---|---|---|'];
+  const lines = ['| type | status | methods | to use | count | time ms |', '|---|---|---|---|---|---|'];
   for (const row of rows) {
     const methods = row.methods.length === 0 ? '-' : row.methods.map(methodCell).join(', ');
-    lines.push(`| ${row.type} | ${row.status} | ${methods} | ${row.count === null ? '-' : String(row.count)} | ${row.timeMs === null ? '-' : String(row.timeMs)} |`);
+    const use = row.use.length === 0 ? '-' : row.use.join(', ');
+    lines.push(`| ${row.type} | ${row.status} | ${methods} | ${use} | ${row.count === null ? '-' : String(row.count)} | ${row.timeMs === null ? '-' : String(row.timeMs)} |`);
   }
   const times = rows.flatMap((r) => (r.timeMs === null ? [] : [r.timeMs]));
   lines.push('', `total time ms: ${times.length === 0 ? '-' : String(times.reduce((a, b) => a + b, 0))}`);
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Fills `use` of the `ok` rows: each method `ogw generation methods` would give a key of that type in this game, with
+ * `temporary` for the temporary method, and its billing (`game-setup` 6).
+ */
+async function addUse(ctx: Context, settings: HarnessSettings, game: GameRepo, rows: TypeRow[]): Promise<void> {
+  const ok = rows.filter((r) => r.status === 'ok');
+  if (ok.length === 0) return;
+  const list = exists(join(game.root, LIST_PATH)) ? await readList(game.root) : [];
+  const imageMethod = gameImageMethod(settings, list);
+  const billing = new Map((await providerCliChecks(ctx, settings)).map((p) => [p.provider, p.billing ?? 'unknown']));
+  for (const row of ok) {
+    const choices = await methodChoices(ctx, settings, row.type, emptySpec(), imageMethod);
+    row.use = choices.map((c) => {
+      const provider = settings.resourceGeneration.find((m) => m.name === c.name)?.provider;
+      return `${c.name}${c.temporary ? ' temporary' : ''} (${provider === undefined ? 'none' : (billing.get(provider) ?? 'unknown')})`;
+    });
+  }
 }
 
 function parseCounts(text: string | undefined, types: string[]): Map<string, number> {
@@ -88,8 +117,9 @@ export const checkCommand: CommandDef = {
     const unknown = types.filter((t) => !known.includes(t));
     if (unknown.length > 0) throw new OgwError(`not a resource type of harness settings schema resourceTypes: ${unknown.join(', ')}`);
     const counts = parseCounts(str(args, 'counts'), types);
-    const methods = (await ctx.settings()).resourceGeneration;
-    const rows = types.map((t) => typeRow(t, methods, counts.get(t) ?? null));
+    const settings = await ctx.settings();
+    const rows = types.map((t) => typeRow(t, settings.resourceGeneration, counts.get(t) ?? null));
+    await addUse(ctx, settings, game, rows);
     const path = join(game.root, 'records', 'setup', 'host-check.md');
     const markdown = hostCheckMarkdown(rows);
     await writeFileAtomic(path, markdown);

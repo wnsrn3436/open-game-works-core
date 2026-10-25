@@ -2,7 +2,7 @@ import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import type { GenerationMethod, HarnessSettings, MeasuredStep } from '../../../lib/settings.ts';
-import { findRow, readList, requireKey } from '../../resource/lib/list.ts';
+import { findRow, parseKey, readList, requireKey, type ResourceRow } from '../../resource/lib/list.ts';
 import { parseSpec, type Spec } from '../../resource/lib/spec.ts';
 import { methodMarker } from './install.ts';
 
@@ -53,34 +53,60 @@ export interface MethodChoice {
   skill?: string | null;
   cli?: string | null;
   flux2Klein?: Stage | null;
+  /** The temporary method of the key (`production.md` `## method`): its resource becomes `temporary`. */
+  temporary?: true;
 }
 
 export const IMAGE_METHOD = 'flux2-klein';
 const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2']);
+/** Image types: the image method of a game makes them (`production.md` `## method`). */
+export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 'background', 'nine_slice', 'texture', 'skybox', 'app_icon', 'splash'];
 
-/** The parsed `spec` of a resource key of `resource/resources.csv`; fails when the row is missing or its spec breaks the rules. */
-export async function keySpec(game: GameRepo, key: string): Promise<{ type: string; spec: Spec }> {
-  const row = findRow(await readList(game.root), key);
+/**
+ * The image method of a game: the method of the first `final` row of an image type made by a method of the image types,
+ * else harness settings `imageMethod`.
+ */
+export function gameImageMethod(settings: HarnessSettings, rows: readonly ResourceRow[]): string {
+  const imageMethods = new Set(settings.resourceGeneration.filter((m) => m.resourceTypes.includes('image')).map((m) => m.name));
+  const first = rows.find((r) => r.status === 'final' && IMAGE_TYPES.includes(parseKey(r.key)?.type ?? '') && imageMethods.has(r.method));
+  return first?.method ?? settings.imageMethod;
+}
+
+/**
+ * The parsed `spec` of a resource key of `resource/resources.csv` and the rows of the list; fails when the row is
+ * missing or its spec breaks the rules.
+ */
+export async function keySpec(game: GameRepo, key: string): Promise<{ type: string; spec: Spec; rows: ResourceRow[] }> {
+  const rows = await readList(game.root);
+  const row = findRow(rows, key);
   if (!row) throw new OgwError(`resource key ${key} is not in resource/resources.csv`);
   const { type } = requireKey(key);
-  return { type, spec: parseSpec(key, type, row.spec) };
+  return { type, spec: parseSpec(key, type, row.spec), rows };
 }
 
 /** Methods a resource key can use and the stage of each (`production.md` `## method`). */
 export async function chooseMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<MethodChoice[]> {
-  const { type, spec } = await keySpec(game, key);
-  return methodChoices(ctx, settings, type, spec);
+  const { type, spec, rows } = await keySpec(game, key);
+  return methodChoices(ctx, settings, type, spec, gameImageMethod(settings, rows));
 }
 
-/** `chooseMethods` for a resource type and the parsed `spec` of its key (`keySpec`). */
-export async function methodChoices(ctx: Context, settings: HarnessSettings, type: string, spec: Spec): Promise<MethodChoice[]> {
+/**
+ * `chooseMethods` for a resource type, the parsed `spec` of its key (`keySpec`) and the image method of the game: an
+ * image type takes only that method, and `flux2-klein` is added as the temporary method of an image type made by
+ * another method and of `sprite_animation`.
+ */
+export async function methodChoices(ctx: Context, settings: HarnessSettings, type: string, spec: Spec, imageMethod: string): Promise<MethodChoice[]> {
   const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
+  const imageType = IMAGE_TYPES.includes(type);
   const choices: MethodChoice[] = [];
   for (const method of settings.resourceGeneration) {
     const needsImage = NEEDS_IMAGE_METHOD.has(method.name);
     if (!method.resourceTypes.includes(type) || !usable(method) || (needsImage && !usable(image))) continue;
+    if (imageType && method.name !== imageMethod) continue;
     choices.push(await choiceOf(ctx, method, spec, needsImage ? image : undefined));
   }
+  const temporary = (imageType && imageMethod !== IMAGE_METHOD) || type === 'sprite_animation';
+  if (temporary && image && usable(image)) choices.push({ ...(await choiceOf(ctx, image, spec, undefined)), temporary: true });
   return choices;
 }
 

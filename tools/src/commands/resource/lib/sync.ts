@@ -18,6 +18,7 @@ import {
   listSha,
   parseKey,
   readList,
+  MADE,
   STATUSES,
   type KeyFile,
   type ParsedKey,
@@ -155,7 +156,7 @@ async function syncRow(c: RowContext, row: ResourceRow): Promise<void> {
   const files = await keyFiles(c.root, row.key);
   let data: Buffer[] | null;
   // until `ogw resource finalize` writes the final file and `final` together, the files are the tool's placeholder
-  if (row.status !== 'final') {
+  if (!MADE.includes(row.status)) {
     const made = await placeholderFiles(c.engine, row.key, parsed, spec, c.tools);
     for (const file of files) if (!made.some((m) => m.path === file.path)) c.changes.delete(file.path);
     for (const file of made) c.changes.write(file.path, file.data);

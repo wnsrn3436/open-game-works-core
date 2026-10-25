@@ -6,6 +6,7 @@ import { request } from './request.ts';
 import { rigCheckCommand } from './rig-check.ts';
 import { rigMeshCommand } from './rig-mesh.ts';
 import { rigSplitCommand } from './rig-split.ts';
+import { spriteSheetCommand } from './sprite-sheet.ts';
 import { sync } from './sync.ts';
 
-export const commands: CommandDef[] = [placeholder, sync, request, finalize, rigSplitCommand, rigCheckCommand, rigMeshCommand, firstFinalCommand];
+export const commands: CommandDef[] = [placeholder, sync, request, finalize, rigSplitCommand, rigCheckCommand, rigMeshCommand, firstFinalCommand, spriteSheetCommand];

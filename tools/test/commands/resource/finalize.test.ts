@@ -331,6 +331,41 @@ describe('ogw resource finalize', () => {
     expect(rowOf(f.game, 'sprite_animation/coin').status).toBe('final');
   });
 
+  it('packs frames with sprite-sheet into a sheet a temporary sprite animation is finalized from', async () => {
+    const f = setup([{ key: 'sprite_animation/coin', spec: 'size=8x8;animations=spin:500:loop,pop:250:once', status: 'requested' }]);
+    await sync(f);
+    const frames = [work(f, 'a.png'), work(f, 'b.png'), work(f, 'c.png')];
+    await png(frames[0] as string, 16, 16, [255, 0, 0, 255]);
+    await png(frames[1] as string, 8, 16, [0, 255, 0, 255]);
+    await png(frames[2] as string, 16, 8, [0, 0, 255, 255]);
+    const out = work(f, 'packed');
+    const pack = await ogw(f.ws, ['resource', 'sprite-sheet', '--frames', `spin=${frames[0] as string},${frames[1] as string}`, '--frames', `pop=${frames[2] as string}`, '--out', out]);
+    expect(pack.stderr).toBe('');
+    const sheet = await pixels(join(out, 'sheet.png'));
+    expect([sheet.width, sheet.height]).toEqual([32, 32]);
+    // the 8-wide frame sits at the center of its 16x16 cell
+    const at = (x: number, y: number): number[] => [...sheet.data.subarray((y * 32 + x) * 4, (y * 32 + x) * 4 + 4)];
+    expect(at(18, 8)[3]).toBe(0);
+    expect(at(22, 8)).toEqual([0, 255, 0, 255]);
+    expect(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))).toEqual({
+      frame_layout: { rows: { spin: [{ x: 0, y: 0, w: 16, h: 16 }, { x: 16, y: 0, w: 16, h: 16 }], pop: [{ x: 0, y: 16, w: 16, h: 16 }] } },
+    });
+    const run = await finalize(f, ['sprite_animation/coin', '--method', 'flux2-klein', '--file', join(out, 'sheet.png'), '--manifest', join(out, 'manifest.json')]);
+    expect(run.stderr).toBe('');
+    expect(rowOf(f.game, 'sprite_animation/coin')).toMatchObject({ status: 'temporary', method: 'flux2-klein' });
+    expect(rowOf(f.game, 'sprite_sheet/coin').status).toBe('temporary');
+    for (const [argv, message] of [
+      [['--frames', 'spin=/nonexistent.png', '--out', out], '--frames file /nonexistent.png does not exist'],
+      [['--frames', `spin=${join(out, 'manifest.json')}`, '--out', out], 'is not a PNG'],
+      [['--frames', `spin=${frames[0] as string}`, '--frames', `spin=${frames[1] as string}`, '--out', out], '--frames gives animation spin twice'],
+      [['--frames', 'spin', '--out', out], '--frames item must be <animation>=<file>,<file>...: spin'],
+    ] as const) {
+      const bad = await ogw(f.ws, ['resource', 'sprite-sheet', ...argv]);
+      expect(bad.code).toBe(1);
+      expect(bad.stderr).toContain(message);
+    }
+  });
+
   it('copies the rig scene and part images, writes part rows and removes old part rows', async () => {
     const f = setup([
       { key: 'rig_animation_2d/hero', spec: 'size=20x20;animations=idle:800:loop', status: 'requested' },
@@ -480,6 +515,22 @@ describe('ogw resource finalize', () => {
     const run = await finalize(f, argv);
     expect(run.stderr).toBe('');
     expect(rowOf(f.game, 'sfx/hit')).toMatchObject({ status: 'final', source: 'https://s/1 https://s/2', license: 'CC-BY-4.0 AND CC0-1.0', attribution: 'Bea' });
+  });
+
+  it('makes a row temporary when its method is the temporary method, and final when the image method makes it again', async () => {
+    const f = setup([{ key: 'icon/a', spec: 'size=4x4', status: 'requested' }], {}, { imageMethod: 'sprite-gen-codex' });
+    await sync(f);
+    const temp = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
+    expect(temp.stderr).toBe('');
+    expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'temporary', method: 'flux2-klein' });
+    expect(existsSync(join(f.game, 'resource/icon/a.png'))).toBe(true);
+    commitAll(f.game, 'temporary');
+    // sync keeps the made file of a temporary row
+    await sync(f);
+    expect(rowOf(f.game, 'icon/a').status).toBe('temporary');
+    const again = await finalize(f, await okPng(f, ['icon/a', '--method', 'sprite-gen-codex']));
+    expect(again.stderr).toBe('');
+    expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'sprite-gen-codex' });
   });
 
   it('removes the other files of the key', async () => {

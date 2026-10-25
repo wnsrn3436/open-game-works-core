@@ -33,6 +33,8 @@ export interface IterationRecordData {
   measurements: MeasureTarget[] | null;
   /** null when the `performance` check did not fail. */
   load: { platform: string | null; hostLoad: unknown }[] | null;
+  /** Keys that became `temporary` since the previous iteration (`game-loop` `## loop iteration record`). */
+  temporary: string[];
 }
 
 function judgeBlock(judge: RecordJudge): string {
@@ -84,6 +86,7 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ['defects', defects],
     ['measurements', measurements],
     ['load', load],
+    ['temporary resources', data.temporary.length > 0 ? data.temporary.map((k) => `- \`${k}\``).join('\n') : 'none'],
   ]);
 }
 

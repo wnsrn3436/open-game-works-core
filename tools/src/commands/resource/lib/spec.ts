@@ -151,7 +151,8 @@ const ITEMS: Record<string, ItemRule> = {
   },
 };
 
-function emptySpec(): Spec {
+/** A `spec` with every item at its default. */
+export function emptySpec(): Spec {
   return { size: null, alpha: false, slice: null, lengthMs: null, loop: false, animations: null, variants: 1, level: 'normal', bounds: null, space: null };
 }
 

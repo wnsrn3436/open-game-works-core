@@ -71,7 +71,7 @@ describe('ogw generation methods', () => {
   });
 
   it('gives skill and cli of a pinned external-service', async () => {
-    expect(await methodsOf('sprite_animation/fx')).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill: null, cli: null }]);
+    expect(await methodsOf('sprite_animation/fx')).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill: null, cli: null }, { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: false }, temporary: true }]);
     const ws = makeWorkspace({ resourceGeneration: methods() });
     makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
     const sprite = methods().find((m) => (m as { name: string }).name === 'sprite') as { pins: unknown[] };
@@ -83,8 +83,8 @@ describe('ogw generation methods', () => {
     const marker = { name: 'sprite', pins: JSON.stringify(sprite.pins), git: [], hf: [], files: null, python: null, cli, skill, ffmpeg: null };
     writeFileSync(join(dir, 'installed.json'), JSON.stringify(marker));
     const run = await ogw(ws, ['generation', 'methods', 'g', 'sprite_animation/fx', '--json']);
-    expect((JSON.parse(run.stdout) as { methods: unknown }).methods).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill, cli }]);
-    expect((await ogw(ws, ['generation', 'methods', 'g', 'sprite_animation/fx'])).stdout).toBe(`sprite external-service no stage\n  skill ${skill}\n  cli ${cli}\n`);
+    expect((JSON.parse(run.stdout) as { methods: unknown }).methods).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill, cli }, { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: false }, temporary: true }]);
+    expect((await ogw(ws, ['generation', 'methods', 'g', 'sprite_animation/fx'])).stdout).toBe(`sprite external-service no stage\n  skill ${skill}\n  cli ${cli}\nflux2-klein local-model resolution 512px temporary\n`);
   });
 
   it('prints one block per method, or none', async () => {
@@ -94,9 +94,32 @@ describe('ogw generation methods', () => {
     expect((await ogw(ws, ['generation', 'methods', 'g', 'image/big'])).stdout).toBe('flux2-klein local-model resolution 1024px fallback\n');
     expect((await ogw(ws, ['generation', 'methods', 'g', 'sfx/coin'])).stdout).toBe('audio local-model duration 3000ms\n');
     expect((await ogw(ws, ['generation', 'methods', 'g', 'sprite_animation/fx'])).stdout).toBe(
-      'sprite external-service no stage\n  skill not installed\n  cli not installed\n',
+      'sprite external-service no stage\n  skill not installed\n  cli not installed\nflux2-klein local-model resolution 512px temporary\n',
     );
     expect((await ogw(ws, ['generation', 'methods', 'g', 'bgm/none'])).stdout).toBe('audio local-model duration 1000ms\n');
+  });
+
+  it('gives an image type only the image method of the game, and flux2-klein as its temporary method', async () => {
+    const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const host = (imageMethod: string): Record<string, unknown> => ({ resourceGeneration: [...methods(), sub], imageMethod });
+    const run = async (imageMethod: string, list: string, key: string): Promise<unknown> => {
+      const ws = makeWorkspace(host(imageMethod));
+      makeGame(ws, 'g', { 'resource/resources.csv': list });
+      const out = await ogw(ws, ['generation', 'methods', 'g', key, '--json']);
+      if (out.code !== 0) throw new Error(out.stderr);
+      return (JSON.parse(out.stdout) as { methods: { name: string; temporary?: boolean }[] }).methods.map((m) => `${m.name}${m.temporary ? ' temporary' : ''}`);
+    };
+    // no image made yet: the host imageMethod
+    expect(await run('sub', RESOURCES, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    expect(await run('flux2-klein', RESOURCES, 'image/hero')).toEqual(['flux2-klein']);
+    // the first final image fixes the method of the game, whatever this host chose
+    const madeLocal = RESOURCES.replace('image/small,small,size=100x100,placeholder,,', 'image/small,small,size=100x100,final,flux2-klein,');
+    expect(await run('sub', madeLocal, 'image/hero')).toEqual(['flux2-klein']);
+    const madeSub = RESOURCES.replace('image/small,small,size=100x100,placeholder,,', 'image/small,small,size=100x100,final,sub,');
+    expect(await run('flux2-klein', madeSub, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    // a temporary image does not fix it
+    const temp = RESOURCES.replace('image/small,small,size=100x100,placeholder,,', 'image/small,small,size=100x100,temporary,flux2-klein,');
+    expect(await run('sub', temp, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
   });
 
   it('fails for a key not in resources.csv or a spec that breaks the rules', async () => {
@@ -131,18 +154,18 @@ describe('ogw generation check', () => {
   ];
 
   it('writes host-check.md with status, methods, counts and the total time', async () => {
-    const ws = makeWorkspace({ resourceGeneration: settingsMethods });
+    const ws = makeWorkspace({ resourceGeneration: settingsMethods, imageMethod: 'a' });
     const root = makeGame(ws, 'g');
     const run = await ogw(ws, ['generation', 'check', 'g', '--types', 'image,bgm,sfx,icon,model', '--counts', 'image=3,bgm=2,icon=1']);
     expect(run.code).toBe(0);
     const expected = [
-      '| type | status | methods | count | time ms |',
-      '|---|---|---|---|---|',
-      '| image | ok | a 1024px 400ms, b 10ms | 3 | 0 |',
-      '| bgm | unmeasured | - | - | - |',
-      '| sfx | missing | - | - | - |',
-      '| icon | ok | a 1024px 400ms | 1 | 400 |',
-      '| model | missing | - | - | - |',
+      '| type | status | methods | to use | count | time ms |',
+      '|---|---|---|---|---|---|',
+      '| image | ok | a 1024px 400ms, b 10ms | a (none) | 3 | 0 |',
+      '| bgm | unmeasured | - | - | - | - |',
+      '| sfx | missing | - | - | - | - |',
+      '| icon | ok | a 1024px 400ms | a (none) | 1 | 400 |',
+      '| model | missing | - | - | - | - |',
       '',
       'total time ms: 400',
       '',

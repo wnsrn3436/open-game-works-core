@@ -102,16 +102,18 @@ export interface HostSettings {
   playInstances?: number;
   reviewRunConcurrency?: number;
   testDevices?: TestDevice[];
+  imageMethod?: string;
   measured?: Record<string, MeasuredStep[]>;
 }
 
 /** Keys of `HostSettings` that hold a value of the host; `ogw settings` reads them as top-level harness settings paths. */
-export const HOST_KEYS = ['maxConcurrentInstances', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'measured'] as const;
+export const HOST_KEYS = ['maxConcurrentInstances', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'imageMethod', 'measured'] as const;
 
 /**
  * Harness settings as commands use them: the file with this host's `hosts` entry in place of `hosts`.
  * `maxConcurrentInstances` is null when this host has no measured value, `playInstances` and `reviewRunConcurrency` are
- * the schema defaults when this host has none, and each method has this host's `measured` steps.
+ * the schema defaults when this host has none, `imageMethod` is the schema default when this host has none, and each
+ * method has this host's `measured` steps.
  */
 export interface HarnessSettings {
   humanLanguage: string;
@@ -122,6 +124,7 @@ export interface HarnessSettings {
   testDevices?: TestDevice[];
   playInstances: number;
   reviewRunConcurrency: number;
+  imageMethod: string;
   backgroundRetryLimit: number;
   webSmokeCpuThrottleRate: number;
   webSmokeBootTimeoutMs: number;
@@ -174,7 +177,7 @@ export function schemaPath(name: 'harness-settings' | 'game-settings', env: Node
 }
 
 /** The harness settings file: harness-wide values and `hosts`. */
-export type HarnessSettingsFile = Omit<HarnessSettings, 'maxConcurrentInstances' | 'playInstances' | 'reviewRunConcurrency' | 'testDevices'> & {
+export type HarnessSettingsFile = Omit<HarnessSettings, 'maxConcurrentInstances' | 'playInstances' | 'reviewRunConcurrency' | 'testDevices' | 'imageMethod'> & {
   hosts?: Record<string, HostSettings>;
 };
 
@@ -182,17 +185,22 @@ export type HarnessSettingsFile = Omit<HarnessSettings, 'maxConcurrentInstances'
 export interface HostDefaults {
   playInstances: number;
   reviewRunConcurrency: number;
+  imageMethod: string;
 }
 
-function hostDefault(schema: unknown, key: keyof HostDefaults): number {
+function hostDefault<T extends 'number' | 'string'>(schema: unknown, key: keyof HostDefaults, type: T): T extends 'number' ? number : string {
   const properties = (schema as { $defs?: { host?: { properties?: Record<string, { default?: unknown }> } } }).$defs?.host?.properties;
   const value = properties?.[key]?.default;
-  if (typeof value !== 'number') throw new OgwError(`harness settings schema $defs.host.properties.${key} has no default`);
-  return value;
+  if (typeof value !== type) throw new OgwError(`harness settings schema $defs.host.properties.${key} has no default`);
+  return value as T extends 'number' ? number : string;
 }
 
 function hostDefaults(schema: unknown): HostDefaults {
-  return { playInstances: hostDefault(schema, 'playInstances'), reviewRunConcurrency: hostDefault(schema, 'reviewRunConcurrency') };
+  return {
+    playInstances: hostDefault(schema, 'playInstances', 'number'),
+    reviewRunConcurrency: hostDefault(schema, 'reviewRunConcurrency', 'number'),
+    imageMethod: hostDefault(schema, 'imageMethod', 'string'),
+  };
 }
 
 /** Harness settings with the values of `host` (an entry of `hosts`, or undefined when this host has none). */
@@ -202,6 +210,7 @@ export function withHostValues(file: HarnessSettingsFile, host: HostSettings | u
     maxConcurrentInstances: host?.maxConcurrentInstances ?? null,
     playInstances: host?.playInstances ?? defaults.playInstances,
     reviewRunConcurrency: host?.reviewRunConcurrency ?? defaults.reviewRunConcurrency,
+    imageMethod: host?.imageMethod ?? defaults.imageMethod,
     resourceGeneration: file.resourceGeneration.map((inFile) => {
       const method = { ...inFile };
       Reflect.deleteProperty(method, 'measured');

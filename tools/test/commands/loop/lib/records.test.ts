@@ -77,12 +77,14 @@ const DATA: IterationRecordData = {
   defects: [],
   measurements: [{ metric: 'fps', min: 30, max: 60, value: null, result: 'unknown', data: null }],
   load: [{ platform: 'web', hostLoad: { cpuMaxPercent: 99 } }],
+  temporary: ['icon/a', 'image/b'],
 };
 
 describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
-    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## checks', '## judge', '## play', '## defects', '## measurements', '## load']);
+    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## checks', '## judge', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
+    expect(text).toContain('## temporary resources\n\n- `icon/a`\n- `image/b`\n');
     expect(text).toContain('- omitted moments: boss');
     expect(text).toContain('| records/loops/r/play-1-1.md | 1 | 0 | 2 | 3 |');
     expect(text).toContain('| fps | none | 30..60 | unknown |');
@@ -104,8 +106,8 @@ describe('iteration record', () => {
   });
 
   it('writes none for steps that did not run', () => {
-    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, plays: null, measurements: null, load: null });
-    expect(text).toBe('## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n');
+    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, plays: null, measurements: null, load: null, temporary: [] });
+    expect(text).toBe('## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n');
     const parsed = parseIterationRecord(text, 2, 'p');
     expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0 });
     expect(mainOf(parsed)).toBeNull();

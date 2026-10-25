@@ -46,7 +46,7 @@ description: Holds the resource key format, the resource list file, the `spec` f
 | `key` | resource key |
 | `description` | One sentence on what it is. The scenes and moments where it is used |
 | `spec` | The size, length and format conditions of the resource to make |
-| `status` | `placeholder`, `requested`, `final` |
+| `status` | `placeholder`, `requested`, `final`, `temporary` |
 | `method` | The name of the generation method that made the final resource |
 | `source` | The source URL of a collected resource. Empty cell for a made resource |
 | `license` | SPDX license expression or `unknown` |
@@ -61,6 +61,7 @@ description: Holds the resource key format, the resource list file, the `spec` f
 - `ogw resource sync` writes `text_key` and `speaker` of line voice rows. `text_key` is the translation key of `text` of that `cutscene_step` row, and `speaker` is the ID name of `speaker` of that row without the brackets (`none` when it is `null`)
 - The content agent writes `text_key` and `speaker` of subtitled voice rows. `text_key` is the subtitle translation key passed to `play_voice`, and `speaker` is the `cutscene_speaker` ID name of the same character without the brackets when there is one, otherwise a snake_case name that the content agent decides
 - Rows whose type is `scene`, `prefab` or `tween` are `final` from the start
+- A `temporary` row holds a resource that the temporary method made in place of the method of that key (`## method` of [production.md](production.md)). It counts as made in the no placeholder check, and is not given in `--see` or `--base`
 - When the SHA-256 of a file differs from `sha256`, an automated check blocks it. `ogw resource sync <game>` aligns the files and the list
 - For each text voice row whose `status` is `final`, `ogw resource sync` finds the `text_key` row in the translation file of the source language. When the `current_hash` of that row differs from `text_hash`, it changes `status` to `placeholder`, empties `method`, `source`, `license`, `attribution`, `text_hash`, and makes the placeholder resource again
 - `ogw resource sync` fails when the `text_key` of a text voice row is not in the translation file of the source language, when `spec` violates the `spec` item rules, or when the file extension or engine class differs from `## resource type` of the engine
@@ -98,11 +99,12 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
 
 ## resource request
 
-The content agent requests, and in `game-loop` and `build`, `ogw loop dispatch` run by the lead agent requests with `--pending`. The request command is `ogw resource request <game> (<key>... | --pending) [--see <key>...] [--base <key>]`. The tool changes the `status` of the requested rows to `requested`, writes the request file and commits. The request file is `records/loops/<run>/resource-requests/<unix ms>.md` in the loop, and in build the path that `build` defines.
+The content agent requests, and in `game-loop` and `build`, `ogw loop dispatch` run by the lead agent requests with `--pending`. The request command is `ogw resource request <game> (<key>... | --pending) [--see <key>...] [--base <key>]`. The tool changes the `status` of the requested rows to `requested`, writes the request file and commits. A `temporary` row keeps its `status` and its file until `ogw resource finalize` replaces them. The request file is `records/loops/<run>/resource-requests/<unix ms>.md` in the loop, and in build the path that `build` defines.
 
 - `--pending`: requests all of the rows below
   - rows whose `status` is `placeholder`
   - rows whose `status` is `requested` and whose resource key is in no request file written in this run
+  - rows whose `status` is `temporary` and whose resource key is in no request file written in this run
   - rows whose `status` is `requested`, for which every request file of this run that holds that resource key has a result file `<request file name>-result.md`, and for which the number of those request files is at most harness settings `backgroundRetryLimit`. These are rows whose assigned work ended without them becoming final
 - `--see`: existing final resource keys to look at together. The content agent picks them
 - `--base`: an existing final resource key to use as the base when requesting a variant of the same target. The content agent picks it

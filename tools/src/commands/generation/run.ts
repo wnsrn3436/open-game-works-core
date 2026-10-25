@@ -10,7 +10,7 @@ import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import type { GenerationMethod } from '../../lib/settings.ts';
 import { dataDir } from '../env/lib/host.ts';
 import { methodDir, methodMarker, withMethodLock } from './lib/install.ts';
-import { IMAGE_METHOD, keySpec, methodChoices, type Stage } from './lib/select.ts';
+import { gameImageMethod, IMAGE_METHOD, keySpec, methodChoices, type Stage } from './lib/select.ts';
 import { runCall, standardJob, type StageValues } from './lib/standard.ts';
 
 function required(args: CommandArgs, name: string, usage: string): string {
@@ -29,8 +29,9 @@ async function stageFor(
   gameName: string,
   key: string,
 ): Promise<{ stage: Stage | null; spec: { size: [number, number] | null; lengthMs: number | null; loop: boolean } }> {
-  const { type, spec } = await keySpec(await ctx.game(gameName), key);
-  const choices = await methodChoices(ctx, await ctx.settings(), type, spec);
+  const settings = await ctx.settings();
+  const { type, spec, rows } = await keySpec(await ctx.game(gameName), key);
+  const choices = await methodChoices(ctx, settings, type, spec, gameImageMethod(settings, rows));
   const sizes = { size: spec.size, lengthMs: spec.lengthMs, loop: spec.loop };
   const own = choices.find((c) => c.name === method.name);
   if (own) return { stage: own.stage, spec: sizes };

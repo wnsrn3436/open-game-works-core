@@ -360,6 +360,12 @@
             }
           }
         },
+        "imageMethod": {
+          "description": "The method that makes the image types of a game whose images no method has made yet (`## method` of [production](../skills/resource/production.md)). The name of a `resourceGeneration` method whose `resourceTypes` has `image`. The `host-env` skill sets it with the human",
+          "type": "string",
+          "minLength": 1,
+          "default": "flux2-klein"
+        },
         "measured": {
           "description": "Results per method and per step that `ogw generation measure` measured on this host. The key is the method `name` of `resourceGeneration`. Steps go from the lowest, and stop at the step that fails or exceeds the safety limit. A method that is not present is a method not measured on this host. Only `ogw env propose --apply` writes it",
           "type": "object",

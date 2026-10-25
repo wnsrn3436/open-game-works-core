@@ -75,7 +75,7 @@ export function useGitOnlyHarness(): void {
 /** The host id of every test (`OGW_HOST_ID`, set by tmp-setup.ts). */
 export const TEST_HOST_ID = '0123456789abcdef0123456789abcdef';
 
-const HOST_KEYS = ['maxConcurrentInstances', 'playInstances', 'reviewRunConcurrency', 'testDevices'];
+const HOST_KEYS = ['maxConcurrentInstances', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'imageMethod'];
 
 /**
  * Harness settings in the file form: top-level host keys (`maxConcurrentInstances`, `playInstances`, `reviewRunConcurrency`, `testDevices`) and
