@@ -1,0 +1,12 @@
+{
+  "target": "step",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/input/input.ts:114",
+      "problem": "`runScript` takes `start` (input.ts:114) before `recordVideo`, which since this range first sends the probing `capture_screen jpg` of `takesFormat` (tools/src/commands/capture/capture.ts:26, :38) and only then `capture_video`; the first input waits for `onSent` of `capture_video` (input.ts:121-126), while later inputs are timed from `start + atMs` (input.ts:118). On a core that takes the format, that `capture_screen` waits for a drawn frame and encodes the window (open-game-works-core-impl `client/godot/core/qa_core/dev/qa_core.gd:1001-1015` `_drawn_frame` before the image is read), so the first input goes in at least one frame plus the encode time late and the gap to the second input shrinks by that much. Run path: 0.3.1 core at 60 FPS, `ogw input <instance> --script s.json --video` with `tap` at `atMs` 0 and `tap` at `atMs` 50 → the first tap is put in after the probe round trip (≥ 17 ms), the second at `start` + 50, so the inputs are not at the written times that skills/game-loop/instance.md:25 defines. Before this range only the send of `capture_video` came first. Deciding the format before `start` (e.g. in `prepareVideo`) removes the shift",
+      "foundBy": "step round 3"
+    }
+  ]
+}
