@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
 import { decodeRgba, type Rgba } from '../../resource/lib/image.ts';
 import { LIMITS } from '../../../lib/limits.ts';
@@ -29,6 +30,8 @@ export interface UiQualityOptions extends InstanceCheckOptions {
 
 /** Game settings `uiQuality`: the numbers of the presentation conditions (`qa-core` UI quality check). */
 export interface UiQualityLimits {
+  /** Real time waited after an open command before the capture. */
+  settleMs: number;
   maxFontSizes: number;
   minFontPx: number;
   minContrast: number;
@@ -396,6 +399,8 @@ async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheck
 
 async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits): Promise<void> {
   if (!(await run.open(command, `${language}, ${item.name}`))) return;
+  // the opening presentation of the screen ends before the first capture
+  if (quality.settleMs > 0) await sleep(quality.settleMs);
   for (const scale of scales) {
     if (scale !== null) await run.setup('set_text_scale', [String(scale)]);
     const context = `${language}, ${item.name}, ${command}, text scale ${String(scale ?? 1000)}`;

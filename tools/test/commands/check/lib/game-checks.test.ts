@@ -40,7 +40,7 @@ function pass(name: string, platform: string | null = null): CheckResult {
 
 const ctx = { settings: () => Promise.resolve({ maxConcurrentInstances: 2 }) } as unknown as Context;
 const game = { name: 'g', root: '/nowhere' } as GameRepo;
-const UI_QUALITY = { maxFontSizes: 4, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
+const UI_QUALITY = { settleMs: 0, maxFontSizes: 4, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
 const settings = { buildPlatforms: ['ios', 'web'], targetFps: 60, loadingTimeLimitMs: 1000, rowSimulationSeeds: 2, uiQuality: UI_QUALITY } as GameSettings;
 const options = { godot: 'godot', pollMs: 1, sampleMs: 1, probe: { sample: () => Promise.resolve(null) } } as unknown as Parameters<typeof gameChecks>[3];
 

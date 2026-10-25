@@ -29,7 +29,7 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.f
 const ctx = fakeContext();
 
 /** Limits no capture breaks, for the tests of the other conditions. */
-const NO_LIMITS = { maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxFlatShare: 2, maxEmptyShare: 2 };
+const NO_LIMITS = { settleMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxFlatShare: 2, maxEmptyShare: 2 };
 /** A 1 × 1 white PNG, as capture_screen gives it. */
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
 
@@ -51,7 +51,7 @@ function canvas(width: number, height: number, color: [number, number, number], 
   return { width, height, data };
 }
 
-const LIMITS = { maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
+const LIMITS = { settleMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
 
 describe('UI quality presentation conditions', () => {
   it('counts text sizes, finds small text and low contrast', () => {
@@ -168,8 +168,9 @@ describe('UI quality rules', () => {
 });
 
 /** A fake client with two screens: `shop.open_main` (a text input; overlap at text scale 1400) and `inv.open_bag`. */
-function fakeUi(): { calls: string[] } {
+function fakeUi(): { calls: string[]; times: { command: string; at: number }[] } {
   const calls: string[] = [];
+  const times: { command: string; at: number }[] = [];
   let screen = '';
   let scale = 1000;
   let focus = '';
@@ -221,6 +222,7 @@ function fakeUi(): { calls: string[] } {
   };
   vi.mocked(automationRequest).mockImplementation(fakeAutomation((command, args) => {
     calls.push([command, ...args].join(' '));
+    times.push({ command, at: Date.now() });
     switch (command) {
       case 'list_commands':
         return ok([{ name: 'shop.open_main' }, { name: 'inv.open_bag' }, { name: 'shop.buy' }, { name: 'get_state' }]);
@@ -235,7 +237,7 @@ function fakeUi(): { calls: string[] } {
         return ok(null);
     }
   }));
-  return { calls };
+  return { calls, times };
 }
 
 function options(evidenceRoot: string, extra: Partial<UiQualityOptions> = {}): UiQualityOptions {
@@ -262,6 +264,17 @@ beforeEach(() => {
 });
 
 describe('uiQualityCheck', () => {
+  it('waits uiQuality.settleMs after an open command before the first capture of that screen', async () => {
+    const { times } = fakeUi();
+    const root = mkdtempSync(join(tmpdir(), 'ui-settle-'));
+    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], screens: [{ name: 'wide', window: [1920, 1080], fillMode: 'Letterbox', notch: [0, 0, 0, 0] }], baseResolution: [1920, 1080], gamepadSupported: false, maxTextScale: null, quality: { ...NO_LIMITS, settleMs: 60 } }));
+    for (const open of times.filter((t) => t.command.includes('.open_'))) {
+      const capture = times.find((t) => t.command === 'capture_screen' && t.at >= open.at);
+      expect(capture).toBeDefined();
+      expect((capture?.at ?? 0) - open.at).toBeGreaterThanOrEqual(60);
+    }
+  });
+
   it('captures every combination, judges captures, keyboard captures and gamepad focus', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
     const { calls } = fakeUi();

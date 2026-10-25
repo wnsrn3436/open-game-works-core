@@ -133,7 +133,7 @@ A command marked setup is not real input. Bot playtest records that step as setu
 - For UI quality check, the tool runs `capture_screen` and `list_ui` through the automation channel for each combination in the order below
   1. For each language of game settings `supportedLanguages`, calls `set_language` and waits until `boot_stage` becomes `Done`
   2. For each item of game settings `uiCheckScreens` whose orientation equals the orientation of game settings `baseResolution`, calls `set_test_screen`(`window`, `fillMode`) and `set_virtual_notch`(`notch`). The orientation is `Landscape` when the width is greater than the height, otherwise `Portrait`
-  3. For each content command of `list_commands` whose name is `<feature>.open_<screen>`, calls that command. When it fails, the UI quality check of that screen fails
+  3. For each content command of `list_commands` whose name is `<feature>.open_<screen>`, calls that command and then waits `uiQuality.settleMs` of game settings in real time, so that the opening presentation of the screen has ended. When it fails, the UI quality check of that screen fails
   4. For text scale 1000 and for the largest value of `AccessibilityCore.textScales`, calls `set_text_scale`. When `AccessibilityCore` is not in the module list, does not call it and captures once
 - keyboard capture: when `keyboard` of the item of 2 is 1 or more, for each capture of 4, for each element of that `list_ui` whose `text_input` is `true` and `modal_covered` is `false`, in turn: puts in a `tap` at the center of the element's `rect`, calls `set_virtual_keyboard`(`keyboard`), runs `capture_screen` and `list_ui`, then calls `set_virtual_keyboard`(`none`) and the command of 3
 - gamepad focus check: when game settings `gamepadSupported` is `true`, after all captures above end, with the first language of 1, the first item of 2 and text scale 1000, does the following for each screen of 3. Elements are told apart by `path`
@@ -312,7 +312,7 @@ none
 | `baseResolution` | array<integer> | game | none | base resolution that `set_test_screen` passes to `ResolutionCore.set_test_screen` |
 | `uiCheckScreens` | array<object> | game | none | list of screens UI quality check captures. An item is `name` (snake_case), `window` (window width, height in pixels), `fillMode` (`Crop`, `Letterbox`), `notch` (left, top, right, bottom in integer window pixels), `keyboard` (on-screen keyboard height for keyboard capture, in window pixels. 0 means no keyboard capture) |
 | `gamepadSupported` | boolean | game | none | When `true`, UI quality check runs gamepad focus check |
-| `uiQuality` | object | game | none | the numbers of the presentation conditions of UI quality check: `maxFontSizes`, `minFontPx`, `minContrast`, `maxFlatShare`, `maxEmptyShare`. The defaults are in the game settings schema |
+| `uiQuality` | object | game | none | the numbers of UI quality check: `settleMs` and the presentation conditions `maxFontSizes`, `minFontPx`, `minContrast`, `maxFlatShare`, `maxEmptyShare`. The defaults are in the game settings schema |
 | `supportedLanguages` | array<string> | game | none | list of languages UI quality check runs through |
 
 ## data
