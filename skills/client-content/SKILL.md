@@ -154,6 +154,7 @@ At build, the client hardening agent finds and fixes the items below based on th
 - A panel or popup is drawn in layers: a frame, a header band that holds its title, an inner inset behind its content, and a divider between its groups. Its background is not one flat color, and its content fills it. The UI quality check fails a panel or popup whose background is mostly one color or that is mostly empty (game settings `uiQuality`)
 - lobby: the logo or title and the playable character or key art in the middle, the start button as the largest button at the bottom center, currencies at the top right, other menus at the sides
 - HUD: health and level at the top left, time or goal at the top center, resources at the top right, abilities at the bottom. A HUD plate is the size of what it holds
+- The system popup (confirms, notices, errors) and the loading icon are prefabs of the game drawn with the theme: content sets core settings `UICore.systemPopupResource` to a popup frame prefab and `UICore.loadingIconResource` to a loading icon prefab. The frame holds no body or buttons, because `UICore` puts them in it
 - popup: a title band at the top, the content, and the buttons at the bottom with the main action on the right
 - result: the outcome as a title, the numbers of the play counting up, the rewards, then the retry and leave buttons
 - A button has normal, pressed and disabled art, and a press plays a sound and a scale tween. Panels and popups open and close with tween presets, and the items of a list or a reward appear one after another
