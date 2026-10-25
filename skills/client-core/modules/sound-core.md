@@ -58,7 +58,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 
 ### bus and volume
 
-- The output of the `Bgm`, `Sfx`, `Voice` and `Ui` buses goes into the `Master` bus. The linear output level is playback volume × that bus's volume × `Master` volume
+- The output of the `Bgm`, `Sfx`, `Voice` and `Ui` buses goes into the `Master` bus. The linear output level is playback volume × variation gain × that bus's volume × duck gain × `Master` volume. The variation gain is 1 except for `Sfx` playback, and the duck gain is 1 except for the `Bgm` bus
 - The `Master` bus has a limiter. Its ceiling is `SoundCore.masterPeakMaxDbtp` minus `SoundCore.masterLimiterMarginDb`
 - Exception: a run for which the engine-specific implementation rules state that the limiter cannot run plays without the limiter. The `Master` output level of that run relies on `SoundCore.busLoudnessLufs` and `SoundCore.busPeakMaxDbtp`, which `ogw resource finalize` of [`resource`](../../resource/SKILL.md) applies
 - A bus with mute on and a bus with volume 0 are silent. Mute does not change volume
@@ -91,6 +91,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 
 - The bus of `play` is one of `Sfx`, `Voice`, `Ui`
 - `play` of a resource key whose variant count is 2 or more picks one of the variants other than the variant played last with that key, using the random instance of `UtilCore` (purpose name `sound_variant`). The first `play` of that key picks from all variants
+- Each playback of `play` on the `Sfx` bus gets a variation picked with the random instance of `UtilCore` (purpose name `sound_variation`): a pitch scale of 2^(c ÷ 1200), where c is uniform in ±`SoundCore.sfxPitchVariationCents`, and a variation gain of 10^(d ÷ 20), where d is uniform in ±`SoundCore.sfxVolumeVariationDb`. A value of 0 gives no variation. Playback on the `Voice` and `Ui` buses has none
 - `SoundCore.maxConcurrent` sfx players are created in advance, and new playback starts on one free player. When playback ends or stops, the player becomes free at once
 - `play` of a loaded sound starts playback within the call and can be called from frame code
 - `play` of a sound that is not loaded returns the handle at once, and loading starts before that frame ends. `play_bgm` and `return_bgm` of a BGM that is not loaded also start loading before that frame ends. When loading ends, it does the limit check and plays. When `stop` or a scope release comes before that, it does not play
@@ -102,7 +103,13 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 - The handle of a request that ended, was stopped, was replaced or was decided not to play is invalid. `stop` with an invalid handle does nothing
 - `is_playing` is `false` from the frame in which the end, stop or replacement happens
 - A caller that runs `play` on a loop sound keeps the handle and ends it with `stop`
-- Non-repeating playback ends when the engine reports its end, or when the real elapsed time outside pause reaches the length of that sound. So even while audio output is not running (e.g. before the first user input in a browser), the playback count and the end of voices follow the sound length, and sounds do not play late when audio runs again
+- Non-repeating playback ends when the engine reports its end, or when the real elapsed time outside pause reaches the length of that sound ÷ the pitch scale of that playback. So even while audio output is not running (e.g. before the first user input in a browser), the playback count and the end of voices follow the sound length, and sounds do not play late when audio runs again
+
+### voice duck
+
+- voice playing: one or more `play` playbacks on the `Voice` bus have started and are not stopped by a pause
+- While a voice is playing, the duck gain of the `Bgm` bus goes in real elapsed time linearly in dB from its value to −`SoundCore.voiceDuckDb` dB over `SoundCore.voiceDuckAttackMs` × (the dB still to go ÷ `SoundCore.voiceDuckDb`). When no voice is playing, it goes back to 0 dB the same way over `SoundCore.voiceDuckReleaseMs`. A `SoundCore.voiceDuckDb` of 0 gives no duck
+- `release` puts the duck gain back to 0 dB at once
 
 ### pause
 
@@ -168,6 +175,11 @@ none
 | `SoundCore.busLoudnessLufs` | object | core | content | integrated loudness target (LUFS) per `Bgm`, `Sfx`, `Voice`, `Ui`. `ogw resource finalize` adjusts sound files to it |
 | `SoundCore.busPeakMaxDbtp` | object | core | content | true peak limit (dBTP) of sound files per `Bgm`, `Sfx`, `Voice`, `Ui`. `ogw resource finalize` adjusts sound files to it |
 | `SoundCore.devHapticLogCount` | integer | core | content | number of records that `get_haptic_log` keeps. Only DEV code reads it |
+| `SoundCore.sfxPitchVariationCents` | number | core | content | largest pitch change (cents) of a `Sfx` playback. 0 or more |
+| `SoundCore.sfxVolumeVariationDb` | number | core | content | largest volume change (dB) of a `Sfx` playback. 0 or more |
+| `SoundCore.voiceDuckDb` | number | core | content | how far (dB) the `Bgm` bus goes down while a voice is playing. 0 or more |
+| `SoundCore.voiceDuckAttackMs` | integer | core | content | time to go down the whole `SoundCore.voiceDuckDb`. 1 or more |
+| `SoundCore.voiceDuckReleaseMs` | integer | core | content | time to come back up the whole `SoundCore.voiceDuckDb`. 1 or more |
 
 ## data
 
@@ -191,6 +203,9 @@ none
 
 ## test
 
+- With `SoundCore.sfxPitchVariationCents` 100 and `SoundCore.sfxVolumeVariationDb` 2, 200 `Sfx` playbacks of one key have pitch scales from 2^(−100÷1200) to 2^(100÷1200) and variation gains from 10^(−2÷20) to 10^(2÷20), not all equal; `Ui` and `Voice` playbacks have pitch scale 1 and variation gain 1. With both 0, every `Sfx` playback has pitch scale 1 and variation gain 1
+- With `SoundCore.sfxPitchVariationCents` 100, a `Sfx` playback whose pitch scale is below 1 and whose end the engine does not report stays playing until the length of the sound ÷ its pitch scale
+- With `SoundCore.voiceDuckDb` 12, `SoundCore.voiceDuckAttackMs` 100 and `SoundCore.voiceDuckReleaseMs` 400, the duck gain of `Bgm` is −6 dB 50 ms after a `Voice` playback starts and −12 dB from 100 ms on, stays −12 dB while a second `Voice` playback continues after the first ends, and is 0 dB 400 ms after the last one ends. A game time pause that stops the `Voice` playback starts the release
 - Playback that does not report its end (while page audio is stopped in a browser runtime) ends when the sound length passes; its handle becomes invalid and it leaves the playback count. Time passed while paused is not counted in the length
 - Running `play` 100 times on a resource key with 3 variants never gives the same variant in two consecutive playbacks, and all three variants are played
 - At volume 1, 0.5 and 0, the bus level is 0 dB, -6.02 dB (error at most 0.01) and silent

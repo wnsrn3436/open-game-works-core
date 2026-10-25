@@ -56,6 +56,7 @@ Handles the tween, which changes a property value of one object over time, and p
 
 - Values are received as 4-component real-number vectors, and only the components the target property uses are used. `Position` and `Scale` are x, y in 2D and x, y, z in 3D. `Rotation` is in degrees, x in 2D and x, y, z (Euler) in 3D. `Color` is r, g, b, a and each component is at least 0 and at most 1. `Opacity` is x and is the same value as a of `Color`
 - `Position` is in coordinates relative to the parent
+- arranged element: a UI element whose parent sets the place and size of its children. A change decides whether its target is an arranged element when it starts and keeps that until it ends, even when the target moves to another parent. For an arranged element, `Position`, `Rotation` and `Scale` change only how it is drawn and where it takes input, not the place its parent gives it: `Position` is the offset from that place, `Rotation` and `Scale` turn and scale it about the same pivot as a UI element that is not arranged, and the values stay when the parent arranges its children again and after the change ends. The engine mapping is in the engine-specific implementation rules
 - The `Easing` formulas are the Robert Penner easing formulas
 - A value receiver is an object with one function that receives the frame value
 
@@ -195,6 +196,7 @@ none
 
 ## test
 
+- A `Position` change to (10, 0) of a UI element in a parent that lines up its children horizontally ends with the element drawn 10 to the right of the place the parent gives it. After the parent arranges its children again, it is still drawn there and the place the parent gives it is unchanged. A `Scale` change of that element to (1.2, 1.2) also stays after the parent arranges its children again
 - In a definition with two changes of duration 100ms and 200ms in step 1 and one change in step 2, the two values of step 1 start changing in the same frame, the value of step 2 does not change before 200ms after the start, and after completion the three values are the target values
 - A change that does not use the start value and has a delay starts from the property value changed during the delay
 - A tween with repeat count 3 ends with `Completed` after three times the cycle time has passed, and the callback is not called before that. A tween with repeat count 0 is still playing after ten times the cycle time has passed
