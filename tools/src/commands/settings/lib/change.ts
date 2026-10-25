@@ -55,8 +55,9 @@ async function withHostName(target: Target, next: JsonObject): Promise<JsonObjec
 }
 
 /**
- * The condition of harness settings `imageMethod`: the value of every `hosts` entry, and the schema default when this
- * host's entry has none, is the `name` of a `resourceGeneration` method whose `resourceTypes` has `image`.
+ * The condition of harness settings `imageMethod`: the value of every `hosts` entry, the schema default for an entry
+ * that has none and for this host when it has no entry, is the `name` of a `resourceGeneration` method whose
+ * `resourceTypes` has `image`.
  */
 async function imageMethodIssues(target: Target, value: JsonObject): Promise<Issue[]> {
   const hosts = isPlainObject(value.hosts) ? value.hosts : {};
@@ -64,16 +65,16 @@ async function imageMethodIssues(target: Target, value: JsonObject): Promise<Iss
   const methods = Array.isArray(value.resourceGeneration) ? value.resourceGeneration : [];
   const makesImage = (name: string): boolean => methods.some((m) => isPlainObject(m) && m.name === name && Array.isArray(m.resourceTypes) && m.resourceTypes.includes('image'));
   const message = (path: string, name: string): Issue => ({ message: `${path}: ${name} is not the name of a resourceGeneration method whose resourceTypes has image` });
-  const issues: Issue[] = [];
-  const entry = id === null ? undefined : hosts[id];
   const fallback = hostDefaults(target.schema).imageMethod;
-  // a value that is not a string is a schema issue
-  if ((!isPlainObject(entry) || entry.imageMethod === undefined) && typeof fallback === 'string' && !makesImage(fallback)) {
-    issues.push(message('imageMethod (schema default)', fallback));
-  }
-  for (const [entryId, other] of Object.entries(hosts)) {
-    const name = isPlainObject(other) ? other.imageMethod : undefined;
-    if (typeof name === 'string' && !makesImage(name)) issues.push(message(display(['hosts', entryId, 'imageMethod']), name));
+  const issues: Issue[] = [];
+  const entries = Object.entries(hosts);
+  if (id !== null && !(id in hosts)) entries.push([id, {}]);
+  for (const [entryId, entry] of entries) {
+    const own = isPlainObject(entry) ? entry.imageMethod : undefined;
+    // a value that is not a string is a schema issue
+    const name = own === undefined ? fallback : own;
+    const path = own === undefined ? `${display(['hosts', entryId, 'imageMethod'])} (schema default)` : display(['hosts', entryId, 'imageMethod']);
+    if (typeof name === 'string' && !makesImage(name)) issues.push(message(path, name));
   }
   return issues;
 }

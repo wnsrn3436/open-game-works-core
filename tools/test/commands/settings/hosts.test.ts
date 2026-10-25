@@ -77,16 +77,14 @@ describe('harness settings host values', () => {
     const methods = (JSON.parse(readFileSync(path, 'utf8')) as { resourceGeneration: { name: string }[] }).resourceGeneration;
     const without = (name: string): string => JSON.stringify(methods.filter((m) => m.name !== name));
     expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('sprite-gen-codex'))).toEqual({ code: 1, stdout: '', stderr: refused('sprite-gen-codex') });
+    const byDefault = (id: string): string => `hosts.${id}.imageMethod (schema default): flux2-klein is not the name of a resourceGeneration method whose resourceTypes has image\n`;
+    // another entry without a value takes the schema default, so flux2-klein stays
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({ code: 1, stdout: '', stderr: byDefault(OTHER) });
+    // and so does this host without an entry
+    writeHosts({ [OTHER]: { ...OTHER_ENTRY, imageMethod: 'sprite-gen-grok' } });
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({ code: 1, stdout: '', stderr: byDefault(TEST_HOST_ID) });
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-codex"')).toMatchObject({ code: 0 });
     expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toMatchObject({ code: 0 });
-    // without a value of this host, the schema default counts
-    expect(await settingsCmd('set', 'harness', 'imageMethod', '"flux2-klein"')).toEqual({ code: 1, stdout: '', stderr: refused('flux2-klein') });
-    expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-grok"', 'resourceGeneration', JSON.stringify(methods))).toMatchObject({ code: 0 });
-    expect(await settingsCmd('unset', 'harness', 'imageMethod')).toMatchObject({ code: 0 });
-    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({
-      code: 1,
-      stdout: '',
-      stderr: 'imageMethod (schema default): flux2-klein is not the name of a resourceGeneration method whose resourceTypes has image\n',
-    });
   });
 
   it('refuses removing the method that another host entry names as its imageMethod', async () => {
