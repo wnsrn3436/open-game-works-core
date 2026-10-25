@@ -1,12 +1,5 @@
 {
   "target": "generation methods",
   "nextId": 2,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/src/commands/settings/lib/change.ts:62",
-      "problem": "For harness settings, `settingsIssues` checks only the schema. harness-settings.schema.json:364 says `imageMethod` must be the name of a `resourceGeneration` method whose `resourceTypes` has `image`, but nothing enforces that. `ogw settings set harness imageMethod ace-step` (or a typo) is written as given. Then `gameImageMethod` returns it for every game that has no final image yet, and image keys silently get only `flux2-klein temporary`, so every image stays `temporary`",
-      "foundBy": "generation methods round 1"
-    }
-  ]
+  "items": []
 }
