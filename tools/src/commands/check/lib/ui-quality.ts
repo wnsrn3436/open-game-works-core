@@ -304,12 +304,14 @@ class UiRun {
   private readonly id: string;
   private readonly platform: string;
   private readonly evidence: Evidence;
+  private readonly settleMs: number;
 
   constructor(ctx: Context, id: string, platform: string, options: UiQualityOptions) {
     this.ctx = ctx;
     this.id = id;
     this.platform = platform;
     this.evidence = options.evidence;
+    this.settleMs = options.quality.settleMs;
   }
 
   request(command: string, args: string[]): Promise<AutomationResponse> {
@@ -377,9 +379,13 @@ class UiRun {
       throw new OpenThrew(`${command} failed: ${(error as Error).message}`);
     }
     this.where = await this.sceneWhere(command);
-    if (opened.ok) return true;
-    this.report(`${command} failed: ${JSON.stringify(opened.result)}`, context, []);
-    return false;
+    if (!opened.ok) {
+      this.report(`${command} failed: ${JSON.stringify(opened.result)}`, context, []);
+      return false;
+    }
+    // the opening presentation of the screen ends before the screen is looked at
+    if (this.settleMs > 0) await sleep(this.settleMs);
+    return true;
   }
 }
 
@@ -393,14 +399,12 @@ async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheck
     const problem = keyboardProblem(shot.elements, item.window[1], keyboard);
     if (problem !== null) run.report(problem, context, shot.evidence, input.owner);
     await run.setup('set_virtual_keyboard', ['none']);
-    await run.request(command, []);
+    if (!(await run.open(command, context))) return;
   }
 }
 
 async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits): Promise<void> {
   if (!(await run.open(command, `${language}, ${item.name}`))) return;
-  // the opening presentation of the screen ends before the first capture
-  if (quality.settleMs > 0) await sleep(quality.settleMs);
   for (const scale of scales) {
     if (scale !== null) await run.setup('set_text_scale', [String(scale)]);
     const context = `${language}, ${item.name}, ${command}, text scale ${String(scale ?? 1000)}`;

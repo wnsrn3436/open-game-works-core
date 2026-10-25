@@ -264,14 +264,17 @@ beforeEach(() => {
 });
 
 describe('uiQualityCheck', () => {
-  it('waits uiQuality.settleMs after an open command before the first capture of that screen', async () => {
+  it('waits uiQuality.settleMs after every open command, keyboard reopens and the gamepad check included, before the screen is looked at', async () => {
     const { times } = fakeUi();
     const root = mkdtempSync(join(tmpdir(), 'ui-settle-'));
-    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], screens: [{ name: 'wide', window: [1920, 1080], fillMode: 'Letterbox', notch: [0, 0, 0, 0] }], baseResolution: [1920, 1080], gamepadSupported: false, maxTextScale: null, quality: { ...NO_LIMITS, settleMs: 60 } }));
-    for (const open of times.filter((t) => t.command.includes('.open_'))) {
-      const capture = times.find((t) => t.command === 'capture_screen' && t.at >= open.at);
-      expect(capture).toBeDefined();
-      expect((capture?.at ?? 0) - open.at).toBeGreaterThanOrEqual(60);
+    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], quality: { ...NO_LIMITS, settleMs: 30 } }));
+    const opens = times.map((t, i) => ({ ...t, i })).filter((t) => t.command.includes('.open_'));
+    // the first open, the keyboard reopens and the open of the gamepad check
+    expect(opens.length).toBeGreaterThan(2);
+    for (const open of opens) {
+      const next = times.slice(open.i + 1).find((t) => t.command !== 'get_state');
+      if (next === undefined) continue;
+      expect(next.at - open.at).toBeGreaterThanOrEqual(30);
     }
   });
 
