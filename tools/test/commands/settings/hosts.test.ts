@@ -53,6 +53,42 @@ describe('harness settings host values', () => {
     expect(hosts()[OTHER]).toEqual(OTHER_ENTRY);
   });
 
+  it('sets, reads and unsets imageMethod in this host entry, with the schema default when it has none', async () => {
+    expect((await settingsCmd('get', 'harness', 'imageMethod')).stdout).toBe('"flux2-klein"\nsource: schema default\n');
+    expect((await loadHarnessSettings(ws.env)).imageMethod).toBe('flux2-klein');
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-codex"')).toEqual({ code: 0, stdout: `set hosts.${TEST_HOST_ID}.imageMethod\n`, stderr: '' });
+    expect(hosts()).toEqual({ [OTHER]: OTHER_ENTRY, [TEST_HOST_ID]: { name: hostname(), imageMethod: 'sprite-gen-codex' } });
+    expect((await settingsCmd('get', 'harness', 'imageMethod')).stdout).toBe('"sprite-gen-codex"\n');
+    expect((await loadHarnessSettings(ws.env)).imageMethod).toBe('sprite-gen-codex');
+    expect((await loadHarnessSettings({ ...ws.env, OGW_HOST_ID: OTHER })).imageMethod).toBe('flux2-klein');
+    expect(await settingsCmd('unset', 'harness', 'imageMethod')).toMatchObject({ code: 0, stdout: `unset hosts.${TEST_HOST_ID}.imageMethod\n` });
+    expect((await settingsCmd('get', 'harness', 'imageMethod')).stdout).toBe('"flux2-klein"\nsource: schema default\n');
+    expect(hosts()[OTHER]).toEqual(OTHER_ENTRY);
+  });
+
+  it('refuses an imageMethod that is not a resourceGeneration method whose resourceTypes has image', async () => {
+    const before = readFileSync(path, 'utf8');
+    const refused = (name: string): string => `hosts.${TEST_HOST_ID}.imageMethod: ${name} is not the name of a resourceGeneration method whose resourceTypes has image\n`;
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-codx"')).toEqual({ code: 1, stdout: '', stderr: refused('sprite-gen-codx') });
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"ace-step"')).toEqual({ code: 1, stdout: '', stderr: refused('ace-step') });
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    // removing the method that imageMethod names leaves it dangling
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-codex"')).toMatchObject({ code: 0 });
+    const methods = (JSON.parse(readFileSync(path, 'utf8')) as { resourceGeneration: { name: string }[] }).resourceGeneration;
+    const without = (name: string): string => JSON.stringify(methods.filter((m) => m.name !== name));
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('sprite-gen-codex'))).toEqual({ code: 1, stdout: '', stderr: refused('sprite-gen-codex') });
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toMatchObject({ code: 0 });
+    // without a value of this host, the schema default counts
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"flux2-klein"')).toEqual({ code: 1, stdout: '', stderr: refused('flux2-klein') });
+    expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-grok"', 'resourceGeneration', JSON.stringify(methods))).toMatchObject({ code: 0 });
+    expect(await settingsCmd('unset', 'harness', 'imageMethod')).toMatchObject({ code: 0 });
+    expect(await settingsCmd('set', 'harness', 'resourceGeneration', without('flux2-klein'))).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: 'imageMethod (schema default): flux2-klein is not the name of a resourceGeneration method whose resourceTypes has image\n',
+    });
+  });
+
   it('gives commands the values of this host', async () => {
     const none = await loadHarnessSettings(ws.env);
     expect(none.maxConcurrentInstances).toBeNull();

@@ -95,7 +95,7 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
   - `rig`, `material`, `sprite_animation`, `rig_animation_2d`, `animation_3d`, `particle`, `shader`: the placeholder resource that `## resource type` of the engine defines
 - Placeholder resources are not drawn or edited by hand
 - A sound effect that is heard repeatedly (hits, footsteps, UI presses) gets `variants` of 2 or more in `spec`
-- The long side of `size` of a `nine_slice` is 256 or more, so that a stretched frame keeps its detail. `ogw resource request` refuses a smaller one
+- The long side of `size` of a `nine_slice` is 256 or more, so that a stretched frame keeps its detail. When a `nine_slice` row whose `status` is `placeholder` or `requested` has a smaller one, static check `nine slice size` blocks it
 - A game with UI art adds `image/ui_kit` (`spec` `size=1024x1024`) and requests it before its first `nine_slice` and `icon` keys, which are requested with `--see image/ui_kit`
 - A sound effect that is heard many times a minute (hits, pickups, footsteps, UI presses) gets `level=quiet`, and a sound effect of a rare event that the player must notice (level up, boss arrival, death) gets `level=loud`
 
@@ -108,6 +108,8 @@ The content agent requests, and in `game-loop` and `build`, `ogw loop dispatch` 
   - rows whose `status` is `requested` and whose resource key is in no request file written in this run
   - rows whose `status` is `temporary` and whose resource key is in no request file written in this run
   - rows whose `status` is `requested`, for which every request file of this run that holds that resource key has a result file `<request file name>-result.md`, and for which the number of those request files is at most harness settings `backgroundRetryLimit`. These are rows whose assigned work ended without them becoming final
+  - It leaves out a `nine_slice` row whose long side of `size` is under 256, changes nothing of that row, and prints its resource key
+- A request that names a `nine_slice` key whose long side of `size` is under 256 fails and changes nothing
 - `--see`: existing final resource keys to look at together. The content agent picks them
 - `--base`: an existing final resource key to use as the base when requesting a variant of the same target. The content agent picks it
 - A request file has three sections, `## keys` (the requested resource keys), `## see` and `## base`, and each section is a list with one resource key per line. An empty section is one line `none`

@@ -1,7 +1,7 @@
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
-import type { Role } from '../../../lib/settings.ts';
+import { hostDefaults, type Role } from '../../../lib/settings.ts';
 import { callerRole } from '../api.ts';
 import { implConstraints } from './core-files.ts';
 import { constraintIssues, gameIssues } from './game-check.ts';
@@ -55,12 +55,32 @@ async function withHostName(target: Target, next: JsonObject): Promise<JsonObjec
 }
 
 /**
+ * The condition of harness settings `imageMethod`: this host's value, or the schema default when this host has none, is
+ * the `name` of a `resourceGeneration` method whose `resourceTypes` has `image`.
+ */
+async function imageMethodIssues(target: Target, value: JsonObject): Promise<Issue[]> {
+  const hosts = value.hosts;
+  const id = await target.hostEntryId(hosts);
+  const entry = id === null || !isPlainObject(hosts) ? undefined : hosts[id];
+  const own = isPlainObject(entry) ? entry.imageMethod : undefined;
+  const name = own ?? hostDefaults(target.schema).imageMethod;
+  // a value that is not a string is a schema issue
+  if (typeof name !== 'string') return [];
+  const methods = Array.isArray(value.resourceGeneration) ? value.resourceGeneration : [];
+  const makesImage = methods.some((m) => isPlainObject(m) && m.name === name && Array.isArray(m.resourceTypes) && m.resourceTypes.includes('image'));
+  if (makesImage) return [];
+  const path = own === undefined || id === null ? 'imageMethod (schema default)' : display(['hosts', id, 'imageMethod']);
+  return [{ message: `${path}: ${name} is not the name of a resourceGeneration method whose resourceTypes has image` }];
+}
+
+/**
  * Schema and condition issues of a settings value of the target. Game settings are checked at the build stage, so
  * unsetting a required build stage value is refused too.
  */
 export async function settingsIssues(ctx: Context, target: Target, value: JsonObject): Promise<Issue[]> {
   if (target.kind === 'game') return gameIssues(ctx, value, true, 'build');
   const issues = schemaIssues(target.schema, value);
+  if (target.kind === 'harness') issues.push(...(await imageMethodIssues(target, value)));
   if (target.kind === 'core' && target.coreImpl !== null) {
     // core settings are filled one key at a time: a constraint counts once both of its keys have a value
     // (`ogw core release` checks that every constraint of an implemented side has both)

@@ -8,6 +8,7 @@ import type { RunState } from '../../../lib/runstate.ts';
 import { openRun } from '../../../lib/runstate.ts';
 import { FileChanges } from './files.ts';
 import { ALWAYS_FINAL, findRow, formatList, LIST_PATH, parseKey, readList, type ResourceRow } from './list.ts';
+import { MIN_NINE_SLICE_SIDE, smallNineSlice } from './spec.ts';
 
 export interface RequestOptions {
   /** Requested keys, or `pending`. */
@@ -22,6 +23,8 @@ export interface RequestResult {
   /** Request file path relative to the checkout; null when `--pending` found nothing. */
   path: string | null;
   keys: string[];
+  /** `nine_slice` keys that `--pending` left out: the long side of their `size` is under 256. */
+  leftOut: string[];
 }
 
 /** Where the run's request files are: a folder relative to the checkout and a file name prefix. */
@@ -102,15 +105,6 @@ function checkRows(rows: readonly ResourceRow[], options: RequestOptions): strin
   return problems;
 }
 
-/** The shortest long side of a `nine_slice` `size` (`resource` skill `## placeholder resource`). */
-const MIN_NINE_SLICE_SIDE = 256;
-
-function smallNineSlice(row: ResourceRow): boolean {
-  if (parseKey(row.key)?.type !== 'nine_slice') return false;
-  const size = /(?:^|;)size=([0-9]+)x([0-9]+)(?:;|$)/.exec(row.spec);
-  return size !== null && Math.max(Number(size[1]), Number(size[2])) < MIN_NINE_SLICE_SIDE;
-}
-
 function requestPath(root: string, place: { dir: string; prefix: string }): string {
   let ms = Date.now();
   while (exists(join(root, place.dir, `${place.prefix}${String(ms)}.md`))) ms++;
@@ -125,22 +119,24 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
   const rows = await readList(game.root);
   const problems = checkRows(rows, options);
   if (problems.length > 0) throw new OgwError(problems.join('\n'));
+  const small = (row: ResourceRow): boolean => smallNineSlice(parseKey(row.key)?.type ?? '', row.spec);
   let keys: string[];
+  let leftOut: string[] = [];
   if (options.keys === 'pending') {
     const written = await writtenKeys(game.root, place);
     const again = (key: string): boolean => {
       const w = written.get(key);
       return w === undefined || (w.finished && w.files <= options.retryLimit);
     };
-    keys = rows
-      .filter((r) => r.status === 'placeholder' || (r.status === 'requested' && again(r.key)) || (r.status === 'temporary' && !written.has(r.key)))
-      .map((r) => r.key);
+    const due = rows.filter((r) => r.status === 'placeholder' || (r.status === 'requested' && again(r.key)) || (r.status === 'temporary' && !written.has(r.key)));
+    leftOut = due.filter(small).map((r) => r.key);
+    keys = due.filter((r) => !small(r)).map((r) => r.key);
   } else {
     keys = [...new Set(options.keys)];
+    const refused = keys.filter((key) => small(findRow(rows, key) as ResourceRow));
+    if (refused.length > 0) throw new OgwError(refused.map((key) => `${key}: the long side of a nine_slice size is ${String(MIN_NINE_SLICE_SIDE)} or more`).join('\n'));
   }
-  if (keys.length === 0) return { path: null, keys };
-  const small = keys.filter((key) => smallNineSlice(findRow(rows, key) as ResourceRow));
-  if (small.length > 0) throw new OgwError(small.map((key) => `${key}: the long side of a nine_slice size is ${String(MIN_NINE_SLICE_SIDE)} or more`).join('\n'));
+  if (keys.length === 0) return { path: null, keys, leftOut };
   for (const key of keys) {
     const row = findRow(rows, key) as ResourceRow;
     // a temporary row keeps its file until finalize replaces it
@@ -158,5 +154,5 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
     await undo();
     throw error;
   }
-  return { path, keys };
+  return { path, keys, leftOut };
 }

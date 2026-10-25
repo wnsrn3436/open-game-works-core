@@ -12,11 +12,11 @@ function context(env: NodeJS.ProcessEnv, cwd: string): ReturnType<typeof createC
 }
 
 describe('placeholderFailures', () => {
-  it('reports placeholder resources, missing and stale translations and empty glossary cells at HEAD', async () => {
+  it('reports placeholder resources (not final, not temporary), missing and stale translations and empty glossary cells at HEAD', async () => {
     const ws = makeWorkspace();
     const root = makeGame(ws, 'g', {
       'settings.json': { sourceLanguage: 'ko', supportedLanguages: ['ko', 'en', 'ja'] },
-      'resource/resources.csv': 'key,description,spec,status\nui/a,,,final\nui/b,,,placeholder\n"ui/c",,,requested\n',
+      'resource/resources.csv': 'key,description,spec,status\nui/a,,,final\nui/b,,,placeholder\n"ui/c",,,requested\nui/d,,,temporary\n',
       'data/translations/ko.csv': 'key,source,source_hash,current_hash,text\nt.a,가,1,1,가\n',
       'data/translations/en.csv': 'key,source,source_hash,current_hash,text\nt.a,가,1,1,A\nt.b,나,,2,\nt.c,다,1,2,C\n',
       'data/glossary.csv': 'source,id_name,note,source_hash,en,ja\n검,[sword],,h,Sword,\n방패,[shield],,h,,盾\n',

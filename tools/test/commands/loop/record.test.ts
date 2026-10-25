@@ -250,6 +250,32 @@ describe('ogw loop record', () => {
     expect(git(g.root, 'status', '--porcelain')).toBe('');
   });
 
+  it('lists the resources that became temporary since the instance commit of the previous iteration, the base commit for iteration 1', async () => {
+    const list = (rows: Record<string, string>): string => `key,status,license\n${Object.entries(rows).map(([key, status]) => `${key},${status},MIT`).join('\n')}\n`;
+    const g = setupGame({}, { 'resource/resources.csv': list({ 'icon/old': 'temporary', 'icon/a': 'requested', 'icon/b': 'requested', 'icon/c': 'requested' }) });
+    const section = async (iteration: number, rows: Record<string, string> | null): Promise<string> => {
+      await setRun(g, (run) => {
+        run.iteration = iteration;
+      });
+      if (rows !== null) {
+        write(g.root, 'resource/resources.csv', list(rows));
+        write(g.root, `${R}/check-${String(iteration)}.json`, checkFile(commit(g.root, `iteration ${String(iteration)}`)));
+      }
+      write(g.root, `${R}/findings-${String(iteration)}.json`, { findings: [], discarded: [] });
+      expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
+      return /## temporary resources\n\n([^#]*)/.exec(read(g.root, `${R}/iteration-${String(iteration)}.md`))?.[1]?.trim() ?? '';
+    };
+    await openLoopRun(g, { iteration: 1 });
+    // icon/old is temporary at the base commit already
+    expect(await section(1, { 'icon/old': 'temporary', 'icon/a': 'temporary', 'icon/b': 'requested', 'icon/c': 'requested' })).toBe('- `icon/a`');
+    // icon/a became temporary in iteration 1; icon/b after the instance commit of iteration 1
+    expect(await section(2, { 'icon/old': 'temporary', 'icon/a': 'temporary', 'icon/b': 'temporary', 'icon/c': 'requested' })).toBe('- `icon/b`');
+    // an iteration without a check file has no instance commit
+    write(g.root, 'resource/resources.csv', list({ 'icon/old': 'temporary', 'icon/a': 'temporary', 'icon/b': 'temporary', 'icon/c': 'temporary' }));
+    commit(g.root, 'icon/c');
+    expect(await section(3, null)).toBe('none');
+  });
+
   it('writes the candidate of a confirmation iteration and keeps its non-blocker play defects awaiting confirmation', async () => {
     const { g } = await iterationOne();
     await setRun(g, (run) => {
@@ -767,6 +793,26 @@ describe('ogw loop end-record', () => {
     expect(text).toContain(`## result\n\n- merge commit: ${c2}\n- vs baseline: same\n- last judge result: ${R}/judge-10-1.md\n- no blocker: pass\n`);
     expect(text).toContain('## failures\n\n- not given again /r/2.md: boom\n- not merged jobx: merge of job jobx failed: no worktree\n\n');
     expect(text).toContain('## human\n\n- core proposal: records/core-proposals/2-new.md\n- banned word list missing: ja\n');
+  });
+
+  it('lists the resources temporary at the commit to merge, and none without that commit', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 1 });
+    write(g.root, 'resource/resources.csv', 'key,status,license\nicon/t,temporary,MIT\nicon/u,requested,MIT\n');
+    const chosen = commit(g.root, 'iteration 1');
+    // a resource job synced after the chosen commit: icon/t final, icon/u and icon/v temporary
+    write(g.root, 'resource/resources.csv', 'key,status,license\nicon/t,final,MIT\nicon/u,temporary,MIT\nicon/v,temporary,MIT\n');
+    commit(g.root, 'synced resource job');
+    const human = async (prepareMerge: unknown): Promise<string> => {
+      await setRun(g, (run) => {
+        run.data.loop = { tasks: [], handled: [], merges: [], verdict: { iteration: 1, reason: 'limit reached', evidence: [] }, prepareMerge };
+      });
+      expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
+      return read(g.root, `${R}/end.md`).split('## human\n\n')[1] ?? '';
+    };
+    expect(await human({ commit: chosen, mainHead: 'm', baseCommit: 'm', created: true })).toBe('- temporary resource (the next update game makes it again): icon/t\n');
+    expect(await human({ commit: null, mainHead: 'm', baseCommit: 'm', created: true })).toBe('none\n');
+    expect(await human(null)).toBe('none\n');
   });
 
   it('writes why nothing was merged', async () => {

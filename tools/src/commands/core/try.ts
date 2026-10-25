@@ -44,6 +44,8 @@ export const tryCommand: CommandDef = {
       const local = localCoreContext(ctx, worktree);
       const checkout = await local.game(game.name);
       await generateCheckout(local, checkout);
+      // `generated diff` reads HEAD plus the staged changes: staged in the worktree's own index, they are the local-core output
+      await git(worktree, ['add', '-A'], { env: ctx.env });
       const { checks, lines } = await coreTryChecks(local, checkout, { root: evidenceRoot, dir: '.', relative: false });
       const failed = checks.some((c) => c.result === 'fail');
       const text = [`core try ${game.name} at main ${main.slice(0, 12)} with the local core`, ...lines, `evidence: ${evidenceRoot}`].join('\n');

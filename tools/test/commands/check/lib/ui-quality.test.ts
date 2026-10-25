@@ -61,6 +61,8 @@ describe('UI quality presentation conditions', () => {
       el('hud/title', { text: 'T', font_size: 40, rect: [0, 0, 120, 40], owner: 'run' }),
       el('hud/body', { text: 'B', font_size: 20, rect: [100, 100, 100, 40], owner: 'run' }),
       el('hud/tiny', { text: 'x', font_size: 12, rect: [0, 200, 10, 10], owner: 'run' }),
+      // one color where it is inside the image, but partly outside it: its contrast is not judged
+      el('hud/edge', { text: 'E', font_size: 20, rect: [190, 100, 20, 40], owner: 'run' }),
     ]);
     expect(presentationProblems(list, image, 'run', LIMITS).map((p) => p.message)).toEqual([
       '3 text sizes (12, 20, 40 px), more than 2',
@@ -303,6 +305,31 @@ describe('uiQualityCheck', () => {
     expect(calls.filter((c) => c.startsWith('set_text_scale'))).toEqual([]);
     expect(calls.filter((c) => c === 'capture_screen')).toHaveLength(2);
     expect(calls).not.toContain('set_input_device Gamepad');
+  });
+
+  it('judges the presentation conditions only on captures at text scale 1000 that are not keyboard captures', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
+    fakeUi();
+    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 }];
+    // every capture with text breaks maxFontSizes 0
+    const strict = { ...NO_LIMITS, maxFontSizes: 0 };
+    const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, gamepadSupported: false, quality: strict }));
+    expect(result.failures.map((f) => f.message).filter((m) => m.includes('text sizes'))).toEqual(['1 text sizes (0 px), more than 0 in lobby (en, phone, shop.open_main, text scale 1000)']);
+  });
+
+  it('reports a capture that is no PNG image once per screen at text scale 1000', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
+    fakeUi();
+    const base = vi.mocked(automationRequest).getMockImplementation();
+    vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) =>
+      command === 'capture_screen' ? ok(null, Buffer.from('PNG')) : (base?.(c, i, command, args, client) ?? ok(null)),
+    );
+    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 }];
+    const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, gamepadSupported: false }));
+    expect(result.failures.map((f) => f.message).filter((m) => m.includes('PNG'))).toEqual([
+      'capture_screen gave no PNG image (en, phone, shop.open_main, text scale 1000)',
+      'capture_screen gave no PNG image (en, phone, inv.open_bag, text scale 1000)',
+    ]);
   });
 
   it('an open command that fails fails that screen', async () => {

@@ -66,7 +66,7 @@ const GAME = {
 describe('staticCheck', () => {
   it('lists the static checks except data check and debug text', () => {
     expect(STATIC_CHECKS.map((c) => c.NAME)).toEqual([
-      'core diff', 'generated diff', 'contract', 'DEV reference', 'type check', 'lint', 'data literal', 'resource hash', 'block token', 'test input',
+      'core diff', 'generated diff', 'contract', 'DEV reference', 'type check', 'lint', 'data literal', 'resource hash', 'nine slice size', 'block token', 'test input',
       'frame polling', 'haptic format', 'embedded script', 'theme only', 'scene links', 'system clock', 'game state lock', 'shared formula', 'bot scenario', 'option entry',
       'game settings owner', 'design target', 'simulation target', 'feature boundary', 'forbidden GDScript API', 'settings access',
       'resource load', 'engine random', 'data mutation', 'frame code', 'literal timing', 'object destroy', 'determinism',
@@ -125,6 +125,7 @@ describe('staticCheck', () => {
     expect((await run()).failures).toEqual([
       { where: 'client/features/options/options_x.gd:2', message: 'data literal: number literal `7` outside a constants file', evidence: [] },
       { where: 'data/translations/en.csv:1', message: 'action reference: data/translations/en.csv could not be read: data/translations/en.csv:2: unclosed quote', evidence: [] },
+      { where: 'resource/resources.csv:1', message: 'nine slice size: resource/resources.csv could not be read: resource/resources.csv:2: unclosed quote', evidence: [] },
       { where: 'resource/resources.csv:1', message: 'resource hash: resource/resources.csv could not be read: resource/resources.csv:2: unclosed quote', evidence: [] },
     ]);
   });

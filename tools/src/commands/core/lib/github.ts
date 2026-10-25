@@ -34,13 +34,33 @@ export async function releaseExists(ctx: Context, repo: string, tag: string): Pr
   throw new OgwError(`gh release view ${tag} --repo ${repo} failed: ${(result.stderr || result.stdout).trim()}`);
 }
 
-/** First lines of the commit messages between two tags of a repository, oldest first (GitHub compare). */
+/**
+ * First lines of the commit messages between two tags of a repository, oldest first (GitHub compare). The compare
+ * endpoint lists at most 250 commits on one page, so every page is read; fewer commits than `total_commits` fail.
+ */
 export async function compareSubjects(ctx: Context, repo: string, from: string, to: string): Promise<string[]> {
-  const result = await runOk('gh', ['api', `repos/${repo}/compare/${from}...${to}`, '--jq', '.commits[].commit.message | split("\n")[0]'], {
-    env: ctx.env,
-    timeoutMs: LIMITS.httpMs,
-  });
-  return result.stdout.split('\n').filter((line) => line.trim() !== '');
+  const result = await runOk(
+    'gh',
+    ['api', `repos/${repo}/compare/${from}...${to}?per_page=100`, '--paginate', '--jq', '{total: .total_commits, subjects: [.commits[].commit.message | split("\n")[0]]}'],
+    { env: ctx.env, timeoutMs: LIMITS.httpMs },
+  );
+  let total: number | null = null;
+  const subjects: string[] = [];
+  for (const line of result.stdout.split('\n')) {
+    if (line.trim() === '') continue;
+    let page: { total?: unknown; subjects?: unknown };
+    try {
+      page = JSON.parse(line) as { total?: unknown; subjects?: unknown };
+    } catch {
+      throw new OgwError(`gh api compare ${from}...${to} of ${repo} printed no JSON: ${line}`);
+    }
+    if (typeof page.total !== 'number' || !Array.isArray(page.subjects)) throw new OgwError(`gh api compare ${from}...${to} of ${repo} printed no commit list: ${line}`);
+    total = page.total;
+    subjects.push(...page.subjects.filter((s): s is string => typeof s === 'string'));
+  }
+  if (total === null) throw new OgwError(`gh api compare ${from}...${to} of ${repo} printed nothing`);
+  if (subjects.length !== total) throw new OgwError(`gh api compare ${from}...${to} of ${repo} listed ${String(subjects.length)} of ${String(total)} commits`);
+  return subjects;
 }
 
 export async function downloadRelease(ctx: Context, repo: string, tag: string, dir: string): Promise<void> {

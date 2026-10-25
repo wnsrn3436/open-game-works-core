@@ -29,6 +29,7 @@ import * as generatedDiff from './static/generated-diff.ts';
 import * as hapticFormat from './static/haptic-format.ts';
 import { at, finding, StaticContext, UnreadableFile, type Finding } from './static/lib/context.ts';
 import * as lint from './static/lint.ts';
+import * as nineSliceSize from './static/nine-slice-size.ts';
 import * as literalTiming from './static/literal-timing.ts';
 import * as objectDestroy from './static/object-destroy.ts';
 import * as optionEntry from './static/option-entry.ts';
@@ -49,7 +50,7 @@ export interface StaticCheckModule {
 
 /** The checks that `ogw check --static` runs, in report order. */
 export const STATIC_CHECKS: readonly StaticCheckModule[] = [
-  coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, blockToken, testInput, framePolling,
+  coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, framePolling,
   hapticFormat, embeddedScript, themeOnly, sceneLinks, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
   literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference,

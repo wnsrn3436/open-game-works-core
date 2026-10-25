@@ -130,6 +130,7 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     `image/hero,hero,size=900x900,placeholder${rest}`,
     `rig_animation_2d/hero,rig,size=600x600;animations=idle:100:loop,placeholder${rest}`,
     `sfx/a,a,length=10,placeholder${rest}`,
+    `sfx/b,b,length=20;loop=true,placeholder${rest}`,
     '',
   ].join('\n');
   const methods = [
@@ -237,14 +238,14 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     expect(existsSync(join(root, 'resource', 'tmp'))).toBe(false);
   });
 
-  it('gives the call the spec size and length and no seed', async () => {
+  it('gives the call the spec size, length and loop and no seed', async () => {
     const seen: unknown[] = [];
     const recording: StandardJob = {
       stages: [],
       prompt: '',
       image: false,
       call: (input) => {
-        seen.push({ size: input.size, lengthMs: input.lengthMs, seed: input.seed });
+        seen.push({ size: input.size, lengthMs: input.lengthMs, loop: input.loop, seed: input.seed });
         return Promise.resolve({ cmd: '/bin/sh', args: ['-c', 'touch "$1/x"', 'sh', input.out] });
       },
     };
@@ -259,9 +260,11 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     expect((await ogw(ws, ['generation', 'run', 'flux2-klein', '--game', 'g', '--key', 'image/hero', '--prompt', prompt, '--out', join(ws.root, 'o1')], { env })).code).toBe(0);
     expect(vi.mocked(readList)).toHaveBeenCalledTimes(1);
     expect((await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--key', 'sfx/a', '--prompt', prompt, '--out', join(ws.root, 'o2')], { env })).code).toBe(0);
+    expect((await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--key', 'sfx/b', '--prompt', prompt, '--out', join(ws.root, 'o3')], { env })).code).toBe(0);
     expect(seen).toEqual([
-      { size: [900, 900], lengthMs: null, seed: null },
-      { size: null, lengthMs: 10, seed: null },
+      { size: [900, 900], lengthMs: null, loop: false, seed: null },
+      { size: null, lengthMs: 10, loop: false, seed: null },
+      { size: null, lengthMs: 20, loop: true, seed: null },
     ]);
   });
 

@@ -295,16 +295,20 @@ describe('scene links', () => {
       '[ext_resource type="Texture2D" path="res://resource/icon/gem.png" id="2"]',
       '[ext_resource type="PackedScene" path="res://resource/prefab/lobby/card.tscn" id="3"]',
       '[ext_resource type="Script" path="res://core/ui_core/ui_button.gd" id="4"]',
+      '[sub_resource type="Gradient" id="s"]',
+      '[sub_resource type="Gradient" id="s"]',
       '[node name="Root" type="Control"]',
       '[node name="Icon" type="TextureRect" parent="."]',
       'texture = ExtResource("1")',
       'material = SubResource("m")',
+      'icon = ExtResource("9")',
       '[node name="Card" parent="." instance=ExtResource("3")]',
       '[node name="Inner" type="Label" parent="Card/Body"]',
       '[node name="Lost" type="Label" parent="Gone"]',
       '[node name="Second" type="Control"]',
       '[connection signal="pressed" from="Icon" to="." method="on_press"]',
       '[connection signal="pressed" from="Nope" to="." method="on_press"]',
+      '[connection signal="pressed" from="Icon" to="Missing" method="on_press"]',
     ].join('\n');
     const sc = memContext({
       'resource/scene/lobby/main.tscn': scene,
@@ -315,10 +319,13 @@ describe('scene links', () => {
       'resource/scene/lobby/main.tscn:2 | scene links: ext_resource res://resource/icon/Coin.png: the file is resource/icon/coin.png: the letter case differs',
       'resource/scene/lobby/main.tscn:4 | scene links: ext_resource id "2" is declared twice',
       'resource/scene/lobby/main.tscn:4 | scene links: ext_resource res://resource/icon/gem.png: no such file',
-      'resource/scene/lobby/main.tscn:8 | scene links: SubResource("m") is not declared',
-      'resource/scene/lobby/main.tscn:13 | scene links: parent "Gone" of node Lost is not a node of the scene',
-      'resource/scene/lobby/main.tscn:14 | scene links: the scene has 2 root nodes, not 1',
-      'resource/scene/lobby/main.tscn:16 | scene links: connection from "Nope" is not a node of the scene',
+      'resource/scene/lobby/main.tscn:8 | scene links: sub_resource id "s" is declared twice',
+      'resource/scene/lobby/main.tscn:10 | scene links: ExtResource("9") is not declared',
+      'resource/scene/lobby/main.tscn:10 | scene links: SubResource("m") is not declared',
+      'resource/scene/lobby/main.tscn:16 | scene links: parent "Gone" of node Lost is not a node of the scene',
+      'resource/scene/lobby/main.tscn:17 | scene links: the scene has 2 root nodes, not 1',
+      'resource/scene/lobby/main.tscn:19 | scene links: connection from "Nope" is not a node of the scene',
+      'resource/scene/lobby/main.tscn:20 | scene links: connection to "Missing" is not a node of the scene',
     ]);
   });
 });

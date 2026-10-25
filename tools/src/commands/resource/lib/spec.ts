@@ -151,6 +151,16 @@ const ITEMS: Record<string, ItemRule> = {
   },
 };
 
+/** The shortest long side of a `nine_slice` `size` (`resource` skill `## placeholder resource`). */
+export const MIN_NINE_SLICE_SIDE = 256;
+
+/** Whether a `spec` cell of a `nine_slice` has a `size` whose long side is under 256. A cell without a valid `size` is not small. */
+export function smallNineSlice(type: string, cell: string): boolean {
+  if (type !== 'nine_slice') return false;
+  const size = /(?:^|;)size=([0-9]+)x([0-9]+)(?:;|$)/.exec(cell);
+  return size !== null && Math.max(Number(size[1]), Number(size[2])) < MIN_NINE_SLICE_SIDE;
+}
+
 /** A `spec` with every item at its default. */
 export function emptySpec(): Spec {
   return { size: null, alpha: false, slice: null, lengthMs: null, loop: false, animations: null, variants: 1, level: 'normal', bounds: null, space: null };

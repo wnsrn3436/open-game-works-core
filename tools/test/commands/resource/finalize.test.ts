@@ -1,9 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogEntries } from '../../../src/commands/generation/api.ts';
-import { combinedAttribution, combinedLicense } from '../../../src/commands/resource/lib/finalize.ts';
+import { combinedAttribution, combinedLicense, soundShape } from '../../../src/commands/resource/lib/finalize.ts';
+import { parseSpec } from '../../../src/commands/resource/lib/spec.ts';
 import { ogw, commitAll } from '../../helpers/workspace.ts';
 import { listCsv, makeFixture, measuredMethods, pcmWav, pixels, png, readList, realFfmpegs, rowOf, silence, sine, translationCsv, wavLengthMs, type Fixture, type Row } from './fixture.ts';
 
@@ -53,6 +55,28 @@ function snapshot(f: Fixture): string {
 
 beforeEach(() => {
   bus.settings = structuredClone(BUS);
+});
+
+describe('soundShape', () => {
+  const shape = (key: string, spec: string, music: string | null = null): ReturnType<typeof soundShape> =>
+    soundShape(key, parseSpec(key, key.slice(0, key.indexOf('/')), spec), music);
+
+  it('makes the seam of a looped bgm one bar of --music', async () => {
+    const music = join(mkdtempSync(join(tmpdir(), 'ogw-sound-shape-')), 'music.json');
+    writeFileSync(music, JSON.stringify({ bpm: 120, beatsPerBar: 3 }));
+    expect(await shape('bgm/a', 'length=20000;loop=true', music)).toEqual({ kind: 'loop', lengthMs: 20000, seamMs: 1500, barMs: 1500 });
+  });
+
+  it('makes the seam of a looped sfx 500 ms or a quarter of its length, whichever is shorter', async () => {
+    expect(await shape('sfx/a', 'length=1000;loop=true')).toEqual({ kind: 'loop', lengthMs: 1000, seamMs: 250, barMs: null });
+    expect(await shape('sfx/a', 'length=4000;loop=true')).toEqual({ kind: 'loop', lengthMs: 4000, seamMs: 500, barMs: null });
+  });
+
+  it('trims a sound played once except bgm, and cuts only an sfx to its length', async () => {
+    expect(await shape('sfx/a', 'length=300')).toEqual({ kind: 'once', trim: true, maxMs: 300 });
+    expect(await shape('voice/a', 'length=300')).toEqual({ kind: 'once', trim: true, maxMs: null });
+    expect(await shape('bgm/a', 'length=300')).toEqual({ kind: 'once', trim: false, maxMs: null });
+  });
 });
 
 describe('ogw resource finalize', () => {
@@ -347,6 +371,11 @@ describe('ogw resource finalize', () => {
     const at = (x: number, y: number): number[] => [...sheet.data.subarray((y * 32 + x) * 4, (y * 32 + x) * 4 + 4)];
     expect(at(18, 8)[3]).toBe(0);
     expect(at(22, 8)).toEqual([0, 255, 0, 255]);
+    // the 8-tall frame of pop sits at the center of its cell, rows 16 to 32
+    expect(at(8, 19)[3]).toBe(0);
+    expect(at(8, 20)).toEqual([0, 0, 255, 255]);
+    expect(at(8, 27)).toEqual([0, 0, 255, 255]);
+    expect(at(8, 28)[3]).toBe(0);
     expect(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))).toEqual({
       frame_layout: { rows: { spin: [{ x: 0, y: 0, w: 16, h: 16 }, { x: 16, y: 0, w: 16, h: 16 }], pop: [{ x: 0, y: 16, w: 16, h: 16 }] } },
     });
@@ -354,15 +383,30 @@ describe('ogw resource finalize', () => {
     expect(run.stderr).toBe('');
     expect(rowOf(f.game, 'sprite_animation/coin')).toMatchObject({ status: 'temporary', method: 'flux2-klein' });
     expect(rowOf(f.game, 'sprite_sheet/coin').status).toBe('temporary');
+    // sync keeps the made sheet of a temporary sprite animation and its sha256
+    const sheetFile = join(f.game, 'resource/sprite_sheet/coin.png');
+    const made = readFileSync(sheetFile);
+    const madeSha = rowOf(f.game, 'sprite_sheet/coin').sha256;
+    commitAll(f.game, 'temporary');
+    await sync(f);
+    expect(readFileSync(sheetFile).equals(made)).toBe(true);
+    expect(rowOf(f.game, 'sprite_sheet/coin')).toMatchObject({ status: 'temporary', sha256: madeSha });
+    // a failure writes nothing: no --out folder, and an earlier sheet and manifest stay as they are
+    const packed = [readFileSync(join(out, 'sheet.png')), readFileSync(join(out, 'manifest.json'))];
+    const fresh = work(f, 'fresh');
     for (const [argv, message] of [
-      [['--frames', 'spin=/nonexistent.png', '--out', out], '--frames file /nonexistent.png does not exist'],
-      [['--frames', `spin=${join(out, 'manifest.json')}`, '--out', out], 'is not a PNG'],
-      [['--frames', `spin=${frames[0] as string}`, '--frames', `spin=${frames[1] as string}`, '--out', out], '--frames gives animation spin twice'],
-      [['--frames', 'spin', '--out', out], '--frames item must be <animation>=<file>,<file>...: spin'],
+      [['--frames', `spin=${frames[0] as string}`, '--frames', 'pop=/nonexistent.png'], '--frames file /nonexistent.png does not exist'],
+      [['--frames', `spin=${frames[0] as string}`, '--frames', `pop=${join(out, 'manifest.json')}`], 'is not a PNG'],
+      [['--frames', `spin=${frames[0] as string}`, '--frames', `spin=${frames[1] as string}`], '--frames gives animation spin twice'],
+      [['--frames', 'spin'], '--frames item must be <animation>=<file>,<file>...: spin'],
     ] as const) {
-      const bad = await ogw(f.ws, ['resource', 'sprite-sheet', ...argv]);
-      expect(bad.code).toBe(1);
-      expect(bad.stderr).toContain(message);
+      for (const folder of [out, fresh]) {
+        const bad = await ogw(f.ws, ['resource', 'sprite-sheet', ...argv, '--out', folder]);
+        expect(bad.code).toBe(1);
+        expect(bad.stderr).toContain(message);
+      }
+      expect(existsSync(fresh)).toBe(false);
+      expect([readFileSync(join(out, 'sheet.png')), readFileSync(join(out, 'manifest.json'))]).toEqual(packed);
     }
   });
 
@@ -520,14 +564,19 @@ describe('ogw resource finalize', () => {
   it('makes a row temporary when its method is the temporary method, and final when the image method makes it again', async () => {
     const f = setup([{ key: 'icon/a', spec: 'size=4x4', status: 'requested' }], {}, { imageMethod: 'sprite-gen-codex' });
     await sync(f);
+    const file = join(f.game, 'resource/icon/a.png');
+    const placeholder = readFileSync(file);
     const temp = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
     expect(temp.stderr).toBe('');
     expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'temporary', method: 'flux2-klein' });
-    expect(existsSync(join(f.game, 'resource/icon/a.png'))).toBe(true);
+    const made = readFileSync(file);
+    const madeSha = rowOf(f.game, 'icon/a').sha256;
+    expect(made.equals(placeholder)).toBe(false);
     commitAll(f.game, 'temporary');
-    // sync keeps the made file of a temporary row
+    // sync keeps the made file of a temporary row and its sha256
     await sync(f);
-    expect(rowOf(f.game, 'icon/a').status).toBe('temporary');
+    expect(readFileSync(file).equals(made)).toBe(true);
+    expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'temporary', sha256: madeSha });
     const again = await finalize(f, await okPng(f, ['icon/a', '--method', 'sprite-gen-codex']));
     expect(again.stderr).toBe('');
     expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'sprite-gen-codex' });
@@ -538,11 +587,24 @@ describe('ogw resource finalize', () => {
       { key: 'image/hero', spec: 'size=4x4;alpha=true', status: 'requested' },
       { key: 'image/ui_kit', spec: 'size=4x4', status: 'final', method: 'flux2-klein' },
       { key: 'icon/coin', spec: 'size=4x4', status: 'requested' },
+      { key: 'nine_slice/panel', spec: 'size=256x256;slice=8,8,8,8;alpha=true', status: 'requested' },
+      { key: 'sprite_sheet/fx', spec: 'size=4x4;alpha=true', status: 'requested' },
     ]);
     await png(join(f.game, 'resource/image/ui_kit.png'), 4, 4, [9, 9, 9, 255]);
     await sync(f);
-    const opaque = await finalize(f, await okPng(f, ['image/hero', '--method', 'flux2-klein']));
-    expect(opaque.stderr).toContain('every pixel is opaque; the background is baked in');
+    const before = snapshot(f);
+    // every image type with alpha in spec, not only the types that step 2 fits into size
+    for (const argv of [['image/hero', '--method', 'flux2-klein'], ['nine_slice/panel', '--method', 'flux2-klein', '--inputs', 'image/ui_kit'], ['sprite_sheet/fx', '--method', 'flux2-klein']]) {
+      const opaque = await finalize(f, await okPng(f, argv));
+      expect(opaque.code).toBe(1);
+      expect(opaque.stderr).toContain('every pixel is opaque; the background is baked in');
+    }
+    expect(snapshot(f)).toBe(before);
+    const clear = work(f, 'clear-border.png');
+    await png(clear, 4, 4, [1, 2, 3, 255], 1);
+    const panel = await finalize(f, ['nine_slice/panel', '--method', 'flux2-klein', '--inputs', 'image/ui_kit', '--file', clear]);
+    expect(panel.stderr).toBe('');
+    expect(rowOf(f.game, 'nine_slice/panel').status).toBe('final');
     const bare = await finalize(f, await okPng(f, ['icon/coin', '--method', 'flux2-klein']));
     expect(bare.stderr).toContain('--inputs needs image/ui_kit: icon keys are made from the UI kit sheet');
     const kit = await finalize(f, await okPng(f, ['icon/coin', '--method', 'flux2-klein', '--inputs', 'image/ui_kit']));

@@ -215,6 +215,13 @@ async function rigProblems(job: Job): Promise<string[]> {
   return [...problems, ...rigCanvasProblems(job, scene)];
 }
 
+/** An image of a type with `alpha` in `spec` (every such type is an image type) whose `alpha` is `true` has a pixel with alpha under 255; a fully opaque file has its background baked in. */
+async function alphaProblems(job: Job): Promise<string[]> {
+  if (!job.spec.alpha) return [];
+  const file = job.options.files[0] as string;
+  return hasTransparency(await decodeRgba(file, file)) ? [] : [`${file}: every pixel is opaque; the background is baked in`];
+}
+
 async function typeProblems(job: Job): Promise<string[]> {
   if (job.parsed.type === 'sprite_animation') {
     return layoutProblems(await readFrameLayout(job.options.manifest as string), requireAnimations(job.row.key, job.spec));
@@ -252,12 +259,13 @@ async function barMs(file: string): Promise<number> {
   return (beatsPerBar * 60000) / bpm;
 }
 
-async function soundShape(job: Job): Promise<SoundShape> {
-  const type = job.parsed.type;
-  if (!job.spec.loop) return { kind: 'once', trim: type !== 'bgm', maxMs: type === 'sfx' ? job.spec.lengthMs : null };
-  const lengthMs = requireLength(job.row.key, job.spec);
+/** How step 2 shapes a sound of `key` with `spec`; `music` is the `--music` file of a looped `bgm`. */
+export async function soundShape(key: string, spec: Spec, music: string | null): Promise<SoundShape> {
+  const type = requireKey(key).type;
+  if (!spec.loop) return { kind: 'once', trim: type !== 'bgm', maxMs: type === 'sfx' ? spec.lengthMs : null };
+  const lengthMs = requireLength(key, spec);
   if (type === 'bgm') {
-    const bar = await barMs(job.options.music as string);
+    const bar = await barMs(music as string);
     return { kind: 'loop', lengthMs, seamMs: bar, barMs: bar };
   }
   return { kind: 'loop', lengthMs, seamMs: Math.min(SFX_SEAM_MS, lengthMs / 4), barMs: null };
@@ -266,7 +274,7 @@ async function soundShape(job: Job): Promise<SoundShape> {
 async function soundPlan(job: Job, plan: Plan): Promise<void> {
   const ffmpeg = await job.tools.ffmpeg();
   const target = await busTarget(job, soundBus(job));
-  const shape = await soundShape(job);
+  const shape = await soundShape(job.row.key, job.spec, job.options.music);
   const ext = engineType(job.engine, job.parsed.type).extensions[0] as string;
   const variants = job.options.files.length > 1;
   plan.loudness = [];
@@ -296,7 +304,6 @@ async function imagePlan(job: Job, plan: Plan): Promise<void> {
   const size = requireSize(job.row.key, job.spec);
   let image = await decodeRgba(file, file);
   if (job.spec.alpha) {
-    if (!hasTransparency(image)) throw new OgwError(`${file}: every pixel is opaque; the background is baked in`);
     const box = alphaBox(image, 0);
     if (!box) throw new OgwError(`${file}: every pixel has alpha 0`);
     image = await fitCentered(crop(image, box[0], box[1], box[2] - box[0], box[3] - box[1]), size[0], size[1]);
@@ -443,7 +450,7 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
     job.skeleton = await readSkeleton(options.skeleton as string, true);
     job.split = await readSplit(options.split as string);
   }
-  const more = [...dependentProblems(job), ...(await typeProblems(job))];
+  const more = [...dependentProblems(job), ...(await alphaProblems(job)), ...(await typeProblems(job))];
   if (more.length > 0) throw new OgwError(more.join('\n'));
   if (SOUND_TYPES.includes(parsed.type)) await tools.ffmpeg();
   return job;

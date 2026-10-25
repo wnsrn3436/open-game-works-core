@@ -72,8 +72,8 @@ export interface StuckJob {
 }
 
 /**
- * Fields `ogw core upgrade` keeps in `run.data['core upgrade']`: the version it changed `coreVersion` to
- * (null when unchanged) and the versions it skipped for backward compatibility.
+ * Fields `ogw core upgrade` keeps in `run.data['core upgrade']`: the version it changed `coreVersion` to (null when
+ * the record has none) and the versions it skipped for backward compatibility.
  */
 export interface CoreUpgradeData {
   version: string | null;

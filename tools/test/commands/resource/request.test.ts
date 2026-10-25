@@ -69,18 +69,35 @@ describe('ogw resource request', () => {
     expect(requestFiles(f, 'records/loops/loop-1/resource-requests')).toHaveLength(3);
   });
 
-  it('refuses a nine_slice whose long side is under 256', async () => {
+  it('leaves out a nine_slice whose long side is under 256 from --pending and refuses it by name', async () => {
     const f = makeFixture({
       'resource/resources.csv': listCsv([
         { key: 'nine_slice/small', spec: 'size=128x128;slice=8,8,8,8', status: 'placeholder' },
+        { key: 'nine_slice/thin', spec: 'size=255x32;slice=8,8,8,8', status: 'requested' },
+        { key: 'nine_slice/edge', spec: 'size=32x256;slice=8,8,8,8', status: 'placeholder' },
         { key: 'nine_slice/wide', spec: 'size=512x64;slice=8,8,8,8', status: 'placeholder' },
       ]),
     });
     await openRun(f, {});
-    const run = await ogw(f.ws, ['resource', 'request', 'g', '--pending']);
-    expect(run).toMatchObject({ code: 1, stderr: 'nine_slice/small: the long side of a nine_slice size is 256 or more\n' });
+    const run = await ogw(f.ws, ['resource', 'request', 'g', '--pending', '--json']);
+    expect(run.stderr).toBe('');
+    const data = JSON.parse(run.stdout) as { path: string; keys: string[]; leftOut: string[] };
+    expect(data).toMatchObject({ keys: ['nine_slice/edge', 'nine_slice/wide'], leftOut: ['nine_slice/small', 'nine_slice/thin'] });
+    expect(requestFileKeys(readFileSync(join(f.game, data.path), 'utf8'))).toEqual(['nine_slice/edge', 'nine_slice/wide']);
     expect(rowOf(f.game, 'nine_slice/small').status).toBe('placeholder');
-    expect((await ogw(f.ws, ['resource', 'request', 'g', 'nine_slice/wide'])).code).toBe(0);
+    expect(rowOf(f.game, 'nine_slice/edge').status).toBe('requested');
+    const again = await ogw(f.ws, ['resource', 'request', 'g', '--pending']);
+    expect(again).toMatchObject({
+      code: 0,
+      stdout: 'no pending resource\nleft out nine_slice/small: the long side of a nine_slice size is under 256\nleft out nine_slice/thin: the long side of a nine_slice size is under 256\n',
+    });
+    const named = await ogw(f.ws, ['resource', 'request', 'g', 'nine_slice/small', 'nine_slice/thin', 'nine_slice/edge']);
+    expect(named).toMatchObject({
+      code: 1,
+      stderr: 'nine_slice/small: the long side of a nine_slice size is 256 or more\nnine_slice/thin: the long side of a nine_slice size is 256 or more\n',
+    });
+    expect(rowOf(f.game, 'nine_slice/small').status).toBe('placeholder');
+    expect(requestFiles(f, 'records/loops/loop-1/resource-requests')).toHaveLength(1);
   });
 
   it('requests a temporary row once per run and keeps its status and file', async () => {

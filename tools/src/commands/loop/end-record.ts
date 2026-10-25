@@ -4,7 +4,7 @@ import { expectPositionals, flag, positional, str, type CommandDef, type Context
 import { OgwError } from '../../lib/errors.ts';
 import { exists, writeFileAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { commitPaths } from '../../lib/git.ts';
+import { commitPaths, showFile } from '../../lib/git.ts';
 import type { RunState } from '../../lib/runstate.ts';
 import { placeholderFailures } from '../check/api.ts';
 import { needsHumanLines } from './lib/assumptions.ts';
@@ -79,10 +79,13 @@ async function unknownLicenses(game: GameRepo): Promise<string[]> {
   return unknownLicenseKeys(await readFile(resources, 'utf8')).map((key) => `license unknown: ${key}`);
 }
 
-async function temporaryResources(game: GameRepo): Promise<string[]> {
-  const resources = join(game.root, LIST_PATH);
-  if (!exists(resources)) return [];
-  return temporaryKeys(await readFile(resources, 'utf8')).map((key) => `temporary resource (the next update game makes it again): ${key}`);
+/** Rows `temporary` at the commit to merge (`ogw loop prepare-merge`); none without that commit. */
+async function temporaryResources(game: GameRepo, run: RunState): Promise<string[]> {
+  const commit = loopData(run).prepareMerge?.commit ?? null;
+  if (commit === null) return [];
+  const resources = await showFile(game.root, commit, LIST_PATH);
+  if (resources === null) return [];
+  return temporaryKeys(resources.toString('utf8')).map((key) => `temporary resource (the next update game makes it again): ${key}`);
 }
 
 /** Languages of the `data check banned_word_missing` warnings of the last check file. */
@@ -99,7 +102,7 @@ async function humanSection(game: GameRepo, run: RunState, humanFile: string | n
   if (exists(assumptions)) lines.push(...needsHumanLines(await readFile(assumptions, 'utf8')));
   lines.push(...(await addedCoreProposals(game, run.baseCommit, run.branch)).map((p) => `core proposal: ${p}`));
   lines.push(...(await unknownLicenses(game)));
-  lines.push(...(await temporaryResources(game)));
+  lines.push(...(await temporaryResources(game, run)));
   lines.push(...(coreUpgrade(run)?.skipped ?? []).map((v) => `skipped core version: ${v}`));
   lines.push(...bannedWordLines(await lastCheck(game, run)));
   // One bullet per line, so a line neither joins the item above it nor becomes a heading.

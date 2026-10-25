@@ -99,27 +99,52 @@ describe('ogw generation methods', () => {
     expect((await ogw(ws, ['generation', 'methods', 'g', 'bgm/none'])).stdout).toBe('audio local-model duration 1000ms\n');
   });
 
+  /** Names given for `key`, with ` temporary` on the temporary method, with the host `imageMethod` and the methods of `methods()` plus `sub` and `grok`. */
+  async function given(imageMethod: string, list: string, key: string, imageMeasured?: unknown): Promise<string[]> {
+    const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image', 'icon', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const grok = { name: 'grok', kind: 'external-service', provider: 'grok', resourceTypes: ['image', 'sprite_sheet', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const ws = makeWorkspace({ resourceGeneration: [...methods(imageMeasured), sub, grok], imageMethod });
+    makeGame(ws, 'g', { 'resource/resources.csv': list });
+    const out = await ogw(ws, ['generation', 'methods', 'g', key, '--json']);
+    if (out.code !== 0) throw new Error(out.stderr);
+    return (JSON.parse(out.stdout) as { methods: { name: string; temporary?: boolean }[] }).methods.map((m) => `${m.name}${m.temporary ? ' temporary' : ''}`);
+  }
+  const row = (key: string, status: string, method: string): string => `${key},x,size=64x64,${status},${method},,,,,,,`;
+
   it('gives an image type only the image method of the game, and flux2-klein as its temporary method', async () => {
-    const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
-    const host = (imageMethod: string): Record<string, unknown> => ({ resourceGeneration: [...methods(), sub], imageMethod });
-    const run = async (imageMethod: string, list: string, key: string): Promise<unknown> => {
-      const ws = makeWorkspace(host(imageMethod));
-      makeGame(ws, 'g', { 'resource/resources.csv': list });
-      const out = await ogw(ws, ['generation', 'methods', 'g', key, '--json']);
-      if (out.code !== 0) throw new Error(out.stderr);
-      return (JSON.parse(out.stdout) as { methods: { name: string; temporary?: boolean }[] }).methods.map((m) => `${m.name}${m.temporary ? ' temporary' : ''}`);
-    };
     // no image made yet: the host imageMethod
-    expect(await run('sub', RESOURCES, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
-    expect(await run('flux2-klein', RESOURCES, 'image/hero')).toEqual(['flux2-klein']);
+    expect(await given('sub', RESOURCES, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    expect(await given('flux2-klein', RESOURCES, 'image/hero')).toEqual(['flux2-klein']);
     // the first final image fixes the method of the game, whatever this host chose
     const madeLocal = RESOURCES.replace('image/small,small,size=100x100,placeholder,,', 'image/small,small,size=100x100,final,flux2-klein,');
-    expect(await run('sub', madeLocal, 'image/hero')).toEqual(['flux2-klein']);
+    expect(await given('sub', madeLocal, 'image/hero')).toEqual(['flux2-klein']);
     const madeSub = RESOURCES.replace('image/small,small,size=100x100,placeholder,,', 'image/small,small,size=100x100,final,sub,');
-    expect(await run('flux2-klein', madeSub, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    expect(await given('flux2-klein', madeSub, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
     // a temporary image does not fix it
     const temp = RESOURCES.replace('image/small,small,size=100x100,placeholder,,', 'image/small,small,size=100x100,temporary,flux2-klein,');
-    expect(await run('sub', temp, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    expect(await given('sub', temp, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+  });
+
+  it('does not fix the image method with the sprite_sheet row of a sprite animation or a row of a method outside the image types', async () => {
+    // the sheet ogw resource finalize writes for sprite_animation/fx, made by grok
+    const animation = `${RESOURCES.replace('sprite_animation/fx,fx,size=64x64;animations=play:300:once,placeholder,,', 'sprite_animation/fx,fx,size=64x64;animations=play:300:once,final,grok,')}${row('sprite_sheet/fx', 'final', 'grok')}\n`;
+    expect(await given('sub', animation, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    // after it, the first image of the game still fixes the method
+    expect(await given('flux2-klein', `${animation}${row('image/a', 'final', 'sub')}\n`, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    // a sprite_sheet of its own counts
+    expect(await given('sub', `${RESOURCES}${row('sprite_sheet/own', 'final', 'grok')}\n`, 'image/hero')).toEqual(['grok', 'flux2-klein temporary']);
+    // a method that makes no image, or no method, does not fix it
+    expect(await given('sub', `${RESOURCES}${row('image/a', 'final', 'audio')}\n`, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    expect(await given('sub', `${RESOURCES}${row('image/a', 'final', '')}\n`, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+  });
+
+  it('gives the temporary method only when flux2-klein is usable, and for an image type only when flux2-klein lists it', async () => {
+    const failed = [{ resolution: 512, result: 'failed' }];
+    expect(await given('sub', RESOURCES, 'image/hero', failed)).toEqual(['sub']);
+    expect(await given('sub', RESOURCES, 'sprite_animation/fx', failed)).toEqual(['sprite', 'sub', 'grok']);
+    // flux2-klein lists only image: none for icon, and for sprite_animation the type condition is excepted
+    expect(await given('sub', `${RESOURCES}${row('icon/x', 'placeholder', '')}\n`, 'icon/x')).toEqual(['sub']);
+    expect(await given('sub', RESOURCES, 'sprite_animation/fx')).toEqual(['sprite', 'sub', 'grok', 'flux2-klein temporary']);
   });
 
   it('fails for a key not in resources.csv or a spec that breaks the rules', async () => {
@@ -161,17 +186,55 @@ describe('ogw generation check', () => {
     const expected = [
       '| type | status | methods | to use | count | time ms |',
       '|---|---|---|---|---|---|',
-      '| image | ok | a 1024px 400ms, b 10ms | a (none) | 3 | 0 |',
+      '| image | ok | a 1024px 400ms, b 10ms | a (none) | 3 | 1200 |',
       '| bgm | unmeasured | - | - | - | - |',
       '| sfx | missing | - | - | - | - |',
       '| icon | ok | a 1024px 400ms | a (none) | 1 | 400 |',
       '| model | missing | - | - | - | - |',
       '',
-      'total time ms: 400',
+      'total time ms: 1600',
       '',
     ].join('\n');
     expect(readFileSync(join(root, 'records', 'setup', 'host-check.md'), 'utf8')).toBe(expected);
     expect(run.stdout).toBe(expected);
+  });
+
+  it('counts for an image type only the methods ogw generation methods gives, and writes their billing', async () => {
+    const own = [
+      { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image', 'sprite_sheet'], safetyTimeoutMs: 1, license: 'X', measured: [{ resolution: 512, jobMs: 50, result: 'ok' }] },
+      { name: 'grok', kind: 'external-service', provider: 'grok', resourceTypes: ['image', 'icon', 'sprite_sheet', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ jobMs: 300, result: 'ok' }] },
+      { name: 'local', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ resolution: 512, jobMs: 5, result: 'ok' }] },
+    ];
+    const ws = makeWorkspace({ resourceGeneration: own, imageMethod: 'grok' });
+    const login = join(ws.root, 'grok-login');
+    mkdirSync(login);
+    writeFileSync(join(login, 'auth.json'), '{}');
+    const header = ['| type | status | methods | to use | count | time ms |', '|---|---|---|---|---|---|'];
+    const args = ['generation', 'check', 'g', '--types', 'image,icon,sprite_animation,sprite_sheet', '--counts', 'image=2,icon=1,sprite_animation=1'];
+    makeGame(ws, 'g');
+    const subscription = await ogw(ws, args, { env: { GROK_HOME: login } });
+    expect(subscription.stdout).toBe(
+      [
+        ...header,
+        // local is faster but makes no image of this game; the temporary flux2-klein does
+        '| image | ok | flux2-klein 512px 50ms, grok 300ms, local 512px 5ms | grok (subscription), flux2-klein temporary (none) | 2 | 100 |',
+        '| icon | ok | grok 300ms | grok (subscription) | 1 | 300 |',
+        '| sprite_animation | ok | grok 300ms | grok (subscription), flux2-klein temporary (none) | 1 | 300 |',
+        '| sprite_sheet | ok | flux2-klein 512px 50ms, grok 300ms | grok (subscription), flux2-klein temporary (none) | - | - |',
+        '',
+        'total time ms: 700',
+        '',
+      ].join('\n'),
+    );
+    const perCall = await ogw(ws, args, { env: { GROK_HOME: join(ws.root, 'no-login'), XAI_API_KEY: 'k' } });
+    expect(perCall.stdout).toContain('| icon | ok | grok 300ms | grok (per-call) | 1 | 300 |\n');
+    // the first final image of the game sets its image method: local, which makes no icon
+    const list = [RESOURCES.trimEnd(), 'image/a,a,size=64x64,final,local,,,,,,,', ''].join('\n');
+    makeGame(ws, 'h', { 'resource/resources.csv': list });
+    const made = await ogw(ws, [...args.slice(0, 2), 'h', ...args.slice(3)], { env: { GROK_HOME: login } });
+    expect(made.stdout).toContain('| image | ok | flux2-klein 512px 50ms, grok 300ms, local 512px 5ms | local (none), flux2-klein temporary (none) | 2 | 10 |\n');
+    expect(made.stdout).toContain('| icon | missing | grok 300ms | - | - | - |\n');
+    expect(made.stdout).toContain('total time ms: 310\n');
   });
 
   it('writes a dash total when no ok type has a count', async () => {

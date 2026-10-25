@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -178,12 +179,6 @@ describe('standard test jobs', () => {
     expect(readFileSync(join(ace.input.dir, 'drivers', 'ogw_ace-step.py'), 'utf8')).toBe(DRIVERS['ace-step']);
     const moss = await calls('moss-sfx', { stage: { durationMs: 3000 }, lengthMs: 800 });
     expect(moss.list[0]?.args).toEqual([join(moss.input.dir, 'drivers', 'ogw_moss-sfx.py'), join(moss.input.dir, 'hf', '1'), moss.input.promptFile, '800', join(moss.input.out, 'sound.wav'), '-1']);
-    // moss-sfx: the seed reaches the pipeline, the model is told the length and the cut is 1 s later
-    expect(DRIVERS['moss-sfx']).toContain('seed=s, append_duration_suffix=False');
-    expect(DRIVERS['moss-sfx']).toContain('seconds = min(int(duration_ms) / 1000 + 1, pipe.max_inference_seconds)');
-    // ace-step: the LM plans the song and its tempo goes to music.json
-    expect(DRIVERS['ace-step']).toContain('thinking=True, use_cot_metas=True');
-    expect(DRIVERS['ace-step']).toContain('json.dump({"bpm": bpm, "beatsPerBar": beats}, f)');
     const qwen = await calls('qwen3-tts');
     expect(qwen.list[0]?.args).toEqual([join(qwen.input.dir, 'drivers', 'ogw_qwen3-tts.py'), join(qwen.input.dir, 'hf', '1'), qwen.input.promptFile, join(qwen.input.out, 'voice.wav'), '-1']);
     await expect(calls('ace-step', { stage: { durationMs: 1 }, marker: marker('/m', { git: [] }) })).rejects.toThrow('method ace-step has no git pin');
@@ -201,5 +196,214 @@ describe('standard test jobs', () => {
     expect(run.list[0]?.args.slice(5)).toEqual(['--resolution', '1024', '--no-rembg']);
     await expect(calls('trellis2')).rejects.toThrow('trellis2 takes exactly one --image');
     await expect(calls('trellis2', { images: ['/a', '/b'] })).rejects.toThrow('trellis2 takes exactly one --image');
+  });
+});
+
+/** `python3` on PATH, or null: the driver runs below need it. */
+const python = ((): string | null => {
+  const found = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+  return found.status === 0 ? found.stdout.trim() : null;
+})();
+
+/**
+ * Stub modules of the libraries the drivers import. Each records the arguments it gets into the JSON file
+ * `STUB_RECORD`; `STUB_DEVICE` is the available device (`mps`, `cuda`, or none), `STUB_LM_METADATA` the
+ * `lm_metadata` that `generate_music` returns, and `STUB_LM_FAIL` makes the LM fail to start.
+ */
+const STUBS: Record<string, string> = {
+  'stub_record.py': [
+    'import json, os',
+    'def record(name, value):',
+    '    path = os.environ["STUB_RECORD"]',
+    '    data = json.load(open(path)) if os.path.exists(path) else {}',
+    '    data[name] = value',
+    '    json.dump(data, open(path, "w"))',
+  ].join('\n'),
+  'torch/__init__.py': [
+    'import os',
+    'float32 = "float32"',
+    'bfloat16 = "bfloat16"',
+    'class _Device:',
+    '    def __init__(self, name):',
+    '        self.name = name',
+    '    def is_available(self):',
+    '        return os.environ.get("STUB_DEVICE") == self.name',
+    'cuda = _Device("cuda")',
+    'class backends:',
+    '    mps = _Device("mps")',
+    'class Tensor:',
+    '    def __init__(self, shape):',
+    '        self.shape = tuple(shape)',
+    '    ndim = property(lambda self: len(self.shape))',
+    '    T = property(lambda self: Tensor(reversed(self.shape)))',
+    '    def detach(self):',
+    '        return self',
+    '    def cpu(self):',
+    '        return self',
+    '    def to(self, dtype):',
+    '        return self',
+    '    def numpy(self):',
+    '        return self',
+    '    def unsqueeze(self, dim):',
+    '        return Tensor((1,) + self.shape)',
+    '    def __getitem__(self, index):',
+    '        if isinstance(index, int):',
+    '            return Tensor(self.shape[1:])',
+    '        shape = list(self.shape)',
+    '        for i, part in enumerate(index):',
+    '            shape[i] = len(range(*part.indices(shape[i])))',
+    '        return Tensor(shape)',
+  ].join('\n'),
+  'soundfile/__init__.py': [
+    'from stub_record import record',
+    'def write(target, data, rate):',
+    '    record("write", {"shape": list(data.shape), "rate": rate})',
+    '    open(target, "w").write("wav")',
+  ].join('\n'),
+  'moss_soundeffect_v2/__init__.py': [
+    'import os',
+    'import torch',
+    'from stub_record import record',
+    'class MossSoundEffectPipeline:',
+    '    sample_rate = 48000',
+    '    max_inference_seconds = 30',
+    '    @classmethod',
+    '    def from_pretrained(cls, model, torch_dtype, device):',
+    '        record("from_pretrained", {"model": model, "dtype": torch_dtype, "device": device, "dynamo": os.environ.get("TORCHDYNAMO_DISABLE")})',
+    '        return cls()',
+    '    def __call__(self, **kwargs):',
+    '        record("call", kwargs)',
+    '        # as the pipeline: the full length, cut at whole 0.1 s',
+    '        seconds = round(float(kwargs["seconds"]), 1)',
+    '        if seconds > self.max_inference_seconds:',
+    '            raise ValueError("seconds exceeds max_inference_seconds")',
+    '        return torch.Tensor((1, 1, int(self.sample_rate * seconds)))',
+  ].join('\n'),
+  'acestep/__init__.py': '',
+  'acestep/handler.py': ['from stub_record import record', 'class AceStepHandler:', '    def initialize_service(self, **kwargs):', '        record("initialize_service", kwargs)'].join('\n'),
+  'acestep/llm_inference.py': [
+    'import os',
+    'from stub_record import record',
+    'class LLMHandler:',
+    '    def initialize(self, **kwargs):',
+    '        record("lm_initialize", kwargs)',
+    '        return ("lm failed", False) if os.environ.get("STUB_LM_FAIL") else ("ok", True)',
+  ].join('\n'),
+  'acestep/inference.py': [
+    'import json, os',
+    'from types import SimpleNamespace',
+    'from stub_record import record',
+    'class GenerationParams:',
+    '    def __init__(self, **kwargs):',
+    '        record("params", kwargs)',
+    'class GenerationConfig:',
+    '    def __init__(self, **kwargs):',
+    '        record("config", kwargs)',
+    'def generate_music(dit, lm, params, config, save_dir):',
+    '    record("save_dir", save_dir)',
+    '    os.makedirs(save_dir, exist_ok=True)',
+    '    path = os.path.join(save_dir, "song.wav")',
+    '    open(path, "w").write("song")',
+    '    return SimpleNamespace(success=True, error=None, audios=[{"path": path}], extra_outputs={"lm_metadata": json.loads(os.environ["STUB_LM_METADATA"])})',
+  ].join('\n'),
+};
+
+interface DriverRun {
+  code: number | null;
+  stderr: string;
+  record: Record<string, unknown>;
+  dir: string;
+}
+
+/** Runs a driver with `python3` and the stub modules on `PYTHONPATH`; `args` get `<dir>` replaced by the run folder. */
+function runDriver(name: string, args: string[], env: Record<string, string> = {}): DriverRun {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-driver-')));
+  const stubs = join(dir, 'stubs');
+  for (const [file, text] of Object.entries(STUBS)) {
+    mkdirSync(join(stubs, file, '..'), { recursive: true });
+    writeFileSync(join(stubs, file), `${text}\n`);
+  }
+  mkdirSync(join(dir, 'drivers'));
+  mkdirSync(join(dir, 'home'));
+  mkdirSync(join(dir, 'out'));
+  writeFileSync(join(dir, 'prompt.txt'), 'A coin pickup.\n');
+  const script = join(dir, 'drivers', driverFile(name));
+  writeFileSync(script, DRIVERS[name] as string);
+  const record = join(dir, 'record.json');
+  const run = spawnSync(python as string, [script, ...args.map((a) => a.replaceAll('<dir>', dir))], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH ?? '', HOME: join(dir, 'home'), PYTHONPATH: stubs, STUB_RECORD: record, ...env },
+  });
+  return { code: run.status, stderr: run.stderr, record: existsSync(record) ? (JSON.parse(readFileSync(record, 'utf8')) as Record<string, unknown>) : {}, dir };
+}
+
+describe.runIf(python !== null)('drivers against stub libraries', () => {
+  const ace = (seed: string, metadata: unknown, env: Record<string, string> = {}): DriverRun =>
+    runDriver('ace-step', ['<dir>/checkpoints', '<dir>/prompt.txt', '68000', '<dir>/out', seed], { STUB_LM_METADATA: JSON.stringify(metadata), ...env });
+
+  it('ace-step makes the song with the LM, moves the WAV to music.wav and writes the tempo the LM chose', () => {
+    const run = ace('42', { bpm: 120 }, { STUB_DEVICE: 'mps' });
+    expect(run).toMatchObject({ code: 0, stderr: '' });
+    const project = join(run.dir, 'home', 'ace-step-project');
+    expect(readlinkSync(join(project, 'checkpoints'))).toBe(join(run.dir, 'checkpoints'));
+    expect(run.record).toEqual({
+      initialize_service: { project_root: project, config_path: 'acestep-v15-turbo', device: 'mps' },
+      lm_initialize: { checkpoint_dir: join(run.dir, 'checkpoints'), lm_model_path: 'acestep-5Hz-lm-1.7B', backend: 'mlx', device: 'mps' },
+      params: { caption: 'A coin pickup.', instrumental: true, duration: 68, seed: 42, thinking: true, use_cot_metas: true, use_cot_caption: false, use_cot_language: false },
+      config: { batch_size: 1, audio_format: 'wav', use_random_seed: false, seeds: [42] },
+      save_dir: join(run.dir, 'out', 'work'),
+    });
+    expect(readdirSync(join(run.dir, 'out')).sort()).toEqual(['music.json', 'music.wav']);
+    expect(readFileSync(join(run.dir, 'out', 'music.wav'), 'utf8')).toBe('song');
+    // no timesignature: 4 beats per bar
+    expect(JSON.parse(readFileSync(join(run.dir, 'out', 'music.json'), 'utf8'))).toEqual({ bpm: 120, beatsPerBar: 4 });
+  });
+
+  it('ace-step uses a random seed for -1, the pt LM without MPS, and the timesignature the LM chose', () => {
+    const run = ace('-1', { bpm: 90, timesignature: '3' });
+    expect(run.code).toBe(0);
+    expect(run.record).toMatchObject({ lm_initialize: { backend: 'pt', device: 'cpu' }, params: { seed: -1 }, config: { use_random_seed: true, seeds: null } });
+    expect(JSON.parse(readFileSync(join(run.dir, 'out', 'music.json'), 'utf8'))).toEqual({ bpm: 90, beatsPerBar: 3 });
+    expect(ace('7', { bpm: 100, timesignature: '0' }, { STUB_DEVICE: 'cuda' }).record).toMatchObject({ lm_initialize: { backend: 'pt', device: 'cuda' } });
+  });
+
+  it('ace-step fails when the LM chose no bpm or does not start', () => {
+    const none = ace('42', { timesignature: '4' });
+    expect(none.code).not.toBe(0);
+    expect(none.stderr).toContain('the LM chose no bpm');
+    expect(existsSync(join(none.dir, 'out', 'music.json'))).toBe(false);
+    const lm = ace('42', { bpm: 120 }, { STUB_LM_FAIL: '1' });
+    expect(lm.code).not.toBe(0);
+    expect(lm.stderr).toContain('lm failed');
+    expect(lm.record).not.toHaveProperty('params');
+  });
+
+  const moss = (durationMs: number, seed: string, env: Record<string, string> = {}): DriverRun =>
+    runDriver('moss-sfx', ['<dir>/model', '<dir>/prompt.txt', String(durationMs), '<dir>/out/sound.wav', seed], env);
+
+  it('moss-sfx tells the model the length and cuts the sound at the output length + 1000 ms', () => {
+    const run = moss(1234, '42');
+    expect(run).toMatchObject({ code: 0, stderr: '' });
+    expect(run.record).toEqual({
+      from_pretrained: { model: join(run.dir, 'model'), dtype: 'float32', device: 'cpu', dynamo: '1' },
+      call: { prompt: 'A coin pickup. duration: 1.2s', seconds: 30, num_inference_steps: 100, cfg_scale: 4.0, seed: 42, append_duration_suffix: false },
+      // 2234 ms at 48000 Hz, mono
+      write: { shape: [107232, 1], rate: 48000 },
+    });
+    expect(readFileSync(join(run.dir, 'out', 'sound.wav'), 'utf8')).toBe('wav');
+    expect(moss(1260, '42').record).toMatchObject({ write: { shape: [108480, 1] } });
+    expect(moss(800, '42').record).toMatchObject({ call: { prompt: 'A coin pickup. duration: 0.8s' }, write: { shape: [86400, 1] } });
+    // at most the pipeline maximum
+    expect(moss(29500, '42').record).toMatchObject({ call: { prompt: 'A coin pickup. duration: 29.5s' }, write: { shape: [1440000, 1] } });
+  });
+
+  it('moss-sfx tells at least 0.1 s, uses a random seed for -1, and keeps torch.compile on CUDA', () => {
+    const short = moss(30, '-1', { STUB_DEVICE: 'mps' });
+    expect(short.code).toBe(0);
+    const call = short.record.call as { prompt: string; seed: number };
+    expect(call.prompt).toBe('A coin pickup. duration: 0.1s');
+    expect(Number.isInteger(call.seed) && call.seed >= 0).toBe(true);
+    expect(short.record).toMatchObject({ from_pretrained: { dtype: 'bfloat16', device: 'mps', dynamo: '1' }, write: { shape: [49440, 1] } });
+    expect(moss(1000, '42', { STUB_DEVICE: 'cuda' }).record).toMatchObject({ from_pretrained: { device: 'cuda', dynamo: null } });
   });
 });

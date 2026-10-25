@@ -6,11 +6,10 @@ import type { GenerationMethod, MeasuredStep } from '../../lib/settings.ts';
 import { loadSchema, schemaPath, type HarnessSettings } from '../../lib/settings.ts';
 import type { Context } from '../../lib/command.ts';
 import { exists } from '../../lib/fsx.ts';
-import type { GameRepo } from '../../lib/game.ts';
 import { providerCliChecks } from '../env/lib/hostcheck.ts';
 import { LIST_PATH, readList } from '../resource/lib/list.ts';
 import { emptySpec } from '../resource/lib/spec.ts';
-import { gameImageMethod, methodChoices } from './lib/select.ts';
+import { gameImageMethod, IMAGE_METHOD, IMAGE_TYPES, methodChoices } from './lib/select.ts';
 
 export type TypeStatus = 'ok' | 'unmeasured' | 'missing';
 
@@ -36,16 +35,26 @@ function lastOk(method: GenerationMethod): MeasuredStep | null {
   return (method.measured ?? []).filter((s) => s.result === 'ok').at(-1) ?? null;
 }
 
-/** `game-setup` 6: status of a type and its methods with an `ok` step. */
-export function typeRow(type: string, methods: readonly GenerationMethod[], count: number | null): TypeRow {
+/**
+ * `game-setup` 6: status of a type and its methods with an `ok` step. With `makers` (an image type: the methods
+ * `ogw generation methods` gives it), the status and the duration come only from the methods of the type named there.
+ */
+export function typeRow(type: string, methods: readonly GenerationMethod[], count: number | null, makers?: readonly string[]): TypeRow {
   const own = methods.filter((m) => m.resourceTypes.includes(type));
   const withOk = own.flatMap((m) => {
     const step = lastOk(m);
     return step ? [{ name: m.name, step }] : [];
   });
-  const status: TypeStatus = withOk.length > 0 ? 'ok' : own.some((m) => m.measured === undefined) ? 'unmeasured' : 'missing';
-  const timeMs = status === 'ok' && count !== null ? Math.min(...withOk.map((m) => count * (m.step.jobMs ?? 0))) : null;
+  const counted = makers === undefined ? own : own.filter((m) => makers.includes(m.name));
+  const countedOk = withOk.filter((m) => counted.some((c) => c.name === m.name));
+  const status: TypeStatus = countedOk.length > 0 ? 'ok' : counted.some((m) => m.measured === undefined) ? 'unmeasured' : 'missing';
+  const timeMs = status === 'ok' && count !== null ? Math.min(...countedOk.map((m) => count * (m.step.jobMs ?? 0))) : null;
   return { type, status, methods: withOk, count: status === 'ok' ? count : null, timeMs, use: [] };
+}
+
+/** The methods that can make a key of an image type in a game (`production.md` `## method`): its image method and the temporary method. */
+export function imageTypeMakers(imageMethod: string): string[] {
+  return [...new Set([imageMethod, IMAGE_METHOD])];
 }
 
 function methodCell(m: { name: string; step: MeasuredStep }): string {
@@ -73,11 +82,9 @@ export function hostCheckMarkdown(rows: TypeRow[]): string {
  * Fills `use` of the `ok` rows: each method `ogw generation methods` would give a key of that type in this game, with
  * `temporary` for the temporary method, and its billing (`game-setup` 6).
  */
-async function addUse(ctx: Context, settings: HarnessSettings, game: GameRepo, rows: TypeRow[]): Promise<void> {
+async function addUse(ctx: Context, settings: HarnessSettings, imageMethod: string, rows: TypeRow[]): Promise<void> {
   const ok = rows.filter((r) => r.status === 'ok');
   if (ok.length === 0) return;
-  const list = exists(join(game.root, LIST_PATH)) ? await readList(game.root) : [];
-  const imageMethod = gameImageMethod(settings, list);
   const billing = new Map((await providerCliChecks(ctx, settings)).map((p) => [p.provider, p.billing ?? 'unknown']));
   for (const row of ok) {
     const choices = await methodChoices(ctx, settings, row.type, emptySpec(), imageMethod);
@@ -118,8 +125,10 @@ export const checkCommand: CommandDef = {
     if (unknown.length > 0) throw new OgwError(`not a resource type of harness settings schema resourceTypes: ${unknown.join(', ')}`);
     const counts = parseCounts(str(args, 'counts'), types);
     const settings = await ctx.settings();
-    const rows = types.map((t) => typeRow(t, settings.resourceGeneration, counts.get(t) ?? null));
-    await addUse(ctx, settings, game, rows);
+    const list = exists(join(game.root, LIST_PATH)) ? await readList(game.root) : [];
+    const imageMethod = gameImageMethod(settings, list);
+    const rows = types.map((t) => typeRow(t, settings.resourceGeneration, counts.get(t) ?? null, IMAGE_TYPES.includes(t) ? imageTypeMakers(imageMethod) : undefined));
+    await addUse(ctx, settings, imageMethod, rows);
     const path = join(game.root, 'records', 'setup', 'host-check.md');
     const markdown = hostCheckMarkdown(rows);
     await writeFileAtomic(path, markdown);

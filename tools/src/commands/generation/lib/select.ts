@@ -64,11 +64,19 @@ export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 
 
 /**
  * The image method of a game: the method of the first `final` row of an image type made by a method of the image types,
- * else harness settings `imageMethod`.
+ * else harness settings `imageMethod`. The attached row `sprite_sheet/<name>` of a `sprite_animation/<name>` in the list
+ * (the sheet `ogw resource finalize` writes for that sprite animation) does not count.
  */
 export function gameImageMethod(settings: HarnessSettings, rows: readonly ResourceRow[]): string {
   const imageMethods = new Set(settings.resourceGeneration.filter((m) => m.resourceTypes.includes('image')).map((m) => m.name));
-  const first = rows.find((r) => r.status === 'final' && IMAGE_TYPES.includes(parseKey(r.key)?.type ?? '') && imageMethods.has(r.method));
+  const keys = rows.map((r) => parseKey(r.key));
+  const animations = new Set(keys.flatMap((k) => (k?.type === 'sprite_animation' ? [k.name] : [])));
+  const first = rows.find((r, i) => {
+    const key = keys[i];
+    if (key === null || key === undefined || !IMAGE_TYPES.includes(key.type)) return false;
+    if (key.type === 'sprite_sheet' && animations.has(key.name)) return false;
+    return r.status === 'final' && imageMethods.has(r.method);
+  });
   return first?.method ?? settings.imageMethod;
 }
 
@@ -92,8 +100,8 @@ export async function chooseMethods(ctx: Context, settings: HarnessSettings, gam
 
 /**
  * `chooseMethods` for a resource type, the parsed `spec` of its key (`keySpec`) and the image method of the game: an
- * image type takes only that method, and `flux2-klein` is added as the temporary method of an image type made by
- * another method and of `sprite_animation`.
+ * image type takes only that method, and a usable `flux2-klein` is added as the temporary method of an image type it
+ * lists that another method makes, and of `sprite_animation` (the type condition excepted).
  */
 export async function methodChoices(ctx: Context, settings: HarnessSettings, type: string, spec: Spec, imageMethod: string): Promise<MethodChoice[]> {
   const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
@@ -105,9 +113,15 @@ export async function methodChoices(ctx: Context, settings: HarnessSettings, typ
     if (imageType && method.name !== imageMethod) continue;
     choices.push(await choiceOf(ctx, method, spec, needsImage ? image : undefined));
   }
-  const temporary = (imageType && imageMethod !== IMAGE_METHOD) || type === 'sprite_animation';
-  if (temporary && image && usable(image)) choices.push({ ...(await choiceOf(ctx, image, spec, undefined)), temporary: true });
+  if (image && takesTemporary(type, imageMethod, image)) choices.push({ ...(await choiceOf(ctx, image, spec, undefined)), temporary: true });
   return choices;
+}
+
+/** Whether `flux2-klein` is the temporary method of the type: usable, and an image type it lists that another method makes, or `sprite_animation`. */
+function takesTemporary(type: string, imageMethod: string, image: GenerationMethod): boolean {
+  if (!usable(image)) return false;
+  if (type === 'sprite_animation') return true;
+  return IMAGE_TYPES.includes(type) && imageMethod !== IMAGE_METHOD && image.resourceTypes.includes(type);
 }
 
 async function choiceOf(ctx: Context, method: GenerationMethod, spec: Spec, image: GenerationMethod | undefined): Promise<MethodChoice> {

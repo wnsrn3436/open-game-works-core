@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateDeps } from '../../../src/commands/loop/lib/evaluate.ts';
 import type { EvaluateFile } from '../../../src/commands/loop/lib/files.ts';
 import { ogw } from '../../helpers/workspace.ts';
-import { commit, git, openBuildRun, openLoopRun, read, readJsonFile, setupGame, write, type TestGame } from './helpers.ts';
+import { commit, git, openBuildRun, openLoopRun, read, readJsonFile, REFERENCE_MD, setupGame, write, type TestGame } from './helpers.ts';
 
 interface FakeInstance {
   id: string;
@@ -379,6 +379,8 @@ describe('ogw loop evaluate', () => {
     await openLoopRun(c, { name: 'create-1', command: 'create', iteration: 1 });
     const chead = git(c.root, 'rev-parse', 'HEAD');
     write(c.root, 'records/loops/create-1/check-1.json', { commit: chead, checks: PASS_ALL.map((name) => ({ name, platform: null, result: 'pass', failures: [], warnings: [] })), gate: 'pass' });
+    // the presentation game is another game than the reference game
+    write(c.root, 'records/setup/reference/reference.md', REFERENCE_MD.replace('## reason', '## presentation game\n\nGlow Town\n\n## reason'));
     fake.root = c.root;
     fake.run = 'create-1';
     fake.instances = [];
@@ -390,7 +392,7 @@ describe('ogw loop evaluate', () => {
     const created = readJsonFile(c.root, 'records/loops/create-1/evaluate-1.json') as EvaluateFile;
     expect(created.baseline).toBeNull();
     expect(created.judges).toEqual([{ kind: 'main', result: 'records/loops/create-1/judge-1-1.md', A: chead, B: null, instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'unknown', status: 'done' }]);
-    expect(fake.agents[0]?.input).toMatchObject({ B: null, fixtures: [] });
+    expect(fake.agents[0]?.input).toMatchObject({ B: null, fixtures: [], reference: { name: 'Hollow Run', presentation: 'Glow Town' } });
   });
 
   it('caps judge moments by maxConcurrentInstances and waits for room', async () => {

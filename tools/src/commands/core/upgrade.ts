@@ -1,6 +1,6 @@
 import { cp, mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { expectPositionals, flag, positional, type CommandDef, type Context } from '../../lib/command.ts';
+import { expectPositionals, flag, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { readJson, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
@@ -23,8 +23,8 @@ import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 
 /** What `ogw core upgrade` records in the open loop run: `run.data[CORE_UPGRADE_KEY]`. */
 export interface CoreUpgradeRecord {
-  /** The version `coreVersion` was changed to, or null when it stayed. */
-  version: string | null;
+  /** The version `coreVersion` was changed to. */
+  version: string;
   /** Higher versions left out because they break backward compatibility with the last PROD build. */
   skipped: string[];
 }
@@ -161,32 +161,37 @@ async function check(ctx: Context, game: GameRepo, from: string, choice: Choice)
   return { text: lines.join('\n'), data: { from, version: choice.version, skipped: choice.skipped, changes, proposals } };
 }
 
-/** `ogw core upgrade <game> [--check]` (`tools/ogw.md` `## core upgrade`). */
+/** `ogw core upgrade <game> (--check | --version <v>)` (`tools/ogw.md` `## core upgrade`). */
 export const upgradeCommand: CommandDef = {
   name: ['core', 'upgrade'],
-  usage: 'ogw core upgrade <game> [--check]',
-  options: { check: { type: 'boolean' } },
+  usage: 'ogw core upgrade <game> (--check | --version <version>)',
+  options: { check: { type: 'boolean' }, version: { type: 'string' } },
   background: {
     game: (args) => args.positionals[0] ?? null,
     timeLimitMs: () => LIMITS.jobMs,
   },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, this.usage);
+    const approved = str(args, 'version');
+    if (flag(args, 'check') === (approved !== undefined)) throw new OgwError(`give one of --check and --version\nusage: ${this.usage}`);
     const game = await ctx.game(positional(args, 0, 'game'));
     const from = await gameCoreVersion(game);
     const settings = JSON.parse(await readFile(gameSettingsPath(game.root), 'utf8')) as GameSettings;
     const choice = await chooseVersion(ctx, game, from, settings);
-    if (flag(args, 'check')) return check(ctx, game, from, choice);
-    const commit = choice.version === null ? null : await applyVersion(ctx, game, from, choice.version);
+    if (approved === undefined) return check(ctx, game, from, choice);
+    if (choice.version !== approved) {
+      throw new OgwError(`--version ${approved} is not the version ogw core upgrade ${game.name} --check prints now (${choice.version ?? 'none'}); run --check again and ask the human`);
+    }
+    const commit = await applyVersion(ctx, game, from, approved);
     const run = await openRun(game);
     if (run?.kind === 'loop') {
-      const record: CoreUpgradeRecord = { version: choice.version, skipped: choice.skipped };
+      const record: CoreUpgradeRecord = { version: approved, skipped: choice.skipped };
       await changeOpenRun(game, (open) => {
         open.data[CORE_UPGRADE_KEY] = record;
       });
     }
-    const lines = [choice.version === null ? `coreVersion stays ${from}` : `coreVersion: ${from} -> ${choice.version}`];
+    const lines = [`coreVersion: ${from} -> ${approved}`];
     if (choice.skipped.length > 0) lines.push(`skipped: ${choice.skipped.join(', ')}`);
-    return { text: lines.join('\n'), data: { from, version: choice.version, skipped: choice.skipped, commit } };
+    return { text: lines.join('\n'), data: { from, version: approved, skipped: choice.skipped, commit } };
   },
 };

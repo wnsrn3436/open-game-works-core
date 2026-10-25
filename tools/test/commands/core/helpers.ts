@@ -28,10 +28,11 @@ export interface FakeGh {
 
 /**
  * A fake `gh`: `releases` maps a tag to a folder whose files are its assets. Supports `release list`,
- * `release view`, `release download`, `release create`, and `api repos/<repo>/compare/<a>...<b>`, which prints
- * `compare["<a>...<b>"]`. `FAKE_GH_FAIL=<subcommand>` makes that call fail.
+ * `release view`, `release download`, `release create`, and `api repos/<repo>/compare/<a>...<b>?per_page=100 --paginate`,
+ * which prints one `{total, subjects}` line per page of `compare["<a>...<b>"]`: commit subjects one per line (one page,
+ * `total` their count), or `{ total, pages }`. `FAKE_GH_FAIL=<subcommand>` makes that call fail.
  */
-export function fakeGh(ws: TestWorkspace, releases: Record<string, string>, compare: Record<string, string> = {}): FakeGh {
+export function fakeGh(ws: TestWorkspace, releases: Record<string, string>, compare: Record<string, string | { total: number; pages: string[][] }> = {}): FakeGh {
   const state = join(ws.root, 'gh-state.json');
   writeFileSync(state, JSON.stringify({ releases, calls: [], created: {}, compare }));
   fakeBin(ws, 'gh', `
@@ -44,7 +45,15 @@ const save = () => fs.writeFileSync(statePath, JSON.stringify(s));
 const opt = (name) => args[args.indexOf(name) + 1];
 save();
 if (process.env.FAKE_GH_FAIL === args[1]) { process.stderr.write('boom'); process.exit(4); }
-if (args[0] === 'api' && args[1].includes('/compare/')) { process.stdout.write((s.compare || {})[args[1].split('/compare/')[1]] || ''); process.exit(0); }
+if (args[0] === 'api' && args[1].includes('/compare/')) {
+  if (!args[1].endsWith('?per_page=100') || !args.includes('--paginate')) process.exit(9);
+  const value = (s.compare || {})[args[1].split('/compare/')[1].split('?')[0]] || '';
+  const subjects = typeof value === 'string' ? value.split('\\n').filter((l) => l !== '') : null;
+  const pages = subjects ? [subjects] : value.pages;
+  const total = subjects ? subjects.length : value.total;
+  process.stdout.write(pages.map((page) => JSON.stringify({ total, subjects: page })).join('\\n') + '\\n');
+  process.exit(0);
+}
 if (args[0] !== 'release') process.exit(9);
 if (args[1] === 'list') { process.stdout.write(JSON.stringify(Object.keys(s.releases).map((tagName) => ({ tagName })))); process.exit(0); }
 const tag = args[2];

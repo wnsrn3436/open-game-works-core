@@ -195,7 +195,8 @@ function hostDefault<T extends 'number' | 'string'>(schema: unknown, key: keyof 
   return value as T extends 'number' ? number : string;
 }
 
-function hostDefaults(schema: unknown): HostDefaults {
+/** The schema defaults of the host values of harness settings schema `schema`. */
+export function hostDefaults(schema: unknown): HostDefaults {
   return {
     playInstances: hostDefault(schema, 'playInstances', 'number'),
     reviewRunConcurrency: hostDefault(schema, 'reviewRunConcurrency', 'number'),

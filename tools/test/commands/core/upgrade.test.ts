@@ -97,7 +97,15 @@ describe('ogw core upgrade', () => {
     await changeRuns(await ctx.game('g'), (runs) => {
       runs.push(newRunState({ name: 'update-1', kind: 'loop', branch: 'loop/update-1', baseCommit: 'x' }));
     });
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env });
+    // only the version that --check prints now: not a lower one, and only with one of --check and --version
+    const stale = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
+    expect(stale).toMatchObject({ code: 1, stderr: '--version 1.1.0 is not the version ogw core upgrade g --check prints now (1.2.0); run --check again and ask the human\n' });
+    for (const args of [[], ['--check', '--version', '1.2.0']]) {
+      expect((await ogw(ws, ['core', 'upgrade', 'g', ...args], { env: gh.env })).stderr).toBe('give one of --check and --version\nusage: ogw core upgrade <game> (--check | --version <version>)\n');
+    }
+    expect(generateCheckout).not.toHaveBeenCalled();
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['?? notes.txt']);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.2.0'], { env: gh.env });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.2.0\n' });
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.2.0', engine: 'godot' });
     expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual(['core upgrade: 1.0.0 -> 1.2.0', '', 'generated.txt', 'settings.json']);
@@ -108,10 +116,11 @@ describe('ogw core upgrade', () => {
     expect(generateCheckout).toHaveBeenCalledTimes(1);
     expect((await listRuns(await ctx.game('g')))[0]?.data['core upgrade']).toEqual({ version: '1.2.0', skipped: [] });
 
-    const again = await ogw(ws, ['core', 'upgrade', 'g', '--json'], { env: gh.env });
-    expect(JSON.parse(again.stdout)).toEqual({ from: '1.2.0', version: null, skipped: [], commit: null });
-    expect((await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env })).stdout).toBe('coreVersion stays 1.2.0\n');
-    expect((await listRuns(await ctx.game('g')))[0]?.data['core upgrade']).toEqual({ version: null, skipped: [] });
+    const none = await ogw(ws, ['core', 'upgrade', 'g', '--check', '--json'], { env: gh.env });
+    expect(JSON.parse(none.stdout)).toEqual({ from: '1.2.0', version: null, skipped: [], changes: [], proposals: [] });
+    const again = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.2.0'], { env: gh.env });
+    expect(again).toMatchObject({ code: 1, stderr: '--version 1.2.0 is not the version ogw core upgrade g --check prints now (none); run --check again and ask the human\n' });
+    expect(generateCheckout).toHaveBeenCalledTimes(1);
   });
 
   it('with --check prints the version, the changes and the released proposals, and changes nothing', async () => {
@@ -127,6 +136,11 @@ describe('ogw core upgrade', () => {
       'records/core-proposals/2-old.md': 'status: released\nversion: 1.0.0\n',
     });
     const head = sh(dir, 'git', ['rev-parse', 'HEAD']);
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    await changeRuns(await ctx.game('g'), (runs) => {
+      runs.push(newRunState({ name: 'update-1', kind: 'loop', branch: 'loop/update-1', baseCommit: 'x' }));
+    });
+    const runsBefore = await listRuns(await ctx.game('g'));
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--check'], { env: gh.env });
     expect(run).toMatchObject({ code: 0 });
     expect(run.stdout).toBe(
@@ -142,6 +156,8 @@ describe('ogw core upgrade', () => {
     );
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0', engine: 'godot' });
     expect(sh(dir, 'git', ['rev-parse', 'HEAD'])).toBe(head);
+    expect(await listRuns(await ctx.game('g'))).toEqual(runsBefore);
+    expect(runsBefore[0]?.data['core upgrade']).toBeUndefined();
     expect(installEngines).not.toHaveBeenCalled();
     expect(generateCheckout).not.toHaveBeenCalled();
     const none = makeWorkspace();
@@ -150,12 +166,25 @@ describe('ogw core upgrade', () => {
     expect((await ogw(none, ['core', 'upgrade', 'g', '--check'], { env: ghNone.env })).stdout).toBe('coreVersion: 1.0.0\nno version to raise to\n');
   });
 
+  it('with --check reads every page of the comparison, and fails when it lists fewer commits than the total', async () => {
+    const ws = makeWorkspace();
+    const releases = { 'v1.0.0': await release(ws, '1.0.0', 'a', {}), 'v1.1.0': await release(ws, '1.1.0', 'b', {}) };
+    makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' } });
+    const paged = fakeGh(ws, releases, { 'v1.0.0...v1.1.0': { total: 3, pages: [['UICore: one', 'UICore: two'], ['UICore: three']] } });
+    const all = await ogw(ws, ['core', 'upgrade', 'g', '--check', '--json'], { env: paged.env });
+    expect((JSON.parse(all.stdout) as { changes: string[] }).changes).toEqual(['UICore: one', 'UICore: two', 'UICore: three']);
+    const short = fakeGh(ws, releases, { 'v1.0.0...v1.1.0': { total: 3, pages: [['UICore: one', 'UICore: two']] } });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--check'], { env: short.env });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('listed 2 of 3 commits');
+  });
+
   it('does not touch settings.json with uncommitted changes', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'b', {}) });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' } });
     writeFileSync(join(dir, 'settings.json'), '{"coreVersion":"1.0.0","x":1}');
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('settings.json has uncommitted changes');
     expect(generateCheckout).not.toHaveBeenCalled();
@@ -167,7 +196,7 @@ describe('ogw core upgrade', () => {
     writeFileSync(join(remote, 'core-settings.json'), '{"changed":1}');
     const gh = fakeGh(ws, { 'v1.1.0': remote });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' } });
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('core release 1.1.0 failed the hash check');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
@@ -176,7 +205,7 @@ describe('ogw core upgrade', () => {
     const cached = join(ws.coreReleases, '1.1.0');
     mkdirSync(cached);
     for (const name of readdirSync(remote)) writeFileSync(join(cached, name), readFileSync(join(remote, name)));
-    expect((await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env })).stderr).toContain(`core release 1.1.0 in ${cached} failed the hash check`);
+    expect((await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env })).stderr).toContain(`core release 1.1.0 in ${cached} failed the hash check`);
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
     expect(generateCheckout).not.toHaveBeenCalled();
   });
@@ -186,7 +215,7 @@ describe('ogw core upgrade', () => {
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'b', {}) });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'generated.txt': 'generated 1.0.0' });
     vi.mocked(installEngines).mockRejectedValueOnce(new Error('no engine download'));
-    const engines = await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env });
+    const engines = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
     expect(engines.stderr).toContain('no engine download');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
     expect(generateCheckout).not.toHaveBeenCalled();
@@ -195,7 +224,7 @@ describe('ogw core upgrade', () => {
       writeFileSync(join(game.root, 'generated.txt'), 'half');
       return Promise.reject(new Error('generate broke'));
     });
-    const generate = await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env });
+    const generate = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
     expect(generate.stderr).toContain('generate broke');
     expect(generateCheckout).toHaveBeenCalledTimes(2);
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
@@ -224,7 +253,9 @@ describe('ogw core upgrade', () => {
     sh(dir, 'git', ['tag', 'prod-1.0.0-bundle-1']);
     writeFiles(dir, { 'contract/extra.proto': 'syntax = "proto3";' });
     commitAll(dir, 'more contract');
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
+    const checked = await ogw(ws, ['core', 'upgrade', 'g', '--check'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'check-log.jsonl') } });
+    expect(checked.stdout.split('\n').slice(0, 3)).toEqual(['coreVersion: 1.0.0', 'skipped: 1.3.0, 1.2.0', 'would raise to: 1.1.0']);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\nskipped: 1.3.0, 1.2.0\n' });
     expect(run.stderr).toContain('core 1.3.0 breaks backward compatibility with prod-1.0.0:\ncontract/service.proto:1:1 ERROR breaks');
     const calls = toolLog(log);
@@ -256,13 +287,13 @@ describe('ogw core upgrade', () => {
     });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'server/generated/contract/contract_version': '1\n' });
     sh(dir, 'git', ['tag', 'prod-1.0.0']);
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\nskipped: 1.2.0\n' });
     expect(run.stderr).toContain('core 1.2.0 breaks backward compatibility with prod-1.0.0:\ncontract/service.proto:1:1 ERROR breaks\n');
     expect(run.stderr).toContain('core 1.1.0 keeps backward compatibility with prod-1.0.0; its contract tool finds other violations:\ncontract/service.proto:2:1 ERROR rule');
   });
 
-  it('with useLocalCore, compares with the contract tool of each published candidate release', async () => {
+  it('with useLocalCore, --check compares with the contract tool of each published candidate release', async () => {
     const ws = makeWorkspace({ useLocalCore: true });
     const log = join(ws.root, 'tool-log.jsonl');
     const gh = fakeGh(ws, {
@@ -272,13 +303,13 @@ describe('ogw core upgrade', () => {
     });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'server/generated/contract/contract_version': '1\n' });
     sh(dir, 'git', ['tag', 'prod-1.0.0']);
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
-    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion stays 1.0.0\nskipped: 1.2.0, 1.1.0\n' });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--check'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0\nskipped: 1.2.0, 1.1.0\nno version to raise to\n' });
     expect(toolLog(log).filter((c) => c.previous).map((c) => c.proto)).toEqual(['BREAK too', 'BREAK']);
     expect(readdirSync(ws.coreReleases).sort()).toEqual(['1.0.0', '1.1.0', '1.2.0']);
   });
 
-  it('stays when no higher version is compatible, and fails when the contract tool cannot run', async () => {
+  it('prints no version when no higher version is compatible, and fails when the contract tool cannot run', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, {
       'v1.0.0': await release(ws, '1.0.0', 'prod', {}),
@@ -287,14 +318,15 @@ describe('ogw core upgrade', () => {
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'server/generated/contract/contract_version': '1\n' });
     sh(dir, 'git', ['tag', 'prod-1.0.0']);
     const env = { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'log') };
-    expect((await ogw(ws, ['core', 'upgrade', 'g'], { env })).stdout).toBe('coreVersion stays 1.0.0\nskipped: 1.1.0\n');
+    expect((await ogw(ws, ['core', 'upgrade', 'g', '--check'], { env })).stdout).toBe('coreVersion: 1.0.0\nskipped: 1.1.0\nno version to raise to\n');
+    expect((await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env })).stderr).toContain('--version 1.1.0 is not the version ogw core upgrade g --check prints now (none); run --check again and ask the human\n');
     expect(generateCheckout).not.toHaveBeenCalled();
 
     const ws2 = makeWorkspace();
     const gh2 = fakeGh(ws2, { 'v1.0.0': await release(ws2, '1.0.0', 'prod', {}), 'v1.1.0': await release(ws2, '1.1.0', 'BAD', {}) });
     const dir2 = makeGame(ws2, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'server/generated/contract/contract_version': '1\n' });
     sh(dir2, 'git', ['tag', 'prod-1.0.0']);
-    const failed = await ogw(ws2, ['core', 'upgrade', 'g'], { env: { ...gh2.env, FAKE_TOOL_LOG: join(ws2.root, 'log') } });
+    const failed = await ogw(ws2, ['core', 'upgrade', 'g', '--check'], { env: { ...gh2.env, FAKE_TOOL_LOG: join(ws2.root, 'log') } });
     expect(failed.code).toBe(1);
     expect(failed.stderr).toContain('contract tool of core 1.1.0 failed (2): bad input');
   });
@@ -304,7 +336,7 @@ describe('ogw core upgrade', () => {
     const gh = fakeGh(ws, { 'v1.0.0': await release(ws, '1.0.0', 'p', {}), 'v1.1.0': await release(ws, '1.1.0', 'q', {}) });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' } });
     sh(dir, 'git', ['tag', 'prod-1.0.0']);
-    const run = await ogw(ws, ['core', 'upgrade', 'g'], { env: gh.env });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
     expect(run.stderr).toContain('no server/generated/contract/contract_version at prod-1.0.0');
     const ws2 = makeWorkspace();
     const gh2 = fakeGh(ws2, { 'v1.1.0': await release(ws2, '1.1.0', 'q', {}) });
@@ -312,6 +344,6 @@ describe('ogw core upgrade', () => {
     sh(dir2, 'git', ['tag', 'prod-1.0.0']);
     writeFiles(dir2, { 'settings.json': { coreVersion: '1.0.0' } });
     commitAll(dir2);
-    expect((await ogw(ws2, ['core', 'upgrade', 'g'], { env: gh2.env })).stderr).toContain('no settings.json at refs/tags/prod-1.0.0');
+    expect((await ogw(ws2, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh2.env })).stderr).toContain('no settings.json at refs/tags/prod-1.0.0');
   });
 });
