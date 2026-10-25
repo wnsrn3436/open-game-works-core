@@ -262,7 +262,7 @@ The standard test task of `ogw generation measure` and the programs that `ogw ge
 - The standard test task gives seed 42. `generation run` gives no seed (`-1` to the driver), and a driver given `-1` uses a random seed
 - stage: for the standard test task, the stage under test; for `generation run`, the stage that `ogw generation methods` output for that method
 - output length: when `spec` has `length`, the smaller of that value and the `durationMs` of the stage; otherwise the `durationMs` of the stage
-- loop length: for a key whose `spec` has `loop` `true`, the smaller of `length` + 8000 ms and the `durationMs` of the stage; otherwise the output length. The standard test task has no `spec`, so its loop length is the output length
+- loop length: for a key whose `spec` has `loop` `true`, the output length + 8000 ms, so that the song goes on past the loop and its ending is not in the loop; otherwise the output length. The standard test task has no `spec`, so its loop length is the output length
 - image size: `size` of `spec` scaled up or down so that its long side is the `resolution` of the stage (1024 when there is no stage), with each side rounded to a multiple of 16. Less than 16 becomes 16. Without `size`, a square of that `resolution`
 - result: the calls run in order and stop when one fails. When all calls end with code 0 and all output files exist, it is `ok`. For a method whose output files are `none`, it is `ok` when the output folder is not empty. There is one time limit for all the calls together. When a call ends with `failed` or `timeout`, the last 20 lines of the stderr of that call, without the output that `/usr/bin/time` added, are recorded in the result `error` and also shown in the text output
 

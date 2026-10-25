@@ -148,7 +148,7 @@ describe('ogw resource finalize', () => {
     const loop = work(f, 'l.wav');
     writeFileSync(loop, 'L');
     await finalize(f, ['sfx/loop', '--method', 'moss-sfx', '--file', loop, '--bus', 'Sfx']);
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-i ${loop} -af aformat=sample_rates=48000 -c:a pcm_f32le -f wav`);
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-i ${loop} -af areverse,silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,aformat=sample_rates=48000 -c:a pcm_f32le -f wav`);
     expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-i \S+\/shaped\.wav -af loudnorm=I=-18:TP=-1\.5:LRA=20/);
 
     const voice = work(f, 'v.wav');

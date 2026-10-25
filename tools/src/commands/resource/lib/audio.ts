@@ -74,7 +74,8 @@ export async function encodeOgg(program: string, wav: Buffer, env: NodeJS.Proces
 /**
  * How a sound is shaped before its loudness is matched (`production.md` `## finalize` step 2). `once`: cut the leading
  * and trailing parts below -60 dBFS when `trim`, cut to `maxMs`, then fade in and out. `loop`: a loop of whole
- * `barMs` bars (any length when null) at most `lengthMs` long, whose `seamMs` start is crossfaded with what follows it.
+ * `barMs` bars (any length when null) at most `lengthMs` long, made after the silence at the end is cut, whose `seamMs`
+ * start is crossfaded with what follows it.
  */
 export type SoundShape = { kind: 'once'; trim: boolean; maxMs: number | null } | { kind: 'loop'; lengthMs: number; seamMs: number; barMs: number | null };
 
@@ -312,7 +313,8 @@ export async function processSound(program: string, file: string, target: SoundT
   const norm = `loudnorm=I=${String(normI)}:TP=${String(clamp(target.peakMaxDbtp, LOUDNORM_TP))}:LRA=20`;
   return withTemp(env, async (dir) => {
     const decoded = join(dir, 'decoded.wav');
-    const trim = target.shape.kind === 'once' && target.shape.trim ? `${TRIM},areverse,${TRIM},areverse,` : '';
+    // A loop keeps its start, where its first bar starts, and loses only the silence at its end.
+    const trim = target.shape.kind === 'loop' ? `areverse,${TRIM},areverse,` : target.shape.trim ? `${TRIM},areverse,${TRIM},areverse,` : '';
     await ffmpeg(program, [...input(file), '-af', `${trim}${RESAMPLE}`, '-c:a', 'pcm_f32le', '-f', 'wav', ...BITEXACT, decoded]);
     const source = join(dir, 'shaped.wav');
     await writeFile(source, writeWavF32(shapeSound(readWavF32(await readFile(decoded)), target.shape, file)));

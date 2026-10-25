@@ -116,7 +116,8 @@ export const DRIVERS: Record<string, string> = {
     'if not result.success or not result.audios:',
     '    sys.exit(str(result.error))',
     'audio = result.audios[0]',
-    'used = audio.get("params") or {}',
+    '# the tempo the LM planned the song with',
+    'used = result.extra_outputs.get("lm_metadata") or {}',
     'shutil.move(audio["path"], os.path.join(out, "music.wav"))',
     'shutil.rmtree(os.path.join(out, "work"), ignore_errors=True)',
     'bpm = used.get("bpm")',
@@ -259,11 +260,9 @@ export function outputLengthMs(input: CallInput): number {
   return stage === undefined ? input.lengthMs : Math.min(input.lengthMs, stage);
 }
 
-/** Loop length: for a looped key, the `spec` length plus `LOOP_TAIL_MS` capped at the stage length; else the output length. */
+/** Loop length: for a looped key, the output length plus `LOOP_TAIL_MS`; else the output length. */
 export function loopLengthMs(input: CallInput): number {
-  const stage = input.stage?.durationMs;
-  if (!input.loop || input.lengthMs === null) return outputLengthMs(input);
-  return stage === undefined ? input.lengthMs + LOOP_TAIL_MS : Math.min(input.lengthMs + LOOP_TAIL_MS, stage);
+  return outputLengthMs(input) + (input.loop && input.lengthMs !== null ? LOOP_TAIL_MS : 0);
 }
 
 function seedArg(input: CallInput): string {

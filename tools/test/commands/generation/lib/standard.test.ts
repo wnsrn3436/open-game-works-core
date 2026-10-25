@@ -109,9 +109,10 @@ describe('standard test jobs', () => {
     expect(() => outputLengthMs(input('ace-step'))).toThrow('method ace-step has no stage length or spec length');
   });
 
-  it('adds the loop tail to the spec length of a looped key, capped at the stage length', () => {
+  it('adds the loop tail to the output length of a looped key', () => {
     expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 90000, loop: true }))).toBe(98000);
-    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 118000, loop: true }))).toBe(120000);
+    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 120000, loop: true }))).toBe(128000);
+    expect(loopLengthMs(input('ace-step', { stage: { durationMs: 60000 }, lengthMs: 90000, loop: true }))).toBe(68000);
     expect(loopLengthMs(input('ace-step', { stage: null, lengthMs: 5000, loop: true }))).toBe(13000);
     expect(loopLengthMs(input('ace-step', { stage: { durationMs: 120000 }, lengthMs: 90000 }))).toBe(90000);
     expect(loopLengthMs(input('ace-step', { stage: { durationMs: 30000 } }))).toBe(30000);
