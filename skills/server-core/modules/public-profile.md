@@ -28,10 +28,11 @@ Builds the profile that other users see (nickname, the `PublicProfile` message t
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
 | `GetPublicProfiles` (core rpc, `silent`). changes: none | `user_ids` | `profiles`: list of `PublicProfileEntry` | `INVALID_REQUEST` | `routing`. Client content code sends it |
-| `FindUserByPublicCode` (core rpc, `silent`). changes: none | `public_code` | `profile`: `PublicProfileEntry` of that user | `INVALID_REQUEST`, `USER_NOT_FOUND`, `RATE_LIMITED` | `routing`. Client content code sends it |
+| `FindUserByPublicCode` (core rpc). changes: none | `public_code` | `profile`: `PublicProfileEntry` of that user | `INVALID_REQUEST`, `USER_NOT_FOUND`, `RATE_LIMITED` | `routing`. Client content code sends it |
 | `get_public_profiles` | ctx, list of user IDs | list of `PublicProfileEntry` | none | content handler, hook, `friend`, `block-report`, `guild`, `chat` |
 | `is_active_user` | ctx, user ID | `true` when the `user` row exists and the user is not a withdrawn user | `false` | content handler, hook, `friend`, `block-report`, `chat` |
 | `on_request_start` | user ID | async operation. none | none. A failure is an `error` log | `routing`, `auth` |
+| `count_find_attempt` | user ID | async operation. `pass` | `RATE_LIMITED`, `UNAUTHORIZED`, `INTERNAL` | `routing` |
 
 - `PublicProfileEntry`(base proto message): `int64 user_id`, `string nickname` (empty string when there is no nickname), `bytes profile` (bytes of the game `PublicProfile` message; empty bytes when there is no hook `build_public_profile`), `int64 last_active_at` (last access time; 0 when there is no record), `string public_code` (the public code of `storage`)
 - The output list is in ascending order of user ID and leaves out users for whom `is_active_user` is `false`
@@ -67,7 +68,8 @@ core `rpc` response field
 | `public_profile_find_counter` | `user` | `user_id`, `window_start`, `count`, `expires_at` | `user_id` | `expires_at` |
 
 - `public_profile_find_counter` is registered with snapshot flag `false`
-- `FindUserByPublicCode`: in the user transaction of the request, sets the requester's `public_profile_find_counter` row to the current minute window of `server-time` (`count` 0 when the row is of another window, `expires_at` the window end) and increments `count` by 1. When the incremented value exceeds `public-profile.findPerMinute`, fails with `RATE_LIMITED` and keeps the incremented row. Otherwise finds the user with `storage.find_user_by_public_code`; when it is not a public code input, `INVALID_REQUEST`; when no user is found or `is_active_user` of that user is `false`, `USER_NOT_FOUND`. Otherwise the response is the profile of that user, built as `GetPublicProfiles` builds it. A failed find also counts, so codes are not found by trying many
+- `count_find_attempt`: in its own `storage.run_user_transaction`, sets that user's `public_profile_find_counter` row to the current minute window of `server-time` (`count` 0 when the row is of another window, `expires_at` the window end), increments `count` by 1 and commits, whatever the find gives later. When the incremented value exceeds `public-profile.findPerMinute`, the result is `RATE_LIMITED`. When `run_user_transaction` is `WITHDRAWN`, the result is `UNAUTHORIZED`; when it is `FAILED`, `INTERNAL`; and the count does not increase. `routing` calls it before the request transaction (request prepare)
+- `FindUserByPublicCode`: finds the user with `storage.find_user_by_public_code`; when it is not a public code input, `INVALID_REQUEST`; when no user is found or `is_active_user` of that user is `false`, `USER_NOT_FOUND`. Otherwise the response is the profile of that user, built as `GetPublicProfiles` builds it. A failed find also counts, so codes are not found by trying many
 
 ### last active
 
@@ -99,6 +101,8 @@ none
 | `(ogw.v)` violation of `user_ids` (count, element less than 1, duplicate) | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | `public_code` of `FindUserByPublicCode` that is not a public code input | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | more `FindUserByPublicCode` of one user than `public-profile.findPerMinute` in one minute window | `RATE_LIMITED` | `RATE_LIMITED` | none |
+| the user transaction of `count_find_attempt` is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
+| the user transaction of `count_find_attempt` is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
 | throw of the hook, output in a wrong format, write inside the hook | throw. The message of the throw holds the target user ID | `INTERNAL` | `error` log by `routing` |
 | transaction failure of `on_request_start` | none. The request continues to be handled | none | `error` log |
 

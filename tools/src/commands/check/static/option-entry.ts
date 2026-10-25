@@ -11,7 +11,7 @@ import { chainText } from './lib/gd-walk.ts';
  */
 export const NAME = 'option entry';
 
-const ALWAYS = ['AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_user_id', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code'];
+const ALWAYS = ['AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code'];
 
 interface Requirement {
   calls: string[];

@@ -223,7 +223,7 @@ describe('shared formula', () => {
 
 describe('option entry', () => {
   const ALL_CALLS = [
-    'AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_user_id', 'NativeUiCore.copy_text', 'UICore.open_licenses',
+    'AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses',
     'AuthCore.issue_deletion_code',
   ];
   const code = (calls: string[]): string => `class_name OptionsPanel\nfunc f() -> void:\n${calls.map((c) => `\t${c}()`).join('\n')}\n`;

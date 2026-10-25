@@ -32,7 +32,7 @@ vi.mock('../../../../src/commands/settings/api.ts', () => ({
   gameCheckErrors: () => (mocks.failCheck ? Promise.reject(new OgwError('game check broke')) : Promise.resolve([])),
 }));
 
-const ALWAYS = ['AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_user_id', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code'];
+const ALWAYS = ['AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code'];
 
 async function setup(
   files: Record<string, string | object>,
