@@ -94,7 +94,7 @@ case "$*" in
     peak=$(awk -v b="$base" -v v="$vol" 'BEGIN{printf "%.1f", b + v}')
     printf '  Integrated loudness:\\n    I:         %s LUFS\\n  True peak:\\n    Peak:       %s dBFS\\n' "$i" "$peak" >&2
     exit 0;;
-  *pipe:0*) cat > /dev/null;;
+  *pipe:0*) cat > "${log}.pipe";;
 esac
 vol=$(echo "$*" | sed -n 's/.*volume=\\(-\\{0,1\\}[0-9.]*\\)dB.*/\\1/p')
 if [ -z "$vol" ]; then vol=0; fi

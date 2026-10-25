@@ -77,6 +77,11 @@ const ALL_TYPES = [
   { key: 'scene/battle/main', spec: '', status: 'final' },
 ];
 
+/** A 16-bit PCM WAV whose samples are all 0. */
+function silent(wav: Buffer): boolean {
+  return wav.subarray(0, 4).toString() === 'RIFF' && wav.readUInt32LE(40) > 0 && wav.subarray(44).every((b) => b === 0);
+}
+
 describe('ogw resource placeholder and sync', () => {
   beforeEach(() => {
     tools.ffmpeg = null;
@@ -98,10 +103,12 @@ describe('ogw resource placeholder and sync', () => {
     expect(hits[0]?.subarray(0, 4).toString()).toBe('RIFF');
     expect(hits[0]?.readUInt32LE(40)).toBe(Math.round(0.2 * 48000) * 2);
     expect(hits[0]?.equals(hits[1] as Buffer)).toBe(true);
+    for (const wav of [...hits, file(f, 'resource/sfx/click.wav')]) expect(silent(wav)).toBe(true);
     expect(existsSync(join(f.game, 'resource/sfx/hit.wav'))).toBe(false);
     expect(rowOf(f.game, 'sfx/hit').sha256).toBe(sha(hits.map((h) => sha(h)).join('')));
     expect(file(f, 'resource/sfx/click.wav').readUInt32LE(24)).toBe(48000);
     expect(file(f, 'resource/bgm/battle.ogg').toString()).toBe('OggS-fake');
+    expect(silent(readFileSync(`${f.ffmpegLog}.pipe`))).toBe(true);
     expect(readFileSync(f.ffmpegLog, 'utf8')).toContain('-c:a libvorbis');
     expect(file(f, 'resource/model/crate.glb').subarray(0, 4).toString()).toBe('glTF');
     expect(file(f, 'resource/model/crate.glb').toString()).toContain('"max":[0.5,2.5,0.25]');
@@ -209,6 +216,7 @@ describe('ogw resource placeholder and sync', () => {
     const one = rowOf(f.game, 'voice/intro_1');
     expect(one).toMatchObject({ text_key: 'cutscene_step.text.[intro].1', speaker: 'hero', status: 'placeholder', method: '', license: '', attribution: '', text_hash: '' });
     expect(file(f, 'resource/voice/intro_1.wav').subarray(0, 4).toString()).toBe('RIFF');
+    expect(silent(file(f, 'resource/voice/intro_1.wav'))).toBe(true);
     expect(one.sha256).toBe(sha(file(f, 'resource/voice/intro_1.wav')));
     expect(rowOf(f.game, 'voice/intro_2')).toMatchObject({ text_key: 'cutscene_step.text.[intro].2', speaker: 'none', status: 'final', text_hash: 'h2' });
     expect(file(f, 'resource/voice/intro_2.wav').toString()).toBe('FINAL-2');
