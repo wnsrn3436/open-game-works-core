@@ -1,12 +1,18 @@
 {
   "target": "input",
-  "nextId": 2,
+  "nextId": 3,
   "items": [
     {
       "id": "D1",
       "location": "tools/src/commands/check/lib/ui-quality.ts:438",
       "problem": "skills/client-core/modules/qa-core.md:137 (changed in this range) says that when a later call of the open command (keyboard capture) fails, the rest of that screen's captures and keyboard captures are skipped, but `keyboardCaptures` only returns (ui-quality.ts:421) and `screenCaptures` goes on with the next text scale of its loop (ui-quality.ts:427-438): with `keyboard` 1 or more and `AccessibilityCore` in the module list, a reopen that fails after the text scale 1000 captures is followed by `set_text_scale` of the largest scale, `capture_screen`, `list_ui` and the layout and keyboard judgements on a screen that did not open",
       "foundBy": "input round 2"
+    },
+    {
+      "id": "D2",
+      "location": "skills/game-loop/instance.md:41",
+      "problem": "The `step` mode text says an input put in between steps \"advances game time by 1 ms per key or touch event\", and the same item has the agent turn step mode on before a realtime match. skills/client-core/modules/qa-core.md:116 adds no budget in `Playing` of a lockstep match, and says that game time there grows only by the steps of the match, so an input between those steps does not advance game time. The two defining documents differ for a lockstep realtime match. The condition `the client is not in Playing of a lockstep match` was already in qa-core.md at c8066bb, so the difference was there before this range",
+      "foundBy": "input round 4"
     }
   ]
 }
