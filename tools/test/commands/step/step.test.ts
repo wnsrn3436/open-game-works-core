@@ -151,6 +151,17 @@ describe('ogw step --count --capture', () => {
     );
   });
 
+  it('reports a step that failed while only a stop mark was added as ended early, with the mark on that step', async () => {
+    const timeLimit = 'the command went over its time limit';
+    const fail = { at: startedAt + 7000, play_at: 700, kind: 'Fail' };
+    const run = await stepWith([{}, { marks: [fail], fail: timeLimit }], ['100', '--count', '4', '--json']);
+    expect(run).toMatchObject({ code: 0, steps: 2 });
+    const data = JSON.parse(run.stdout) as { steps: { endedEarly?: boolean; marks: unknown[] }[]; stopped: unknown; failed?: unknown };
+    expect(data.failed).toBeUndefined();
+    expect(data.steps[1]).toMatchObject({ endedEarly: true, marks: [{ kind: 'Fail', playMs: 7000 }] });
+    expect(data.stopped).toEqual({ after: 2, reasons: ['mark: Fail', `ended early: main: step failed: "${timeLimit}"`] });
+  });
+
   it('prints after every step, the last included, the play ms that ogw telemetry --summary reports', async () => {
     const from = Date.now() - startedAt;
     const run = await stepWith([], ['100', '--count', '3', '--json']);
