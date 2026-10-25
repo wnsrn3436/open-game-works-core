@@ -470,8 +470,22 @@ export interface WebOptions {
   timeoutMs: number;
 }
 
-/** Browser run of one module in headless Chromium against the test host's `/app/index.html`. */
+/** How many times a browser run opens its page when the page did not load (the browser cut off an `/app/` file). */
+export const WEB_LOAD_ATTEMPTS = 2;
+
+/**
+ * Browser run of one module in headless Chromium against the test host's `/app/index.html`. A page whose load the
+ * browser cut off sends no result, so it is ended at once and opened again, up to `WEB_LOAD_ATTEMPTS` times.
+ */
 export async function webModuleTest(ctx: Context, options: WebOptions): Promise<ModuleOutcome> {
+  for (let attempt = 1; ; attempt++) {
+    const run = await webModuleRun(ctx, options);
+    if (!run.cutOff || attempt >= WEB_LOAD_ATTEMPTS) return run.outcome;
+  }
+}
+
+/** One browser run; `cutOff` when the page did not load and no result came. */
+async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcome: ModuleOutcome; cutOff: boolean }> {
   const runId = newId();
   const appDir = await newPrivateTempFolder('ogw-web-app-', ctx.env);
   const host = await startTestHost(appDir);
@@ -498,20 +512,23 @@ export async function webModuleTest(ctx: Context, options: WebOptions): Promise<
     browser.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
-    const json = await waitForResult(host, options.timeoutMs);
+    const json = await waitForResult(host, options.timeoutMs, () => host.appCutOff().length > 0);
+    const cutOff = json === null && host.appCutOff().length > 0;
     // the post-run hook's `release` prints after the result; the run sends `PUT /released` and prints its last line when
     // it has ended (`client-core` Godot `## test`). Without that signal the run reads on at most CONSOLE_DRAIN_MS.
     if (json !== null) await releasedOrDrained(host, () => stderr, runId, CONSOLE_DRAIN_MS);
     if (json !== null) await writeJsonAtomic(join(options.resultsDir, `${runId}.json`), json);
     const outcome = judgeRun(json, consoleMessages(stderr), null, 'browser run');
     for (const failure of host.inputFailures()) outcome.failures.push(`browser run: input: ${failure}`);
-    if (json === null) {
+    if (cutOff) {
+      outcome.failures.push(`browser run: the page did not load: the browser closed ${host.appCutOff().join(', ')} before it was sent to the end`);
+    } else if (json === null) {
       outcome.failures.push(`browser run: no result within ${String(options.timeoutMs)} ms`);
       // the browser's own output tells why the page sent nothing (`godot` `## test`)
       const tail = stderr.split('\n').map((line) => line.trimEnd()).filter((line) => line !== '').slice(-NO_RESULT_TAIL);
       for (const line of tail) outcome.failures.push(`browser run: browser: ${line}`);
     }
-    return outcome;
+    return { outcome, cutOff };
   } finally {
     input.close();
     if (browser) killTree(browser, 'SIGKILL');
@@ -544,12 +561,12 @@ export async function releasedOrDrained(host: TestHost, stderr: () => string, ru
   }
 }
 
-/** The result the run sent to the test host, or null when none arrived within `timeoutMs`. */
-export async function waitForResult(host: TestHost, timeoutMs: number): Promise<unknown> {
+/** The result the run sent to the test host, or null when none arrived within `timeoutMs` or before `stop` gave true. */
+export async function waitForResult(host: TestHost, timeoutMs: number, stop: () => boolean = () => false): Promise<unknown> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const result = host.result();
-    if (result !== null || Date.now() >= deadline) return result;
+    if (result !== null || Date.now() >= deadline || stop()) return result;
     await sleep(Math.min(RESULT_POLL_MS, Math.max(0, deadline - Date.now())));
   }
 }

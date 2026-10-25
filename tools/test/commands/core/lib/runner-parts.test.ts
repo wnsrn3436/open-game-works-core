@@ -61,6 +61,34 @@ describe('browser run with no result', () => {
   }, 20_000);
 });
 
+describe('browser run whose page did not load', () => {
+  it('ends the run at once when the browser cuts off an /app/ file, and opens the page once more', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
+    const exportDir = join(dir, 'export');
+    mkdirSync(exportDir);
+    writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
+    writeFileSync(join(exportDir, 'index.wasm'), Buffer.alloc(64 * 1024 * 1024));
+    // a browser that starts loading the wasm, drops the connection after the first chunk and sends no result
+    const chromium = join(dir, 'chromium');
+    writeFileSync(chromium, `#!${process.execPath}
+const fs = require('node:fs');
+const http = require('node:http');
+fs.appendFileSync(${JSON.stringify(join(dir, 'launches'))}, 'x');
+const page = new URL(process.argv[process.argv.length - 1]);
+const req = http.get(new URL('/app/index.wasm', page.origin), (res) => res.once('data', () => req.destroy()));
+req.on('error', () => undefined);
+setTimeout(() => undefined, 60000);
+`);
+    chmodSync(chromium, 0o755);
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const started = Date.now();
+    const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000 });
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(outcome.failures).toContain('browser run: the page did not load: the browser closed index.wasm before it was sent to the end');
+    expect(readFileSync(join(dir, 'launches'), 'utf8')).toBe('xx');
+  }, 60_000);
+});
+
 describe('browser run page input', () => {
   /** A fake browser: a DevTools endpoint in its profile, two `POST /input`, then a passing result and the release signal. */
   function fakeBrowser(dir: string, listPage: boolean): string {
@@ -239,7 +267,7 @@ describe('releasedOrDrained', () => {
   it('waits for both the release request and the last console line of that run, and at most the longest time', async () => {
     let released: string | null = null;
     let stderr = '';
-    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], close: () => Promise.resolve() };
+    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], appCutOff: () => [], close: () => Promise.resolve() };
     const started = Date.now();
     setTimeout(() => {
       released = 'r1';
@@ -261,7 +289,7 @@ describe('releasedOrDrained', () => {
 
   it('does not end on the console line alone when the release request comes later', async () => {
     let released: string | null = null;
-    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], close: () => Promise.resolve() };
+    const host = { url: '', result: () => null, released: () => released, onInput: () => undefined, inputFailures: () => [], appCutOff: () => [], close: () => Promise.resolve() };
     const stderr = `[1:INFO:CONSOLE:1] "${releasedLine('r1')}", source: x (1)\n`;
     const started = Date.now();
     setTimeout(() => {

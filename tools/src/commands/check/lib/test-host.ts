@@ -24,6 +24,8 @@ export interface TestHost {
   onInput(put: (input: TestInput) => Promise<void>): void;
   /** Why each `POST /input` that could not be put into the page failed, in order. */
   inputFailures(): string[];
+  /** The `/app/` files whose response the browser closed before it was sent to the end, in order: a page that did not load. */
+  appCutOff(): string[];
   close(): Promise<void>;
 }
 
@@ -191,6 +193,7 @@ class Host {
   readonly relays = new Map<number, Relay>();
   input: ((input: TestInput) => Promise<void>) | null = null;
   readonly inputFailures: string[] = [];
+  readonly appCutOff: string[] = [];
   private result: unknown = null;
   private releasedRun: string | null = null;
   private readonly appDir: string | null;
@@ -328,6 +331,9 @@ class Host {
       return;
     }
     const content = await readFile(file).catch(() => null);
+    res.on('close', () => {
+      if (!res.writableFinished) this.appCutOff.push(path);
+    });
     if (content === null) send(res, 404);
     else res.writeHead(200, { 'content-type': contentTypeOf(file) }).end(content); // a browser checks the type of module scripts and audio worklets
   }
@@ -369,6 +375,7 @@ export async function startTestHost(appDir: string | null = null): Promise<TestH
       host.input = put;
     },
     inputFailures: () => [...host.inputFailures],
+    appCutOff: () => [...host.appCutOff],
     close: () =>
       new Promise<void>((resolve) => {
         for (const client of sockets.clients) client.terminate();
