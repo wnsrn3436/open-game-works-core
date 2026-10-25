@@ -1,0 +1,12 @@
+{
+  "target": "core",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/check/lib/regression.ts:178",
+      "problem": "`clientRegression` calls `gutRun` without `startLimitMs`, so a client regression test run of a game whose core settings have `UnitTestCore.startTimeLimitMs` and that never sends `PUT /started` is not ended at that limit and waits `runTimeLimitMs` plus the startup allowance, unlike `skills/client-core/modules/unit-test-core.md:137` and `skills/client-core/engines/godot.md:549` (\"A native run that did not start ends with a failure\"); it is in `ogw check`, not the `core` command",
+      "foundBy": "core round 3"
+    }
+  ]
+}
