@@ -27,7 +27,7 @@ writeFileSync(join(logDir, `${name}.args.json`), JSON.stringify(argv));
 if (argv.includes('--write-movie')) writeFileSync(argv[argv.indexOf('--write-movie') + 1], 'AVI');
 writeFileSync(join(logDir, `${name}.values.json`), JSON.stringify(values));
 // stepEffects[n] of the config applies to the state and telemetry marks when the n-th `step` (from 0, counted from the
-// last config change) passes; its `fail` fails that step instead
+// last config change) runs; its `fail` then fails that step
 let configText = '';
 let stepCount = 0;
 let stepMarks = [];
@@ -79,9 +79,10 @@ function answer(command, args) {
       if (!state.step_mode) return { ok: false, result: 'not in step mode' };
       const effect = mine.stepEffects?.[stepCount] ?? {};
       stepCount += 1;
-      if (effect.fail !== undefined) return { ok: false, result: effect.fail };
+      // a step can change the state and then fail, as a popup that pauses game time fails the step at the time limit
       Object.assign(state, effect.state ?? {});
       stepMarks.push(...(effect.marks ?? []));
+      if (effect.fail !== undefined) return { ok: false, result: effect.fail };
       return { ok: true, result: null };
     }
     case 'leave_match':

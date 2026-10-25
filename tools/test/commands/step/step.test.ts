@@ -128,6 +128,29 @@ describe('ogw step --count --capture', () => {
     expect(lines[1]).toBe('step 2/4: main: step failed: "game time is paused"');
   });
 
+  it('reports a step that failed while a popup opened as ended early with the reason, and exits 0', async () => {
+    const timeLimit = 'the command went over its time limit';
+    const run = await stepWith([{}, { state: { popups: ['levelup'] }, fail: timeLimit }], ['100', '--count', '4', '--capture', '--json']);
+    expect(run).toMatchObject({ code: 0, steps: 2 });
+    const data = JSON.parse(run.stdout) as { steps: { index: number; advancedMs: number; endedEarly?: boolean; capture?: string }[]; stopped: unknown; failed?: unknown };
+    expect(data.failed).toBeUndefined();
+    expect(data.steps.map((s) => [s.index, s.advancedMs, s.endedEarly === true])).toEqual([
+      [1, 100, false],
+      [2, 100, true],
+    ]);
+    expect(data.steps[1]?.capture).toMatch(/\.png$/);
+    // the fake keeps its state between tests, so the list before the change is whatever the last test left
+    expect(data.stopped).toEqual({
+      after: 2,
+      reasons: [expect.stringMatching(/^popups changed: \[.*\] -> \[levelup\]$/), `ended early: main: step failed: "${timeLimit}"`],
+    });
+    const text = await stepWith([{ state: { popups: ['pause'] }, fail: timeLimit }], ['100', '--count', '3']);
+    expect(text.code).toBe(0);
+    expect(plain(text.stdout)).toBe(
+      `step 1/3: ended early: main: play ms <p>\nstopped after step 1/3: popups changed: [levelup] -> [pause]; ended early: main: step failed: "${timeLimit}"\n`,
+    );
+  });
+
   it('prints after every step, the last included, the play ms that ogw telemetry --summary reports', async () => {
     const from = Date.now() - startedAt;
     const run = await stepWith([], ['100', '--count', '3', '--json']);

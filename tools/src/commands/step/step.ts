@@ -59,8 +59,10 @@ export function stopReasons(before: State, after: State, marks: readonly Mark[])
 
 interface StepRecord {
   index: number;
-  /** Game time advanced by this command up to the end of this step. */
+  /** Game time advanced by this command up to the end of this step; for a step that ended early, up to the start of it. */
   advancedMs: number;
+  /** The step failed, but a stop reason happened during it (e.g. a popup paused game time), so it ended early. */
+  endedEarly?: boolean;
   clients: ClientRef[];
   /** `play ms` of the instance after this step, as `ogw telemetry <instance> --summary` reports it. */
   playMs: number;
@@ -117,7 +119,7 @@ async function advance(ctx: Context, plan: Plan, index: number, watch: Watch): P
   const targets = await stepTargets(ctx, plan.id, watch.main);
   if (targets.length === 0) throw new OgwError('no client is in step mode');
   const errors = await stepOnce(ctx, plan.id, plan.ms, targets);
-  if (errors.length > 0) return { errors };
+  if (errors.length > 0) return endedEarly(ctx, plan, index, watch, targets, errors);
   const last = index === plan.count;
   const [path, main, { telemetry, now }] = await Promise.all([
     plan.capture ? captureScreen(ctx, plan.id) : undefined,
@@ -135,6 +137,28 @@ async function advance(ctx: Context, plan: Plan, index: number, watch: Watch): P
   };
   if (main === undefined) return { record, reasons: [], next: null };
   return { record, reasons: stopReasons(watch.main, main, added), next: { main, marks: telemetry.marks } };
+}
+
+/**
+ * A failed step: when a stop reason happened during it (a popup that pauses game time fails the step at the command
+ * time limit), the step ended early and the steps stop with that reason and the failure; otherwise it is a failure.
+ */
+async function endedEarly(ctx: Context, plan: Plan, index: number, watch: Watch, targets: ClientRef[], errors: string[]): Promise<Advance> {
+  const [main, { telemetry, now }] = await Promise.all([state(ctx, plan.id, 'main'), telemetryNow(ctx, plan.id)]);
+  const added = newMarks(watch.marks, telemetry.marks);
+  const reasons = stopReasons(watch.main, main, added);
+  if (reasons.length === 0) return { errors };
+  const path = plan.capture ? await captureScreen(ctx, plan.id) : undefined;
+  const record: StepRecord = {
+    index,
+    advancedMs: (index - 1) * Number(plan.ms),
+    endedEarly: true,
+    clients: targets,
+    playMs: playMs(telemetry, now),
+    marks: added.map((m) => ({ kind: m.kind, playMs: playMs(telemetry, m.at) })),
+    ...(path ? { capture: path } : {}),
+  };
+  return { record, reasons: [...reasons, ...errors.map((e) => `ended early: ${e}`)], next: null };
 }
 
 async function runSteps(ctx: Context, plan: Plan): Promise<Outcome> {
@@ -162,7 +186,7 @@ function outcomeLines(count: number, outcome: Outcome): string[] {
   const of = (i: number): string => `step ${String(i)}/${String(count)}`;
   const lines = outcome.steps.map((s) =>
     [
-      `${of(s.index)}: advanced ${String(s.advancedMs)} ms`,
+      s.endedEarly === true ? `${of(s.index)}: ended early` : `${of(s.index)}: advanced ${String(s.advancedMs)} ms`,
       s.clients.join(', '),
       `play ms ${String(s.playMs)}`,
       ...s.marks.map((m) => `mark ${m.kind} at play ms ${String(m.playMs)}`),
