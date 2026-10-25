@@ -3,13 +3,27 @@ import { join } from 'node:path';
 import { expectPositionals, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { writeFileAtomic } from '../../lib/fsx.ts';
-import { automationRequest } from '../instance/automation.ts';
+import { automationRequest, type AutomationResponse } from '../instance/automation.ts';
 import { AGENT_CAPTURE_FORMAT, captureStem, capturesDir, imageExtension } from '../instance/lib/captures.ts';
 
 export interface VideoCapture {
   dir: string;
   frames: string[];
   result: unknown;
+}
+
+/**
+ * A capture command asked with `AGENT_CAPTURE_FORMAT` after `args`; when that fails, asked again without it, because a
+ * core before the format argument fails a capture command with an extra argument (`wrong argument count`).
+ */
+async function withFormat(args: string[], send: (args: string[]) => Promise<AutomationResponse>): Promise<AutomationResponse> {
+  const asked = await send([...args, AGENT_CAPTURE_FORMAT]);
+  return asked.ok ? asked : send(args);
+}
+
+/** Whether the core of the instance takes the format argument of the capture commands: one `capture_screen` asked with it. */
+async function takesFormat(ctx: Context, instanceId: string): Promise<boolean> {
+  return (await automationRequest(ctx, instanceId, 'capture_screen', [AGENT_CAPTURE_FORMAT], 'main', { access: 'play' })).ok;
 }
 
 /** The new folder `<stem>-video/` of `captures/` a `capture_video` of the instance writes its frames to. */
@@ -20,11 +34,9 @@ export async function videoDir(ctx: Context, instanceId: string): Promise<string
 /** `capture_video` of `ms` into `dir` (from `videoDir`); the folder is removed when it fails. */
 export async function recordVideo(ctx: Context, instanceId: string, ms: number, dir: string, onSent?: () => void): Promise<VideoCapture> {
   try {
-    const response = await automationRequest(ctx, instanceId, 'capture_video', [String(ms), AGENT_CAPTURE_FORMAT], 'main', {
-      access: 'play',
-      framesDir: dir,
-      ...(onSent ? { onSent } : {}),
-    });
+    // one request, so that `onSent` comes once: the format is asked only of a core that takes it
+    const args = (await takesFormat(ctx, instanceId)) ? [String(ms), AGENT_CAPTURE_FORMAT] : [String(ms)];
+    const response = await automationRequest(ctx, instanceId, 'capture_video', args, 'main', { access: 'play', framesDir: dir, ...(onSent ? { onSent } : {}) });
     if (!response.ok) throw new OgwError(`capture_video failed: ${JSON.stringify(response.result)}`);
     return { dir, frames: response.framePaths ?? [], result: response.result };
   } catch (error) {
@@ -42,7 +54,7 @@ let lastCaptureAt = 0;
 
 /** `capture_screen` of the client that is not a bot client, written to `captures/<instance id>-<unix ms>.jpg` (`.png` from a core that sends PNG); returns the path. */
 export async function captureScreen(ctx: Context, instanceId: string): Promise<string> {
-  const response = await automationRequest(ctx, instanceId, 'capture_screen', [AGENT_CAPTURE_FORMAT], 'main', { access: 'play' });
+  const response = await withFormat([], (args) => automationRequest(ctx, instanceId, 'capture_screen', args, 'main', { access: 'play' }));
   if (!response.ok) throw new OgwError(`capture_screen failed: ${JSON.stringify(response.result)}`);
   // two captures of one process in the same ms get different names
   lastCaptureAt = Math.max(Date.now(), lastCaptureAt + 1);

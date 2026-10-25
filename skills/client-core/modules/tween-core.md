@@ -79,6 +79,7 @@ Handles the tween, which changes a property value of one object over time, and p
 At playback start, when not all of the items below hold, leaves an error log and plays with a definition that has no steps. A tween with no steps does not change the value and ends with `Completed`.
 
 - Every step has one or more changes
+- The `Easing` of every change is a member of `Easing`
 - Every duration and delay is at least 0 and at most `TweenCore.maxDurationMs`
 - The repeat count is at least 0 and at most `TweenCore.maxRepeatCount`
 - The target value and start value of the used components are finite numbers. The target value and start value of `Color` and `Opacity` are at least 0 and at most 1
@@ -168,10 +169,11 @@ none
 
 | condition | failure value | log |
 |---|---|---|
-| a `TweenOptions` `TimeBasis` or a `TweenChange` `Easing` that is not a member | `play`, `play_preset`, `play_value`: invalid handle. No callback and no input block. `evaluate_easing`: `0` | error |
+| the `TweenOptions` `TimeBasis` of `play`, `play_preset` or `play_value` is not a member | invalid handle. No callback and no input block | error |
+| the `Easing` of `evaluate_easing` is not a member | `0` | error |
 | the target object of `play` or `play_preset` is missing or destroyed | invalid handle. No callback and no input block | error |
 | definition check failure | plays with a definition with no steps | error |
-| the receiver or definition of `play_value` is missing, there is no first change, the duration of the first change is out of range, or the start value or end value is not a finite number | invalid handle | error |
+| the receiver or definition of `play_value` is missing, the `TweenValueKind` is not a member, there is no first change, the duration of the first change is out of range, the `Easing` of the first change is not a member, or the start value or end value is not a finite number | invalid handle | error |
 | the object of `stop_target` or `skip_target_to_end` is missing or destroyed | `0` | error |
 | the tag of `stop_tag` or `skip_tag_to_end` is an empty string | `0` | error |
 | the handle of `wait_end` is not playing | `None` without waiting | none |

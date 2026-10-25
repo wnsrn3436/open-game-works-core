@@ -100,9 +100,25 @@ describe('ogw input', () => {
     const run = await ogw(runner.ws, ['input', id, '--script', script, '--video', '--json']);
     expect(run.code).toBe(0);
     const sent = runner.requests('main').slice(before);
-    expect(sent.map((r) => r.command)).toEqual(['get_state', 'capture_video', 'tap', 'drag']);
-    expect(sent[1]?.args).toEqual(['750', 'jpg']);
+    // the capture_screen that finds whether the core takes the format comes before the video
+    expect(sent.map((r) => r.command)).toEqual(['get_state', 'capture_screen', 'capture_video', 'tap', 'drag']);
+    expect(sent[2]?.args).toEqual(['750', 'jpg']);
     expect((JSON.parse(run.stdout) as { videoError: unknown }).videoError).toBeNull();
+  });
+
+  it('records the video in PNG frames from a core that does not take the format', async () => {
+    runner.config({ clients: { main: { pngOnly: true, videoFrames: 2 } } });
+    const script = join(runner.ws.root, 'old.json');
+    writeFileSync(script, JSON.stringify({ steps: [{ atMs: 0, command: 'tap', args: ['1', '1'] }] }));
+    const before = runner.requests('main').length;
+    const run = await ogw(runner.ws, ['input', id, '--script', script, '--video', '--json']);
+    expect(run.code).toBe(0);
+    const video = runner.requests('main').slice(before).filter((r) => r.command === 'capture_video');
+    expect(video.map((r) => r.args.length)).toEqual([1]);
+    const out = JSON.parse(run.stdout) as { video: { frames: string[] } | null; videoError: unknown };
+    expect(out.videoError).toBeNull();
+    expect(out.video?.frames.every((f) => f.endsWith('.png'))).toBe(true);
+    runner.config({});
   });
 
   it('covers the frames a text step of the last step types in the video', async () => {

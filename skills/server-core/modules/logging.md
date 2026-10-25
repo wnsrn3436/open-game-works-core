@@ -149,7 +149,7 @@ core analytics event. Its name starts with `core_`, and only core modules emit i
 
 | event | module | when | param |
 |---|---|---|---|
-| `core_user_created` | `auth` | the transaction in which `Login` or `DevLogin` created a new user | `provider` (string. `LoginProvider` element name. `LOGIN_PROVIDER_GUEST` for `DevLogin`) |
+| `core_user_created` | `auth` | the transaction of `Login` or `DevLogin` that opens the session of a user that request created (step 6 of `auth`). A user whose request then failed has none | `provider` (string. `LoginProvider` element name. `LOGIN_PROVIDER_GUEST` for `DevLogin`) |
 | `core_session_started` | `auth` | the transaction in which `Login`, `AutoLogin` or `DevLogin` opened a new session | `login` (string. request name) |
 | `core_tutorial_step` | `tutorial` | when `SaveTutorialProgress` changed the progress | `tutorial_id` (integer), `step` (integer) |
 | `core_iap_granted` | `iap` | when a payment record was recorded as `GRANTED` | `product_id` (integer), `store` (string. `IapStore` element name), `spend_amount` (integer), `test` (bool), `renewal` (bool. `true` for a renewal transaction. Step 8 of the grant order of `iap` judges it) |

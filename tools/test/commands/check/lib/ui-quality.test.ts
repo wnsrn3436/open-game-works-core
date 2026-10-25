@@ -170,9 +170,10 @@ describe('UI quality rules', () => {
 /** A fake client with two screens: `shop.open_main` (a text input; overlap at text scale 1400) and `inv.open_bag`. */
 /**
  * A fake client of the UI quality check. After an open command, `settleReads` reads of `get_state` give `ui_flow` true and
- * one finite tween; `legacy` leaves both fields out, as a core before them.
+ * one finite tween, then `tweenReads` reads give `ui_flow` false and still one finite tween; with `never` the flow does
+ * not end; `legacy` leaves both fields out, as a core before them.
  */
-function fakeUi(flow: { settleReads?: number; legacy?: boolean } = {}): { calls: string[]; times: { command: string; at: number }[] } {
+function fakeUi(flow: { settleReads?: number; tweenReads?: number; never?: boolean; legacy?: boolean } = {}): { calls: string[]; times: { command: string; at: number }[] } {
   const calls: string[] = [];
   const times: { command: string; at: number }[] = [];
   let screen = '';
@@ -180,6 +181,7 @@ function fakeUi(flow: { settleReads?: number; legacy?: boolean } = {}): { calls:
   let focus = '';
   let booting = 0;
   let settling = 0;
+  let tweening = 0;
   const ui = (): Record<string, unknown>[] => {
     if (screen === 'shop.open_main') {
       return [
@@ -199,9 +201,11 @@ function fakeUi(flow: { settleReads?: number; legacy?: boolean } = {}): { calls:
       return ok({ boot_stage: 'Login' });
     }
     if (flow.legacy === true) return ok({ boot_stage: 'Done', scene_key: 'lobby' });
-    const busy = settling > 0;
-    if (busy) settling--;
-    return ok({ boot_stage: 'Done', scene_key: 'lobby', ui_flow: busy, finite_tweens: busy ? 1 : 0 });
+    const busy = flow.never === true || settling > 0;
+    const tween = busy || tweening > 0;
+    if (settling > 0) settling--;
+    else if (tweening > 0) tweening--;
+    return ok({ boot_stage: 'Done', scene_key: 'lobby', ui_flow: busy, finite_tweens: tween ? 1 : 0 });
   };
   /** Commands that only change the fake's state and answer null. */
   const change = (command: string, args: string[]): void => {
@@ -214,6 +218,7 @@ function fakeUi(flow: { settleReads?: number; legacy?: boolean } = {}): { calls:
         screen = command;
         focus = command === 'shop.open_main' ? 'shop/buy' : '';
         settling = flow.settleReads ?? 0;
+        tweening = flow.tweenReads ?? 0;
         break;
       case 'set_text_scale':
         scale = Number(args[0]);
@@ -286,6 +291,27 @@ describe('uiQualityCheck', () => {
       // the two busy reads (the read for the scene of the failures is one of them) and the settled read
       expect(next === -1 ? after.length : next).toBeGreaterThanOrEqual(3);
     }
+  });
+
+  it('waits also for the finite tweens that go on after the UI flow ended', async () => {
+    const { times } = fakeUi({ settleReads: 1, tweenReads: 3 });
+    const root = mkdtempSync(join(tmpdir(), 'ui-settle-'));
+    await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], gamepadSupported: false, quality: { ...NO_LIMITS, settleLimitMs: 60_000 } }));
+    const open = times.findIndex((t) => t.command.includes('.open_'));
+    const next = times.slice(open + 1).findIndex((t) => t.command !== 'get_state');
+    // one busy read, three reads with only a tween, the settled read
+    expect(next).toBeGreaterThanOrEqual(5);
+  });
+
+  it('goes on with the screen as it is when the flow does not end within uiQuality.settleLimitMs', async () => {
+    const { times } = fakeUi({ never: true });
+    const root = mkdtempSync(join(tmpdir(), 'ui-settle-'));
+    const result = await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], gamepadSupported: false, quality: { ...NO_LIMITS, settleLimitMs: 40 } }));
+    const open = times.find((t) => t.command.includes('.open_'));
+    const capture = times.find((t) => t.command === 'capture_screen');
+    expect(capture).toBeDefined();
+    expect((capture?.at ?? 0) - (open?.at ?? 0)).toBeGreaterThanOrEqual(40);
+    expect(result.failures.some((f) => f.message.includes('failed'))).toBe(false);
   });
 
   it('waits the whole uiQuality.settleLimitMs after an open command for a core whose state has no UI flow fields', async () => {

@@ -97,6 +97,13 @@ describe('ogw step --count --capture', () => {
     );
   });
 
+  it('captures a .png from a core that does not take the format', async () => {
+    runner.config({ clients: { main: { pngOnly: true } }, telemetry, seq: Math.random() });
+    const run = await ogw(runner.ws, ['step', id, '50', '--capture']);
+    expect(run.code).toBe(0);
+    expect(run.stdout.trim()).toMatch(/\.png$/);
+  });
+
   it('stops when the scene changes', async () => {
     const run = await stepWith([{}, { state: { scene_key: 'battle' } }], ['100', '--count', '5']);
     expect(run).toMatchObject({ code: 0, steps: 2 });

@@ -101,8 +101,9 @@ function answer(command, args) {
     case 'extract_logs':
       return { ok: true, result: config.logs ?? [] };
     case 'capture_screen':
-      // a core before the format argument (`pngOnly`) sends PNG whatever it is asked
-      if (args[0] === 'jpg' && mine.pngOnly !== true) return { ok: true, result: null, bytes: jpeg(`JPG-${name}`).toString('base64') };
+      // a core before the format argument (`pngOnly`) fails a capture with an argument, as the released cores do
+      if (args.length > 0 && mine.pngOnly === true) return { ok: false, result: 'wrong argument count' };
+      if (args[0] === 'jpg') return { ok: true, result: null, bytes: jpeg(`JPG-${name}`).toString('base64') };
       return { ok: true, result: null, bytes: Buffer.from(`PNG-${name}`).toString('base64') };
     default:
       break;
@@ -127,9 +128,13 @@ function connect() {
     log({ command: request.command, args: request.args, at: Date.now() });
     // a crash on this command: the process ends without an answer
     if (mine.exitOn?.[request.command] !== undefined) process.exit(mine.exitOn[request.command]);
+    if (request.command === 'capture_video' && mine.pngOnly === true && request.args.length > 1) {
+      socket.send(JSON.stringify({ id: request.id, ok: false, result: 'wrong argument count', bytes: '' }));
+      return;
+    }
     if (request.command === 'capture_video' && mine.fail?.capture_video === undefined) {
       const n = mine.videoFrames ?? 3;
-      const asJpeg = request.args[1] === 'jpg' && mine.pngOnly !== true;
+      const asJpeg = request.args[1] === 'jpg';
       for (let i = 0; i < n; i++) {
         const frame = asJpeg ? jpeg(`FRAME-${i}`) : Buffer.from(`FRAME-${i}`);
         socket.send(JSON.stringify({ id: request.id, frame: i, bytes: frame.toString('base64') }));
