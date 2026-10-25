@@ -11,6 +11,8 @@ function workspace(): TestWorkspace {
   const ws = makeWorkspace();
   workspaces.push(ws);
   writeSpecHarness(BASIC_CLIENT, BASIC_SERVER, ws.harness);
+  // the settings type table is written only once the `testing` module folder exists
+  mkdirSync(join(ws.coreImpl, 'server/core/testing'), { recursive: true });
   return ws;
 }
 afterEach(() => {
@@ -47,6 +49,16 @@ describe('ogw core spec', () => {
     expect(readdirSync(dir).sort()).toEqual([...NAMES.map((n) => `${n}.json`), 'sub'].sort());
     const built = await buildFromHarness(ws.harness);
     expect(readFileSync(join(dir, 'AlphaCore.json'), 'utf8')).toBe(`${JSON.stringify(built.modules.get('AlphaCore'), null, 2)}\n`);
+  });
+
+  it('writes no settings type table and creates no server core folder before the testing module exists', async () => {
+    const ws = workspace();
+    rmSync(join(ws.coreImpl, 'server'), { recursive: true, force: true });
+    const run = await ogw(ws, ['core', 'spec', '--json']);
+    expect(run.code).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ ok: true, settingTypesWritten: false });
+    expect(existsSync(join(ws.coreImpl, 'server'))).toBe(false);
+    expect(readdirSync(join(ws.coreImpl, 'core-spec')).length).toBe(NAMES.length);
   });
 
   it('writes only files whose bytes differ', async () => {
@@ -116,6 +128,7 @@ describe('ogw core spec', () => {
     const ws = workspace();
     const tree = join(ws.worktrees, '_core', 'w1');
     sh(ws.coreImpl, 'git', ['worktree', 'add', '--quiet', '-b', 'agent/w1', tree]);
+    mkdirSync(join(tree, 'server/core/testing'), { recursive: true });
     const run = await ogw(ws, ['core', 'spec'], { cwd: tree });
     expect(run.code).toBe(0);
     expect(readdirSync(join(tree, 'core-spec')).sort()).toEqual(NAMES.map((n) => `${n}.json`).sort());

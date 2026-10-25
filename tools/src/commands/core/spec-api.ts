@@ -85,9 +85,15 @@ export async function writeCoreSpec(ctx: Context): Promise<CoreSpecWrite> {
         if (!isNotFound(error)) throw error;
       }
     }
+    // only once the `testing` module exists: writing it earlier would create `server/core/`, which marks the server
+    // core as implemented for the core tests and the release
     const typesPath = join(coreImpl, SETTING_TYPES_FILE);
-    await mkdir(dirname(typesPath), { recursive: true });
-    const settingTypesWritten = await writeIfChanged(typesPath, renderSettingTypes(build.settingTypes));
+    const testingDir = dirname(dirname(typesPath));
+    let settingTypesWritten = false;
+    if (exists(testingDir)) {
+      await mkdir(dirname(typesPath), { recursive: true });
+      settingTypesWritten = await writeIfChanged(typesPath, renderSettingTypes(build.settingTypes));
+    }
     return { ...build, dir, written, deleted: deleted.sort(), settingTypesWritten };
   });
 }
