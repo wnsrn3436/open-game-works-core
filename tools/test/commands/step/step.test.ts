@@ -89,6 +89,14 @@ describe('ogw step --count --capture', () => {
     expect(order).toEqual(['step', 'capture_screen', 'step', 'capture_screen', 'step', 'capture_screen']);
   });
 
+  it('prints with --state the content state of main after every step, the last included', async () => {
+    const run = await stepWith([{ state: { content: { stack: { x: 10 } } } }, { state: { content: { stack: { x: 20 } } } }], ['50', '--count', '2', '--state']);
+    expect(run).toMatchObject({ code: 0, steps: 2 });
+    expect(plain(run.stdout)).toBe(
+      'step 1/2: advanced 50 ms: main: play ms <p>: content {"stack":{"x":10}}\nstep 2/2: advanced 100 ms: main: play ms <p>: content {"stack":{"x":20}}\n',
+    );
+  });
+
   it('stops when the scene changes', async () => {
     const run = await stepWith([{}, { state: { scene_key: 'battle' } }], ['100', '--count', '5']);
     expect(run).toMatchObject({ code: 0, steps: 2 });

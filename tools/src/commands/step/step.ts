@@ -69,6 +69,8 @@ interface StepRecord {
   /** Telemetry marks added during this step, with the `play ms` of each. */
   marks: { kind: string; playMs: number }[];
   capture?: string;
+  /** `content` of the `get_state` of `main` after this step (`--state`). */
+  content?: unknown;
 }
 
 /** One step: `step` of `ms` to each target client while the bot loops run. Returns the failure lines; empty when it passed. */
@@ -93,6 +95,8 @@ interface Plan {
   ms: string;
   count: number;
   capture: boolean;
+  /** Read and output the content state of `main` after every step. */
+  state: boolean;
 }
 
 interface Watch {
@@ -123,7 +127,7 @@ async function advance(ctx: Context, plan: Plan, index: number, watch: Watch): P
   const last = index === plan.count;
   const [path, main, { telemetry, now }] = await Promise.all([
     plan.capture ? captureScreen(ctx, plan.id) : undefined,
-    last ? undefined : state(ctx, plan.id, 'main'),
+    last && !plan.state ? undefined : state(ctx, plan.id, 'main'),
     telemetryNow(ctx, plan.id),
   ]);
   const added = newMarks(watch.marks, telemetry.marks);
@@ -134,8 +138,9 @@ async function advance(ctx: Context, plan: Plan, index: number, watch: Watch): P
     playMs: playMs(telemetry, now),
     marks: added.map((m) => ({ kind: m.kind, playMs: playMs(telemetry, m.at) })),
     ...(path ? { capture: path } : {}),
+    ...(plan.state ? { content: main?.content ?? {} } : {}),
   };
-  if (main === undefined) return { record, reasons: [], next: null };
+  if (main === undefined || last) return { record, reasons: [], next: null };
   return { record, reasons: stopReasons(watch.main, main, added), next: { main, marks: telemetry.marks } };
 }
 
@@ -157,6 +162,7 @@ async function endedEarly(ctx: Context, plan: Plan, index: number, watch: Watch,
     playMs: playMs(telemetry, now),
     marks: added.map((m) => ({ kind: m.kind, playMs: playMs(telemetry, m.at) })),
     ...(path ? { capture: path } : {}),
+    ...(plan.state ? { content: main.content ?? {} } : {}),
   };
   return { record, reasons: [...reasons, ...errors.map((e) => `ended early: ${e}`)], next: null };
 }
@@ -191,6 +197,7 @@ function outcomeLines(count: number, outcome: Outcome): string[] {
       `play ms ${String(s.playMs)}`,
       ...s.marks.map((m) => `mark ${m.kind} at play ms ${String(m.playMs)}`),
       ...(s.capture !== undefined ? [s.capture] : []),
+      ...(s.content !== undefined ? [`content ${JSON.stringify(s.content)}`] : []),
     ].join(': '),
   );
   const { failed, stopped } = outcome;
@@ -201,8 +208,8 @@ function outcomeLines(count: number, outcome: Outcome): string[] {
 
 export const step: CommandDef = {
   name: ['step'],
-  usage: 'ogw step <instance> <ms> [--count <n>] [--capture]',
-  options: { count: { type: 'string' }, capture: { type: 'boolean' } },
+  usage: 'ogw step <instance> <ms> [--count <n>] [--capture] [--state]',
+  options: { count: { type: 'string' }, capture: { type: 'boolean' }, state: { type: 'boolean' } },
   async run(ctx, args) {
     expectPositionals(args, 2, 2, this.usage);
     const id = positional(args, 0, 'instance');
@@ -210,7 +217,7 @@ export const step: CommandDef = {
     if (!/^[0-9]+$/.test(ms) || Number(ms) < 1) throw new OgwError(`invalid ms: ${ms}`);
     const count = nonNegativeInt(args, 'count') ?? 1;
     if (count < 1) throw new OgwError(`invalid --count: ${String(count)}`);
-    const outcome = await runSteps(ctx, { id, ms, count, capture: flag(args, 'capture') });
+    const outcome = await runSteps(ctx, { id, ms, count, capture: flag(args, 'capture'), state: flag(args, 'state') });
     return { exitCode: outcome.failed ? 1 : 0, text: outcomeLines(count, outcome).join('\n'), data: outcome };
   },
 };
