@@ -17,6 +17,8 @@ https://github.com/user-attachments/assets/fb74b4ca-cc63-430d-af79-5b5118ec9c8a
   </tr>
 </table>
 
+<p align="center"><img src=".github/media/block-stack.gif" alt="block-stack gameplay" width="640"><br><a href="https://github.com/wnsrn3436/open-game-works-game-block-stack">block-stack</a>: one-tap block stacking, from a one-paragraph request to main in 3 loop cycles (<a href=".github/media/block-stack-promo.mp4">60-second video</a>)</p>
+
 The features that many games would write again the same way (infra, live ops, store policy, meta systems) are prebuilt as **core**, and agents write only the gameplay, as **content code**. A human gives one command, such as `create game: <game>`. The agent that receives it becomes the **lead agent**: it calls sub-agents per role and runs the loop of editing, playing and judging until it stops, then reports.
 
 This repository is the harness: the rules the agents follow, the skills and core module specs they read, the settings, and the CLI `ogw` that does the work that needs no judgement. You use it from a Claude Code or Codex session opened in this folder.
@@ -453,7 +455,7 @@ The rules that agents actually follow are [AGENTS.md](AGENTS.md), `agents/`, `sk
 | `schemas/` | JSON schemas of harness settings and game settings |
 | `settings.json` | Harness settings |
 | `tools/` | The harness tool `ogw` in TypeScript: `bin/ogw` (entry script), `src/` (commands), `test/` (vitest tests), `ogw.md` (internal behavior and how `ogw` is changed), `patches/` (patches applied to pinned generation sources), `vendor/` (SPDX license list data), `scripts/` (lint script, `npm run lint`), `package.json` and `package-lock.json` (dependencies, Node version), `tsconfig.json`, `vitest.config.ts` |
-| `.github/media/` | The gameplay GIFs shown on this page |
+| `.github/media/` | The gameplay GIFs and the video shown on this page |
 | `LICENSE` | Apache License 2.0 |
 | `README.md`, `README.ko.md` | This introduction, in English and Korean |
 
@@ -480,7 +482,7 @@ By contributing, you agree that your contribution is licensed under the Apache L
 
 The harness is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
-The gameplay GIFs in `.github/media/` are not covered by the Apache License 2.0. They show games made with open-game-works and are licensed under CC BY-NC-ND 4.0 (see `.github/media/LICENSE`).
+The gameplay GIFs and the video in `.github/media/` are not covered by the Apache License 2.0. They show games made with open-game-works and are licensed under CC BY-NC-ND 4.0 (see `.github/media/LICENSE`).
 
 | repository | license |
 |---|---|
