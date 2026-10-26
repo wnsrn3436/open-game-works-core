@@ -17,6 +17,9 @@ https://github.com/user-attachments/assets/9cf4f284-32c5-4f82-9c3f-13d17cbc12ec
     <td align="center" width="50%"><img src=".github/media/pong.gif" alt="pong gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-pong">pong</a>: CPU와 대결하는 패들 게임</td>
     <td align="center" width="50%"><img src=".github/media/card-duel.gif" alt="card-duel gameplay" width="220"><br>card-duel: AI와 겨루는 실시간 카드 배틀. open-game-works의 아주 초기 버전으로 만들었다 (저장소 비공개)</td>
   </tr>
+  <tr>
+    <td align="center" width="50%"><img src=".github/media/block-stack.gif" alt="block-stack gameplay"><br><a href="https://github.com/wnsrn3436/open-game-works-game-block-stack">block-stack</a>: 원탭 블록 쌓기</td>
+  </tr>
 </table>
 
 여러 게임이 똑같이 다시 만들게 될 기능(인프라, 라이브 운영, 스토어 정책, 메타 시스템)은 **코어**(core)로 미리 만들어 두고, 에이전트는 게임플레이만 **콘텐츠 코드**(content code)로 작성한다. 사람이 `create game: <game>` 같은 명령 하나를 내리면, 그 명령을 받은 에이전트가 **리드 에이전트**(lead agent)가 된다. 리드 에이전트는 역할별 하위 에이전트를 부르며 수정, 플레이, 판정의 루프를 멈출 때까지 돌리고, 끝나면 보고한다.
