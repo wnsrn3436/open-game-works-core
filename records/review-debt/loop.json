@@ -1,0 +1,12 @@
+{
+  "target": "loop",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/settings/lib/game-check.ts:291",
+      "problem": "`gameIssues` reads the core release with `coreFiles` → `coreRelease` (tools/src/commands/settings/lib/core-files.ts:51), not `coreReleaseOfGame`, so `ogw game check` and `ogw settings set game` on a game whose `coreVersion` is newer than the harness core or below `minCoreVersion` pass without the failure that AGENTS.md `## repo` sets for every command on a game",
+      "foundBy": "loop round 1"
+    }
+  ]
+}
