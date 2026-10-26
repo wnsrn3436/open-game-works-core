@@ -1,0 +1,12 @@
+{
+  "target": "build",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/loop/next.ts:21",
+      "problem": "AGENTS.md `## repo` says `ogw loop next` fails unless the game is on the core version of the harness, and no loop test makes a `core-v` tag in the test harness, so removing that call fails no test (`grep core-v tools/test` finds only tools/test/commands/core/)",
+      "foundBy": "build round 1"
+    }
+  ]
+}
