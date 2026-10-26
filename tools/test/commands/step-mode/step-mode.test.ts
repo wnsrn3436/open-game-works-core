@@ -48,7 +48,7 @@ describe('ogw step-mode and ogw step', () => {
     const before = count('opponent_1', 'battle.opponent_step');
     const run = await ogw(runner.ws, ['step', id, '100']);
     expect(run.code).toBe(0);
-    expect(run.stdout).toMatch(/^step 1\/1: advanced 100 ms: main, opponent_1: play ms [0-9]+\n$/);
+    expect(run.stdout).toMatch(/^step 1\/1: advanced 100 ms: main, opponent_1: device ms [0-9]+\n$/);
     expect(runner.requests('main').slice(-2)).toMatchObject([{ command: 'step', args: ['100'] }, { command: 'get_telemetry' }]);
     expect(runner.requests('opponent_1').some((r) => r.command === 'step' && r.args[0] === '100')).toBe(true);
     expect(count('opponent_1', 'battle.opponent_step')).toBeGreaterThan(before);
@@ -59,7 +59,7 @@ describe('ogw step-mode and ogw step', () => {
     const steps = count('opponent_1', 'step');
     const run = await ogw(runner.ws, ['step', id, '50']);
     expect(run.code).toBe(0);
-    expect(run.stdout).toMatch(/^step 1\/1: advanced 50 ms: main: play ms [0-9]+\n$/);
+    expect(run.stdout).toMatch(/^step 1\/1: advanced 50 ms: main: device ms [0-9]+\n$/);
     expect(count('opponent_1', 'step')).toBe(steps);
   });
 

@@ -133,7 +133,7 @@ describe('play feedback', () => {
   });
 
   it('appends telemetry lines at the end of `## coverage`', () => {
-    expect(appendCoverage(feedback, ['play ms: 9'])).toBe(feedback.replace('unknown: shop\n', 'unknown: shop\nplay ms: 9\n'));
+    expect(appendCoverage(feedback, ['device ms: 9'])).toBe(feedback.replace('unknown: shop\n', 'unknown: shop\ndevice ms: 9\n'));
     expect(appendCoverage('## coverage\n\n## observations\n', ['t'])).toBe('## coverage\n\nt\n\n## observations\n');
     expect(appendCoverage('## coverage\nx\n', ['t'])).toBe('## coverage\nx\nt\n');
     expect(appendCoverage('## observations\n', ['t'])).toBe('## observations\n\n## coverage\n\nt\n');

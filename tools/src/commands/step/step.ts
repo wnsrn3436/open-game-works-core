@@ -3,7 +3,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { captureScreen } from '../capture/capture.ts';
 import { automationRequest, botControl, type ClientRef } from '../instance/automation.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
-import { playMs, readTelemetry } from '../telemetry/api.ts';
+import { deviceMs, readTelemetry } from '../telemetry/api.ts';
 import type { Telemetry } from '../telemetry/lib/metrics.ts';
 
 type State = Record<string, unknown>;
@@ -64,10 +64,10 @@ interface StepRecord {
   /** The step failed, but a stop reason happened during it (e.g. a popup paused game time), so it ended early. */
   endedEarly?: boolean;
   clients: ClientRef[];
-  /** `play ms` of the instance after this step, as `ogw telemetry <instance> --summary` reports it. */
-  playMs: number;
-  /** Telemetry marks added during this step, with the `play ms` of each. */
-  marks: { kind: string; playMs: number }[];
+  /** `device ms` of the instance after this step, as `ogw telemetry <instance> --summary` reports it. */
+  deviceMs: number;
+  /** Telemetry marks added during this step, with the `play ms` of each: its QACore `play_at`, null without one. */
+  marks: { kind: string; playMs: number | null }[];
   capture?: string;
   /** `content` of the `get_state` of `main` after this step (`--state`). */
   content?: unknown;
@@ -89,6 +89,8 @@ async function stepOnce(ctx: Context, id: string, ms: string, targets: ClientRef
   }
   return results.filter((r) => !r.ok).map((r) => `${r.client}: step failed: ${JSON.stringify(r.result)}`);
 }
+
+const markLine = (mark: Mark): { kind: string; playMs: number | null } => ({ kind: mark.kind, playMs: mark.play_at ?? null });
 
 interface Plan {
   id: string;
@@ -135,8 +137,8 @@ async function advance(ctx: Context, plan: Plan, index: number, watch: Watch): P
     index,
     advancedMs: index * Number(plan.ms),
     clients: targets,
-    playMs: playMs(telemetry, now),
-    marks: added.map((m) => ({ kind: m.kind, playMs: playMs(telemetry, m.at) })),
+    deviceMs: deviceMs(telemetry, now),
+    marks: added.map(markLine),
     ...(path ? { capture: path } : {}),
     ...(plan.state ? { content: main?.content ?? {} } : {}),
   };
@@ -159,8 +161,8 @@ async function endedEarly(ctx: Context, plan: Plan, index: number, watch: Watch,
     advancedMs: (index - 1) * Number(plan.ms),
     endedEarly: true,
     clients: targets,
-    playMs: playMs(telemetry, now),
-    marks: added.map((m) => ({ kind: m.kind, playMs: playMs(telemetry, m.at) })),
+    deviceMs: deviceMs(telemetry, now),
+    marks: added.map(markLine),
     ...(path ? { capture: path } : {}),
     ...(plan.state ? { content: main.content ?? {} } : {}),
   };
@@ -194,8 +196,8 @@ function outcomeLines(count: number, outcome: Outcome): string[] {
     [
       s.endedEarly === true ? `${of(s.index)}: ended early` : `${of(s.index)}: advanced ${String(s.advancedMs)} ms`,
       s.clients.join(', '),
-      `play ms ${String(s.playMs)}`,
-      ...s.marks.map((m) => `mark ${m.kind} at play ms ${String(m.playMs)}`),
+      `device ms ${String(s.deviceMs)}`,
+      ...s.marks.map((m) => `mark ${m.kind} at play ms ${m.playMs === null ? 'unknown' : String(m.playMs)}`),
       ...(s.capture !== undefined ? [s.capture] : []),
       ...(s.content !== undefined ? [`content ${JSON.stringify(s.content)}`] : []),
     ].join(': '),

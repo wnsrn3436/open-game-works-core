@@ -146,7 +146,7 @@ const measure = vi.hoisted(() => ({ collected: [] as string[][], collect: [] as 
 
 vi.mock('../../../src/commands/telemetry/api.ts', () => ({
   telemetrySummary: vi.fn((_ctx: unknown, id: string) =>
-    measure.dead.includes(id) ? Promise.reject(new Error('get_telemetry failed: client channel closed\nmore')) : Promise.resolve([`play ms: ${id}`, 'scenes: lobby']),
+    measure.dead.includes(id) ? Promise.reject(new Error('get_telemetry failed: client channel closed\nmore')) : Promise.resolve([`device ms: ${id}`, 'scenes: lobby']),
   ),
 }));
 vi.mock('../../../src/commands/measure/api.ts', () => ({
@@ -323,7 +323,7 @@ describe('ogw loop evaluate', () => {
     const playInputs = fake.agents.filter((a) => a.role === 'play').map((a) => a.input);
     expect(playInputs[0]).toEqual({ instance: 'i5', playGuide: join(g.root, '..', 'instances', 'i5', 'play-guide.md'), moment: null });
     expect(playInputs.find((p) => p.moment !== null)).toMatchObject({ moment: { name: 'boss', description: 'reach the boss' } });
-    expect(read(g.root, `${R}/play-1-1.md`)).toBe('## coverage\n\nunknown: none\nplay ms: i5\nscenes: lobby\n\n## observations\n\n1 | lobby | tap | ok | fine | none | c.png\n');
+    expect(read(g.root, `${R}/play-1-1.md`)).toBe('## coverage\n\nunknown: none\ndevice ms: i5\nscenes: lobby\n\n## observations\n\n1 | lobby | tap | ok | fine | none | c.png\n');
     expect(measure.collect.map(([id]) => id).sort()).toEqual(['i5', 'i6']);
     expect(measure.collect[0]?.[1]).toBe(join(g.root, `${R}/evidence/measure-1/${measure.collect[0]?.[0] ?? ''}.json`));
     expect(measure.collected).toHaveLength(1);

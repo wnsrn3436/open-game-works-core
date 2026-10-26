@@ -15,15 +15,15 @@ export async function readTelemetry(ctx: Context, instanceId: string): Promise<T
   return toTelemetry(await readTelemetryRaw(ctx, instanceId));
 }
 
-/** `play ms` of a telemetry at the time `at`: the ms since the telemetry started. */
-export function playMs(telemetry: Telemetry, at: number): number {
+/** `device ms` of a telemetry at the device time `at`: the device ms since the telemetry started, between steps included. */
+export function deviceMs(telemetry: Telemetry, at: number): number {
   return at - telemetry.started_at;
 }
 
 /** The four summary lines of a telemetry at the time `now`. */
 export function summaryLines(telemetry: Telemetry, now: number): string[] {
   return [
-    `- play ms: ${String(playMs(telemetry, now))}`,
+    `- device ms: ${String(deviceMs(telemetry, now))}`,
     `- scenes: ${telemetry.scene_loads.map((l) => l.scene_key).join(', ')}`,
     `- fail: ${String(telemetry.marks.filter((m) => m.kind === 'Fail').length)}`,
     `- restart: ${String(telemetry.marks.filter((m) => m.kind === 'Restart').length)}`,

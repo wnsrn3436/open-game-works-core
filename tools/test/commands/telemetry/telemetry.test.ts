@@ -265,11 +265,11 @@ describe('ogw telemetry', () => {
     expect(JSON.parse(json.stdout)).toEqual(t);
     const run = await ogw(runner.ws, ['telemetry', a, '--summary']);
     const lines = run.stdout.trim().split('\n');
-    expect(Number(lines[0]?.replace('- play ms: ', ''))).toBeGreaterThanOrEqual(60_000);
+    expect(Number(lines[0]?.replace('- device ms: ', ''))).toBeGreaterThanOrEqual(60_000);
     expect(lines.slice(1)).toEqual(['- scenes: scene/title, scene/battle', '- fail: 2', '- restart: 1']);
     const ctx = createContext({ cwd: runner.ws.root, env: runner.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     expect((await telemetrySummary(ctx, a)).slice(1)).toEqual(lines.slice(1));
-    expect(summaryLines(t, started + 7)[0]).toBe('- play ms: 7');
+    expect(summaryLines(t, started + 7)[0]).toBe('- device ms: 7');
   });
 
   it('fails when get_telemetry fails', async () => {
