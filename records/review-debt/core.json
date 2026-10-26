@@ -1,6 +1,6 @@
 {
   "target": "core",
-  "nextId": 4,
+  "nextId": 7,
   "items": [
     {
       "id": "D1",
@@ -19,6 +19,24 @@
       "location": "tools/src/commands/check/lib/regression.ts:203",
       "problem": "the did-not-start failure of the client regression test added in this range has no test: no test under tools/test/commands/check passes `startTimeLimitMs` or asserts `test run did not start within`; it is in `ogw check`, not the `core` command",
       "foundBy": "core round 4"
+    },
+    {
+      "id": "D4",
+      "location": "tools/src/commands/loop/next.ts:21",
+      "problem": "`test evidence`: no test runs `ogw loop next` on a game whose core is not the core version of the harness (no test file outside tools/test/commands/core/lib/harness-core.test.ts refers to `requireHarnessCore` or its message `the specs of this harness are of core`), so deleting the call leaves the AGENTS.md `## repo` rule for `ogw loop next` untested",
+      "foundBy": "core round 6"
+    },
+    {
+      "id": "D5",
+      "location": "tools/src/commands/build/start.ts:134",
+      "problem": "`test evidence`: no test runs `ogw build start` on a game whose core at the checked commit is not the core version of the harness; deleting the `requireHarnessCore` call fails no test that refers to it",
+      "foundBy": "core round 6"
+    },
+    {
+      "id": "D6",
+      "location": "tools/src/commands/game/init.ts:41",
+      "problem": "`test evidence`: skills/game-setup/SKILL.md step 2 gives the draft `coreVersion` the core version of the harness; no test makes a tagged harness for `ogw game init`, so changing the line back to the highest release fails no test that refers to `core-v`",
+      "foundBy": "core round 6"
     }
   ]
 }
