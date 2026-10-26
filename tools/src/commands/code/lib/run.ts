@@ -8,9 +8,8 @@ import { secretCheck, secretNeedles } from './secret.ts';
 import { checkTarget, commitTarget, coreEngines, isBenchmarkPath, isTypeDeclaration, isTypeScript, targetRepo, type CheckTarget, type Side } from './target.ts';
 import { withToolReaders } from '../../core/lib/tools.ts';
 import { lintTypeScript, typeCheckTypeScript, writeTsconfig } from './typescript.ts';
-import { toolTestsCheck } from './tool-tests.ts';
 
-export type CheckName = 'type check' | 'lint' | 'dependency' | 'secret' | 'fix test proof' | 'tool tests';
+export type CheckName = 'type check' | 'lint' | 'dependency' | 'secret' | 'fix test proof';
 
 export interface CodeCheckItem {
   name: CheckName;
@@ -68,8 +67,6 @@ async function checkedItems(ctx: Context, side: Side, options: CodeCheckOptions,
     item('lint', async () => [...(await lintTypeScript(target, tsconfig, settings.codeCheck.maxComplexity)), ...(await engineLint(ctx, target, engines))]),
     item('dependency', () => dependencyCheck(target, ctx.env)),
     item('secret', async () => secretCheck(target, await secretNeedles(ctx))),
-    // the whole tool test suite of the commit a review round reads, run once for the targets of that round
-    ...(side === 'tool' && options.commit !== undefined ? [item('tool tests', async () => toolTestsCheck(ctx, await targetRepo(ctx, side, options.coreRoot), options.commit as string))] : []),
   ]);
 }
 

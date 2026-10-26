@@ -7,8 +7,6 @@ import { ogw, commitAll, makeWorkspace, realHarness, sh, type TestWorkspace } fr
 
 /** The text of a code check whose four checks pass; each line may end with the check's wall time. */
 const ALL_PASS = /^type check: pass( \(\d+ s\))?\nlint: pass( \(\d+ s\))?\ndependency: pass( \(\d+ s\))?\nsecret: pass( \(\d+ s\))?\n$/;
-/** `ALL_PASS` of a `--commit` run of `ogw code check tool`, which also runs the tool test suite of that commit. */
-const ALL_PASS_AT = /^type check: pass( \(\d+ s\))?\nlint: pass( \(\d+ s\))?\ndependency: pass( \(\d+ s\))?\nsecret: pass( \(\d+ s\))?\ntool tests: pass( \(\d+ s\))?\n$/;
 
 function checksOf(stdout: string): Map<string, { name: string; result: string; failures: string[] }> {
   const checks = (JSON.parse(stdout) as { checks: { name: string; result: string; failures: string[] }[] }).checks;
@@ -146,7 +144,7 @@ describe('ogw code check tool', () => {
     commitAll(ws.harness, 'later');
     writeFileSync(join(ws.harness, 'tools/src/uncommitted.ts'), "export const m: number = 'text';\n");
     const fixed = await ogw(ws, ['code', 'check', 'tool', '--commit', at], { env: fakeNpm(ws) });
-    expect(fixed).toMatchObject({ code: 0, stdout: expect.stringMatching(ALL_PASS_AT) as string });
+    expect(fixed).toMatchObject({ code: 0, stdout: expect.stringMatching(ALL_PASS) as string });
     const live = await ogw(ws, ['code', 'check', 'tool', '--json'], { env: fakeNpm(ws) });
     expect(checksOf(live.stdout).get('type check')?.failures).toEqual([
       expect.stringMatching(/^src\/later\.ts:1:14 TS2322 /) as string,
