@@ -215,6 +215,7 @@ A resource whose source cannot be checked is not used, and the screens, resource
 | [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash) | a one-on-one card battle game made with open-game-works |
 | [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong) | a paddle-and-ball game against the CPU made with open-game-works |
 | [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | an isometric 3D horde survival game made with open-game-works |
+| [open-game-works-game-block-stack](https://github.com/wnsrn3436/open-game-works-game-block-stack) | a one-tap block stacking game made with open-game-works |
 
 ### Core releases and how a game pins one
 
@@ -397,6 +398,7 @@ The games made with open-game-works can be cloned into `games/`. Run this in the
 git clone https://github.com/wnsrn3436/open-game-works-game-mana-clash.git games/open-game-works-game-mana-clash
 git clone https://github.com/wnsrn3436/open-game-works-game-pong.git games/open-game-works-game-pong
 git clone https://github.com/wnsrn3436/open-game-works-game-iso-survivors.git games/open-game-works-game-iso-survivors
+git clone https://github.com/wnsrn3436/open-game-works-game-block-stack.git games/open-game-works-game-block-stack
 ```
 
 The folder name of a game under `games/` is the `<game>` name you use in commands. A fresh clone has the ID registry branch only as `origin/id-registry`. `ogw` and the data tool read the local branch, so create it with `git -C games/<game> branch id-registry origin/id-registry`. The reference gameplay videos are not in git (every file in `records/setup/reference/` except `reference.md` is ignored), and `update game` and `build` do not start without them, so before you run them, put the video files that `records/setup/reference/reference.md` names into `records/setup/reference/`.
@@ -491,4 +493,4 @@ The gameplay GIFs in `.github/media/` are not covered by the Apache License 2.0.
 |---|---|
 | [open-game-works-core](https://github.com/wnsrn3436/open-game-works-core) | Apache-2.0 |
 | [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) | Apache-2.0. Third-party components are listed in `licenses.json` |
-| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong), [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | CC BY-NC-ND 4.0 for the game's own content. The `client/core/` and `server/core/` folders are copies of a core release and stay Apache-2.0; the bundled font (Noto Sans KR in mana-clash and iso-survivors, Black Han Sans in pong) stays SIL OFL 1.1; generated assets list their method and license in `resource/resources.csv` (the model license, the output terms of the provider, or `LicenseRef-game-owned` for the game's own procedural generation, which is part of the game's content) |
+| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong), [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors), [open-game-works-game-block-stack](https://github.com/wnsrn3436/open-game-works-game-block-stack) | CC BY-NC-ND 4.0 for the game's own content. The `client/core/` and `server/core/` folders are copies of a core release and stay Apache-2.0; the bundled font (Noto Sans KR in mana-clash and iso-survivors, Black Han Sans in pong, Noto Sans in block-stack) stays SIL OFL 1.1; generated assets list their method and license in `resource/resources.csv` (the model license, the output terms of the provider, or `LicenseRef-game-owned` for the game's own procedural generation, which is part of the game's content) |

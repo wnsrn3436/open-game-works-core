@@ -215,6 +215,7 @@ PROD 문제는 최신 main으로 띄운 인스턴스에서, PROD 사용자를 �
 | [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash) | open-game-works로 만든 1대1 카드 배틀 게임 |
 | [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong) | open-game-works로 만든, CPU와 대결하는 패들과 공 게임 |
 | [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | open-game-works로 만든 아이소메트릭 3D 호드 서바이벌 게임 |
+| [open-game-works-game-block-stack](https://github.com/wnsrn3436/open-game-works-game-block-stack) | open-game-works로 만든 원탭 블록 쌓기 게임 |
 
 ### 코어 릴리스와 게임의 버전 고정
 
@@ -397,6 +398,7 @@ open-game-works로 만든 게임을 `games/`에 클론할 수 있다. 워크스�
 git clone https://github.com/wnsrn3436/open-game-works-game-mana-clash.git games/open-game-works-game-mana-clash
 git clone https://github.com/wnsrn3436/open-game-works-game-pong.git games/open-game-works-game-pong
 git clone https://github.com/wnsrn3436/open-game-works-game-iso-survivors.git games/open-game-works-game-iso-survivors
+git clone https://github.com/wnsrn3436/open-game-works-game-block-stack.git games/open-game-works-game-block-stack
 ```
 
 `games/` 아래 게임 폴더 이름이 명령에서 쓰는 `<game>` 이름이다. 새로 클론한 저장소에는 ID 레지스트리 브랜치가 `origin/id-registry`로만 있다. `ogw`와 data tool은 로컬 브랜치를 읽으므로 `git -C games/<game> branch id-registry origin/id-registry`로 만든다. 레퍼런스 게임플레이 영상은 git에 없고(`records/setup/reference/`에서 `reference.md`를 뺀 모든 파일이 무시된다), 영상이 없으면 `update game`과 `build`가 시작되지 않는다. 그래서 실행하기 전에 `records/setup/reference/reference.md`에 적힌 영상 파일을 `records/setup/reference/`에 넣어 둔다.
@@ -491,4 +493,4 @@ pbpaste | tr -d '[:space:]' | ogw secret set --harness huggingface
 |---|---|
 | [open-game-works-core](https://github.com/wnsrn3436/open-game-works-core) | Apache-2.0 |
 | [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) | Apache-2.0. 서드파티 구성 요소는 `licenses.json`에 있다 |
-| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong), [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors) | 게임 자체 콘텐츠는 CC BY-NC-ND 4.0. `client/core/`와 `server/core/` 폴더는 코어 릴리스의 사본이라 Apache-2.0을 유지하고, 함께 들어 있는 폰트(mana-clash와 iso-survivors는 Noto Sans KR, pong은 Black Han Sans)는 SIL OFL 1.1을 유지하며, 생성한 에셋은 `resource/resources.csv`에 생성 방법과 라이선스를 적어 둔다(모델 라이선스, 제공자의 출력물 약관, 또는 게임 자체의 절차적 생성으로 만들어 게임 콘텐츠에 속하는 `LicenseRef-game-owned`) |
+| [open-game-works-game-mana-clash](https://github.com/wnsrn3436/open-game-works-game-mana-clash), [open-game-works-game-pong](https://github.com/wnsrn3436/open-game-works-game-pong), [open-game-works-game-iso-survivors](https://github.com/wnsrn3436/open-game-works-game-iso-survivors), [open-game-works-game-block-stack](https://github.com/wnsrn3436/open-game-works-game-block-stack) | 게임 자체 콘텐츠는 CC BY-NC-ND 4.0. `client/core/`와 `server/core/` 폴더는 코어 릴리스의 사본이라 Apache-2.0을 유지하고, 함께 들어 있는 폰트(mana-clash와 iso-survivors는 Noto Sans KR, pong은 Black Han Sans, block-stack은 Noto Sans)는 SIL OFL 1.1을 유지하며, 생성한 에셋은 `resource/resources.csv`에 생성 방법과 라이선스를 적어 둔다(모델 라이선스, 제공자의 출력물 약관, 또는 게임 자체의 절차적 생성으로 만들어 게임 콘텐츠에 속하는 `LicenseRef-game-owned`) |
