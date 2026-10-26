@@ -39,7 +39,7 @@ describe('placeholderFailures', () => {
 
   it('uses the sourceLanguage default and has nothing to report without files', async () => {
     const ws = makeWorkspace();
-    const root = makeGame(ws, 'g', { 'settings.json': { supportedLanguages: ['ko'] } });
+    const root = makeGame(ws, 'g', { 'settings.json': { supportedLanguages: ['en'] } });
     const ctx = context(ws.env, root);
     expect(await placeholderFailures(ctx, await ctx.game('g'))).toEqual([]);
     const bare = makeGame(ws, 'h', { 'README.md': 'x' });

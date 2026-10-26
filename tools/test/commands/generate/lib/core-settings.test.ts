@@ -55,7 +55,7 @@ describe('schemaDefault', () => {
 
   it('reads defaults of the real game settings schema', () => {
     expect(schemaDefault(realSchema, ['gamepadSupported'])).toBe(false);
-    expect(schemaDefault(realSchema, ['sourceLanguage'])).toBe('ko');
+    expect(schemaDefault(realSchema, ['sourceLanguage'])).toBe('en');
   });
 });
 

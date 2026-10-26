@@ -78,7 +78,7 @@
     "sourceLanguage": {
       "description": "The language of the source text written in text columns. BCP 47 tag",
       "type": "string",
-      "default": "ko"
+      "default": "en"
     },
     "supportedLanguages": {
       "description": "All languages the game ships. Includes sourceLanguage. BCP 47 tag",

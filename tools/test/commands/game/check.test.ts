@@ -87,7 +87,7 @@ describe('ogw game check', () => {
 
   it('checks that sourceLanguage is in supportedLanguages', async () => {
     expect(await errors((s) => (s.sourceLanguage = 'ja'))).toEqual(['sourceLanguage: ja is not in supportedLanguages']);
-    expect(await errors((s) => (s.supportedLanguages = ['en']))).toEqual(['sourceLanguage: ko is not in supportedLanguages']);
+    expect(await errors((s) => (s.supportedLanguages = ['ko']))).toEqual(['sourceLanguage: en is not in supportedLanguages']);
   });
 
   it('checks signing keys against the engine signing table', async () => {
@@ -342,7 +342,7 @@ describe('ogw game check --defaults', () => {
     const run = await check((s) => (s.core = { 'UICore.theme': { color: 'red' }, 'auth.maxAgeYears': 100 }), ['--defaults']);
     expect(run.code).toBe(0);
     const lines = run.stdout.trim().split('\n');
-    expect(lines).toContain('sourceLanguage = "ko" (schema default)');
+    expect(lines).toContain('sourceLanguage = "en" (schema default)');
     expect(lines).toContain('loopIterationLimit = 20 (schema default)');
     expect(lines).toContain('environments.DEV.containerLog.maxBytes = 104857600 (schema default)');
     expect(lines).toContain('uiCheckScreens.0.keyboard = 0 (schema default)');
