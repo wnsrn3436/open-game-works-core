@@ -86,9 +86,10 @@ interface Choice {
 async function chooseVersion(ctx: Context, game: GameRepo, current: string, settings: GameSettings): Promise<Choice> {
   // no higher than the core whose specs this harness holds (AGENTS.md `## repo`)
   const harness = await harnessCoreVersion(ctx);
-  const higher = (await remoteReleaseVersions(ctx))
-    .filter((version) => compareVersions(version, current) > 0 && (harness === null || compareVersions(version, harness) <= 0))
-    .reverse();
+  const min = (await ctx.settings()).minCoreVersion;
+  const supported = (version: string): boolean =>
+    (harness === null || compareVersions(version, harness) <= 0) && (min === null || compareVersions(version, min) >= 0);
+  const higher = (await remoteReleaseVersions(ctx)).filter((version) => compareVersions(version, current) > 0 && supported(version)).reverse();
   const tag = lastProdTagName(await listTags(game.root, { env: ctx.env }));
   if (tag === null || higher.length === 0) return { version: higher[0] ?? null, skipped: [] };
   const work = await newPrivateTempFolder('ogw-core-upgrade-', ctx.env);

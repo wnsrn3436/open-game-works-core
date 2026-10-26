@@ -9,6 +9,7 @@ import { addedLeaves, changedPaths, getAt, mergeSettings, setAt, unsetAt } from 
 import { child, expand, infoOf, locate, ownerOf, propertyPaths, type SchemaNode } from '../../../src/commands/settings/lib/schema-nav.ts';
 import { pointerPath, schemaIssues } from '../../../src/commands/settings/lib/validate.ts';
 import { createContext } from '../../../src/lib/command.ts';
+import { makeWorkspace } from '../../helpers/workspace.ts';
 
 vi.mock('../../../src/commands/core/api.ts', () => ({
   coreRelease: vi.fn(),
@@ -167,7 +168,8 @@ describe('core files', () => {
     write('core-settings.schema.json', {});
     write('core-settings-constraints.json', []);
     vi.mocked(coreRelease).mockResolvedValue({ version: '1.0.0', dir, local: false });
-    const ctx = createContext({ cwd: dir, env: process.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    // a test harness: the core-v tags of the real harness are not of this test
+    const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     expect(await coreFiles(ctx, '1.0.0')).toEqual({ version: '1.0.0', settings: {}, schema: {}, constraints: [], modules: [] });
     write('core-settings-constraints.json', {});
     await expect(coreFiles(ctx, '1.0.0')).rejects.toThrow(`not a JSON array: ${join(dir, 'core-settings-constraints.json')}`);

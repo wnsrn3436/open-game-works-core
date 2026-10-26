@@ -9,7 +9,7 @@ import { runData } from '../../../src/commands/data/api.ts';
 import { planDevStg } from '../../../src/commands/build/lib/plan.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { OgwError } from '../../../src/lib/errors.ts';
-import { ogw, makeWorkspace, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
+import { ogw, makeWorkspace, testSettings, type TestWorkspace, sh } from '../../helpers/workspace.ts';
 import { addSecrets, commit, fakeBin, git, openBuildRun, runsOf, setSecrets, setupGame, write } from './helpers.ts';
 
 vi.mock('../../../src/commands/core/api.ts', async (orig) => ({ ...(await orig<object>()), coreRelease: vi.fn(), coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
@@ -82,6 +82,18 @@ describe('build start preconditions', () => {
     commit(dir);
     await openBuildRun(ws, dir, { kind: 'loop', name: 'loop-1', env: null, version: null });
     expect((await ogw(ws, ['build', 'start', 'g', 'DEV'], { env })).stderr).toContain('open run: loop-1');
+  });
+
+  it('refuses a game whose core is not the core of the harness, before anything is made', async () => {
+    const ws = makeWorkspace();
+    const env = prepare(ws);
+    const dir = setupGame(ws);
+    sh(ws.harness, 'git', ['tag', 'core-v1.1.0']);
+    const out = await ogw(ws, ['build', 'start', 'g', 'DEV'], { env });
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 1.1.0');
+    expect(await runsOf(ws)).toEqual([]);
+    expect(git(dir, 'branch', '--list', 'build/*')).toBe('');
   });
 
   it('refuses while a gameplay video of the reference is missing, before anything is made', async () => {

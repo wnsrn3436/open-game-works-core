@@ -4,6 +4,7 @@ import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJson } from '../../../lib/fsx.ts';
 import { coreRelease } from '../../core/api.ts';
+import { requireSupportedCore } from '../../core/lib/harness-core.ts';
 import { isPlainObject, type JsonObject } from './json-path.ts';
 
 export interface SettingsConstraint {
@@ -46,8 +47,12 @@ async function readArray<T>(path: string): Promise<T[]> {
   return value as T[];
 }
 
-/** Core settings defaults, schema, constraints and modules of the core release `version`. */
-export async function coreFiles(ctx: Context, version: string): Promise<CoreFiles> {
+/**
+ * Core settings defaults, schema, constraints and modules of the core release `version`, the `coreVersion` of the game
+ * settings of `game`, which this harness must support (AGENTS.md `## repo`).
+ */
+export async function coreFiles(ctx: Context, version: string, game = 'the game'): Promise<CoreFiles> {
+  await requireSupportedCore(ctx, game, version);
   const release = await coreRelease(ctx, version);
   const spec = await readObject(join(release.dir, 'core-spec.json'));
   return {

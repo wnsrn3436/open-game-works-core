@@ -55,5 +55,7 @@ export async function requireHarnessCore(ctx: Context, game: string, version: st
   if ((await ctx.settings()).useLocalCore) return;
   const harness = await harnessCoreVersion(ctx);
   if (harness === null || version === harness) return;
-  throw new OgwError(`${game} uses core ${version}, and the specs of this harness are of core ${harness}: ${remedy(game, version, harness)}`);
+  // a game on a newer core cannot come down to the harness: only a harness of its core fits it
+  const upgradable = compareVersions(version, harness) < 0 ? harness : null;
+  throw new OgwError(`${game} uses core ${version}, and the specs of this harness are of core ${harness}: ${remedy(game, version, upgradable)}`);
 }

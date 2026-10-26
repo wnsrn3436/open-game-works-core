@@ -57,6 +57,12 @@ describe('ogw game init', () => {
     expect(hookScript("it's")).toContain(`'it'\\''s'`);
   });
 
+  it('starts the game on the core of the harness when the harness has a core-v tag', async () => {
+    sh(ws.harness, 'git', ['tag', 'core-v1.9.0']);
+    const run = await ogw(ws, ['game', 'init', 'mygame']);
+    expect(run.stdout).toContain('coreVersion 1.9.0\n');
+  });
+
   it('keeps every gameplay video out of git and lets reference.md in', async () => {
     await ogw(ws, ['game', 'init', 'mygame']);
     const dir = join(root, 'records/setup/reference');

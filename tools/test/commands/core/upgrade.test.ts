@@ -166,6 +166,21 @@ describe('ogw core upgrade', () => {
     expect((await ogw(none, ['core', 'upgrade', 'g', '--check'], { env: ghNone.env })).stdout).toBe('coreVersion: 1.0.0\nno version to raise to\n');
   });
 
+  it('raises no higher than the core of the harness and not below minCoreVersion', async () => {
+    const ws = makeWorkspace({ minCoreVersion: '1.1.0' });
+    const gh = fakeGh(ws, {
+      'v1.0.0': await release(ws, '1.0.0', 'a', {}),
+      'v1.1.0': await release(ws, '1.1.0', 'b', {}),
+      'v1.2.0': await release(ws, '1.2.0', 'c', {}),
+    });
+    makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0', engine: 'godot' } });
+    sh(ws.harness, 'git', ['tag', 'core-v1.1.0']);
+    const check = await ogw(ws, ['core', 'upgrade', 'g', '--check', '--json'], { env: gh.env });
+    expect((JSON.parse(check.stdout) as { version: string | null }).version).toBe('1.1.0');
+    const higher = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.2.0'], { env: gh.env });
+    expect(higher.stderr).toContain('--version 1.2.0 is not the version ogw core upgrade g --check prints now (1.1.0)');
+  });
+
   it('with --check reads every page of the comparison, and fails when it lists fewer commits than the total', async () => {
     const ws = makeWorkspace();
     const releases = { 'v1.0.0': await release(ws, '1.0.0', 'a', {}), 'v1.1.0': await release(ws, '1.1.0', 'b', {}) };

@@ -6,7 +6,8 @@ import { gameSecretService, type SecretScope } from '../../../lib/secrets.ts';
 import type { GameSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { ogwOperatorSecret } from '../../admin/api.ts';
 import { missingLoginToken } from '../../secret/lib/login-token.ts';
-import { coreReleaseOfGame, extractedAsset } from '../../core/api.ts';
+import { coreRelease, coreReleaseOfGame, extractedAsset } from '../../core/api.ts';
+import { requireSupportedCore } from '../../core/lib/harness-core.ts';
 import { dockerBuildx, ghStatus, hostPlatform, postgresPresent, probeBuildTool, requireEngine, toolProgram, type BuildToolSpec } from '../../env/api.ts';
 import type { Env } from './names.ts';
 import { signingRequired, SIGNED_PLATFORMS } from './signing-method.ts';
@@ -23,9 +24,13 @@ export interface EngineJson {
   [key: string]: unknown;
 }
 
-/** `engine.json` of the game's core release (root of `client-<engine>.zip`). */
-export async function engineJson(ctx: Context, game: GameRepo, engine: string): Promise<EngineJson> {
-  const release = await coreReleaseOfGame(ctx, game);
+/**
+ * `engine.json` of a core release of the game (root of `client-<engine>.zip`): of `version`, the core of the commit a
+ * build checks, or of the checkout's `coreVersion` when it is left out.
+ */
+export async function engineJson(ctx: Context, game: GameRepo, engine: string, version?: string): Promise<EngineJson> {
+  if (version !== undefined) await requireSupportedCore(ctx, game.name, version);
+  const release = version === undefined ? await coreReleaseOfGame(ctx, game) : await coreRelease(ctx, version);
   const dir = await extractedAsset(ctx, release, `client-${engine}.zip`);
   return readJson<EngineJson>(join(dir, 'engine.json'));
 }
@@ -68,7 +73,7 @@ function signingProblems(ctx: Context, input: HostCheckInput): string[] {
 async function toolProblems(ctx: Context, input: HostCheckInput): Promise<string[]> {
   const problems: string[] = [];
   const engine = input.settings.engine ?? 'godot';
-  const meta = await engineJson(ctx, input.game, engine);
+  const meta = await engineJson(ctx, input.game, engine, String(input.settings.coreVersion));
   try {
     await requireEngine(ctx, engine, meta.godot ?? '');
   } catch (error) {

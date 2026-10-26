@@ -137,6 +137,7 @@ export async function gameCoreVersion(game: GameRepo): Promise<string> {
 /** The release of the game settings `coreVersion` of this checkout. */
 export async function coreReleaseOfGame(ctx: Context, game: GameRepo): Promise<CoreRelease> {
   const version = await gameCoreVersion(game);
+  // this harness must support that core (AGENTS.md `## repo`)
   await requireSupportedCore(ctx, game.name, version);
   return coreRelease(ctx, version);
 }

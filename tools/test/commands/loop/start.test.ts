@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listRuns, withRunLock } from '../../../src/lib/runstate.ts';
-import { ogw } from '../../helpers/workspace.ts';
+import { ogw, sh } from '../../helpers/workspace.ts';
 import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setupGame, write } from './helpers.ts';
 
 const mocks = vi.hoisted(() => ({
@@ -310,6 +310,22 @@ describe('ogw loop next', () => {
     commit(g.root);
     expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 2\n');
     expect(await currentRun(g)).toMatchObject({ iteration: 2, referenceCommit: head });
+  });
+
+  it('does not start an iteration of a game whose core is not the core of the harness', async () => {
+    const g = setupGame();
+    await openLoopRun(g);
+    // the harness specs are of core 1.1.0; the game is on 1.0.0
+    sh(g.ws.harness, 'git', ['tag', 'core-v1.1.0']);
+    const out = await ogw(g.ws, ['loop', 'next', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 1.1.0: raise the core of the game to 1.1.0 (ogw core upgrade g --version 1.1.0) or use the harness at tag core-v1.0.0');
+    expect(await currentRun(g)).toMatchObject({ iteration: 0 });
+    sh(g.ws.harness, 'git', ['tag', '-d', 'core-v1.1.0']);
+    // a game on a newer core than the harness is told only of the harness tag
+    sh(g.ws.harness, 'git', ['tag', 'core-v0.9.0']);
+    const newer = await ogw(g.ws, ['loop', 'next', 'g']);
+    expect(newer.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 0.9.0: use the harness at tag core-v1.0.0');
   });
 
   it('stops at loopIterationLimit for a loop run only', async () => {
