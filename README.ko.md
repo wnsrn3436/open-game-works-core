@@ -17,8 +17,6 @@ https://github.com/user-attachments/assets/fb74b4ca-cc63-430d-af79-5b5118ec9c8a
   </tr>
 </table>
 
-<p align="center"><img src=".github/media/block-stack.gif" alt="block-stack gameplay" width="640"><br><a href="https://github.com/wnsrn3436/open-game-works-game-block-stack">block-stack</a>: 원탭 블록 쌓기. 한 문단짜리 요청에서 루프 3번 만에 main까지 (<a href=".github/media/block-stack-promo.mp4">60초 영상</a>)</p>
-
 여러 게임이 똑같이 다시 만들게 될 기능(인프라, 라이브 운영, 스토어 정책, 메타 시스템)은 **코어**(core)로 미리 만들어 두고, 에이전트는 게임플레이만 **콘텐츠 코드**(content code)로 작성한다. 사람이 `create game: <game>` 같은 명령 하나를 내리면, 그 명령을 받은 에이전트가 **리드 에이전트**(lead agent)가 된다. 리드 에이전트는 역할별 하위 에이전트를 부르며 수정, 플레이, 판정의 루프를 멈출 때까지 돌리고, 끝나면 보고한다.
 
 이 저장소는 하네스다. 에이전트가 따르는 규칙, 에이전트가 읽는 스킬과 코어 모듈 명세, 설정, 그리고 판단이 필요 없는 일을 맡는 CLI `ogw`가 들어 있다. 이 폴더에서 연 Claude Code 또는 Codex 세션에서 쓴다.
@@ -455,7 +453,7 @@ pbpaste | tr -d '[:space:]' | ogw secret set --harness huggingface
 | `schemas/` | 하네스 설정과 게임 설정의 JSON 스키마 |
 | `settings.json` | 하네스 설정 |
 | `tools/` | TypeScript로 작성한 하네스 도구 `ogw`: `bin/ogw`(진입 스크립트), `src/`(명령), `test/`(vitest 테스트), `ogw.md`(내부 동작과 `ogw`를 고치는 절차), `patches/`(고정된 생성 소스에 적용하는 패치), `vendor/`(SPDX 라이선스 목록 데이터), `scripts/`(린트 스크립트, `npm run lint`), `package.json`과 `package-lock.json`(의존성, Node 버전), `tsconfig.json`, `vitest.config.ts` |
-| `.github/media/` | 이 페이지에 나오는 게임플레이 GIF와 영상 |
+| `.github/media/` | 이 페이지에 나오는 게임플레이 GIF |
 | `LICENSE` | Apache License 2.0 |
 | `README.md`, `README.ko.md` | 이 소개 문서(영어, 한국어) |
 
@@ -482,7 +480,7 @@ pbpaste | tr -d '[:space:]' | ogw secret set --harness huggingface
 
 하네스는 Apache License 2.0으로 배포한다. 전문은 [LICENSE](LICENSE)에 있다.
 
-`.github/media/`의 게임플레이 GIF와 영상은 Apache License 2.0의 적용 대상이 아니다. open-game-works로 만든 게임의 화면이며 CC BY-NC-ND 4.0으로 배포한다(`.github/media/LICENSE` 참고).
+`.github/media/`의 게임플레이 GIF는 Apache License 2.0의 적용 대상이 아니다. open-game-works로 만든 게임의 화면이며 CC BY-NC-ND 4.0으로 배포한다(`.github/media/LICENSE` 참고).
 
 | 저장소 | 라이선스 |
 |---|---|
