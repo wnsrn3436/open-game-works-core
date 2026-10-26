@@ -40,7 +40,7 @@ When `side` of the input is `spec`, do not read code; compare the defining docum
 | `structure` | A reference to a module not in `## dependency` of the defining documents, a reference to the internals of another module, violation of the DEV code boundary |
 | `efficiency` | DB queries, loops or allocations for one request or frame that grow in proportion to the amount of data. Write that code path and the growing amount as evidence |
 
-What `ogw code check` checks (type check, lint, dependency vulnerabilities, secrets, `fix test proof`) is not written as a finding. To check a finding, or to restore a defect in a temporary copy (step 5), run the tests of the changed code and of the target. Run the whole test suite only when the finding is that something fails outside those tests: the lead agent runs the whole suite before each round.
+What `ogw code check` checks (type check, lint, dependency vulnerabilities, secrets, `fix test proof`) is not written as a finding. To check a finding, or to restore a defect in a temporary copy (step 5), run the tests of the changed code and of the target. Run the whole test suite only when the finding is that something fails outside those tests: for an `ogw` target the lead agent runs the whole tool suite before each round, and for a core target `ogw review run` runs the core tests of the modules that depend on the target after each fix.
 
 ## severity
 
