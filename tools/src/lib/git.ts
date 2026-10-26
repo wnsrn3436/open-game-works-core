@@ -59,9 +59,23 @@ function absolute(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
 }
 
-/** The git common dir, shared by the main checkout and its worktrees. */
+/** `commonDir` of each checkout root this process asked for, by its resolved path. */
+const commonDirs = new Map<string, string>();
+
+/**
+ * The git common dir, shared by the main checkout and its worktrees. The answer for a checkout root is kept for the
+ * process: its `.git` names the common dir (the folder itself, or the repo of the worktree), and a worktree path is not
+ * made again for another repo. A path without `.git` (a subfolder, a folder git looks above) and git told by
+ * `GIT_DIR` or `GIT_COMMON_DIR` (e.g. a hook) are asked each time.
+ */
 export async function commonDir(cwd: string, options: GitOptions = {}): Promise<string> {
-  return absolute(cwd, await gitLine(cwd, ['rev-parse', '--git-common-dir'], options));
+  const env = options.env ?? process.env;
+  const key = isCheckout(cwd) && env.GIT_DIR === undefined && env.GIT_COMMON_DIR === undefined ? resolve(cwd) : null;
+  const kept = key === null ? undefined : commonDirs.get(key);
+  if (kept !== undefined) return kept;
+  const dir = absolute(cwd, await gitLine(cwd, ['rev-parse', '--git-common-dir'], options));
+  if (key !== null) commonDirs.set(key, dir);
+  return dir;
 }
 
 /** The git dir of this checkout (differs per worktree). */
