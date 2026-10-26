@@ -48,7 +48,7 @@ async function overlay(worktree: string, commit: string, changed: readonly Chang
  * The environment of the proof's test runs: without the code check job's id and agent key, so that a test run (and a
  * `ogw` command a test runs) does not record into the code check job.
  */
-function testEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function testEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([key]) => key !== 'OGW_JOB_ID' && key !== AGENT_KEY_ENV));
 }
 
