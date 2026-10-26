@@ -12,6 +12,7 @@
     "paths",
     "coreReleaseRepository",
     "useLocalCore",
+    "minCoreVersion",
     "resourceGeneration",
     "backgroundRetryLimit",
     "webSmokeCpuThrottleRate",
@@ -127,6 +128,13 @@
       "description": "The GitHub repository that publishes core releases. <owner>/<repo>",
       "type": "string",
       "pattern": "^[^/]+/[^/]+$"
+    },
+    "minCoreVersion": {
+      "description": "The lowest core version of a game that this harness supports; null supports every version up to the core version of the harness (AGENTS.md `## repo`)",
+      "type": ["string", "null"],
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "x-owner": "human",
+      "default": null
     },
     "useLocalCore": {
       "description": "When true, the harness tool uses the core in paths.coreImpl instead of the release of the game's core version. AGENTS.md `## repo` defines the behavior",

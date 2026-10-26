@@ -73,5 +73,6 @@
   },
   "coreReleaseRepository": "wnsrn3436/open-game-works-core-impl",
   "useLocalCore": false,
+  "minCoreVersion": null,
   "webSmokeBootTimeoutMs": 120000
 }

@@ -18,6 +18,7 @@ import { planDevStg, planProd, type BuildPlan } from './lib/plan.ts';
 import { ghcrLogin, imageDigest } from './lib/registry.ts';
 import { humanChecks } from './lib/settingschecks.ts';
 import { buildStageMissingErrors } from '../settings/api.ts';
+import { requireHarnessCore } from '../core/lib/harness-core.ts';
 
 export const PLATFORMS = ['android', 'ios', 'web', 'windows', 'macos', 'linux'];
 
@@ -129,6 +130,8 @@ export const start: CommandDef = {
     const prodPlan = env === 'PROD' ? await planProd(input) : null;
     const checked = prodPlan?.startCommit ?? (await mainHead(game));
     const settings = await gameSettingsAt(game.root, checked, ctx.env);
+    // the hardening agents read the specs of this harness
+    await requireHarnessCore(ctx, game.name, String(settings.coreVersion));
     const platforms = choosePlatforms(args.positionals.slice(2), settings);
     const missing = await buildStageMissingErrors(ctx, settings, env);
     if (missing.length > 0) throw new OgwError(`game settings miss build stage values (ogw game check ${game.name} --build):\n${missing.join('\n')}`, 1, { missing });

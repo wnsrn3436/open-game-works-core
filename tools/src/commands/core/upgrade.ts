@@ -20,6 +20,7 @@ import { changedPaths } from './lib/gitx.ts';
 import { workingFiles } from './lib/impl.ts';
 import { compareVersions } from './lib/version.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
+import { harnessCoreVersion } from './lib/harness-core.ts';
 
 /** What `ogw core upgrade` records in the open loop run: `run.data[CORE_UPGRADE_KEY]`. */
 export interface CoreUpgradeRecord {
@@ -83,7 +84,11 @@ interface Choice {
 }
 
 async function chooseVersion(ctx: Context, game: GameRepo, current: string, settings: GameSettings): Promise<Choice> {
-  const higher = (await remoteReleaseVersions(ctx)).filter((version) => compareVersions(version, current) > 0).reverse();
+  // no higher than the core whose specs this harness holds (AGENTS.md `## repo`)
+  const harness = await harnessCoreVersion(ctx);
+  const higher = (await remoteReleaseVersions(ctx))
+    .filter((version) => compareVersions(version, current) > 0 && (harness === null || compareVersions(version, harness) <= 0))
+    .reverse();
   const tag = lastProdTagName(await listTags(game.root, { env: ctx.env }));
   if (tag === null || higher.length === 0) return { version: higher[0] ?? null, skipped: [] };
   const work = await newPrivateTempFolder('ogw-core-upgrade-', ctx.env);

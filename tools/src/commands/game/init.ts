@@ -8,6 +8,7 @@ import { gameSettingsPath, schemaPath } from '../../lib/settings.ts';
 import { remoteReleaseVersions } from '../core/api.ts';
 import { deriveSettings } from './lib/derive.ts';
 import { installHook } from './lib/pre-commit.ts';
+import { harnessCoreVersion } from '../core/lib/harness-core.ts';
 
 const GAME_NAME = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
@@ -36,7 +37,8 @@ async function createIdRegistry(root: string, env: NodeJS.ProcessEnv): Promise<v
 
 async function draftSettings(ctx: Context, root: string): Promise<Record<string, unknown>> {
   // remoteReleaseVersions gives the `v<major>.<minor>.<patch>` release versions in ascending order.
-  const coreVersion = (await remoteReleaseVersions(ctx)).at(-1);
+  // the core whose specs this harness holds; the highest release for a harness before its first core release
+  const coreVersion = (await harnessCoreVersion(ctx)) ?? (await remoteReleaseVersions(ctx)).at(-1);
   if (coreVersion === undefined) throw new OgwError(`no core release in ${(await ctx.settings()).coreReleaseRepository}`);
   const postgresqlMajor = Number((await ctx.settings()).tools.postgresql.tag.split('.')[0]);
   return deriveSettings({

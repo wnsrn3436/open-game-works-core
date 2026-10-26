@@ -135,6 +135,7 @@ export interface HarnessSettings {
   paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string };
   coreReleaseRepository: string;
   useLocalCore: boolean;
+  minCoreVersion: string | null;
   resourceGeneration: GenerationMethod[];
   tools: {
     blender: ToolPin;

@@ -102,7 +102,10 @@ describe('ogw core release', () => {
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nnot removed: /w/_core/agent-x\nnot removed: agent/x\n`);
+    const harnessHead = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nharness tag core-v1.2.0 at ${harnessHead}\nnot removed: /w/_core/agent-x\nnot removed: agent/x\n`);
+    // the harness commit whose specs the core was made from
+    expect(sh(ws.harness, 'git', ['rev-parse', 'core-v1.2.0^{commit}']).trim()).toBe(harnessHead);
     expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%s']).trim()).toBe('core release 1.2.0: plugin URLs and SHA-256');
     expect(sh(ws.coreImpl, 'git', ['rev-parse', 'v1.2.0^{commit}']).trim()).toBe(head);
     const engine = readJsonFile(join(ws.coreImpl, 'client/godot/engine.json')) as { plugins: { url: string; sha256: string }[] };
@@ -190,7 +193,8 @@ describe('ogw core release', () => {
     const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.stderr).toBe('');
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nreview debt routing: 2\nreview debt spec UICore: 1\n`);
+    const harnessHead = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nharness tag core-v1.2.0 at ${harnessHead}\nreview debt routing: 2\nreview debt spec UICore: 1\n`);
   });
 
   it('refuses a release without a notes file, with a missing one or with an empty one, before it checks anything', async () => {
@@ -202,6 +206,16 @@ describe('ogw core release', () => {
     expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', empty], { env })).stderr).toContain(`the release notes file ${empty} is empty`);
     expect(gh.calls()).toEqual([]);
     expect(sh(ws.coreImpl, 'git', ['tag']).trim()).toBe('');
+  });
+
+  it('refuses a release while the harness has uncommitted spec changes or already has the harness tag', async () => {
+    const { ws, env, gh } = await setup();
+    writeFileSync(join(ws.harness, 'skills', 'core', 'SKILL.md'), `${readFileSync(join(ws.harness, 'skills', 'core', 'SKILL.md'), 'utf8')}\nchanged\n`);
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).stderr).toContain('the harness has uncommitted spec changes');
+    sh(ws.harness, 'git', ['checkout', '--quiet', '--', 'skills']);
+    sh(ws.harness, 'git', ['tag', 'core-v1.2.0']);
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).stderr).toContain('tag core-v1.2.0 already exists in the harness');
+    expect(gh.calls().filter((c) => c[1] === 'create')).toEqual([]);
   });
 
   it('refuses a dirty checkout, another branch, an existing tag or release', async () => {

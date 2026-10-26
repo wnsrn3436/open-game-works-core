@@ -16,6 +16,20 @@ import { withCoreMain } from './lib/main-checkout.ts';
 import { releaseTag, requireVersion } from './lib/version.ts';
 import { byteCompare } from '../../lib/order.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
+import { harnessRoot } from '../../lib/paths.ts';
+import { harnessCoreTag } from './lib/harness-core.ts';
+
+/**
+ * The harness commit the release tags with `core-v<version>`: its HEAD, whose specs `ogw core spec` read. Fails when
+ * `skills/` has uncommitted changes (the specs would not be those of HEAD) or the tag exists.
+ */
+async function harnessForTag(ctx: Context, version: string): Promise<{ root: string; head: string }> {
+  const root = harnessRoot(ctx.env);
+  const changed = await statusLines(root, { env: ctx.env }, ['skills']);
+  if (changed.length > 0) throw new OgwError(`the harness has uncommitted spec changes; commit them before the release:\n${changed.join('\n')}`);
+  if (await tagExists(root, harnessCoreTag(version), { env: ctx.env })) throw new OgwError(`tag ${harnessCoreTag(version)} already exists in the harness`);
+  return { root, head: await head(root, { env: ctx.env }) };
+}
 
 async function requireCleanMain(implDir: string): Promise<void> {
   const branch = await currentBranch(implDir);
@@ -125,6 +139,7 @@ export const releaseCommand: CommandDef = {
     const tag = releaseTag(version);
     await requireCleanMain(implDir);
     if (await tagExists(implDir, tag, { env: ctx.env })) throw new OgwError(`tag ${tag} already exists in open-game-works-core-impl/`);
+    const harness = await harnessForTag(ctx, version);
     if (await releaseExists(ctx, settings.coreReleaseRepository, tag)) {
       throw new OgwError(`release ${tag} already exists in ${settings.coreReleaseRepository}`);
     }
@@ -149,10 +164,13 @@ export const releaseCommand: CommandDef = {
         await publish(ctx, implDir, settings, { tag, commit: made, previousHead, files, notes });
         return made;
       });
+      // the harness commit whose specs this core was made from (`core` command.md `## version and release`)
+      await git(harness.root, ['tag', harnessCoreTag(version), harness.head], { env: ctx.env });
       const left = (await clearReviews(ctx, 'core')).map((what) => `not removed: ${what}`);
+      const harnessLine = `harness tag ${harnessCoreTag(version)} at ${harness.head}`;
       return {
-        text: [`released ${version}: tag ${tag} at ${commit}`, ...untested, ...debt, ...left].join('\n'),
-        data: { version, tag, commit, assets: Object.keys(built.manifest.assets).concat('manifest.json'), untested, debt },
+        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...untested, ...debt, ...left].join('\n'),
+        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), untested, debt },
       };
     } finally {
       await rm(out, { recursive: true, force: true });

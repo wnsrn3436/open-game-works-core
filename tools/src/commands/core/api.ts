@@ -13,6 +13,7 @@ import { openRun, withRunLock } from '../../lib/runstate.ts';
 import { loadGameSettings } from '../../lib/settings.ts';
 import { extractArchive } from './lib/archive.ts';
 import { buildAssets } from './lib/assets.ts';
+import { requireSupportedCore } from './lib/harness-core.ts';
 export { compareVersions, isVersion } from './lib/version.ts';
 import { downloadRelease, releaseTags } from './lib/github.ts';
 import { verifyRelease } from './lib/manifest.ts';
@@ -135,7 +136,9 @@ export async function gameCoreVersion(game: GameRepo): Promise<string> {
 
 /** The release of the game settings `coreVersion` of this checkout. */
 export async function coreReleaseOfGame(ctx: Context, game: GameRepo): Promise<CoreRelease> {
-  return coreRelease(ctx, await gameCoreVersion(game));
+  const version = await gameCoreVersion(game);
+  await requireSupportedCore(ctx, game.name, version);
+  return coreRelease(ctx, version);
 }
 
 const ARCHIVE = /^([^/\\]+)\.(zip|tgz)$/;

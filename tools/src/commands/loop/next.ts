@@ -3,6 +3,8 @@ import { OgwError } from '../../lib/errors.ts';
 import { revParse } from '../../lib/git.ts';
 import { changeOpenRun } from '../../lib/runstate.ts';
 import { gameSettings, loopData, openTarget } from './lib/run.ts';
+import { gameCoreVersion } from '../core/api.ts';
+import { requireHarnessCore } from '../core/lib/harness-core.ts';
 
 const USAGE = 'ogw loop next <game>';
 
@@ -15,6 +17,8 @@ export const loopNext: CommandDef = {
     if ((await ctx.settings()).useLocalCore) {
       throw new OgwError('harness settings useLocalCore is true: loop iterations do not start while the local core is in use');
     }
+    // the content agent of the iteration reads the specs of this harness
+    await requireHarnessCore(ctx, game.name, await gameCoreVersion(game));
     const limit = Number((await gameSettings(ctx, game)).loopIterationLimit);
     // Both checks read the run inside the run file lock, so concurrent calls cannot pass the limit or set the reference twice.
     const started = await changeOpenRun(game, async (open) => {
