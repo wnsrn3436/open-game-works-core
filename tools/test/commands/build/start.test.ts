@@ -413,9 +413,15 @@ describe('build start PROD', () => {
     commit(dir, 'core upgrade');
     fakeBin(ws, {});
     sh(ws.harness, 'git', ['tag', 'core-v1.0.0']);
+    vi.mocked(coreRelease).mockClear();
+    vi.mocked(coreReleaseOfGame).mockClear();
     const out = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
+    // the host check reads engine.json of the core of the stg tag commit, not of the checkout
+    expect(vi.mocked(coreRelease).mock.calls.map((c) => c[1])).toContain('1.0.0');
+    expect(vi.mocked(coreRelease).mock.calls.map((c) => c[1])).not.toContain('1.2.0');
+    expect(coreReleaseOfGame).not.toHaveBeenCalled();
   });
 
   it('stops without the STG image, with a stale compatibility base, or an existing PROD tag', async () => {
