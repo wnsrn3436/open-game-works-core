@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { reportFailures, toolTestsCheck } from '../../../src/commands/code/lib/tool-tests.ts';
+import { FAILURE_KEPT_MS, reportFailures, toolTestsCheck } from '../../../src/commands/code/lib/tool-tests.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 
@@ -19,7 +19,9 @@ function harness(): { ws: TestWorkspace; runs: string } {
   writeFileSync(
     join(tools, 'node_modules', 'vitest', 'vitest.mjs'),
     `import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 fs.appendFileSync(${JSON.stringify(runs)}, 'x');
+fs.writeFileSync(${JSON.stringify(runs)} + '.git', execSync('git rev-parse --path-format=absolute --git-common-dir').toString().trim());
 const out = process.argv.find((a) => a.startsWith('--outputFile=')).slice('--outputFile='.length);
 const failed = fs.existsSync('fail');
 await new Promise((r) => setTimeout(r, 300));
@@ -41,14 +43,26 @@ describe('tool tests of ogw code check tool', () => {
     expect(readFileSync(runs, 'utf8')).toBe('x');
   });
 
-  it('reports the failed tests, keeps no pass, and runs a failing commit again', async () => {
+  it('reports the failed tests once for the code checks of a round, and runs a failing commit again after FAILURE_KEPT_MS', async () => {
     const { ws, runs } = harness();
     writeFileSync(join(ws.harness, 'tools', 'fail'), '');
-    commitAll(ws.harness, 'failing');
+    const sha = commitAll(ws.harness, 'failing');
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    expect(await toolTestsCheck(ctx, ws.harness, 'HEAD')).toEqual(['test/a.test.ts: a works']);
-    expect(await toolTestsCheck(ctx, ws.harness, 'HEAD')).toEqual(['test/a.test.ts: a works']);
+    const failed = ['test/a.test.ts: a works'];
+    expect(await Promise.all([toolTestsCheck(ctx, ws.harness, 'HEAD'), toolTestsCheck(ctx, ws.harness, 'HEAD')])).toEqual([failed, failed]);
+    expect(readFileSync(runs, 'utf8')).toBe('x');
+    // a failure older than one round is run again
+    const record = join(ws.harness, '.git', 'ogw-cache', 'tool-tests', `${sha}.json`);
+    writeFileSync(record, JSON.stringify({ at: Date.now() - FAILURE_KEPT_MS - 1, failures: failed }));
+    expect(await toolTestsCheck(ctx, ws.harness, 'HEAD')).toEqual(failed);
     expect(readFileSync(runs, 'utf8')).toBe('xx');
+  });
+
+  it('runs the suite in a checkout with a git dir of its own, not in the git dir of the harness repo', async () => {
+    const { ws, runs } = harness();
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    await toolTestsCheck(ctx, ws.harness, 'HEAD');
+    expect(readFileSync(`${runs}.git`, 'utf8')).not.toBe(join(ws.harness, '.git'));
   });
 
   it('passes a commit without the tools package', async () => {
