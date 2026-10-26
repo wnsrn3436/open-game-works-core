@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,13 @@ export const gitEnv: NodeJS.ProcessEnv = {
   GIT_COMMITTER_EMAIL: 'ogw-test@example.com',
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1',
+  // no automatic maintenance after a commit: its detached run packs the loose objects and removes their folders while a
+  // test reads the repo, and it takes CPUs of the run
+  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_KEY_0: 'maintenance.auto',
+  GIT_CONFIG_VALUE_0: 'false',
+  GIT_CONFIG_KEY_1: 'gc.auto',
+  GIT_CONFIG_VALUE_1: '0',
 };
 
 export interface TestWorkspace {
@@ -130,8 +137,16 @@ export function testSettings(): Record<string, unknown> {
  * of `REAL_SETTINGS_KEYS` and `testSettings()`, with `settingsPatch` merged over them in the form `hostForm` takes),
  * empty `games/`, `worktrees/`, `open-game-works-core-releases/`, and a git repo `open-game-works-core-impl/`.
  */
-export function makeWorkspace(settingsPatch: Record<string, unknown> = {}): TestWorkspace {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-test-')));
+let templates: { harness: string; coreImpl: string } | null = null;
+
+/**
+ * The folders each workspace of this test file copies: the harness docs in a git repo with them staged, and an empty
+ * git repo for `open-game-works-core-impl/`. They are made once per file, in its temporary folder (tmp-setup.ts), so a
+ * workspace runs no `git init` and does not stage the docs again.
+ */
+function workspaceTemplates(): { harness: string; coreImpl: string } {
+  if (templates !== null && existsSync(templates.harness) && existsSync(templates.coreImpl)) return templates;
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-template-')));
   const harness = join(root, 'open-game-works-core');
   mkdirSync(harness);
   for (const entry of ['AGENTS.md', 'agents', 'skills', 'schemas']) {
@@ -139,12 +154,25 @@ export function makeWorkspace(settingsPatch: Record<string, unknown> = {}): Test
   }
   mkdirSync(join(harness, 'tools'));
   cpSync(join(realHarness, 'tools', 'ogw.md'), join(harness, 'tools', 'ogw.md'));
+  gitInit(harness);
+  sh(harness, 'git', ['add', '--all']);
+  const coreImpl = join(root, 'open-game-works-core-impl');
+  gitInit(coreImpl);
+  templates = { harness, coreImpl };
+  return templates;
+}
+
+export function makeWorkspace(settingsPatch: Record<string, unknown> = {}): TestWorkspace {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-test-')));
+  const harness = join(root, 'open-game-works-core');
+  const template = workspaceTemplates();
+  cpSync(template.harness, harness, { recursive: true });
   // the host entries of the real settings belong to the hosts that ran update env, not to the test host
   const real = JSON.parse(readFileSync(join(realHarness, 'settings.json'), 'utf8')) as Record<string, unknown>;
   const pins = Object.fromEntries(REAL_SETTINGS_KEYS.filter((key) => key !== 'hosts' && key in real).map((key) => [key, real[key]]));
   writeFileSync(join(harness, 'settings.json'), `${JSON.stringify(hostForm({ ...pins, ...testSettings(), ...settingsPatch }), null, 2)}\n`);
-  gitInit(harness);
-  commitAll(harness, 'harness');
+  sh(harness, 'git', ['add', '--all']);
+  sh(harness, 'git', ['commit', '--quiet', '-m', 'harness']);
   const ws: TestWorkspace = {
     root,
     harness,
@@ -165,8 +193,8 @@ export function makeWorkspace(settingsPatch: Record<string, unknown> = {}): Test
   mkdirSync(ws.games);
   mkdirSync(ws.worktrees);
   mkdirSync(ws.coreReleases);
-  gitInit(ws.coreImpl);
-  commitAll(ws.coreImpl, 'core');
+  cpSync(template.coreImpl, ws.coreImpl, { recursive: true });
+  sh(ws.coreImpl, 'git', ['commit', '--quiet', '--allow-empty', '-m', 'core']);
   return ws;
 }
 

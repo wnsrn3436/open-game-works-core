@@ -2,50 +2,10 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readJob } from '../../../src/lib/jobs.ts';
-import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
-import { fakeAgentCli } from '../agent/helpers.ts';
+import { ogw, commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { agentsByCall, commitRange, coreSpec, finding, GOOD_FIX, reviewFile, spec } from './helpers.ts';
-
-interface State {
-  reopenAfter?: number;
-  rounds: { chain?: number; startCommit: string; codeCheckJob: string; input: string; reviewFile: string | null }[];
-}
-
-/** Fake review agent writing `files[round]` (a missing round writes nothing). */
-function reviewer(ws: TestWorkspace, files: Record<number, string>): NodeJS.ProcessEnv {
-  return fakeAgentCli(ws, [
-    `const files = ${JSON.stringify(files)};`,
-    "const round = Number(/^- round: (\\d+)$/m.exec(fs.readFileSync(input, 'utf8'))[1]);",
-    'if (files[round] !== undefined) fs.writeFileSync(output, files[round]);',
-  ].join('\n')).env;
-}
-
-/** `--since` and `--definition` of the tool target `agent merge`. */
-function toolArgs(ws: TestWorkspace, since: string): string[] {
-  return ['tool', 'agent', 'merge', '--since', since, ...['tools/ogw.md', 'skills/core/command.md'].flatMap((path) => ['--definition', join(ws.harness, path)])];
-}
-
-async function next(ws: TestWorkspace, args: string[], env: NodeJS.ProcessEnv) {
-  return ogw(ws, ['review', 'next', ...args], { env });
-}
-
-async function wait(ws: TestWorkspace, args: string[]) {
-  return ogw(ws, ['review', 'wait', ...args, '--timeout', '120000']);
-}
-
-/**
- * Commits everything in `open-game-works-core-impl/` without its pre-commit hook: a merged review agent job leaves the core
- * worktree hook (`ogw meta sync core --staged`) in the repo, which these lead commits do not need.
- */
-function commitCore(ws: TestWorkspace, message: string): string {
-  sh(ws.coreImpl, 'git', ['add', '--all']);
-  sh(ws.coreImpl, 'git', ['commit', '--quiet', '--no-verify', '-m', message]);
-  return sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-}
-
-function readState(dir: string): State {
-  return JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as State;
-}
+import { commitCore, readState, toolArgs } from './reopen-fixture.ts';
+import { next, reviewer, wait } from './review-fixture.ts';
 
 describe('ogw review --reopen', () => {
   it('tool: refuses it with no round, before the round is judged, after a result other than done, and when tools/ did not change', async () => {
@@ -184,79 +144,6 @@ describe('ogw review --reopen', () => {
     expect(state.reopenAfter).toBeUndefined();
     expect(commitRange(ws, 'routing', 2)).toBe(`${state.rounds[0]?.startCommit as string}..${main}`);
     expect((await readJob(state.rounds[1]?.codeCheckJob as string, ws.env)).argv).toEqual(['code', 'check', 'core', '--commit', main, '--json']);
-  });
-});
-
-describe('ogw review run --reopen after a round left unjudged', () => {
-  it('judges that round first, then starts the --reopen round after it when it is done', async () => {
-    const ws = makeWorkspace();
-    coreSpec(ws, { routing: spec('routing', 'server') });
-    const fake = agentsByCall(ws, { 1: reviewFile([]), 2: reviewFile([]) }, GOOD_FIX);
-    // a run that was ended left round 1 unjudged; the target changed after it started
-    expect((await ogw(ws, ['review', 'next', 'core', 'routing'], { env: fake.env })).stdout).toMatch(/^round: 1\n/);
-    writeFileSync(join(ws.coreImpl, 'core-spec', 'routing.json'), spec('routing', 'server', ['logging']));
-    commitAll(ws.coreImpl, 'change');
-    const run = await ogw(ws, ['review', 'run', 'core', 'routing', '--reopen'], { env: fake.env });
-    expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
-    const state = readState(join(ws.coreImpl, '.git', 'ogw-review', 'routing'));
-    expect(state.rounds.map((r) => r.chain)).toEqual([1, 2]);
-    expect(state.reopenAfter).toBeUndefined();
-    expect(fake.calls()).toHaveLength(2);
-  });
-
-  it('goes on with the fix of that round when it is judged fix, and drops the --reopen', async () => {
-    const ws = makeWorkspace();
-    coreSpec(ws, { routing: spec('routing', 'server') });
-    // review agent calls 1 (fix) and 2, and the core agent of the fix
-    const fake = agentsByCall(ws, { 1: reviewFile([finding('R1-1', 'no')]), 2: reviewFile([], ['| R1-1 | fixed | ok |']) }, GOOD_FIX);
-    expect((await ogw(ws, ['review', 'next', 'core', 'routing'], { env: fake.env })).stdout).toMatch(/^round: 1\n/);
-    writeFileSync(join(ws.coreImpl, 'core-spec', 'routing.json'), spec('routing', 'server', ['logging']));
-    commitAll(ws.coreImpl, 'change');
-    const run = await ogw(ws, ['review', 'run', 'core', 'routing', '--reopen'], { env: fake.env });
-    expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
-    const state = readState(join(ws.coreImpl, '.git', 'ogw-review', 'routing'));
-    expect(state.rounds.map((r) => r.chain)).toEqual([1, 1]);
-    expect(state.reopenAfter).toBeUndefined();
-    expect(fake.calls()).toHaveLength(3);
-  });
-});
-
-describe('ogw review run --reopen after a kept --reopen round left unjudged', () => {
-  /**
-   * Round 1 is done, the target changes, and a `review run --reopen` that was ended leaves its round 2 unjudged; with
-   * `again` the target changes once more before `review run core routing --reopen` runs.
-   */
-  async function reopenAgain(again: boolean, files: Record<number, string> = { 1: reviewFile([]), 2: reviewFile([]), 3: reviewFile([]) }): Promise<{ stdout: string; chains: (number | undefined)[]; calls: number }> {
-    const ws = makeWorkspace();
-    coreSpec(ws, { routing: spec('routing', 'server') });
-    const fake = agentsByCall(ws, files, GOOD_FIX);
-    expect(await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env })).toMatchObject({ code: 0, stdout: 'result: done\nround: 1\n' });
-    writeFileSync(join(ws.coreImpl, 'core-spec', 'routing.json'), spec('routing', 'server', ['logging']));
-    commitCore(ws, 'change');
-    expect((await ogw(ws, ['review', 'next', 'core', 'routing', '--reopen'], { env: fake.env })).stdout).toMatch(/^round: 2\n/);
-    if (again) {
-      writeFileSync(join(ws.coreImpl, 'core-spec', 'routing.json'), spec('routing', 'server', ['logging', 'clock']));
-      commitCore(ws, 'change again');
-    }
-    const run = await ogw(ws, ['review', 'run', 'core', 'routing', '--reopen'], { env: fake.env });
-    expect(run.code).toBe(0);
-    const state = readState(join(ws.coreImpl, '.git', 'ogw-review', 'routing'));
-    expect(state.reopenAfter).toBeUndefined();
-    return { stdout: run.stdout, chains: state.rounds.map((r) => r.chain), calls: fake.calls().length };
-  }
-
-  it('judges that round, then starts a round of a new chain when the target changed after that round started', async () => {
-    expect(await reopenAgain(true)).toEqual({ stdout: 'result: done\nround: 3\n', chains: [1, 2, 3], calls: 3 });
-  });
-
-  it('goes on with the fix of that round when it is judged fix, and drops the --reopen', async () => {
-    // review agent calls 1, 2 (fix) and 3, and the core agent of the fix
-    const files = { 1: reviewFile([]), 2: reviewFile([finding('R2-1', 'no')]), 3: reviewFile([], ['| R2-1 | fixed | ok |']) };
-    expect(await reopenAgain(true, files)).toEqual({ stdout: 'result: done\nround: 3\n', chains: [1, 2, 2], calls: 4 });
-  });
-
-  it('judges that round and starts no other round when the target did not change after that round started', async () => {
-    expect(await reopenAgain(false)).toEqual({ stdout: 'result: done\nround: 2\n', chains: [1, 2], calls: 2 });
   });
 });
 
