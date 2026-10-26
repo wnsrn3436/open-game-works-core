@@ -170,11 +170,11 @@ describe('core files', () => {
     vi.mocked(coreRelease).mockResolvedValue({ version: '1.0.0', dir, local: false });
     // a test harness: the core-v tags of the real harness are not of this test
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    expect(await coreFiles(ctx, '1.0.0')).toEqual({ version: '1.0.0', settings: {}, schema: {}, constraints: [], modules: [] });
+    expect(await coreFiles(ctx, '1.0.0', 'g')).toEqual({ version: '1.0.0', settings: {}, schema: {}, constraints: [], modules: [] });
     write('core-settings-constraints.json', {});
-    await expect(coreFiles(ctx, '1.0.0')).rejects.toThrow(`not a JSON array: ${join(dir, 'core-settings-constraints.json')}`);
+    await expect(coreFiles(ctx, '1.0.0', 'g')).rejects.toThrow(`not a JSON array: ${join(dir, 'core-settings-constraints.json')}`);
     write('core-settings.json', []);
-    await expect(coreFiles(ctx, '1.0.0')).rejects.toThrow(`not a JSON object: ${join(dir, 'core-settings.json')}`);
+    await expect(coreFiles(ctx, '1.0.0', 'g')).rejects.toThrow(`not a JSON object: ${join(dir, 'core-settings.json')}`);
   });
 
   it('reads settings constraints of core-spec module files', async () => {

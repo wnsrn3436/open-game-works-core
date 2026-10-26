@@ -297,6 +297,21 @@ describe('ogw loop start', () => {
   });
 });
 
+describe('ogw loop start core range', () => {
+  it('checks the core of main, which the run starts from, not of the checkout', async () => {
+    const g = setupGame();
+    sh(g.ws.harness, 'git', ['tag', 'core-v1.0.0']);
+    // a branch on a core newer than the harness is checked out; main is on the harness core
+    sh(g.root, 'git', ['checkout', '--quiet', '-b', 'other']);
+    const settings = JSON.parse(readFileSync(join(g.root, 'settings.json'), 'utf8')) as Record<string, unknown>;
+    writeFileSync(join(g.root, 'settings.json'), `${JSON.stringify({ ...settings, coreVersion: '9.9.9' }, null, 2)}\n`);
+    sh(g.root, 'git', ['commit', '-qam', 'newer core']);
+    const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'r' });
+    expect(out.stderr).not.toContain('newer than this harness');
+    sh(g.root, 'git', ['checkout', '--quiet', 'main']);
+  });
+});
+
 describe('ogw loop next', () => {
   it('starts iterations and sets the reference commit at iteration 1', async () => {
     const g = setupGame();
@@ -319,7 +334,7 @@ describe('ogw loop next', () => {
     sh(g.ws.harness, 'git', ['tag', 'core-v1.1.0']);
     const out = await ogw(g.ws, ['loop', 'next', 'g']);
     expect(out.code).toBe(1);
-    expect(out.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 1.1.0: raise the core of the game to 1.1.0 (ogw core upgrade g --version 1.1.0) or use the harness at tag core-v1.0.0');
+    expect(out.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 1.1.0: raise the core of the game toward 1.1.0 (ogw core upgrade g --check prints the version it can raise to) or use the harness at tag core-v1.0.0');
     expect(await currentRun(g)).toMatchObject({ iteration: 0 });
     sh(g.ws.harness, 'git', ['tag', '-d', 'core-v1.1.0']);
     // a game on a newer core than the harness is told only of the harness tag

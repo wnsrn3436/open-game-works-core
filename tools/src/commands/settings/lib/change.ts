@@ -84,7 +84,7 @@ async function imageMethodIssues(target: Target, value: JsonObject): Promise<Iss
  * unsetting a required build stage value is refused too.
  */
 export async function settingsIssues(ctx: Context, target: Target, value: JsonObject): Promise<Issue[]> {
-  if (target.kind === 'game') return gameIssues(ctx, value, true, 'build');
+  if (target.kind === 'game') return gameIssues(ctx, target.game?.name ?? 'the game', value, true, 'build');
   const issues = schemaIssues(target.schema, value);
   if (target.kind === 'harness') issues.push(...(await imageMethodIssues(target, value)));
   if (target.kind === 'core' && target.coreImpl !== null) {

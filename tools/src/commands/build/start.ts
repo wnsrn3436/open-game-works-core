@@ -133,7 +133,7 @@ export const start: CommandDef = {
     // the hardening agents read the specs of this harness
     await requireHarnessCore(ctx, game.name, String(settings.coreVersion));
     const platforms = choosePlatforms(args.positionals.slice(2), settings);
-    const missing = await buildStageMissingErrors(ctx, settings, env);
+    const missing = await buildStageMissingErrors(ctx, game.name, settings, env);
     if (missing.length > 0) throw new OgwError(`game settings miss build stage values (ogw game check ${game.name} --build):\n${missing.join('\n')}`, 1, { missing });
     const problems = await hostProblems(ctx, { game, env, platforms, settings, harness: await ctx.settings(), hasProdTag: lastProdTag(tags) !== null });
     if (problems.length > 0) throw new OgwError(problems.join('\n'), 1, { problems });

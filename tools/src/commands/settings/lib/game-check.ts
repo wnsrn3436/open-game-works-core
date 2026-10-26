@@ -283,12 +283,12 @@ export type CheckStage = 'setup' | 'build';
  * the `setup` stage, a missing value of a build stage path is not an issue. At the `build` stage, `envs` are the
  * environments whose builds need their signing values.
  */
-export async function gameIssues(ctx: Context, settings: GameSettings, withRelease = true, stage: CheckStage = 'setup', envs: readonly EnvName[] = ENVIRONMENTS): Promise<Issue[]> {
+export async function gameIssues(ctx: Context, game: string, settings: GameSettings, withRelease = true, stage: CheckStage = 'setup', envs: readonly EnvName[] = ENVIRONMENTS): Promise<Issue[]> {
   const schema = await loadSchema(schemaPath('game-settings', ctx.env));
   const filled = withDefaults(schema, settings);
   const issues = await localGameIssues(harnessRoot(ctx.env), schema, settings, filled);
   if (withRelease && typeof settings.coreVersion === 'string') {
-    issues.push(...releaseGameIssues(filled, await coreFiles(ctx, settings.coreVersion)));
+    issues.push(...releaseGameIssues(filled, await coreFiles(ctx, settings.coreVersion, game)));
   }
   if (stage === 'build') return [...issues, ...signingMissing(settings, envs)];
   return issues.filter((issue) => issue.missing === undefined || !isBuildStage(schema as JsonObject, issue.missing.split('.')));
@@ -299,10 +299,10 @@ export async function gameIssues(ctx: Context, settings: GameSettings, withRelea
  * setup stage, with the checks that read the core release. A STG build also needs the PROD values: a PROD build
  * builds the commit STG checked. Values of the other environments are not needed.
  */
-export async function buildStageMissing(ctx: Context, settings: GameSettings, env: EnvName): Promise<Issue[]> {
+export async function buildStageMissing(ctx: Context, game: string, settings: GameSettings, env: EnvName): Promise<Issue[]> {
   const schema = await loadSchema(schemaPath('game-settings', ctx.env));
   const envs: EnvName[] = env === 'STG' ? ['STG', 'PROD'] : [env];
-  const issues = await gameIssues(ctx, settings, true, 'build', envs);
+  const issues = await gameIssues(ctx, game, settings, true, 'build', envs);
   return issues.filter((issue) => {
     if (issue.missing === undefined) return false;
     const segments = issue.missing.split('.');

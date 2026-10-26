@@ -34,14 +34,14 @@ describe('harness core version', () => {
     await expect(requireSupportedCore(ctx, 'g', '0.2.0')).resolves.toBeUndefined();
     await expect(requireSupportedCore(ctx, 'g', '0.5.0')).rejects.toThrow('g uses core 0.5.0, newer than this harness (core 0.4.0): use the harness at tag core-v0.5.0');
     await expect(requireSupportedCore(ctx, 'g', '0.1.0')).rejects.toThrow(
-      'g uses core 0.1.0, older than harness settings minCoreVersion 0.2.0: raise the core of the game to 0.4.0 (ogw core upgrade g --version 0.4.0) or use the harness at tag core-v0.1.0',
+      'g uses core 0.1.0, older than harness settings minCoreVersion 0.2.0: raise the core of the game toward 0.4.0 (ogw core upgrade g --check prints the version it can raise to) or use the harness at tag core-v0.1.0',
     );
   });
 
   it('lets only the core of the harness write game code, and checks nothing with useLocalCore', async () => {
     const ctx = context(taggedHarness());
     await expect(requireHarnessCore(ctx, 'g', '0.4.0')).resolves.toBeUndefined();
-    await expect(requireHarnessCore(ctx, 'g', '0.3.0')).rejects.toThrow('g uses core 0.3.0, and the specs of this harness are of core 0.4.0: raise the core of the game to 0.4.0');
+    await expect(requireHarnessCore(ctx, 'g', '0.3.0')).rejects.toThrow('g uses core 0.3.0, and the specs of this harness are of core 0.4.0: raise the core of the game toward 0.4.0');
     const local = context(taggedHarness({ useLocalCore: true, minCoreVersion: '0.4.0' }));
     await expect(requireHarnessCore(local, 'g', '0.1.0')).resolves.toBeUndefined();
     await expect(requireSupportedCore(local, 'g', '0.1.0')).resolves.toBeUndefined();

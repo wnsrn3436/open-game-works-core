@@ -22,7 +22,7 @@ export const check: CommandDef = {
     const parts: string[] = [];
     const data: Record<string, unknown> = {};
     if (wantsDefaults) {
-      const defaults = await defaultValues(ctx, settings);
+      const defaults = await defaultValues(ctx, game.name, settings);
       parts.push(defaultsText(defaults));
       data.defaults = defaults;
     }

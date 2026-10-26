@@ -12,7 +12,7 @@ export interface DefaultValue {
 }
 
 /** Values the game uses without writing them: game settings schema defaults and core settings defaults (`game-setup` 10). */
-export async function defaultValues(ctx: Context, settings: JsonObject): Promise<DefaultValue[]> {
+export async function defaultValues(ctx: Context, game: string, settings: JsonObject): Promise<DefaultValue[]> {
   if (typeof settings.coreVersion !== 'string') throw new OgwError('game settings have no coreVersion');
   const schema = await loadSchema(schemaPath('game-settings', ctx.env));
   const out: DefaultValue[] = addedLeaves(settings, withDefaults(schema, settings)).map(({ path, value }) => ({
@@ -20,7 +20,7 @@ export async function defaultValues(ctx: Context, settings: JsonObject): Promise
     value,
     source: 'schema default',
   }));
-  const core = await coreFiles(ctx, settings.coreVersion);
+  const core = await coreFiles(ctx, settings.coreVersion, game);
   const written = isPlainObject(settings.core) ? settings.core : {};
   for (const [key, value] of Object.entries(core.settings)) {
     for (const leaf of addedLeaves(written[key], value, ['core', key])) {

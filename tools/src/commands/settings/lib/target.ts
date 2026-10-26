@@ -30,18 +30,18 @@ export interface Target {
   hostEntryId(hosts: unknown): Promise<string | null>;
 }
 
-function releaseOf(ctx: Context, value: JsonObject): () => Promise<CoreFiles> {
+function releaseOf(ctx: Context, value: JsonObject, game: string): () => Promise<CoreFiles> {
   let cached: Promise<CoreFiles> | null = null;
   return () => {
     if (typeof value.coreVersion !== 'string') return Promise.reject(new OgwError('game settings have no coreVersion'));
-    cached ??= coreFiles(ctx, value.coreVersion);
+    cached ??= coreFiles(ctx, value.coreVersion, game);
     return cached;
   };
 }
 
 /** The target with another value: a game target's core release follows that value's `coreVersion`. */
 export function withValue(ctx: Context, target: Target, value: JsonObject): Target {
-  return { ...target, value, ...(target.kind === 'game' ? { release: releaseOf(ctx, value) } : {}) };
+  return { ...target, value, ...(target.kind === 'game' ? { release: releaseOf(ctx, value, target.game?.name ?? 'the game') } : {}) };
 }
 
 const noRelease = (): Promise<CoreFiles> => Promise.reject(new OgwError('only game settings have a core release'));
@@ -75,7 +75,7 @@ export async function gameTarget(ctx: Context, name: string): Promise<Target> {
     schema: (await loadSchema(schemaPath('game-settings', ctx.env))) as JsonObject,
     game,
     coreImpl: null,
-    release: releaseOf(ctx, value),
+    release: releaseOf(ctx, value, game.name),
     host: noHost,
     hostEntryId: noHost,
   };

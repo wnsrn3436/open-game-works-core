@@ -30,7 +30,7 @@ async function schemaPaths(target: Target): Promise<string[][]> {
 
 /** Paths whose value is required, or required by a condition, and missing; for game settings, not the build stage values. */
 async function missingPaths(ctx: Context, target: Target): Promise<string[][]> {
-  const issues = target.kind === 'game' ? await gameIssues(ctx, target.value, false) : schemaIssues(target.schema, target.value);
+  const issues = target.kind === 'game' ? await gameIssues(ctx, target.game?.name ?? 'the game', target.value, false) : schemaIssues(target.schema, target.value);
   const out: string[][] = [];
   for (const issue of issues) if (issue.missing !== undefined) out.push(await parsePath(target, issue.missing));
   return out;

@@ -12,8 +12,8 @@ import { gameCheckErrors } from '../settings/api.ts';
 import { column, parseTable, section, sectionText, unquote } from './lib/markdown.ts';
 import { gameSettings } from './lib/run.ts';
 import { ART_DIRECTION_FILE, NAME_FILE, REFERENCE_FILE, SETUP_REQUEST, artDirectionGaps, readGameNames, requireReference } from './lib/setup.ts';
-import { gameCoreVersion } from '../core/api.ts';
 import { requireSupportedCore } from '../core/lib/harness-core.ts';
+import { gameSettingsAt } from '../build/lib/buildrun.ts';
 
 const USAGE = 'ogw loop start <game> --command <create|update>';
 
@@ -99,7 +99,8 @@ export const loopStart: CommandDef = {
     // The open run is checked first: an interrupted iteration leaves changes in the checkout, and the lead agent needs the run name.
     const open = await openRun(game);
     if (open) throw new OgwError(`game ${game.name} has an open run: ${open.name}`, 1, { run: open.name });
-    await requireSupportedCore(ctx, game.name, await gameCoreVersion(game));
+    // the run starts from main: its core is the one the run works on
+    await requireSupportedCore(ctx, game.name, String((await gameSettingsAt(game.root, 'main', ctx.env)).coreVersion));
     const changes = await statusLines(game.root, { env: ctx.env });
     if (changes.length > 0) throw new OgwError(`game repo checkout has changes:\n${changes.join('\n')}`, 1, { changes });
     const tokenMissing = missingLoginToken(ctx, await ctx.settings());

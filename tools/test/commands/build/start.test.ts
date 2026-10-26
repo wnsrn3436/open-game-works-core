@@ -400,6 +400,24 @@ describe('build start PROD', () => {
     expect(calls).not.toContain('docker buildx version');
   });
 
+  it('checks the core of the stg tag commit, not of main, against the core of the harness', async () => {
+    const ws = makeWorkspace();
+    const env = prepare(ws);
+    const dir = setupGame(ws);
+    write(dir, 'records/loops/build-stg-1.1.0/end.md', '## result\n\ndone\n\n## compatibility base\n\nnone\n');
+    commit(dir, 'stg build');
+    git(dir, 'tag', 'stg-1.1.0');
+    // main moved on to a newer core after the STG build
+    const settings = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as Record<string, unknown>;
+    write(dir, 'settings.json', `${JSON.stringify({ ...settings, coreVersion: '1.2.0' }, null, 2)}\n`);
+    commit(dir, 'core upgrade');
+    fakeBin(ws, {});
+    sh(ws.harness, 'git', ['tag', 'core-v1.0.0']);
+    const out = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+  });
+
   it('stops without the STG image, with a stale compatibility base, or an existing PROD tag', async () => {
     const ws = makeWorkspace();
     const env = prepare(ws);

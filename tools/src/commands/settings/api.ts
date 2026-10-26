@@ -13,7 +13,7 @@ import { harnessTarget } from './lib/target.ts';
  */
 export async function gameCheckErrors(ctx: Context, game: GameRepo, settings?: GameSettings, stage: CheckStage = 'setup'): Promise<string[]> {
   const value = settings ?? (await loadGameSettings(game.root));
-  return (await gameIssues(ctx, value, true, stage)).map((issue) => issue.message);
+  return (await gameIssues(ctx, game.name, value, true, stage)).map((issue) => issue.message);
 }
 
 /** Role of the caller: the role of the agent `ogw agent` started, or `lead`. */
@@ -31,6 +31,6 @@ export async function writeHarnessSettings(ctx: Context, next: JsonObject, optio
 }
 
 /** Messages of the missing build stage values of the settings for a build of `env` (`ogw build start`). */
-export async function buildStageMissingErrors(ctx: Context, settings: GameSettings, env: EnvName): Promise<string[]> {
-  return (await buildStageMissing(ctx, settings, env)).map((issue) => issue.message);
+export async function buildStageMissingErrors(ctx: Context, game: string, settings: GameSettings, env: EnvName): Promise<string[]> {
+  return (await buildStageMissing(ctx, game, settings, env)).map((issue) => issue.message);
 }

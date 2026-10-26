@@ -24,9 +24,13 @@ export async function harnessCoreVersion(ctx: Context): Promise<string | null> {
   return versions.sort(compareVersions).at(-1) ?? null;
 }
 
-/** How to bring a game of core `version` and this harness together. */
+/**
+ * How to bring a game of core `version` and this harness together. `harness` is null for a game on a newer core, which
+ * no upgrade brings down. A game with a PROD tag may be raised to a lower version than `harness` (backward
+ * compatibility), so the upgrade is named by its `--check`.
+ */
 function remedy(game: string, version: string, harness: string | null): string {
-  const upgrade = harness === null ? '' : `raise the core of the game to ${harness} (ogw core upgrade ${game} --version ${harness}) or `;
+  const upgrade = harness === null ? '' : `raise the core of the game toward ${harness} (ogw core upgrade ${game} --check prints the version it can raise to) or `;
   return `${upgrade}use the harness at tag ${harnessCoreTag(version)}`;
 }
 
