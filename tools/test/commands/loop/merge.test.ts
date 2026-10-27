@@ -38,10 +38,10 @@ beforeEach(() => {
 
 const R = 'records/loops/update-1';
 
-function record(sha: string, gate: boolean, vs: string | null): string {
+function record(sha: string, gate: boolean, vs: string | null, status = 'done'): string {
   const result = gate ? 'pass' : 'fail';
   const checks = ['regression test', 'static check', 'no blocker', 'full flow'].map((n) => `| ${n} | ${result} | p |`).join('\n');
-  const judge = vs === null ? 'none' : `### j\n\n- kind: main\n- vs baseline: ${vs}\n- vs reference: pass`;
+  const judge = vs === null ? 'none' : `### j\n\n- kind: main\n- status: ${status}\n- vs baseline: ${vs}\n- vs reference: pass`;
   return `## commit\n\n- instance: ${sha}\n- baseline: none\n\n## checks\n\n| check | result | file |\n|---|---|---|\n${checks}\n\n## judge\n\n${judge}\n`;
 }
 
@@ -75,10 +75,25 @@ describe('ogw loop prepare-merge', () => {
     expect(mocks.runData).toHaveBeenCalledOnce();
     expect(((await currentRun(g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({
       commit: c1,
+      withSyncedWork: true,
       mainHead: (await currentRun(g)).baseCommit,
       baseCommit: (await currentRun(g)).baseCommit,
       created: true,
     });
+  });
+
+  it('skips a latest iteration whose main judge failed for an earlier done one', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 2 });
+    write(g.root, 'game.txt', 'v1');
+    const c1 = commit(g.root, 'iteration 1');
+    write(g.root, `${R}/iteration-1.md`, record(c1, true, 'better'));
+    write(g.root, 'game.txt', 'v2');
+    const c2 = commit(g.root, 'iteration 2');
+    write(g.root, `${R}/iteration-2.md`, record(c2, true, 'none', 'failed'));
+    commit(g.root, 'records');
+    expect(await ogw(g.ws, ['loop', 'prepare-merge', 'g'])).toMatchObject({ code: 0, stdout: `merge commit: ${c1}\nbranch: merge/update-1\n` });
+    expect(read(g.root, 'game.txt')).toBe('v1');
   });
 
   it('merges a passed confirmation iteration, else the latest candidate iteration, without the work synced after it', async () => {
@@ -154,7 +169,7 @@ describe('ogw loop prepare-merge', () => {
     expect(out.code).toBe(1);
     expect(out.stderr).toContain(`main HEAD ${moved} is not the work branch base ${base}`);
     expect(git(g.root, 'branch', '--list', 'merge/*')).toBe('');
-    expect(((await currentRun(g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({ commit: c1, mainHead: moved, baseCommit: base, created: false });
+    expect(((await currentRun(g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({ commit: c1, withSyncedWork: true, mainHead: moved, baseCommit: base, created: false });
   });
 
   it('remakes an unmerged branch, refuses a merged one, and checks its arguments', async () => {
@@ -294,9 +309,10 @@ describe('ogw loop prepare-merge', () => {
     const out = await ogw(g.ws, ['loop', 'prepare-merge', 'g']);
     expect(out.code).toBe(1);
     expect(out.stderr).toContain('ogw data failed on merge/update-1:\nbad row');
-    expect(during).toEqual([{ commit: c1, mainHead: base, baseCommit: base, created: false, failed: 'ogw loop prepare-merge did not finish' }]);
+    expect(during).toEqual([{ commit: c1, withSyncedWork: true, mainHead: base, baseCommit: base, created: false, failed: 'ogw loop prepare-merge did not finish' }]);
     expect(((await currentRun(g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({
       commit: c1,
+      withSyncedWork: true,
       mainHead: base,
       baseCommit: base,
       created: false,
@@ -437,7 +453,7 @@ describe('ogw loop merge', () => {
     git(g.root, 'reset', '-q', '--hard');
     const again = await ogw(g.ws, ['loop', 'prepare-merge', 'g', '--commit', c1]);
     expect(again).toMatchObject({ code: 0, stdout: 'merge/update-1\n' });
-    expect(((await currentRun(g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({ commit: c1, mainHead: base, baseCommit: base, created: true });
+    expect(((await currentRun(g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({ commit: c1, withSyncedWork: true, mainHead: base, baseCommit: base, created: true });
     const out = await ogw(g.ws, ['loop', 'merge', 'g']);
     expect(out.code).toBe(0);
     expect(git(g.root, 'rev-parse', 'main^2~1')).toBe(c1);
@@ -449,6 +465,7 @@ describe('ogw loop merge', () => {
     expect((await ogw(other.g.ws, ['loop', 'prepare-merge', 'g', '--records-only'])).code).toBe(0);
     expect(((await currentRun(other.g)).data.loop as { prepareMerge: unknown }).prepareMerge).toEqual({
       commit: null,
+      withSyncedWork: false,
       mainHead: other.base,
       baseCommit: other.base,
       created: true,

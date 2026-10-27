@@ -38,6 +38,8 @@ export interface VerdictRecord {
 export interface PrepareMergeRecord {
   /** The commit chosen to merge; null when none. */
   commit: string | null;
+  /** True when the work `ogw loop sync` merged after that commit goes with it; absent is read as false. */
+  withSyncedWork?: boolean;
   mainHead: string;
   baseCommit: string;
   /** True when `merge/<run>` was made. */

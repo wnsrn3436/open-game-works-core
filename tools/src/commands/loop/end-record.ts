@@ -12,7 +12,7 @@ import { addedCoreProposals } from '../build/lib/report-sections.ts';
 import { LIST_PATH, temporaryKeys, unknownLicenseKeys } from '../resource/lib/list.ts';
 import type { DefectsFile } from './lib/defects.ts';
 import { checkResult, COMPLETENESS_CHECKS, mainJudge, type CheckFile, type EvaluateFile } from './lib/files.ts';
-import { iterationRecords, mainOf } from './lib/iteration-record.ts';
+import { iterationRecords, mainOf, type ParsedRecord } from './lib/iteration-record.ts';
 import { document } from './lib/markdown.ts';
 import { abs, coreUpgrade, loopData, openTarget, readRunJson, runRel } from './lib/run.ts';
 
@@ -36,21 +36,48 @@ function oneLine(text: string): string {
   return text.split('\n').map((line) => line.trim()).filter((line) => line !== '').join('; ');
 }
 
+/** The last iteration record of the commit to merge; null without that commit or record. */
+async function mergedRecord(game: GameRepo, run: RunState): Promise<ParsedRecord | null> {
+  const commit = loopData(run).prepareMerge?.commit ?? null;
+  if (commit === null) return null;
+  return (await iterationRecords(game, run)).filter((r) => r.commit === commit).at(-1) ?? null;
+}
+
 async function mergeLines(game: GameRepo, run: RunState): Promise<string[]> {
   const prepared = loopData(run).prepareMerge;
   const commit = prepared?.commit ?? null;
-  const record = commit === null ? undefined : (await iterationRecords(game, run)).filter((r) => r.commit === commit).at(-1);
+  const record = await mergedRecord(game, run);
   const lines = [`merge commit: ${commit ?? 'none'}`, `vs baseline: ${(record ? mainOf(record)?.vsBaseline : null) ?? 'none'}`];
   if (!prepared) lines.push('not merged: ogw loop prepare-merge has not run');
   else if (prepared.failed !== undefined) lines.push(`not merged: ogw loop prepare-merge failed: ${oneLine(prepared.failed)}`);
   else if (prepared.mainHead !== prepared.baseCommit) lines.push(`not merged: main HEAD ${prepared.mainHead} is not the work branch base ${prepared.baseCommit}`);
-  else if (commit === null) lines.push('not merged: no iteration passed the gate checks with a judge not worse than the baseline game; only records/ is merged');
+  else if (commit === null) lines.push('not merged: no iteration passed the gate checks with a done judge not worse than the baseline game; only records/ is merged');
   return lines;
 }
 
-async function lastCheck(game: GameRepo, run: RunState): Promise<CheckFile | null> {
+async function lastCheck(game: GameRepo, run: RunState): Promise<{ iteration: number; file: CheckFile } | null> {
   const n = await lastNumbered(game, run, 'check-');
-  return n === null ? null : readRunJson<CheckFile>(game, run, `check-${String(n)}.json`);
+  const file = n === null ? null : await readRunJson<CheckFile>(game, run, `check-${String(n)}.json`);
+  return n === null || file === null ? null : { iteration: n, file };
+}
+
+/**
+ * The completeness check results of the merged iteration when its commit is not the commit of the last check file.
+ * With the work synced after that commit, the no placeholder result is left out: `## failures` checks the merged tree.
+ */
+async function mergedCheckLines(game: GameRepo, run: RunState, lastCommit: string | null): Promise<string[]> {
+  const prepared = loopData(run).prepareMerge;
+  if (!prepared || prepared.commit === null || prepared.commit === lastCommit) return [];
+  const record = await mergedRecord(game, run);
+  if (record === null) return ['merged iteration: none'];
+  const lines = [`merged iteration: ${String(record.iteration)} (${record.path})`];
+  const check = await readRunJson<CheckFile>(game, run, `check-${String(record.iteration)}.json`);
+  const synced = prepared.withSyncedWork === true;
+  const names = COMPLETENESS_CHECKS.filter((name) => !(synced && name === 'no placeholder'));
+  if (check) lines.push(...names.map((name) => `merged iteration ${name}: ${checkResult(check, name)}`));
+  else lines.push('merged iteration completeness check: none');
+  if (synced) lines.push('merged tree not checked as a whole');
+  return lines;
 }
 
 async function resultSection(game: GameRepo, run: RunState): Promise<string> {
@@ -59,15 +86,25 @@ async function resultSection(game: GameRepo, run: RunState): Promise<string> {
   const evaluate = lastEvaluate === null ? null : await readRunJson<EvaluateFile>(game, run, `evaluate-${String(lastEvaluate)}.json`);
   lines.push(`last judge result: ${(evaluate ? mainJudge(evaluate)?.result : null) ?? 'none'}`);
   const check = await lastCheck(game, run);
-  if (check) lines.push(...COMPLETENESS_CHECKS.map((name) => `${name}: ${checkResult(check, name)}`));
-  else lines.push('completeness check: none');
+  if (check) {
+    lines.push(`completeness check of iteration ${String(check.iteration)} (${check.file.commit})`);
+    lines.push(...COMPLETENESS_CHECKS.map((name) => `${name}: ${checkResult(check.file, name)}`));
+  } else {
+    lines.push('completeness check: none');
+  }
+  lines.push(...(await mergedCheckLines(game, run, check?.file.commit ?? null)));
   return bullets(lines);
 }
 
 async function failuresSection(ctx: Context, game: GameRepo, run: RunState): Promise<string> {
   const lines = (await placeholderFailures(ctx, game)).map((f) => f.message);
+  const records = await iterationRecords(game, run);
+  const lastCommit = records.at(-1)?.commit ?? null;
+  const merged = await mergedRecord(game, run);
+  if (merged !== null && merged.commit !== lastCommit) lines.push(`defects at the merge commit: the defect table of ${merged.path}`);
   const defects = await readRunJson<DefectsFile>(game, run, 'defects.json');
-  for (const d of defects?.defects.filter((x) => x.status === 'open') ?? []) lines.push(`open defect ${d.id}: ${d.what}`);
+  const found = lastCommit === null ? '' : ` (found on ${lastCommit})`;
+  for (const d of defects?.defects.filter((x) => x.status === 'open') ?? []) lines.push(`open defect ${d.id}${found}: ${d.what}`);
   for (const task of loopData(run).tasks.filter((t) => t.gaveUp)) lines.push(`not given again ${task.input}: ${task.lastFailure ?? ''}`);
   for (const stuck of loopData(run).stuck) lines.push(`not merged ${stuck.job}: ${stuck.failure}`);
   return bullets(lines);
@@ -104,7 +141,7 @@ async function humanSection(game: GameRepo, run: RunState, humanFile: string | n
   lines.push(...(await unknownLicenses(game)));
   lines.push(...(await temporaryResources(game, run)));
   lines.push(...(coreUpgrade(run)?.skipped ?? []).map((v) => `skipped core version: ${v}`));
-  lines.push(...bannedWordLines(await lastCheck(game, run)));
+  lines.push(...bannedWordLines((await lastCheck(game, run))?.file ?? null));
   // One bullet per line, so a line neither joins the item above it nor becomes a heading.
   if (humanFile !== null) lines.push(...(await readFile(humanFile, 'utf8')).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== ''));
   return bullets(lines);
