@@ -26,6 +26,7 @@
   ],
   "properties": {
     "humanLanguage": {
+      "x-scope": "local",
       "description": "The language of reports and questions to the human, the `--human` file of `ogw loop end-record` and the `--reason` file of `ogw build report`. BCP 47 language tag",
       "type": "string",
       "minLength": 2
@@ -34,6 +35,7 @@
       "type": "string"
     },
     "agents": {
+      "x-scope": "local",
       "description": "Agent CLI, model and effort per role. The lead agent is not here, because it is a session that a human started",
       "type": "object",
       "additionalProperties": false,
@@ -79,6 +81,7 @@
       }
     },
     "hosts": {
+      "x-scope": "local",
       "description": "Values that differ per host. The key is the host id, and `## host` of [ogw](../tools/ogw.md) defines the host id",
       "type": "object",
       "propertyNames": {
@@ -138,6 +141,7 @@
       "default": null
     },
     "useLocalCore": {
+      "x-scope": "local",
       "description": "When true, the harness tool uses the core in paths.coreImpl instead of the release of the game's core version. AGENTS.md `## repo` defines the behavior",
       "type": "boolean",
       "default": false
@@ -219,6 +223,7 @@
           "minimum": 2
         },
         "judgePanel": {
+          "x-scope": "local",
           "description": "Agent CLI, model and effort of the step 4 judges in turn. Empty: every judge uses `agents.judge`",
           "type": "array",
           "items": {

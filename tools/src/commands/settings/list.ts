@@ -3,7 +3,7 @@ import { HOST_KEYS } from '../../lib/settings.ts';
 import { gameIssues } from './lib/game-check.ts';
 import { display } from './lib/json-path.ts';
 import { child, firstSentence, infoOf, propertyNames, propertyPaths, type SchemaNode } from './lib/schema-nav.ts';
-import { locatePath, openTarget, parsePath, type Target } from './lib/target.ts';
+import { locatePath, openTarget, parsePath, scopeOf, type Target } from './lib/target.ts';
 import { schemaIssues } from './lib/validate.ts';
 
 function nodesOf(schema: Record<string, unknown>): SchemaNode[] {
@@ -45,11 +45,16 @@ export const list: CommandDef = {
     expectPositionals({ ...args, positionals: rest }, 0, 0, this.usage);
     const owner = str(args, 'owner');
     const paths = flag(args, 'missing') ? await missingPaths(ctx, target) : await schemaPaths(target);
-    const rows: { path: string; description: string; xOwner: string | null }[] = [];
+    const rows: { path: string; description: string; xOwner: string | null; xScope: string | null }[] = [];
     for (const segments of paths) {
       const located = await locatePath(target, segments);
       if (owner !== undefined && located.owner !== owner) continue;
-      rows.push({ path: display(segments), description: firstSentence(infoOf(located.nodes).description), xOwner: located.owner ?? null });
+      rows.push({
+        path: display(segments),
+        description: firstSentence(infoOf(located.nodes).description),
+        xOwner: located.owner ?? null,
+        xScope: scopeOf(target, segments) ?? null,
+      });
     }
     return {
       text: rows.map((row) => (row.description === '' ? row.path : `${row.path}: ${row.description}`)).join('\n'),

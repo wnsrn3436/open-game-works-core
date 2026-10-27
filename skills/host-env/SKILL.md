@@ -60,7 +60,13 @@ description: Holds the procedure in which the lead agent of the `update env` com
    - `flux2-klein` is free, has no usage limit and runs offline, and draws lower quality images
    - the method of a game is fixed by its first image, so a change applies only to games without images
    Write the answer with `ogw settings set harness imageMethod <method name>`
-9. Show the human the measurement results, the revisions and notices of step 6, and the revisions of step 7. Apply the revisions of step 6 that the human accepted with `ogw env propose --apply <id,...>` and those of step 7 with `ogw settings set harness`, then commit. `--apply` writes, per revision, only the parts where the current value and the new value differ, so revisions with the same path are also applied together. When revisions whose differing parts overlap are given together, it writes nothing and fails. In that case apply them one at a time, and run `ogw env propose` again after each one
-10. Delete the test result files after the human has seen them
+9. preference settings: show the human, per path below, the current value (`ogw settings get harness <path>`) and its meaning (the description of `ogw settings describe harness <path>`), ask which to change, and write the accepted values with `ogw settings set harness <path> <JSON value>`
+   - `humanLanguage`
+   - `agents.<role>` of each role: model and effort. A larger model and a higher effort give higher quality, and take longer and use more of the subscription usage
+   - `loopStop.repeatedDefect`, `loopStop.oscillation`, `loopStop.plateau`, `loopStop.successJudges`
+   - `loop.funIterations`, `loop.judgeVotes`, `loop.judgePanel`, `loop.variants`. The items of `loop.judgePanel` can mix Claude Code models and efforts. An item with `cli` `codex` only when step 1 found the `codex` CLI logged in
+   - A path that is not local-scope is written to `settings.json`, which every user of the harness gets. Before writing one, tell the human that, and write it only when the human wants the change for every user
+10. Show the human the measurement results, the revisions and notices of step 6, and the revisions of step 7. Apply the revisions of step 6 that the human accepted with `ogw env propose --apply <id,...>` and those of step 7 with `ogw settings set harness`, then commit `settings.json` when it changed. `--apply` writes, per revision, only the parts where the current value and the new value differ, so revisions with the same path are also applied together. When revisions whose differing parts overlap are given together, it writes nothing and fails. In that case apply them one at a time, and run `ogw env propose` again after each one
+11. Delete the test result files after the human has seen them
 
 - Accesses that the sandbox blocked and files that differ from the pinned information are told to the human before the measurement

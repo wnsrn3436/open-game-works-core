@@ -209,6 +209,7 @@ The host secret store where `ogw` keeps secret values.
 - The first 32 hex digits of the SHA-256 of `ogw-host:<id>`, where `<id>` is the machine identifier of the OS in lowercase with `-` removed, are the host id. This keeps the machine identifier out of git. The machine identifier is `IOPlatformUUID` of `ioreg -rd1 -c IOPlatformExpertDevice` on macOS, `/etc/machine-id` on Linux, and `MachineGuid` of the registry `HKLM\SOFTWARE\Microsoft\Cryptography` on Windows. When it cannot be read, the commands that need the values of this host fail
 - When harness settings `hosts` lacks the item of this host or a key in it, that key uses the schema default, and a key without a default has no value. When `hosts` is empty, the host id is not read when harness settings are read
 - When harness settings are written and the item of this host exists, the `name` of that item is set to the host name of this host
+- When a write of harness settings changes the item of this host and `settings.json` holds that item, the item moves to `settings.local.json` in the same write. The items of other hosts stay in the file that holds them
 - `ogw` and the processes that `ogw` starts use IPv4 addresses first among DNS results (`--dns-result-order=ipv4first` in the environment variable `NODE_OPTIONS`). npm registry requests have hung on a host whose IPv6 route does not respond
 
 ## core upgrade

@@ -95,6 +95,7 @@ describe('ogw settings describe', () => {
       allowed: { enum: ['fake', 'turn-coturn'] },
       default: null,
       xOwner: null,
+      xScope: null,
     });
   });
 
