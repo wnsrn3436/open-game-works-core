@@ -28,7 +28,7 @@ import {
 } from './files.ts';
 import { appendCoverage, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
-import { botRun, comparisonText, scenarioAtHead, type BotRun } from './shared-telemetry.ts';
+import { botRun, comparisonText, scenarioAtHead, withInputLatency, type BotRun } from './shared-telemetry.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import { combinedVsBaseline, combinedVsReference, countVotes } from './votes.ts';
 import { MEMORABLE_MOMENT, type Moment, type Reference } from './setup.ts';
@@ -653,9 +653,10 @@ async function botRunOf(state: State, commit: string, scenario: Scenario, inputL
  */
 async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scenario): Promise<void> {
   if (pair.baseline === null) return;
-  const [mine, theirs] = await Promise.all([botRunOf(state, pair.commit, scenario), botRunOf(state, pair.baseline, scenario, pair.baselineLatencyMs)]);
+  const [mine, held] = await Promise.all([botRunOf(state, pair.commit, scenario), botRunOf(state, pair.baseline, scenario, pair.baselineLatencyMs)]);
   checkStopped(state);
-  if (mine === null || theirs === null) return;
+  if (mine === null || held === null) return;
+  const theirs = withInputLatency(held, pair.baselineLatencyMs);
   const judges = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.pair === pair);
   for (const slot of judges.filter((j) => j.kind === 'main')) {
     const path = state.plan.site.telemetry(pair, slot.k);

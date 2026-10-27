@@ -45,6 +45,16 @@ export async function botRun(ctx: Context, instance: { id: string; root: string 
 }
 
 /** The `ogw telemetry compare` output of the two runs as `A` and `B`. */
+/**
+ * The run as the player meets it when the runner held each input `latencyMs` (`ogw instance start --input-latency`):
+ * the client measures `input_latency_ms` from when it gets the input, so the held time is added to every measured one.
+ */
+export function withInputLatency(run: BotRun, latencyMs: number): BotRun {
+  if (latencyMs <= 0) return run;
+  const inputs = run.telemetry.inputs.map((i) => (i.latency_ms === null ? i : { ...i, latency_ms: i.latency_ms + latencyMs }));
+  return { ...run, telemetry: { ...run.telemetry, inputs } };
+}
+
 export function comparisonText(a: BotRun, b: BotRun): string {
   const noFailure = [a.guide, b.guide].some((guide) => guide !== null && failureIsNone(guide));
   const free = (guide: string | null) => (guide === null ? null : freeScenes(guide));
