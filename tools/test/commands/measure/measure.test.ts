@@ -100,7 +100,9 @@ describe('ogw measure', () => {
   let initial: Record<string, unknown>;
 
   beforeAll(async () => {
-    runner = setupRunner({ files: { 'design.md': DESIGN } });
+    // the play guide of the measured commit: scene s is free, so a's first reward in it took no played time of the game
+    const guide = '## play mode\n\n| scene | mode | step ms |\n|---|---|---|\n| `s` | `free` | |\n| `play` | `step` | 50 |\n';
+    runner = setupRunner({ files: { 'design.md': DESIGN, 'play-guide.md': guide } });
     const ws = workspaceFrom(await loadHarnessSettings(runner.ws.env), runner.ws.env);
     const game = await resolveGame(ws, 'g', runner.ws.root);
     await changeRuns(game, (runs) => {
@@ -128,7 +130,7 @@ describe('ogw measure', () => {
     expect(run.code).toBe(0);
     const path = join(runner.root, 'records', 'loops', 'update-1', 'measure-2.json');
     expect(run.stdout).toBe(
-      ['input_latency_ms: 40 [0, 100] in', 'scene_load_ms: 200 [0, 500] in', 'content.gold: 12 [10, 20] in', 'first_reward_ms: 300 [0, 1000] in', path, ''].join('\n'),
+      ['input_latency_ms: 40 [0, 100] in', 'scene_load_ms: 200 [0, 500] in', 'content.gold: 12 [10, 20] in', 'first_reward_ms: 0 [0, 1000] in', path, ''].join('\n'),
     );
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
       commit: sh(runner.root, 'git', ['rev-parse', 'HEAD']).trim(),
@@ -136,7 +138,7 @@ describe('ogw measure', () => {
         { metric: 'input_latency_ms', min: 0, max: 100, value: 40, result: 'in', data: null },
         { metric: 'scene_load_ms', min: 0, max: 500, value: 200, result: 'in', data: 'stage.load' },
         { metric: 'content.gold', min: 10, max: 20, value: 12, result: 'in', data: 'stage.gold' },
-        { metric: 'first_reward_ms', min: 0, max: 1000, value: 300, result: 'in', data: null },
+        { metric: 'first_reward_ms', min: 0, max: 1000, value: 0, result: 'in', data: null },
       ],
     });
   });

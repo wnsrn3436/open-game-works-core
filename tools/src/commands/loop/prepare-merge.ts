@@ -49,7 +49,7 @@ export const loopPrepareMerge: CommandDef = {
     if (mainHead === null) throw new OgwError('game repo has no main branch');
     const record = (fields: Pick<PrepareMergeRecord, 'created' | 'failed'>): Promise<unknown> =>
       changeOpenRun(game, (open) => {
-        loopData(open).prepareMerge = { commit, mainHead, baseCommit: run.baseCommit, ...fields };
+        loopData(open).prepareMerge = { commit, withSyncedWork: choice?.withSyncedWork ?? false, mainHead, baseCommit: run.baseCommit, ...fields };
       });
     const chosen = given === undefined && !recordsOnly;
     if (chosen && mainHead !== run.baseCommit) {

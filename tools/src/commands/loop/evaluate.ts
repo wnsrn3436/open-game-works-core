@@ -4,7 +4,7 @@ import { LIMITS } from '../../lib/limits.ts';
 import { runBaseline } from './lib/baseline.ts';
 import { evaluate } from './lib/evaluate.ts';
 import { gateOf, type CheckFile } from './lib/files.ts';
-import { gameSettings, openTarget, readRunJson, runRel } from './lib/run.ts';
+import { gameSettings, memorableMomentAsked, openTarget, readRunJson, runRel } from './lib/run.ts';
 import { readJudgeMoments, requireReference } from './lib/setup.ts';
 
 const USAGE = 'ogw loop evaluate <game> [--db postgresql]';
@@ -43,6 +43,7 @@ export const loopEvaluate: CommandDef = {
       platforms,
       settings,
       db,
+      memorableMoment: run.kind === 'loop' && memorableMomentAsked(run),
     });
     const lines = [
       path,

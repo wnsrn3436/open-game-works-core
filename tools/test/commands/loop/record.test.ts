@@ -137,6 +137,26 @@ describe('ogw loop findings', () => {
     ]);
   });
 
+  it('makes a finding of a memorable_moment the step 4 judge did not get', async () => {
+    const { g } = await iterationOne();
+    const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as Record<string, unknown>;
+    write(g.root, `${R}/evaluate-1.json`, { ...evaluate, memorableMoment: 'omitted' });
+    commit(g.root);
+    await ogw(g.ws, ['loop', 'findings', 'g']);
+    const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
+    expect(file.findings.filter((f) => f.where === 'judge moment: memorable_moment')).toEqual([{
+      id: null,
+      drop: null,
+      source: 'judge',
+      severity: 'minor',
+      owner: 'design',
+      where: 'judge moment: memorable_moment',
+      what: 'memorable_moment omitted',
+      why: 'the judge does not see the memorable moment of `brief.md`',
+      evidence: [`${R}/evaluate-1.json`],
+    }]);
+  });
+
   it('takes only blocker play observations in a confirmation iteration', async () => {
     const { g } = await iterationOne();
     await setRun(g, (run) => {
@@ -735,8 +755,8 @@ describe('ogw loop end-record', () => {
       [
         '## reason', '', 'plateau', '', '- 1', '- 2', '',
         '## result', '', `- merge commit: ${sha}`, '- vs baseline: better', `- last judge result: ${R}/judge-1-1.md`,
-        '- no blocker: pass', '- performance: unknown', '- no placeholder: unknown', '- full flow: unknown', '- UI quality: unknown', '',
-        '## failures', '', '- placeholder icon/z', '- open defect open-one: broken', '- not given again /r/1.md: boom', '',
+        `- completeness check of iteration 1 (${sha})`, '- no blocker: pass', '- performance: unknown', '- no placeholder: unknown', '- full flow: unknown', '- UI quality: unknown', '',
+        '## failures', '', '- placeholder icon/z', `- open defect open-one (found on ${sha}): broken`, '- not given again /r/1.md: boom', '',
         '## human', '', '- needs human: speed (decision: d)', '- core proposal: records/core-proposals/9-x.md', '- license unknown: icon/a',
         '- skipped core version: 1.3.0', '- banned word list missing: ko', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
       ].join('\n'),
@@ -792,9 +812,21 @@ describe('ogw loop end-record', () => {
     });
     expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
     const text = read(g.root, `${R}/end.md`);
-    expect(text).toContain(`## result\n\n- merge commit: ${c2}\n- vs baseline: same\n- last judge result: ${R}/judge-10-1.md\n- no blocker: pass\n`);
-    expect(text).toContain('## failures\n\n- not given again /r/2.md: boom\n- not merged jobx: merge of job jobx failed: no worktree\n\n');
+    const merged = ['no blocker: fail', 'performance: unknown', 'no placeholder: unknown', 'full flow: unknown', 'UI quality: unknown'].map((l) => `- merged iteration ${l}\n`).join('');
+    expect(text).toContain(
+      `## result\n\n- merge commit: ${c2}\n- vs baseline: same\n- last judge result: ${R}/judge-10-1.md\n- completeness check of iteration 10 (${c10})\n- no blocker: pass\n`
+      + `- performance: unknown\n- no placeholder: unknown\n- full flow: unknown\n- UI quality: unknown\n- merged iteration: 2 (${R}/iteration-2.md)\n${merged}\n`,
+    );
+    expect(text).toContain(`## failures\n\n- defects at the merge commit: the defect table of ${R}/iteration-2.md\n- not given again /r/2.md: boom\n- not merged jobx: merge of job jobx failed: no worktree\n\n`);
     expect(text).toContain('## human\n\n- core proposal: records/core-proposals/2-new.md\n- banned word list missing: ja\n');
+    // with the work synced after the merged commit, its no placeholder result does not hold for the merged tree
+    await setRun(g, (run) => {
+      (run.data.loop as { prepareMerge: object }).prepareMerge = { commit: c2, withSyncedWork: true, mainHead: 'm', baseCommit: 'm', created: true };
+    });
+    expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
+    const synced = read(g.root, `${R}/end.md`);
+    expect(synced).toContain(`- merged iteration: 2 (${R}/iteration-2.md)\n- merged iteration no blocker: fail\n- merged iteration performance: unknown\n- merged iteration full flow: unknown\n`);
+    expect(synced).toContain('- merged iteration UI quality: unknown\n- merged tree not checked as a whole\n\n## failures');
   });
 
   it('lists the resources temporary at the commit to merge, and none without that commit', async () => {

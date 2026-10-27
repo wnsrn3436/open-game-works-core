@@ -38,6 +38,8 @@ export interface VerdictRecord {
 export interface PrepareMergeRecord {
   /** The commit chosen to merge; null when none. */
   commit: string | null;
+  /** True when the work `ogw loop sync` merged after that commit goes with it; absent is read as false. */
+  withSyncedWork?: boolean;
   mainHead: string;
   baseCommit: string;
   /** True when `merge/<run>` was made. */
@@ -81,6 +83,13 @@ export interface CoreUpgradeData {
 }
 
 export const CORE_UPGRADE_KEY = 'core upgrade';
+
+/** `run.data` key that `ogw loop input` sets to true when it asked for the judge moment `memorable_moment`. */
+export const MEMORABLE_MOMENT_KEY = 'memorable moment';
+
+export function memorableMomentAsked(run: RunState): boolean {
+  return run.data[MEMORABLE_MOMENT_KEY] === true;
+}
 
 /** `run.data.loop`, created with defaults. The object is the one in the run, so changes stay in it. */
 export function loopData(run: RunState): LoopData {

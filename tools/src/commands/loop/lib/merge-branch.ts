@@ -24,7 +24,8 @@ export interface MergeChoice {
 /**
  * The merge commit (`game-loop` `## end` 2): the `success` iteration; else the latest confirmation iteration that
  * passed, else the latest candidate iteration, the three without the work synced after them, which no iteration
- * checked; else the latest iteration that passed the gate checks with a judge not `worse`. null when there is none.
+ * checked; else the latest iteration that passed the gate checks with a main judge `done` and not `worse`. null when there is
+ * none.
  */
 export async function chooseMergeCommit(game: GameRepo, run: RunState, loopStop: HarnessSettings['loopStop']): Promise<MergeChoice | null> {
   const records = await iterationRecords(game, run);
@@ -36,7 +37,7 @@ export async function chooseMergeCommit(game: GameRepo, run: RunState, loopStop:
   const latest = [...records].reverse().filter((r): r is ParsedRecord & { commit: string } => r.commit !== null);
   const checked = latest.find((r) => confirmEvidence(r, loopStop) !== null) ?? latest.find((r) => candidateEvidence(r, loopStop) !== null);
   if (checked) return { commit: checked.commit, withSyncedWork: false };
-  const passed = latest.find((r) => r.judges !== null && gatePassed(r) && mainOf(r)?.vsBaseline !== 'worse');
+  const passed = latest.find((r) => mainOf(r)?.status === 'done' && gatePassed(r) && mainOf(r)?.vsBaseline !== 'worse');
   return passed ? { commit: passed.commit, withSyncedWork: true } : null;
 }
 

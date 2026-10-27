@@ -16,7 +16,7 @@ import { telemetrySummary } from '../../telemetry/api.ts';
 import { checkResult, successPrecondition, type CheckFile, type EvaluateFile, type JudgeEntry, type PlayEntry } from './files.ts';
 import { appendCoverage, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
-import type { Moment, Reference } from './setup.ts';
+import { MEMORABLE_MOMENT, type Moment, type Reference } from './setup.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
@@ -58,6 +58,8 @@ export interface EvaluatePlan {
   platforms: string[];
   settings: Pick<HarnessSettings, 'maxConcurrentInstances' | 'instanceWaitTimeoutMs' | 'playInstances' | 'backgroundRetryLimit' | 'loopStop'>;
   db: 'postgresql' | undefined;
+  /** True when `ogw loop input` asked for the judge moment `memorable_moment` in this run. */
+  memorableMoment: boolean;
   /** Folder of the save fixtures taken from the work branch HEAD (`fixturesAtHead`). */
   fixtureDir?: string;
 }
@@ -415,7 +417,7 @@ async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> 
 /** Reads the judge result; null when its tables cannot be read. */
 async function readVerdict(state: State, slot: JudgeSlot, output: string): Promise<JudgeVerdict | null> {
   try {
-    return judgeVerdict(await readFile(output, 'utf8'), slot.side, state.plan.baseline !== null);
+    return judgeVerdict(await readFile(output, 'utf8'), slot.side, state.plan.baseline !== null, slot.moments.map((m) => m.name));
   } catch {
     return null;
   }
@@ -504,6 +506,17 @@ async function runSlots(state: State): Promise<void> {
   checkStopped(state);
 }
 
+/**
+ * Why the step 4 judge did not get `memorable_moment` when it was asked for: `missing` without its `## judge moments`
+ * line or its save fixture at the work branch HEAD, `omitted` when that judge did not put it in. undefined otherwise.
+ */
+function memorableMomentGap(plan: EvaluatePlan, judges: readonly JudgeEntry[]): EvaluateFile['memorableMoment'] {
+  if (!plan.memorableMoment) return undefined;
+  const fixture = plan.fixtureDir === undefined ? false : exists(join(plan.fixtureDir, `${MEMORABLE_MOMENT}.json`));
+  if (!fixture || !plan.moments.some((m) => m.name === MEMORABLE_MOMENT)) return 'missing';
+  return judges.find((j) => j.kind === 'main')?.omittedMoments.includes(MEMORABLE_MOMENT) === true ? 'omitted' : undefined;
+}
+
 function entries(state: State): { plays: PlayEntry[]; judges: JudgeEntry[] } {
   const plays: PlayEntry[] = [];
   const judges: JudgeEntry[] = [];
@@ -564,7 +577,8 @@ async function evaluateWith(ctx: Context, plan: EvaluatePlan): Promise<{ file: E
   if (state.measureFiles.length > 0) measure = rel(state, resolve(plan.game.root, (await measureCollected(ctx, plan.game.name, state.measureFiles)).path));
   else await rm(abs(plan.game, measureRel), { force: true });
   const { plays, judges } = entries(state);
-  const file: EvaluateFile = { commit: plan.commit, baseline: plan.baseline, plays, judges, measure };
+  const gap = memorableMomentGap(plan, judges);
+  const file: EvaluateFile = { commit: plan.commit, baseline: plan.baseline, plays, judges, measure, ...(gap === undefined ? {} : { memorableMoment: gap }) };
   const path = runRel(plan.run, `evaluate-${n}.json`);
   await writeJsonAtomic(abs(plan.game, path), file);
   const written = [measure, ...plays.map((p) => p.result), ...judges.map((j) => j.result)];

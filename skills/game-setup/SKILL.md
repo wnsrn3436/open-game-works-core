@@ -46,7 +46,7 @@ description: Holds the procedure in which the lead agent of the `setup game` com
      | `reward popup` | A popup that gives or picks a reward |
      | `result` | The screen that shows the result of a play |
 
-   - presentation game: the moments `lobby`, `hud`, `reward popup`, `result` judge how commercial the screens look. Ask for one commercial game of the same genre and platform whose screens are made at a high level, with a recommendation of three candidates and the reasons, and its videos as for the reference game. Those four moments are taken from its videos. When the human gives none, they are taken from the videos of the reference game. Tell the human that without it the judge compares the screens with the reference game, and the UI quality check still holds the screens to its numbers
+   - presentation game: the moments `lobby`, `hud`, `reward popup`, `result` judge how commercial the screens look. First ask, for each of these four screens, whether the game will have that screen, with a recommendation decided from the request. The moment of a screen the game will not have is `none`, and no video is asked for or suggested for it. Then ask for one commercial game of the same genre and platform whose screens are made at a high level, with a recommendation of three candidates and the reasons, and its videos as for the reference game. Those four moments are taken from its videos. When the human gives none, they are taken from the videos of the reference game. Tell the human that without it the judge compares the screens with the reference game, and the UI quality check still holds the screens to its numbers
 
    - banned word list: ask only when the modules that the game uses (`## module` of [`core`](../core/SKILL.md)) include at least one of `nickname`, `guild`, `chat`. Get, per language of `supportedLanguages`, a banned word list file that comes with a usage license. The agent does not make or download a list
 6. While waiting for the human's answers, check the host capability
@@ -74,6 +74,7 @@ description: Holds the procedure in which the lead agent of the `setup game` com
    - The videos are third-party works and are not committed, so only the hosts they are put on have them
    - `## video` is one line per video put in `records/setup/reference/`, holding only its file name
    - `## moments` is a table with the columns `moment`, `video`, `start ms`, `end ms`. It has one row per moment of the table in step 5; `moment` is the moment name of the table in step 5, `video` is the `## video` file name of the video that has that moment, and `start ms` and `end ms` are the integers of the start ms and end ms within that video. For a moment that is in no video, the three cells are `none`
+   - After `setup game`, the human may change the row of `lobby`, `hud`, `reward popup` or `result` in `## moments` to `none` when the game will not have that screen
 9. When step 5 asked for banned word lists, organize the received lists
    - Put each received list per language at `records/setup/banned-words/<language>.txt` (UTF-8, one word per line). `<language>` is the language tag of `supportedLanguages` as it is
    - In `records/setup/banned-words/sources.md`, write the source and license per language. For a language whose list was not received, write `none`

@@ -4,7 +4,9 @@ import {
   judgeDefects,
   judgeSectionText,
   judgeVerdict,
+  lostMoments,
   observations,
+  referenceRows,
   vsBaselineOf,
   vsReferenceOf,
 } from '../../../../src/commands/loop/lib/results.ts';
@@ -55,6 +57,17 @@ describe('vs baseline', () => {
     expect(vsBaselineOf(judge([], []), 'A')).toBe('indistinguishable');
   });
 
+  it('is not better when the other side is better at a judge moment', () => {
+    const rows = ['| game feel | A | clear | r | e |', '| progression | A | slight | r | e |'];
+    const text = judge(rows, []).replace('reason: x\n', 'reason: x\n- `B` is better at `late_run_horde`. Reason: more enemies on screen\nIndistinguishable at second_run. Reason: same\n');
+    expect(lostMoments(text, 'A', ['late_run_horde', 'second_run'])).toEqual(['late_run_horde']);
+    expect(vsBaselineOf(text, 'A', ['late_run_horde', 'second_run'])).toBe('indistinguishable');
+    expect(judgeVerdict(text, 'A', true, ['late_run_horde'])).toEqual({ vsBaseline: 'indistinguishable', vsReference: 'unknown' });
+    // a moment that is not a judge moment of that judge, and a moment this side won, do not count
+    expect(vsBaselineOf(text, 'A', ['second_run'])).toBe('better');
+    expect(lostMoments(text, 'B', ['late_run_horde', 'core action'])).toEqual(['core action']);
+  });
+
   it('throws when the table cannot be read', () => {
     expect(() => vsBaselineOf('## vs baseline\n\nnone\n', 'A')).toThrow('table missing');
     expect(() => vsBaselineOf('nothing', 'A')).toThrow('table missing');
@@ -71,6 +84,15 @@ describe('vs reference', () => {
     expect(vsReferenceOf(judge([], ['| A | game feel | pass | r | e |', '| A | x | unknown | r | e |']), 'A')).toBe('unknown');
     expect(vsReferenceOf(judge([], ['| A | game feel | n/a | r | e |']), 'A')).toBe('unknown');
     expect(vsReferenceOf(judge([], ['| A | game feel | unknown | r | e |', '| A | x | fail | r | e |']), 'A')).toBe('fail');
+  });
+
+  it('reads the table with instance columns when a presentation counts table comes first', () => {
+    const text = judge([], ['| A | game feel | pass | r | e |', '| B | game feel | fail | r | e |']).replace(
+      '## vs reference\n\n',
+      '## vs reference\n\n### presentation counts\n\n| screen | panel layers | idle motion | press feedback |\n|---|---|---|---|\n| lobby | 3 | 2 | 1 |\n\n',
+    );
+    expect(vsReferenceOf(text, 'A')).toBe('pass');
+    expect(referenceRows(text).map((r) => [r.instance, r.result])).toEqual([['A', 'pass'], ['B', 'fail']]);
   });
 
   it('throws when the table cannot be read', () => {
