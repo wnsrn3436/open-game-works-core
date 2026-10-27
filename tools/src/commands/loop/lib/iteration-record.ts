@@ -4,14 +4,16 @@ import { gitRaw } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { DEFECT_COLUMNS, defectRow, type Defect } from './defects.ts';
-import { GATE_CHECKS, type ElementVotes, type IterationKind, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
+import { GATE_CHECKS, type ElementVotes, type IterationKind, type JudgeAgent, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
 import { cell, column, document, parseTable, renderTable, section } from './markdown.ts';
 import { abs, runRel } from './run.ts';
 import { combinedVsReference } from './votes.ts';
 
 /** Loop iteration record `records/loops/<run>/iteration-<n>.md` (`game-loop` `## loop iteration record`). */
 
-export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'agent' | 'A' | 'B' | 'vsReference' | 'omittedMoments' | 'status'> {
+export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'A' | 'B' | 'vsReference' | 'omittedMoments' | 'status'> {
+  /** null when the evaluate file has no agent of the judge. */
+  agent: JudgeAgent | null;
   moments: string;
   loserBetter: string;
 }
@@ -73,7 +75,7 @@ function judgeBlock(judge: RecordJudge): string {
     '',
     `- kind: ${judge.kind}`,
     `- status: ${judge.status}`,
-    `- agent: ${judge.agent.cli} ${judge.agent.model} ${judge.agent.effort}`,
+    `- agent: ${judge.agent === null ? 'unknown' : `${judge.agent.cli} ${judge.agent.model} ${judge.agent.effort}`}`,
     `- A: ${judge.A}`,
     `- B: ${judge.B ?? 'none'}`,
     `- vs reference: ${judge.vsReference ?? 'none'}`,

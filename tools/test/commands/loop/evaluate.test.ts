@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { evaluateDeps } from '../../../src/commands/loop/lib/evaluate.ts';
+import { alternateSide, evaluateDeps, judgeAgent } from '../../../src/commands/loop/lib/evaluate.ts';
 import type { EvaluateFile } from '../../../src/commands/loop/lib/files.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { commit, git, openBuildRun, openLoopRun, read, readJsonFile, REFERENCE_MD, setRun, setupGame, write, type TestGame } from './helpers.ts';
@@ -170,13 +170,13 @@ vi.mock('../../../src/commands/measure/api.ts', () => ({
 }));
 
 /** The bot runs of the shared telemetry: by instance id, the telemetry, or null for a run that did not reach every step. */
-const bots = vi.hoisted(() => ({ runs: [] as { id: string; commit: string }[], fail: new Set<string>() }));
+const bots = vi.hoisted(() => ({ runs: [] as { id: string; commit: string; pollMs: number }[], fail: new Set<string>() }));
 
 vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
-  botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {
+  botRun: vi.fn((_ctx: unknown, instance: { id: string }, _scenario: unknown, pollMs: number) => {
     const commit = fake.instances.find((i) => i.id === instance.id)?.commit ?? '';
-    bots.runs.push({ id: instance.id, commit });
+    bots.runs.push({ id: instance.id, commit, pollMs });
     if (bots.fail.has(commit)) return Promise.resolve(null);
     // this commit answers input 30 ms late, the baseline 90 ms
     const latency = bots.runs.length === 1 ? 30 : 90;
@@ -268,10 +268,20 @@ beforeEach(() => {
   bots.runs = [];
   bots.fail = new Set();
   evaluateDeps.pollMs = 0;
+  evaluateDeps.botPollMs = 7;
   evaluateDeps.random = () => 0.1;
   let ms = 1000;
   evaluateDeps.now = () => ms;
   ms += 0;
+});
+
+describe('judgeAgent', () => {
+  it('gives each panel item two judges in a row, in turn, so that with alternating sides it judges both sides', () => {
+    const panel = ['a', 'b', 'c'].map((model) => ({ cli: 'claude-code' as const, model, effort: 'high' }));
+    const settings = { loop: { funIterations: 3, judgeVotes: 8, judgePanel: panel, variants: 1 }, agents: {} };
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map((k) => judgeAgent(settings, k).model)).toEqual(['a', 'a', 'b', 'b', 'c', 'c', 'a', 'a']);
+    expect([1, 2, 3, 4].map((k) => alternateSide('A', k))).toEqual(['A', 'B', 'A', 'B']);
+  });
 });
 
 describe('ogw loop evaluate', () => {
@@ -824,7 +834,7 @@ describe('ogw loop evaluate', () => {
       { cli: 'codex', model: 'gpt-x', effort: 'high' },
       { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'medium' },
     ];
-    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 3, judgePanel: panel, variants: 1 } });
+    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 4, judgePanel: panel, variants: 1 } });
     write(g.root, 'client/dev/bot/fixtures/memorable_moment.json', '{"steps": []}\n');
     commit(g.root);
     await setRun(g, (run) => {
@@ -843,24 +853,25 @@ describe('ogw loop evaluate', () => {
     expect(file).toMatchObject({ kind: 'fun', elements: ['game feel', 'tension and release', 'no friction'], vsBaseline: 'better', vsReference: null });
     expect(file.memorableMoment).toBeUndefined();
     expect(file.votes).toEqual([
-      { element: 'game feel', this: 3, baseline: 0, decision: 'this' },
+      { element: 'game feel', this: 4, baseline: 0, decision: 'this' },
       { element: 'tension and release', this: 0, baseline: 0, decision: 'indistinguishable' },
       { element: 'no friction', this: 0, baseline: 0, decision: 'indistinguishable' },
     ]);
-    // three step 4 judges on alternating sides with the panel in turn; no success judge
+    // four step 4 judges on alternating sides, each panel item for two judges in a row so that it judges both sides; no success judge
     expect(file.judges.map((j) => [j.kind, j.instanceSide, j.agent.model, j.vsReference])).toEqual([
       ['main', 'A', 'gpt-x', null],
+      ['main', 'B', 'gpt-x', null],
+      ['main', 'A', 'claude-sonnet-5-5', null],
       ['main', 'B', 'claude-sonnet-5-5', null],
-      ['main', 'A', 'gpt-x', null],
     ]);
     const judges = fake.agents.filter((a) => a.role === 'judge');
-    expect(judges.map((a) => a.agent)).toEqual([panel[0], panel[1], panel[0]]);
+    expect(judges.map((a) => a.agent)).toEqual([panel[0], panel[0], panel[1], panel[1]]);
     for (const judge of judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], telemetry: null, reference: null });
     // no save fixture instance and no play of a moment
     expect(fake.instances.filter((i) => i.fixture !== undefined)).toEqual([]);
     expect(file.plays.map((p) => p.moment)).toEqual([null]);
     expect(out.stdout).toContain('judge main done codex gpt-x high side A vs reference none');
-    expect(out.stdout).toContain('votes game feel: this 3 baseline 0 this');
+    expect(out.stdout).toContain('votes game feel: this 4 baseline 0 this');
   });
 
   it('shares the telemetry of one bot run per commit with every judge, named by its sides', async () => {
@@ -879,6 +890,8 @@ describe('ogw loop evaluate', () => {
     // two headless instances first, this commit and the baseline game, stopped before the judges start
     expect(fake.instances.slice(0, 2).map((i) => [i.commit, i.client, i.played])).toEqual([[head, 'headless', undefined], [base, 'headless', undefined]]);
     expect(bots.runs.map((r) => r.commit)).toEqual([head, base]);
+    // the bot runs poll at their own interval, not that of the agent jobs
+    expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7]);
     expect(fake.stopped.slice(0, 2).sort()).toEqual(['i1', 'i2']);
     const first = join(g.root, `${R}/evidence/telemetry-1-1.md`);
     const second = join(g.root, `${R}/evidence/telemetry-1-2.md`);

@@ -20,19 +20,29 @@ function stepMs(args: readonly string[]): number | null {
 
 /**
  * The input latency of the client `main` of an instance started with `--input-latency` (ogw.md `## runner`). An input
- * command waits the latency before it is sent; in step mode it is held until the `step` commands after it have
- * advanced game time by the latency, and the step during which that happens is split there.
+ * command is answered at once and sent the latency after it was received, in the order received; in step mode it is
+ * held until the `step` commands after it have advanced game time by the latency, and the step during which that
+ * happens is split there.
  */
 export class InputLatency {
   private readonly ms: number;
   private readonly send: Requester;
   private readonly wait: (ms: number) => Promise<void>;
+  private readonly now: () => number;
   private held: Held[] = [];
+  /** The sends of the inputs received outside step mode, in the order received. */
+  private delayed: Promise<void> = Promise.resolve();
 
-  constructor(ms: number, send: Requester, wait: (ms: number) => Promise<void> = (delay) => sleep(delay)) {
+  constructor(ms: number, send: Requester, wait: (ms: number) => Promise<void> = (delay) => sleep(delay), now: () => number = Date.now) {
     this.ms = ms;
     this.send = send;
     this.wait = wait;
+    this.now = now;
+  }
+
+  /** Resolves once every input received outside step mode so far was sent (for tests). */
+  async sent(): Promise<void> {
+    await this.delayed;
   }
 
   /** The commands held now, oldest first (for tests and the runner log). */
@@ -60,8 +70,14 @@ export class InputLatency {
       this.held.push({ command, args, leftMs: this.ms });
       return OK;
     }
-    await this.wait(this.ms);
-    return this.send(command, args, timeoutMs);
+    // each input waits only its own latency from when it was received, so the delays of inputs sent one after another do not add up
+    const due = this.now() + this.ms;
+    this.delayed = this.delayed.then(async () => {
+      const left = due - this.now();
+      if (left > 0) await this.wait(left);
+      await this.send(command, args, timeoutMs).catch(() => undefined);
+    });
+    return OK;
   }
 
   /**

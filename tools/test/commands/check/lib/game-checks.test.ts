@@ -17,7 +17,7 @@ vi.mock('../../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/api.ts')>()),
   placeholderFailures: vi.fn(),
 }));
-vi.mock('../../../../src/commands/check/lib/bot-playtest.ts', () => ({ botPlaytest: vi.fn(), readScenario: vi.fn(() => Promise.resolve('no scenario')) }));
+vi.mock('../../../../src/commands/check/lib/bot-playtest.ts', () => ({ BOT_PLAYTEST_POLL_MS: 200, botPlaytest: vi.fn(), readScenario: vi.fn(() => Promise.resolve('no scenario')) }));
 vi.mock('../../../../src/commands/check/lib/performance.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/lib/performance.ts')>()),
   performanceCheck: vi.fn(),

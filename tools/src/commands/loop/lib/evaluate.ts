@@ -29,6 +29,7 @@ import {
 import { appendCoverage, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
 import { botRun, comparisonText, scenarioAtHead, withInputLatency, type BotRun } from './shared-telemetry.ts';
+import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import { combinedVsBaseline, combinedVsReference, countVotes } from './votes.ts';
 import { MEMORABLE_MOMENT, type Moment, type Reference } from './setup.ts';
@@ -38,11 +39,13 @@ const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 /** Grace time of each agent job kill when a signal stops `ogw loop evaluate`: the job supervisor kills it 5000 ms after SIGTERM. */
 const SIGNAL_KILL_GRACE_MS = 2000;
 
-/** Dependencies tests replace: the A/B coin, the poll interval, the clock, and the signal handling. */
+/** Dependencies tests replace: the A/B coin, the poll intervals, the clock, and the signal handling. */
 export const evaluateDeps = {
   /** Returns a number in [0, 1); below 0.5 puts this commit's instance in `A`. */
   random: Math.random,
   pollMs: 5000,
+  /** The poll interval of the shared-telemetry bot runs: that of the bot playtest. */
+  botPollMs: BOT_PLAYTEST_POLL_MS,
   now: Date.now,
   /** Calls `handler` on SIGTERM and SIGINT until the returned function is called. */
   onSignal: (handler: (signal: NodeJS.Signals) => void): (() => void) => {
@@ -243,10 +246,13 @@ export function judgeGroup(plan: Pick<JudgingPlan, 'moments' | 'settings'>, pair
   return { size, slots: [slot], gate: kind === 'success' ? 'success' : 'none' };
 }
 
-/** The agent CLI, model and effort of the k-th step 4 judge: `loop.judgePanel` in turn, else `agents.judge`. */
+/**
+ * The agent CLI, model and effort of the k-th step 4 judge: `loop.judgePanel` in turn, each item for two judges in a row
+ * so that, with the sides alternating per judge, each item judges both side assignments; else `agents.judge`.
+ */
 export function judgeAgent(settings: Pick<EvaluatePlan['settings'], 'loop' | 'agents'>, k: number): AgentSettings {
   const panel = settings.loop.judgePanel;
-  if (panel.length > 0) return panel[(k - 1) % panel.length] as AgentSettings;
+  if (panel.length > 0) return panel[Math.floor((k - 1) / 2) % panel.length] as AgentSettings;
   const judge = settings.agents.judge;
   if (judge === undefined) throw new OgwError('harness settings agents.judge is missing');
   return judge;
@@ -641,7 +647,7 @@ async function botRunOf(state: State, commit: string, scenario: Scenario, inputL
   let instance: InstanceInfo | null = null;
   try {
     instance = await start(state, { commit, headless: true, inputLatencyMs });
-    return instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.pollMs);
+    return instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.botPollMs);
   } catch (error) {
     checkStopped(state);
     state.ctx.log(`shared telemetry: no bot run of ${commit}: ${firstLine(error)}`);
@@ -759,6 +765,18 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
  * and returns every slot with its entry. On a failure or a signal it stops what it started and throws.
  */
 export async function runJudging(ctx: Context, plan: JudgingPlan, queue: Group[]): Promise<Slot[]> {
+  return (await judging(ctx, plan, queue, false)).slots;
+}
+
+/**
+ * As `runJudging`, but on a failure other than a signal it stops what it started and returns every slot with the
+ * failure: the slots that ended before it keep their entries, the others have none.
+ */
+export async function runJudgingKeepingEnded(ctx: Context, plan: JudgingPlan, queue: Group[]): Promise<{ slots: Slot[]; failure: string | null }> {
+  return judging(ctx, plan, queue, true);
+}
+
+async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: boolean): Promise<{ slots: Slot[]; failure: string | null }> {
   const state: State = {
     ctx,
     plan,
@@ -780,17 +798,19 @@ export async function runJudging(ctx: Context, plan: JudgingPlan, queue: Group[]
     settle = resolve;
   });
   const off = abortOnSignal(state);
+  let failure: string | null = null;
   try {
     await shareTelemetry(state);
     await runSlots(state);
   } catch (error) {
     await abort(state);
-    throw error;
+    if (!keep || state.stoppedBy !== null) throw error;
+    failure = error instanceof Error ? error.message : String(error);
   } finally {
     settle();
     off();
   }
-  return state.all;
+  return { slots: state.all, failure };
 }
 
 async function evaluateWith(ctx: Context, plan: EvaluatePlan): Promise<{ file: EvaluateFile; path: string }> {

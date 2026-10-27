@@ -36,12 +36,52 @@ function fakeMain(fail: Record<string, string> = {}) {
 }
 
 describe('input latency', () => {
-  it('waits the latency before an input in free mode, and sends other commands at once', async () => {
-    const main = fakeMain();
-    expect((await main.latency.request('tap', ['1', '2'], 1000)).ok).toBe(true);
-    await main.latency.request('capture_screen', [], 1000);
-    expect(main.sent).toEqual(['tap 1 2', 'capture_screen']);
-    expect(main.waits).toEqual([150]);
+  it('answers an input in free mode at once and sends it after the latency, and sends other commands at once', async () => {
+    const sent: string[] = [];
+    let release = (): void => undefined;
+    const send = (command: string, args: readonly string[]): Promise<ChannelResponse> => {
+      if (command !== 'get_state') sent.push([command, ...args].join(' '));
+      return Promise.resolve({ ok: true, result: command === 'get_state' ? { step_mode: false } : null, bytes: Buffer.alloc(0), frames: [] });
+    };
+    const waits: number[] = [];
+    const latency = new InputLatency(150, send, (ms) => {
+      waits.push(ms);
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    }, () => 1000);
+    expect((await latency.request('tap', ['1', '2'], 1000)).ok).toBe(true);
+    await latency.request('capture_screen', [], 1000);
+    expect(sent).toEqual(['capture_screen']);
+    release();
+    await latency.sent();
+    expect(sent).toEqual(['capture_screen', 'tap 1 2']);
+    expect(waits).toEqual([150]);
+  });
+
+  it('sends each input of a timed sequence the latency after its own send time, in order', async () => {
+    const arrived: { command: string; at: number }[] = [];
+    const send = (command: string): Promise<ChannelResponse> => {
+      if (command !== 'get_state') arrived.push({ command, at: Date.now() });
+      return Promise.resolve({ ok: true, result: command === 'get_state' ? { step_mode: false } : null, bytes: Buffer.alloc(0), frames: [] });
+    };
+    const latency = new InputLatency(150, send);
+    const start = Date.now();
+    const sentAt: number[] = [];
+    for (const [i, command] of ['key_down', 'tap', 'key_up'].entries()) {
+      const due = start + i * 50;
+      if (due > Date.now()) await new Promise((r) => setTimeout(r, due - Date.now()));
+      sentAt.push(Date.now());
+      expect((await latency.request(command, ['1'], 1000)).ok).toBe(true);
+    }
+    // every request was answered at once, before the first input arrived
+    expect(arrived).toEqual([]);
+    await latency.sent();
+    expect(arrived.map((a) => a.command)).toEqual(['key_down', 'tap', 'key_up']);
+    for (const [i, a] of arrived.entries()) {
+      expect(a.at - (sentAt[i] as number)).toBeGreaterThanOrEqual(149);
+      expect(a.at - (sentAt[i] as number)).toBeLessThan(220);
+    }
   });
 
   it('holds an input in step mode and splits the step during which it becomes due', async () => {
@@ -99,6 +139,8 @@ describe('ogw instance start --input-latency', () => {
     const started = Date.now();
     const run = await ogw(runner.ws, ['input', id, 'tap', '1', '2']);
     expect(run).toMatchObject({ code: 0, stdout: '{"ok":true,"result":null}\n' });
+    const tapped = (): boolean => runner.requests('main').at(-1)?.command === 'tap';
+    while (!tapped() && Date.now() - started < 10_000) await new Promise((r) => setTimeout(r, 20));
     expect(Date.now() - started).toBeGreaterThanOrEqual(300);
     expect(runner.requests('main').at(-1)).toMatchObject({ command: 'tap', args: ['1', '2'] });
   });

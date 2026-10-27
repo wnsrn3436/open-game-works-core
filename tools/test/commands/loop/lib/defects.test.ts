@@ -232,7 +232,7 @@ describe('confirmedBy', () => {
     expect(confirmedBy({ ...none, check: check('pass') }, false, measureDefect)).toBe(false);
   });
 
-  it('confirms play and judge defects when one of that source is done, hardening defects only by hardening', () => {
+  it('confirms play and judge defects when one of that source is done, judge defects only in a completeness iteration, hardening defects only by hardening', () => {
     expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'play' }))).toBe(true);
     // a confirmation iteration takes only blocker play findings
     expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'play', severity: 'major' }), true)).toBe(false);
@@ -242,6 +242,10 @@ describe('confirmedBy', () => {
     expect(confirmedBy({ ...none, evaluate: evaluate('failed', 'done') }, false, d({ source: 'judge' }))).toBe(true);
     expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'judge' }))).toBe(false);
     expect(confirmedBy(none, false, d({ source: 'judge' }))).toBe(false);
+    // a fun iteration judges three elements without the reference game or moments: no result for a judge defect
+    const fun = { ...evaluate('done', 'done'), kind: 'fun' as const };
+    expect(confirmedBy({ ...none, evaluate: fun }, false, d({ source: 'judge' }))).toBe(false);
+    expect(confirmedBy({ ...none, evaluate: fun }, false, d({ source: 'play' }))).toBe(true);
     expect(confirmedBy(none, true, d({ source: 'hardening' }))).toBe(true);
     expect(confirmedBy(none, false, d({ source: 'hardening' }))).toBe(false);
     expect(confirmedBy({ ...none, check: check('pass') }, true, checkDefect)).toBe(false);

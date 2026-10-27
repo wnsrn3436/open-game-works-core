@@ -21,7 +21,9 @@ interface FakeJudge {
 interface Fake {
   root: string;
   worktrees: string;
-  instances: { id: string; commit: string }[];
+  instances: { id: string; commit: string; db?: string }[];
+  /** Fails the start of an instance of this commit. */
+  failStart: (commit: string) => boolean;
   stopped: string[];
   content: { id: string; k: number; input: string; output: string; status: 'done' | 'failed' }[];
   judges: FakeJudge[];
@@ -39,6 +41,7 @@ const fake = vi.hoisted(
     root: '',
     worktrees: '',
     instances: [],
+    failStart: () => false,
     stopped: [],
     content: [],
     judges: [],
@@ -51,16 +54,17 @@ const fake = vi.hoisted(
 );
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({
-  startInstance: vi.fn((_ctx: unknown, opts: { commit: string }) => {
+  startInstance: vi.fn((_ctx: unknown, opts: { commit: string; db?: string }) => {
+    if (fake.failStart(opts.commit)) return Promise.reject(new Error('no server'));
     const id = `i${String(fake.instances.length + 1)}`;
-    fake.instances.push({ id, commit: opts.commit });
+    fake.instances.push({ id, commit: opts.commit, ...(opts.db === undefined ? {} : { db: opts.db }) });
     return Promise.resolve({ id, commit: opts.commit, root: join(fake.root, '..', 'instances', id), game: 'g', serverUrl: '', adminSecret: '', startedAt: 1 });
   }),
   stopInstance: vi.fn((_ctx: unknown, id: string) => {
     fake.stopped.push(id);
     return Promise.resolve();
   }),
-  listInstances: vi.fn(() => Promise.resolve([])),
+  listInstances: vi.fn(() => Promise.resolve(fake.instances.filter((i) => !fake.stopped.includes(i.id)))),
 }));
 
 vi.mock('../../../src/commands/agent/api.ts', async () => {
@@ -151,6 +155,7 @@ async function funIteration(settings: Record<string, unknown> = {}, command: 'up
 
 beforeEach(() => {
   fake.instances = [];
+  fake.failStart = () => false;
   fake.stopped = [];
   fake.content = [];
   fake.judges = [];
@@ -196,6 +201,9 @@ describe('variant choice', () => {
     expect(order.map((v) => v.k)).toEqual([3, 2, 1, 4, 7, 5]);
     // without judges every variant with a commit has a margin of 0: the lowest k first
     expect(choiceOrder([entry(2), entry(1, { commit: null }), entry(3)]).map((v) => v.k)).toEqual([2, 3]);
+    // a variant whose judges could not run is left out while another variant was judged, even a worse one
+    const judgedWorse = entry(3, { vsBaseline: 'worse', votes: votes(['game feel', 0, 2, 'baseline']) });
+    expect(choiceOrder([entry(1), entry(2), judgedWorse]).map((v) => v.k)).toEqual([3]);
   });
 });
 
@@ -301,13 +309,14 @@ describe('ogw loop variants', () => {
     expect(out.stdout).toContain('not merged: data: ERROR x bad row');
   });
 
-  it('fails the content agent of the iteration when no variant has a commit, and commits the variants file', async () => {
+  it('prints the content agent call when no variant has a commit, and commits the variants file', async () => {
     const { g } = await funIteration();
     fake.behavior = (k) => (k === 2 ? 'fail' : 'no change');
     const out = await ogw(g.ws, ['loop', 'variants', 'g']);
     expect(out.code).toBe(1);
-    const failed = fake.content[1]?.id ?? '';
-    expect(out.stdout).toContain(`no variant was merged: the content agent failed; retry it with ogw agent retry ${failed} --background`);
+    // a failed variant agent is not retried: the content agent is called once as without variants
+    expect(out.stdout).toContain(`no variant was merged: call the content agent once with ogw agent content --game g --input ${join(g.root, R)}/content-input-2.md --background`);
+    expect(out.stdout).not.toContain('ogw agent retry');
     expect(fake.judges).toEqual([]);
     expect(fake.merges).toEqual([]);
     const file = readJsonFile(g.root, `${R}/variants-2.json`) as VariantsFile;
@@ -320,13 +329,42 @@ describe('ogw loop variants', () => {
     expect(existsSync(join(g.root, `${R}/content-2.md`))).toBe(false);
     for (const c of fake.content) expect(existsSync(join(g.ws.worktrees, 'g', `agent-${c.id}`))).toBe(false);
     expect(git(g.root, 'branch', '--list', 'agent/*')).toBe('');
-    // no variant agent failed: the content agent is called as without variants
-    const none = await funIteration();
+  });
+
+  it('keeps the finished variants when the judging fails, and passes --db to the judge instances', async () => {
+    const { g } = await funIteration({ maxConcurrentInstances: 2 });
+    fake.votes = (k): Record<string, Vote> => (k === 1 ? { 'game feel': 'this' } : { 'game feel': 'baseline' });
+    // the instances of variant 3 do not start; one judge at a time, so variants 1 and 2 were judged before
+    fake.failStart = (c) => fake.commits.get(c) === 3;
+    const out = await ogw(g.ws, ['loop', 'variants', 'g', '--db', 'postgresql']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect(fake.instances.length).toBeGreaterThan(0);
+    expect(fake.instances.every((i) => i.db === 'postgresql')).toBe(true);
+    const file = readJsonFile(g.root, `${R}/variants-2.json`) as VariantsFile;
+    expect(file.judging).toBe('instance start failed: no server');
+    expect(file.variants.map((v) => [v.k, v.vsBaseline, v.votes === null, v.chosen])).toEqual([
+      [1, 'better', false, true],
+      [2, 'worse', false, false],
+      [3, null, true, false],
+    ]);
+    expect(out.stdout).toContain('judging failed: instance start failed: no server\n');
+    expect(fake.stopped.length).toBe(fake.instances.length);
+    // without a judged variant, a variant whose judges could not run is chosen by the margin rule
+    const all = await funIteration({ maxConcurrentInstances: 2 });
     fake.content = [];
-    fake.behavior = () => 'no change';
-    const out2 = await ogw(none.g.ws, ['loop', 'variants', 'g']);
-    expect(out2.code).toBe(1);
-    expect(out2.stdout).toContain(`no variant was merged and no variant agent failed: call the content agent with ogw agent content --game g --input ${join(none.g.root, R)}/content-input-2.md --background`);
+    fake.judges = [];
+    fake.commits = new Map();
+    fake.failStart = () => true;
+    expect((await ogw(all.g.ws, ['loop', 'variants', 'g'])).code).toBe(0);
+    const none = readJsonFile(all.g.root, `${R}/variants-2.json`) as VariantsFile;
+    expect(none.judging).toBe('instance start failed: no server');
+    expect(none.variants.map((v) => [v.votes, v.chosen])).toEqual([
+      [null, true],
+      [null, false],
+      [null, false],
+    ]);
+    expect((await ogw(all.g.ws, ['loop', 'variants', 'g', '--db', 'mysql'])).stderr).toContain('usage: ogw loop variants <game> [--db postgresql]');
   });
 
   it('runs no judge without a baseline game and chooses the lowest k with a commit', async () => {

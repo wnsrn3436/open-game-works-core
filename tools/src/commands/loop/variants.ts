@@ -1,4 +1,4 @@
-import { expectPositionals, positional, type CommandDef } from '../../lib/command.ts';
+import { expectPositionals, positional, str, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { currentBranch, statusLines } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
@@ -8,17 +8,20 @@ import { failWhenContentRunning, runJobs } from './lib/jobs.ts';
 import { abs, confirmOf, iterationKind, openTarget, runFileExists, runRel } from './lib/run.ts';
 import { runVariants } from './lib/variants.ts';
 
-const USAGE = 'ogw loop variants <game>';
+const USAGE = 'ogw loop variants <game> [--db postgresql]';
 
 export const loopVariants: CommandDef = {
   name: ['loop', 'variants'],
   usage: USAGE,
+  options: { db: { type: 'string' } },
   background: {
     game: (args) => args.positionals[0] ?? null,
     timeLimitMs: () => LIMITS.jobMs,
   },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, USAGE);
+    const db = str(args, 'db');
+    if (db !== undefined && db !== 'postgresql') throw new OgwError(`usage: ${USAGE}`);
     const { game, run } = await openTarget(ctx, positional(args, 0, 'game'), 'loop');
     const n = run.iteration;
     if (n === 0) throw new OgwError(`run ${run.name} has not started an iteration; run ogw loop next first`);
@@ -34,9 +37,10 @@ export const loopVariants: CommandDef = {
     failWhenContentRunning(jobs);
     // what an interrupted earlier `ogw loop variants` of the run left
     await removeVariantLeftovers(ctx, game, run, jobs);
-    const result = await runVariants(ctx, game, run, settings, await runBaseline(game, run));
+    const result = await runVariants(ctx, game, run, settings, await runBaseline(game, run), db);
     const lines = [
       result.path,
+      ...(result.file.judging === null ? [] : [`judging failed: ${result.file.judging}`]),
       ...result.file.variants.map(
         (v) =>
           `variant ${String(v.k)} ${v.job} ${v.element} commit ${v.commit ?? 'none'} vs baseline ${v.vsBaseline ?? 'none'}${v.chosen ? ' chosen' : ''}${v.merge === null ? '' : ` not merged: ${v.merge}`}`,
@@ -44,12 +48,8 @@ export const loopVariants: CommandDef = {
     ];
     if (result.chosen === null) {
       const input = abs(game, runRel(run, `content-input-${String(n)}.md`));
-      lines.push(
-        result.retry === null
-          ? `no variant was merged and no variant agent failed: call the content agent with ogw agent content --game ${game.name} --input ${input} --background`
-          : `no variant was merged: the content agent failed; retry it with ogw agent retry ${result.retry} --background`,
-      );
-      return { exitCode: 1, text: lines.join('\n'), data: { path: result.path, ...result.file, retry: result.retry } };
+      lines.push(`no variant was merged: call the content agent once with ogw agent content --game ${game.name} --input ${input} --background`);
+      return { exitCode: 1, text: lines.join('\n'), data: { path: result.path, ...result.file } };
     }
     return { text: lines.join('\n'), data: { path: result.path, ...result.file, chosen: result.chosen.k } };
   },

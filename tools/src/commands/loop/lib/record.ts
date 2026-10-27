@@ -14,7 +14,7 @@ import {
   type FindingsFile,
   type ReportRow,
 } from './defects.ts';
-import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type MeasureFile } from './files.ts';
+import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
 import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
@@ -76,14 +76,24 @@ function checkConfirmed(results: Confirmations, defect: Defect): boolean {
 /**
  * True when this record's confirmation of the defect gave a result (`### defect status`). A confirmation iteration
  * (`confirming`) takes only blocker play findings, so for another play defect it gives a result only when this record
- * has a finding of its id (`found`), and like any play confirmation only with a done play.
+ * has a finding of its id (`found`), and like any play confirmation only with a done play. A judge defect is confirmed
+ * only by a completeness iteration: a fun judge sees three elements, no reference and no moments.
  */
 export function confirmedBy(results: Confirmations, hardening: boolean, defect: Defect, confirming = false, found = false): boolean {
   if (hardening || defect.source === 'hardening') return hardening && defect.source === 'hardening';
   if (confirming && defect.source === 'play' && defect.severity !== 'blocker' && !found) return false;
   if (defect.source === 'check') return checkConfirmed(results, defect);
-  const entries: { status: string }[] = (defect.source === 'play' ? results.evaluate?.plays : results.evaluate?.judges) ?? [];
-  return entries.some((e) => e.status === 'done');
+  return defect.source === 'play' ? playConfirmed(results) : judgeConfirmed(results);
+}
+
+function playConfirmed(results: Confirmations): boolean {
+  return results.evaluate?.plays.some((p) => p.status === 'done') ?? false;
+}
+
+/** A judge defect: a done judge of a completeness iteration. */
+function judgeConfirmed(results: Confirmations): boolean {
+  const evaluate = results.evaluate;
+  return evaluate !== null && evaluate.kind !== 'fun' && evaluate.judges.some((j) => j.status === 'done');
 }
 
 async function judgesOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordJudge[]> {
@@ -92,6 +102,7 @@ async function judgesOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordJ
     const body = await readGameText(game, judge.result);
     out.push({
       ...judge,
+      agent: (judge as Partial<JudgeEntry>).agent ?? null,
       moments: body === null ? 'none' : judgeSectionText(body, 'moments'),
       loserBetter: body === null ? 'none' : judgeSectionText(body, 'loser better'),
     });

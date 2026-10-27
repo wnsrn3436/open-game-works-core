@@ -10,7 +10,7 @@ import type { RunState } from '../../../lib/runstate.ts';
 import type { HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, mergeAgentJobs, startAgentJob, type AgentOutcome } from '../../agent/api.ts';
 import { removeAgentWorktrees } from './agent-worktrees.ts';
-import { alternateSide, drawSide, evaluateDeps, judgeAgent, judgeGroup, runJudging, type EvaluateSite, type Group, type JudgePair, type JudgingPlan } from './evaluate.ts';
+import { alternateSide, drawSide, evaluateDeps, judgeAgent, judgeGroup, runJudgingKeepingEnded, type EvaluateSite, type Group, type JudgePair, type JudgingPlan } from './evaluate.ts';
 import { elementsOf, FUN_ITERATION_ELEMENTS, type ElementVotes, type JudgeEntry, type VsBaseline } from './files.ts';
 import { abs, runRel } from './run.ts';
 import { combinedVsBaseline, countVotes } from './votes.ts';
@@ -27,7 +27,7 @@ export interface VariantEntry {
   commit: string | null;
   /** Game-repo-relative paths of the judge results of the variant. */
   judges: string[];
-  /** null for a variant that was not judged. */
+  /** null for a variant that was not judged: without a commit, without a baseline game, or whose judges could not all run. */
   votes: ElementVotes[] | null;
   vsBaseline: VsBaseline | null;
   /** Why the merge of the variant failed; null when it was not tried or did not fail. */
@@ -37,6 +37,8 @@ export interface VariantEntry {
 
 export interface VariantsFile {
   baseline: string | null;
+  /** Why the judging of the variants failed; null when it did not fail or did not run. */
+  judging: string | null;
   variants: VariantEntry[];
 }
 
@@ -61,10 +63,11 @@ function votesFor(entry: VariantEntry, side: 'this' | 'baseline'): number {
 /**
  * The variants with a commit in choice order (`game-loop` `## iteration` 1): those whose `vs baseline` is `better` by
  * the most elements decided `this`, the fewest `baseline` votes and the lowest k; then the others by the largest count
- * of `this` votes minus `baseline` votes and the lowest k.
+ * of `this` votes minus `baseline` votes and the lowest k. When a variant was judged, the variants not judged are left out.
  */
 export function choiceOrder(variants: readonly VariantEntry[]): VariantEntry[] {
-  const judged = variants.filter((v) => v.commit !== null);
+  const withCommit = variants.filter((v) => v.commit !== null);
+  const judged = withCommit.some((v) => v.votes !== null) ? withCommit.filter((v) => v.votes !== null) : withCommit;
   const better = judged
     .filter((v) => v.vsBaseline === 'better')
     .sort((a, b) => decided(b, 'this') - decided(a, 'this') || votesFor(a, 'baseline') - votesFor(b, 'baseline') || a.k - b.k);
@@ -129,9 +132,20 @@ function variantSite(game: GameRepo, run: RunState): EvaluateSite {
   };
 }
 
-/** Runs `loop.judgeVotes` fun judges of each variant commit against the baseline, all variants in one judging. */
-async function judgeVariants(ctx: Context, game: GameRepo, run: RunState, settings: HarnessSettings, baseline: string, entries: readonly VariantEntry[]): Promise<void> {
-  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db: undefined, site: variantSite(game, run) };
+/**
+ * Runs `loop.judgeVotes` fun judges of each variant commit against the baseline, all variants in one judging. A variant
+ * whose judges did not all end before a failure of the judging gets no votes; returns that failure, or null.
+ */
+async function judgeVariants(
+  ctx: Context,
+  game: GameRepo,
+  run: RunState,
+  settings: HarnessSettings,
+  baseline: string,
+  entries: readonly VariantEntry[],
+  db: 'postgresql' | undefined,
+): Promise<string | null> {
+  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db, site: variantSite(game, run) };
   const groups: Group[] = [];
   const pairs = new Map<JudgePair, VariantEntry>();
   for (const entry of entries.filter((e) => e.commit !== null)) {
@@ -140,27 +154,29 @@ async function judgeVariants(ctx: Context, game: GameRepo, run: RunState, settin
     const first = drawSide();
     for (let j = 1; j <= settings.loop.judgeVotes; j++) groups.push(judgeGroup(plan, pair, 'main', j, alternateSide(first, j), judgeAgent(settings, j)));
   }
-  if (groups.length === 0) return;
-  const judged = new Map<VariantEntry, { j: number; entry: JudgeEntry }[]>();
-  for (const slot of await runJudging(ctx, plan, groups)) {
+  if (groups.length === 0) return null;
+  const { slots, failure } = await runJudgingKeepingEnded(ctx, plan, groups);
+  const judged = new Map<VariantEntry, { j: number; entry: JudgeEntry | null }[]>();
+  for (const slot of slots) {
     const entry = slot.role === 'judge' ? pairs.get(slot.pair) : undefined;
-    if (slot.role !== 'judge' || entry === undefined || slot.entry === null) continue;
+    if (slot.role !== 'judge' || entry === undefined) continue;
     judged.set(entry, [...(judged.get(entry) ?? []), { j: slot.k, entry: slot.entry }]);
   }
   for (const [entry, list] of judged) {
-    const judges = list.sort((a, b) => a.j - b.j).map((x) => x.entry);
-    entry.judges = judges.map((j) => j.result).filter((r) => r !== '');
-    entry.votes = countVotes(judges, elementsOf('fun'), settings.loop.judgeVotes);
-    entry.vsBaseline = combinedVsBaseline(entry.votes, judges.some((j) => j.lostMoments.length > 0));
+    const ended = list.sort((a, b) => a.j - b.j).flatMap((x) => (x.entry === null ? [] : [x.entry]));
+    entry.judges = ended.map((j) => j.result).filter((r) => r !== '');
+    // a variant whose judges could not all run is not judged
+    if (ended.length < list.length) continue;
+    entry.votes = countVotes(ended, elementsOf('fun'), settings.loop.judgeVotes);
+    entry.vsBaseline = combinedVsBaseline(entry.votes, ended.some((j) => j.lostMoments.length > 0));
   }
+  return failure;
 }
 
 export interface VariantsResult {
   file: VariantsFile;
   path: string;
   chosen: VariantEntry | null;
-  /** The first variant agent that failed, which the content-failure rule retries, when no variant was merged; null otherwise. */
-  retry: string | null;
 }
 
 /** Writes and commits the inputs of the variant agents, then starts them on the work branch HEAD; returns that HEAD. */
@@ -239,14 +255,20 @@ async function mergeChosen(ctx: Context, game: GameRepo, run: RunState, file: Va
  * `ogw loop variants` (`game-loop` `## iteration` 1): writes and commits the variant inputs, runs the variant agents,
  * judges their commits, merges the chosen one with its records, and removes the worktrees of the others.
  */
-export async function runVariants(ctx: Context, game: GameRepo, run: RunState, settings: HarnessSettings, baseline: string | null): Promise<VariantsResult> {
+export async function runVariants(
+  ctx: Context,
+  game: GameRepo,
+  run: RunState,
+  settings: HarnessSettings,
+  baseline: string | null,
+  db?: 'postgresql',
+): Promise<VariantsResult> {
   const { base, started } = await startVariants(ctx, game, run, settings.loop.variants);
   const outcomes = await waitAgents(ctx, started.map((s) => s.job));
   const { entries, reports } = await entriesOf(ctx, game, run, base, started, outcomes);
-  if (baseline !== null) await judgeVariants(ctx, game, run, settings, baseline, entries);
-  const file: VariantsFile = { baseline, variants: entries };
+  const judging = baseline === null ? null : await judgeVariants(ctx, game, run, settings, baseline, entries, db);
+  const file: VariantsFile = { baseline, judging, variants: entries };
   const { path, chosen } = await mergeChosen(ctx, game, run, file, reports);
   await removeAgentWorktrees(ctx, game, entries.filter((e) => e !== chosen).map((e) => e.job));
-  const failed = started.find((s) => outcomes.get(s.job)?.status !== 'done');
-  return { file, path, chosen, retry: chosen === null ? (failed?.job ?? null) : null };
+  return { file, path, chosen };
 }

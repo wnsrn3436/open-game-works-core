@@ -237,6 +237,22 @@ describe('ogw loop record', () => {
     expect((await ogw(g2.ws, ['loop', 'record', 'g'])).stderr).toContain('finding file missing');
   });
 
+  it('records the agent of a judge as unknown when the evaluate file has none', async () => {
+    const { g } = await iterationOne();
+    const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as { judges: Record<string, unknown>[] };
+    write(g.root, `${R}/evaluate-1.json`, { ...evaluate, judges: evaluate.judges.map((j) => Object.fromEntries(Object.entries(j).filter(([key]) => key !== 'agent'))) });
+    commit(g.root);
+    await ogw(g.ws, ['loop', 'findings', 'g']);
+    const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
+    write(g.root, `${R}/findings-1.json`, filled(file, () => ({ id: null, drop: 'not needed' })));
+    const out = await ogw(g.ws, ['loop', 'record', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const record = read(g.root, `${R}/iteration-1.md`);
+    expect(record).toContain(`### ${R}/judge-1-1.md\n\n- kind: main\n- status: done\n- agent: unknown\n- A: base0\n`);
+    expect(record).toContain(`### ${R}/judge-1-2.md\n\n- kind: success\n- status: failed\n- agent: unknown\n`);
+  });
+
   it('merges findings into the defect list and writes the iteration record', async () => {
     const { g, sha } = await iterationOne();
     await ogw(g.ws, ['loop', 'findings', 'g']);

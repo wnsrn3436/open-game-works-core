@@ -6,6 +6,7 @@ import { LIMITS } from '../../lib/limits.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../lib/settings.ts';
 import { binaryBuild } from '../data/lib/binary-build.ts';
 import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
+import { BOT_PLAYTEST_POLL_MS } from './lib/bot-playtest.ts';
 import { gameEngine } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
 import { gameChecks, loopCheck, runTimeLimitMs, startTimeLimitMs } from './lib/loop.ts';
@@ -20,7 +21,7 @@ const MODES = ['loop', 'regression', 'static', 'placeholder'] as const;
 type Mode = (typeof MODES)[number];
 
 /** Polling interval of instance state while a condition is not true yet. */
-export const timing = { pollMs: 200, sampleMs: 1000 };
+export const timing = { pollMs: BOT_PLAYTEST_POLL_MS, sampleMs: 1000 };
 
 function modeOf(args: CommandArgs): Mode {
   const given = MODES.filter((mode) => flag(args, mode));

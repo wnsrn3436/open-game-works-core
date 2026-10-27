@@ -229,7 +229,7 @@
           "minimum": 2
         },
         "judgePanel": {
-          "description": "Agent CLI, model and effort of the step 4 judges in turn. Empty: every judge uses `agents.judge`",
+          "description": "Agent CLI, model and effort of the step 4 judges in turn, each item for two judges in a row so that it judges both side assignments. Every item judges only when `judgeVotes` is at least twice the number of items. Empty: every judge uses `agents.judge`",
           "type": "array",
           "items": {
             "$ref": "#/$defs/agent"
