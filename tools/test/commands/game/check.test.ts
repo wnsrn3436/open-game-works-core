@@ -74,6 +74,17 @@ describe('ogw game check', () => {
       'native plugin: PROD macos needs native plugin ogw-secure-storage: engine.json of core 1.2.0 has no ogw-secure-storage for macos',
     ]);
     expect((await ogw(ws, ['game', 'check', 'mygame'])).code).toBe(0);
+    // the provisioning profile part reads a secret value, which the build host checks: no signing secret is stored here
+    writePlugins(dir, [{ name: 'ogw-secure-storage', platforms: ['linux', 'macos'] }]);
+    expect((await ogw(ws, ['game', 'check', 'mygame', '--build'])).stdout).toBe('pass\n');
+  });
+
+  it('needs provisioningProfile in signing.macos, by the keys of the macos signing table', async () => {
+    expect(await errors((s) => {
+      s.signing = { macos: { certificate: 'c', certificatePassword: 'p', notaryApiKey: 'n' } };
+      s.macosNotary = { keyId: 'K', issuerId: 'I' };
+      s.appleTeamId = 'ABCDE12345';
+    })).toEqual(['signing.macos: keys must be certificate, certificatePassword, notaryApiKey, provisioningProfile']);
   });
 
   it('gives the errors as JSON', async () => {

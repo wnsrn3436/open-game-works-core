@@ -1,10 +1,14 @@
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { exists, readJson } from '../../../lib/fsx.ts';
+import { newSecretFolder } from '../../../lib/secret-files.ts';
+import { gameSecretService } from '../../../lib/secrets.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { extractedAsset, type CoreRelease } from '../../core/api.ts';
 import { ALWAYS_MODULES } from '../../generate/lib/core-spec.ts';
 import { trackingRequested } from './godot-ios.ts';
+import { profileApplicationIdentifier, profilePlist } from './godot-signing.ts';
 import type { EngineJson } from './host.ts';
 import type { Env } from './names.ts';
 import { adaptersOf } from './settingschecks.ts';
@@ -59,11 +63,39 @@ interface Plugin {
 }
 
 /**
+ * What the provisioning profile of `signing.macos` lacks for the keychain access group of `ogw-secure-storage`
+ * (`build` engines/godot.md `## native plugin`): the profile, its secret in the secret store of this host, or
+ * `com.apple.application-identifier` `<appleTeamId>.<appId>` in its `Entitlements`. Null when it has all.
+ */
+async function macosProfileProblem(ctx: Context, game: string, settings: GameSettings): Promise<string | null> {
+  const name = (settings.signing as Record<string, Record<string, unknown> | undefined> | undefined)?.macos?.provisioningProfile;
+  if (typeof name !== 'string') return 'game settings signing.macos has no provisioningProfile';
+  const value = ctx.secrets.get(gameSecretService(game, 'signing', name));
+  if (value === null) return `signing secret ${name} is not in the secret store`;
+  const expected = `${String(settings.appleTeamId)}.${String(settings.appId)}`;
+  const dir = await newSecretFolder('ogw-profile-', ctx.env);
+  let granted: string | null;
+  try {
+    const file = join(dir, 'profile.provisionprofile');
+    await writeFile(file, Buffer.from(value, 'base64'), { mode: 0o600 });
+    granted = profileApplicationIdentifier(await profilePlist(ctx, file));
+  } catch (error) {
+    return `provisioning profile ${name} cannot be decoded with security cms: ${(error as Error).message}`;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  if (granted === expected) return null;
+  return `provisioning profile ${name} grants com.apple.application-identifier ${granted ?? 'none'}, not ${expected}, so the app has no keychain access group`;
+}
+
+/**
  * Failure lines of check `native plugin` (`build` engines/godot.md `## native plugin`): each plugin a build of `env` on
  * `platforms` needs that `engine.json` of the core release lacks for that platform, or whose `<plugin>/<platform>/`
- * `client-godot-plugins.zip` lacks. Empty for an engine other than Godot.
+ * `client-godot-plugins.zip` lacks. With `game` (`ogw build start`, `ogw build run`), a macos build that needs
+ * `ogw-secure-storage` also fails on what the provisioning profile of `signing.macos` lacks. Empty for an engine
+ * other than Godot.
  */
-export async function nativePluginProblems(ctx: Context, release: CoreRelease, settings: GameSettings, env: Env, platforms: readonly string[], modules: ModulesOf): Promise<string[]> {
+export async function nativePluginProblems(ctx: Context, release: CoreRelease, settings: GameSettings, env: Env, platforms: readonly string[], modules: ModulesOf, game?: string): Promise<string[]> {
   if ((settings.engine ?? 'godot') !== 'godot') return [];
   const wanted: { platform: string; plugin: string }[] = [];
   for (const platform of platforms) for (const plugin of await neededPlugins(settings, env, platform, modules)) wanted.push({ platform, plugin });
@@ -81,6 +113,10 @@ export async function nativePluginProblems(ctx: Context, release: CoreRelease, s
     }
     zip ??= await extractedAsset(ctx, release, 'client-godot-plugins.zip');
     if (!exists(join(zip, plugin, platform))) problems.push(`${what}: client-godot-plugins.zip of core ${release.version} has no ${plugin}/${platform}/`);
+  }
+  if (game !== undefined && wanted.some((w) => w.platform === 'macos' && w.plugin === 'ogw-secure-storage')) {
+    const problem = await macosProfileProblem(ctx, game, settings);
+    if (problem !== null) problems.push(`${env} macos needs native plugin ogw-secure-storage: ${problem}`);
   }
   return problems;
 }

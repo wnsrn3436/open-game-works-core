@@ -55,10 +55,10 @@ async function runHumanChecks(ctx: Context, game: GameRepo, commit: string, env:
 }
 
 /** STG, PROD: check `native plugin` of the build run (`build` `## build-time check`), before the hardening agents start. */
-async function requireNativePlugins(ctx: Context, settings: GameSettings, env: Env, platforms: string[]): Promise<void> {
+async function requireNativePlugins(ctx: Context, game: string, settings: GameSettings, env: Env, platforms: string[]): Promise<void> {
   if (env === 'DEV') return;
   const release = await coreRelease(ctx, String(settings.coreVersion));
-  const plugins = await nativePluginProblems(ctx, release, settings, env, platforms, releaseModules(release, settings));
+  const plugins = await nativePluginProblems(ctx, release, settings, env, platforms, releaseModules(release, settings), game);
   if (plugins.length > 0) throw new OgwError(`check native plugin:\n${plugins.join('\n')}`, 1, { plugins });
 }
 
@@ -147,7 +147,7 @@ export const start: CommandDef = {
     if (missing.length > 0) throw new OgwError(`game settings miss build stage values (ogw game check ${game.name} --build):\n${missing.join('\n')}`, 1, { missing });
     const problems = await hostProblems(ctx, { game, env, platforms, settings, harness: await ctx.settings(), hasProdTag: lastProdTag(tags) !== null });
     if (problems.length > 0) throw new OgwError(problems.join('\n'), 1, { problems });
-    await requireNativePlugins(ctx, settings, env, platforms);
+    await requireNativePlugins(ctx, game.name, settings, env, platforms);
     if (env !== 'PROD') await runHumanChecks(ctx, game, checked, env, platforms);
     const plan = prodPlan ?? (await planDevStg(input));
     if (plan.startCommit !== checked) throw mainMoved(checked, plan.startCommit);

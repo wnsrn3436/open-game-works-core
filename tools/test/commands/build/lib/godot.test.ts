@@ -16,6 +16,7 @@ import {
   filterCoreSettings,
   godotBuild,
   iosPluginNames,
+  macosEntitlements,
   missingGdextensionLibraries,
   outputFile,
   packagePaths,
@@ -25,7 +26,7 @@ import {
   withEditorPlugins,
   writeCoreSettingsWithoutDev,
 } from '../../../../src/commands/build/lib/godot.ts';
-import { ENDPOINTS, prepareSigning, profileUuid, securityArg, signWindows, windowsSigner } from '../../../../src/commands/build/lib/godot-signing.ts';
+import { ENDPOINTS, prepareSigning, profileApplicationIdentifier, profileUuid, securityArg, signWindows, windowsSigner, type MacosSigning } from '../../../../src/commands/build/lib/godot-signing.ts';
 import { makePck } from '../../../../src/commands/build/lib/pck.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import type { GameRepo } from '../../../../src/lib/game.ts';
@@ -217,7 +218,7 @@ describe('signing', () => {
     await expect(prepareSigning(ctx, 'g', {}, 'STG', 'android')).rejects.toThrow('signing.android.keystore is missing');
   });
 
-  it('signs macOS STG with the Developer ID identity of a temporary keychain, the team ID and notarization', async () => {
+  it('signs macOS STG with the Developer ID identity of a temporary keychain and the team ID, and keeps the profile and notary key for after the export', async () => {
     const ws = makeWorkspace();
     const b64 = (s: string) => Buffer.from(s).toString('base64');
     setSecrets(ws, { 'ogw/g/signing/c': b64('P12'), 'ogw/g/signing/cp': 'cpw', 'ogw/g/signing/pp': b64('PROFILE'), 'ogw/g/signing/n': b64('P8') });
@@ -231,11 +232,18 @@ esac`;
     const ctx = ctxOf(ws, { ...bin.env, HOME: tmp() });
     const settings = { appleTeamId: 'TEAM123456', macosNotary: { keyId: 'K', issuerId: 'I' }, signing: { macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } } };
     const signing = await prepareSigning(ctx, 'g', settings, 'STG', 'macos');
-    expect(signing.options).toMatchObject({ 'codesign/codesign': 3, 'codesign/identity': hash, 'codesign/apple_team_id': 'TEAM123456', 'notarization/notarization': 2 });
-    expect(readFileSync(signing.credentials['notarization/api_key'] as string, 'utf8')).toBe('P8');
-    expect(signing.credentials).toMatchObject({ 'codesign/certificate_password': 'cpw', 'notarization/api_uuid': 'I', 'notarization/api_key_id': 'K' });
+    // Godot embeds no provisioning profile outside App Store distribution and does not notarize: ogw does both after the export
+    expect(signing.options).toEqual({ 'codesign/codesign': 3, 'codesign/identity': hash, 'codesign/apple_team_id': 'TEAM123456' });
+    expect(Object.keys(signing.credentials).sort()).toEqual(['codesign/certificate_file', 'codesign/certificate_password']);
+    expect(signing.credentials['codesign/certificate_password']).toBe('cpw');
+    const macos = signing.macos as MacosSigning;
+    expect(macos.identity).toBe(hash);
+    expect(readFileSync(macos.profile, 'utf8')).toBe('PROFILE');
+    expect(macos.notary).toMatchObject({ keyId: 'K', issuerId: 'I' });
+    expect(readFileSync(macos.notary?.key ?? '', 'utf8')).toBe('P8');
     const keychain = signing.keychain as string;
     await signing.cleanup();
+    expect(existsSync(macos.profile)).toBe(false);
     const log = readFileSync(bin.log, 'utf8');
     expect(log).toMatch(/security -i "import" "\S+cert\.p12" "-k" "\S+ogw\.keychain-db" "-P" "cpw" "-T" "\/usr\/bin\/codesign"/);
     expect(log).toContain(`security list-keychains -d user -s ${keychain} /Users/x/login.keychain-db`);
@@ -243,7 +251,7 @@ esac`;
     expect(log).toMatch(/security list-keychains -d user -s \/Users\/x\/login\.keychain-db\n/);
     expect(log).toContain(`security delete-keychain ${keychain}`);
     const dev = await prepareSigning(ctx, 'g', settings, 'DEV', 'macos');
-    expect(dev.options['notarization/notarization']).toBeUndefined();
+    expect(dev.macos?.notary).toBeNull();
     expect(dev.options['codesign/identity']).toBe(hash);
     await dev.cleanup();
     await expect(prepareSigning(ctx, 'g', { ...settings, macosNotary: undefined }, 'PROD', 'macos')).rejects.toThrow('macosNotary is missing');
@@ -252,6 +260,22 @@ esac`;
     fakeBin(ws, { security: identities(`'  1) ${hash} "Apple Distribution: Example (TEAM123456)"'`) });
     await expect(prepareSigning(ctx, 'g', settings, 'STG', 'macos')).rejects.toThrow('must hold one Developer ID Application identity; it holds: Apple Distribution: Example (TEAM123456)');
     expect(readFileSync(bin.log, 'utf8').match(/security delete-keychain/g)).toHaveLength(3);
+  });
+
+  it('writes the macOS entitlements with the application identifier, team identifier and Sign in with Apple', () => {
+    const settings = { appId: 'com.x.g', appleTeamId: 'TEAM123456', environments: { STG: { adapters: { 'login-apple': 'login-apple' } } } };
+    const head = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n';
+    const ids = '\t<key>com.apple.application-identifier</key>\n\t<string>TEAM123456.com.x.g</string>\n\t<key>com.apple.developer.team-identifier</key>\n\t<string>TEAM123456</string>\n';
+    expect(macosEntitlements(settings, 'PROD')).toBe(`${head}${ids}</dict>\n</plist>\n`);
+    expect(macosEntitlements(settings, 'STG')).toBe(`${head}${ids}\t<key>com.apple.developer.applesignin</key>\n\t<array>\n\t\t<string>Default</string>\n\t</array>\n</dict>\n</plist>\n`);
+    expect(() => macosEntitlements({ appId: 'com.x.g' }, 'STG')).toThrow('appleTeamId is missing');
+  });
+
+  it('reads com.apple.application-identifier of the Entitlements of a decoded provisioning profile', () => {
+    const plist = (entitlements: string) => `<plist><dict><key>AppIDName</key><string>G</string><key>Entitlements</key><dict>${entitlements}</dict><key>UUID</key><string>U</string></dict></plist>`;
+    expect(profileApplicationIdentifier(plist('<key>com.apple.application-identifier</key>\n<string>TEAM.com.x.g</string><key>keychain-access-groups</key><array><string>TEAM.*</string></array>'))).toBe('TEAM.com.x.g');
+    expect(profileApplicationIdentifier(plist('<key>com.apple.developer.team-identifier</key><string>TEAM</string>'))).toBeNull();
+    expect(profileApplicationIdentifier('<plist><dict><key>com.apple.application-identifier</key><string>TEAM.x</string></dict></plist>')).toBeNull();
   });
 
   it('quotes a security -i argument and refuses a line break', () => {
@@ -555,6 +579,79 @@ esac`,
     expect(calls).toMatch(/codesign --force --sign Apple Distribution --keychain \S+ogw\.keychain-db --entitlements \S+entitlements\.plist \S+\/Payload\/g\.app\n/);
     expect(calls).toMatch(/ditto -c -k --sequesterRsrc --keepParent \S+\/Payload \S+g\.ipa\n/);
     expect(calls.indexOf('codesign --force')).toBeLessThan(calls.indexOf('security delete-keychain'));
+  });
+
+  it('exports macos with the entitlements, embeds the provisioning profile, signs again and notarizes STG before the keychain is deleted', async () => {
+    const ws = makeWorkspace();
+    const release = join(ws.root, 'release');
+    const dir = prepare(ws, release, { godot: '4.5.1.stable', plugins: [] });
+    write(dir, 'resource/app_icon/main.png', 'png');
+    commit(dir, 'resource');
+    const b64 = (v: string) => Buffer.from(v).toString('base64');
+    setSecrets(ws, { 'ogw/g/signing/c': b64('P12'), 'ogw/g/signing/cp': 'cpw', 'ogw/g/signing/pp': b64('PROFILE'), 'ogw/g/signing/n': b64('P8'), 'ogw/g/DEV/devAccess': 'DA' });
+    const appZip = join(ws.root, 'app.zip');
+    writeFileSync(appZip, makeZip({ 'g.app/Contents/Resources/g.pck': makePck(['features/a.gd']) }));
+    const hash = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+    const bin = fakeBin(ws, {
+      godot: GODOT,
+      ffmpeg: 'for last; do :; done; printf png > "$last"',
+      security: `case "$1" in
+  -i) read -r line; echo "security -i $line" >> "$(dirname "$0")/calls.log";;
+  list-keychains) [ "$3" = "-s" ] || echo '    "/Users/x/login.keychain-db"';;
+  find-identity) echo '  1) ${hash} "Developer ID Application: Example (TEAM123456)"'; echo '     1 valid identities found';;
+esac`,
+      ditto: `case "$1" in -x) mkdir -p "$4/g.app/Contents";; -c) for last; do :; done; cp "${appZip}" "$last";; esac`,
+      // the entitlements and the embedded profile at the time of the signing
+      codesign: 'prev=""; for a; do [ "$prev" = "--entitlements" ] && cp "$a" "$FAKE_DIR/entitlements.plist"; prev="$a"; done; for last; do :; done; cp "$last/Contents/embedded.provisionprofile" "$FAKE_DIR/embedded-at-sign"',
+      xcrun: 'prev=""; for a; do [ "$prev" = "--key" ] && cp "$a" "$FAKE_DIR/notary-key"; prev="$a"; done; [ "$1" = notarytool ] && echo "{\\"id\\":\\"S1\\",\\"status\\":\\"$NOTARY_STATUS\\",\\"message\\":\\"m\\"}"; exit 0',
+    });
+    vi.mocked(requireEngine).mockResolvedValue(join(bin.bin, 'godot'));
+    vi.mocked(toolProgram).mockResolvedValue(join(bin.bin, 'ffmpeg'));
+    const ctx = ctxOf(ws, { ...bin.env, FAKE_DIR: bin.bin, HOME: tmp(), NOTARY_STATUS: 'Accepted' });
+    const settings = gameSettings({
+      appleTeamId: 'TEAM123456',
+      macosNotary: { keyId: 'K', issuerId: 'I' },
+      signing: { macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } },
+    });
+    const game = await gameRepo(ws);
+    const input = { game, env: 'STG' as const, version: '1.2.3', platforms: ['macos'], settings, outDir: join(dir, 'builds', 'stg-1.2.3'), iosPrivacy: [], privacyManifest: null };
+    const artifact = await godotBuild(ctx, input, 'macos');
+    expect(artifact.artifact).toEqual({ platform: 'macos', path: 'builds/stg-1.2.3/macos' });
+    expect(readFileSync(join(input.outDir, 'macos', 'g.zip'))).toEqual(readFileSync(appZip));
+    const preset = readFileSync(join(bin.bin, 'preset.cfg'), 'utf8');
+    expect(preset).toContain('codesign/codesign=3');
+    expect(preset).toContain(`codesign/identity="${hash}"`);
+    expect(preset).toMatch(/codesign\/entitlements\/custom_file="\S+\/client\/\.ogw-build\/macos\.entitlements"/);
+    expect(preset).not.toContain('codesign/provisioning_profile');
+    expect(preset).not.toContain('notarization/');
+    expect(readFileSync(join(bin.bin, 'credentials.cfg'), 'utf8')).not.toContain('notarization/');
+    expect(readFileSync(join(bin.bin, 'entitlements.plist'), 'utf8')).toBe(macosEntitlements(settings, 'STG'));
+    expect(readFileSync(join(bin.bin, 'embedded-at-sign'), 'utf8')).toBe('PROFILE');
+    expect(readFileSync(join(bin.bin, 'notary-key'), 'utf8')).toBe('P8');
+    const calls = readFileSync(bin.log, 'utf8');
+    expect(calls).toMatch(/ditto -x -k \S+\/macos\/g\.zip \S+\/unpacked\n/);
+    expect(calls).toMatch(new RegExp(`codesign --force --timestamp --options runtime --entitlements \\S+macos\\.entitlements --sign ${hash} --keychain \\S+ogw\\.keychain-db \\S+/unpacked/g\\.app\\n`));
+    expect(calls).toMatch(/ditto -c -k --sequesterRsrc --keepParent \S+\/unpacked\/g\.app \S+\/g\.zip\n/);
+    expect(calls).toMatch(/xcrun notarytool submit \S+\/g\.zip --key \S+notary\.p8 --key-id K --issuer I --wait --no-progress --output-format json\n/);
+    expect(calls).toMatch(/xcrun stapler staple \S+\/unpacked\/g\.app\n/);
+    expect(calls).toMatch(/ditto -c -k --sequesterRsrc --keepParent \S+\/unpacked\/g\.app \S+\/builds\/stg-1\.2\.3\/macos\/g\.zip\n/);
+    // export, sign again, notarize, staple, the artifact zip, then the keychain goes
+    const order = [/--export-release macos-stg/, /codesign --force/, /xcrun notarytool submit/, /xcrun stapler staple/, /--keepParent \S+ \S+\/builds\/stg-1\.2\.3\/macos\/g\.zip\n/, /security delete-keychain/];
+    const at = order.map((pattern) => pattern.exec(calls)?.index ?? -1);
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+
+    // a notarization that is not Accepted fails the export
+    await expect(godotBuild(ctxOf(ws, { ...bin.env, FAKE_DIR: bin.bin, HOME: tmp(), NOTARY_STATUS: 'Invalid' }), input, 'macos')).rejects.toThrow('notarization of g.app ended with status Invalid (submission S1): m');
+
+    // DEV with signing.macos signs again with the profile and is not notarized
+    writeFileSync(bin.log, '');
+    const dev = await godotBuild(ctx, { ...input, env: 'DEV', outDir: join(dir, 'builds', 'dev-1.2.3') }, 'macos');
+    expect(dev.artifact.freeSigning).toBeUndefined();
+    const devCalls = readFileSync(bin.log, 'utf8');
+    expect(devCalls).toContain('codesign --force --timestamp --options runtime');
+    expect(devCalls).not.toContain('xcrun');
+    expect(devCalls).toMatch(/ditto -c -k --sequesterRsrc --keepParent \S+\/unpacked\/g\.app \S+\/builds\/dev-1\.2\.3\/macos\/g\.zip\n/);
   });
 
   it('enables the editor plugins of the android plugins in project.godot', async () => {

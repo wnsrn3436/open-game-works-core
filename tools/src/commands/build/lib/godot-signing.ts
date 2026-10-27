@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { copyFile, link, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, link, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
@@ -8,7 +8,7 @@ import { exists } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { runOk } from '../../../lib/proc.ts';
-import { newSecretFolder } from '../../../lib/secret-files.ts';
+import { newPrivateTempFolder, newSecretFolder } from '../../../lib/secret-files.ts';
 import { gameSecretService, ogwKeychainFolder } from '../../../lib/secrets.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { buildToolProgram, hostPlatform } from '../../env/api.ts';
@@ -23,7 +23,19 @@ export interface Signing {
   credentials: Record<string, unknown>;
   /** iOS, macOS: the temporary keychain that holds the signing certificate until `cleanup`. */
   keychain?: string;
+  /** macOS without free signing: the material of the macOS signing after the export. */
+  macos?: MacosSigning;
   cleanup(): Promise<void>;
+}
+
+/** The macOS signing after the export (`build` engines/godot.md `## signing`). */
+export interface MacosSigning {
+  /** SHA-1 hash of the Developer ID Application identity in the keychain. */
+  identity: string;
+  /** The Developer ID provisioning profile file, embedded as `Contents/embedded.provisionprofile`. */
+  profile: string;
+  /** STG, PROD: the App Store Connect API key file and IDs of `xcrun notarytool`; null for DEV, which is not notarized. */
+  notary: { key: string; keyId: string; issuerId: string } | null;
 }
 
 export const ENDPOINTS = { entraToken: 'https://login.microsoftonline.com' };
@@ -72,12 +84,23 @@ export function securityArg(value: string): string {
 /** A `security` command with a secret argument: the command reaches `security -i` through stdin, not its command line. */
 const secSecret = (ctx: Context, args: string[]): Promise<string> => sec(ctx, ['-i'], `${args.map(securityArg).join(' ')}\n`);
 
+/** The plist of a provisioning profile file, decoded with `security cms -D -i`. */
+export async function profilePlist(ctx: Context, file: string): Promise<string> {
+  return sec(ctx, ['cms', '-D', '-i', file]);
+}
+
 /** `UUID` of a provisioning profile file. */
 export async function profileUuid(ctx: Context, file: string): Promise<string> {
-  const plist = await sec(ctx, ['cms', '-D', '-i', file]);
+  const plist = await profilePlist(ctx, file);
   const m = /<key>UUID<\/key>\s*<string>([^<]+)<\/string>/.exec(plist);
   if (!m) throw new OgwError('provisioning profile has no UUID');
   return m[1] as string;
+}
+
+/** `com.apple.application-identifier` of `Entitlements` in a decoded macOS provisioning profile plist, or null. */
+export function profileApplicationIdentifier(plist: string): string | null {
+  const entitlements = /<key>Entitlements<\/key>\s*<dict>([^]*?)<\/dict>/.exec(plist)?.[1] ?? '';
+  return /<key>com\.apple\.application-identifier<\/key>\s*<string>([^<]*)<\/string>/.exec(entitlements)?.[1] ?? null;
 }
 
 function searchList(out: string): string[] {
@@ -192,20 +215,58 @@ async function macos(ctx: Context, game: string, settings: GameSettings, env: En
     const notary = settings.macosNotary as { keyId?: string; issuerId?: string } | undefined;
     if (env !== 'DEV' && (!notary?.keyId || !notary.issuerId)) throw new OgwError('game settings macosNotary is missing');
     const credentials: Record<string, unknown> = { 'codesign/certificate_file': p12, 'codesign/certificate_password': certPassword };
-    const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/apple_team_id': team, 'codesign/provisioning_profile': await write('profile.provisionprofile', 'provisioningProfile') };
-    if (env !== 'DEV' && notary?.keyId && notary.issuerId) {
-      options['notarization/notarization'] = 2;
-      credentials['notarization/api_uuid'] = notary.issuerId;
-      credentials['notarization/api_key_id'] = notary.keyId;
-      credentials['notarization/api_key'] = await write('notary.p8', 'notaryApiKey');
-    }
+    // Godot embeds a provisioning profile only for App Store distribution: the macOS signing after the export embeds it
+    const profile = await write('profile.provisionprofile', 'provisioningProfile');
+    const notaryKey = env !== 'DEV' && notary?.keyId && notary.issuerId ? { key: await write('notary.p8', 'notaryApiKey'), keyId: notary.keyId, issuerId: notary.issuerId } : null;
     keychain = join(dir, 'ogw.keychain-db');
     await importCertificate(ctx, keychain, p12, certPassword);
-    options['codesign/identity'] = await developerIdIdentity(ctx, keychain);
-    return { env: {}, options, credentials, keychain, cleanup };
+    const identity = await developerIdIdentity(ctx, keychain);
+    const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/apple_team_id': team, 'codesign/identity': identity };
+    return { env: {}, options, credentials, keychain, macos: { identity, profile, notary: notaryKey }, cleanup };
   } catch (error) {
     await cleanup();
     throw error;
+  }
+}
+
+const run = (ctx: Context, cmd: string, args: string[]): Promise<string> =>
+  runOk(cmd, args, { env: ctx.env, timeoutMs: LIMITS.programMs }).then((r) => r.stdout);
+
+/**
+ * The macOS signing after the export (`build` engines/godot.md `## signing`): the `.app` of `zip` gets the provisioning
+ * profile as `Contents/embedded.provisionprofile` and is signed again with `entitlements`, the identity of `keychain`
+ * and the hardened runtime; STG and PROD then notarize it and staple the ticket; then `zip` is written again.
+ */
+export async function signMacosApp(ctx: Context, zip: string, entitlements: string, keychain: string, macos: MacosSigning): Promise<void> {
+  const dir = await newPrivateTempFolder('ogw-macos-', ctx.env);
+  try {
+    const unpacked = join(dir, 'unpacked');
+    await run(ctx, 'ditto', ['-x', '-k', zip, unpacked]);
+    const name = (await readdir(unpacked)).find((n) => n.endsWith('.app'));
+    if (name === undefined) throw new OgwError(`${zip} has no .app at its root`);
+    const app = join(unpacked, name);
+    await copyFile(macos.profile, join(app, 'Contents', 'embedded.provisionprofile'));
+    await run(ctx, 'codesign', ['--force', '--timestamp', '--options', 'runtime', '--entitlements', entitlements, '--sign', macos.identity, '--keychain', keychain, app]);
+    if (macos.notary !== null) {
+      const submitted = join(dir, `${name.slice(0, -'.app'.length)}.zip`);
+      await run(ctx, 'ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, submitted]);
+      const { key, keyId, issuerId } = macos.notary;
+      const out = await run(ctx, 'xcrun', ['notarytool', 'submit', submitted, '--key', key, '--key-id', keyId, '--issuer', issuerId, '--wait', '--no-progress', '--output-format', 'json']);
+      let result: { id?: unknown; status?: unknown; message?: unknown } = {};
+      try {
+        result = JSON.parse(out) as typeof result;
+      } catch {
+        throw new OgwError(`xcrun notarytool submit gave no JSON: ${out.trim()}`);
+      }
+      if (result.status !== 'Accepted') {
+        throw new OgwError(`notarization of ${name} ended with status ${String(result.status)} (submission ${String(result.id)}): ${String(result.message)}`);
+      }
+      await run(ctx, 'xcrun', ['stapler', 'staple', app]);
+    }
+    await rm(zip, { force: true });
+    await run(ctx, 'ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, zip]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 }
 

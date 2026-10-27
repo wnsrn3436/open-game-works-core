@@ -94,7 +94,7 @@ async function preBuildChecks(b: Build, data: DataRun, versions: DataVersions | 
   const ws = await ctx.workspace();
   const list = needles(ctx, game.name, b.settings, open.env, ws.root);
   const checks: CheckWithHuman[] = [...(await staticChecks(ctx, game, open.env)), ...human.checks];
-  const plugins = await nativePluginProblems(ctx, await coreReleaseOfGame(ctx, game), b.settings, open.env, b.platforms, () => Promise.resolve(input.modules));
+  const plugins = await nativePluginProblems(ctx, await coreReleaseOfGame(ctx, game), b.settings, open.env, b.platforms, () => Promise.resolve(input.modules), game.name);
   checks.push(plain('native plugin', open.env, plugins));
   // PROD uses the server image of the STG build, which this check covered
   if (open.env === 'STG' && versions !== null && (await bundleHasData(b, versions))) addDetails(checks.map((c) => c.check), 'DEV code', open.env, await serverImageDevCode(ctx, game, b.settings, open.env));
