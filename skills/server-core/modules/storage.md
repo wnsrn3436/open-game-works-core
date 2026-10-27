@@ -351,7 +351,7 @@ Added `CoreError`: none
 | `storage.dbAnswerWaitMs` | integer | core | content | maximum duration to wait for a PostgreSQL connection and for the part of a statement answer beyond the lock wait. 1 or more |
 | `storage.schemaLockWaitMs` | integer | core | content | maximum duration that server start waits for the schema lock |
 | `storage.schemaAnswerWaitMs` | integer | core | content | maximum duration to wait for the part of a statement answer beyond the lock wait inside the schema lock transaction of server start. 1 or more |
-| `storage.sweepBatchSize` | integer | core | content | maximum number of rows that one delete statement of `sweep_expired` deletes. 1 or more |
+| `storage.sweepBatchSize` | integer | core | content | maximum number of rows that one delete statement of `sweep_expired` deletes |
 | `storage.sweepTableBudgetMs` | integer | core | content | real elapsed time from the first delete statement of a table after which `sweep_expired` starts no further delete statement of that table in that run. 1 or more |
 | `storage.maxShuffleCount` | integer | core | content | largest n of `random_shuffle` |
 | `storage.maxPublicReadCount` | integer | core | content | limit on the number of users in one `read_public_state` |
