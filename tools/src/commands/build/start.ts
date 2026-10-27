@@ -19,6 +19,8 @@ import { ghcrLogin, imageDigest } from './lib/registry.ts';
 import { humanChecks } from './lib/settingschecks.ts';
 import { buildStageMissingErrors } from '../settings/api.ts';
 import { requireHarnessCore } from '../core/lib/harness-core.ts';
+import { coreRelease } from '../core/api.ts';
+import { nativePluginProblems, releaseModules } from './lib/native-plugins.ts';
 
 export const PLATFORMS = ['android', 'ios', 'web', 'windows', 'macos', 'linux'];
 
@@ -50,6 +52,14 @@ async function runHumanChecks(ctx: Context, game: GameRepo, commit: string, env:
   if (failed.length === 0) return;
   const text = failed.map((f) => `human check ${f.check}: ${f.targets.join(', ')}`).join('\n');
   throw new OgwError(text, 1, { human: failed });
+}
+
+/** STG, PROD: check `native plugin` of the build run (`build` `## build-time check`), before the hardening agents start. */
+async function requireNativePlugins(ctx: Context, settings: GameSettings, env: Env, platforms: string[]): Promise<void> {
+  if (env === 'DEV') return;
+  const release = await coreRelease(ctx, String(settings.coreVersion));
+  const plugins = await nativePluginProblems(ctx, release, settings, env, platforms, releaseModules(release, settings));
+  if (plugins.length > 0) throw new OgwError(`check native plugin:\n${plugins.join('\n')}`, 1, { plugins });
 }
 
 async function bundleHasData(ctx: Context, game: GameRepo, env: Env, appVersion: string, commit: string): Promise<boolean> {
@@ -137,6 +147,7 @@ export const start: CommandDef = {
     if (missing.length > 0) throw new OgwError(`game settings miss build stage values (ogw game check ${game.name} --build):\n${missing.join('\n')}`, 1, { missing });
     const problems = await hostProblems(ctx, { game, env, platforms, settings, harness: await ctx.settings(), hasProdTag: lastProdTag(tags) !== null });
     if (problems.length > 0) throw new OgwError(problems.join('\n'), 1, { problems });
+    await requireNativePlugins(ctx, settings, env, platforms);
     if (env !== 'PROD') await runHumanChecks(ctx, game, checked, env, platforms);
     const plan = prodPlan ?? (await planDevStg(input));
     if (plan.startCommit !== checked) throw mainMoved(checked, plan.startCommit);

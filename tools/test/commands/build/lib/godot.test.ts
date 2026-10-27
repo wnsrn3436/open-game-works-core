@@ -16,6 +16,7 @@ import {
   filterCoreSettings,
   godotBuild,
   iosPluginNames,
+  missingGdextensionLibraries,
   outputFile,
   packagePaths,
   presetCfg,
@@ -216,19 +217,41 @@ describe('signing', () => {
     await expect(prepareSigning(ctx, 'g', {}, 'STG', 'android')).rejects.toThrow('signing.android.keystore is missing');
   });
 
-  it('writes macOS credentials and notarization for STG', async () => {
+  it('signs macOS STG with the Developer ID identity of a temporary keychain, the team ID and notarization', async () => {
     const ws = makeWorkspace();
     const b64 = (s: string) => Buffer.from(s).toString('base64');
     setSecrets(ws, { 'ogw/g/signing/c': b64('P12'), 'ogw/g/signing/cp': 'cpw', 'ogw/g/signing/pp': b64('PROFILE'), 'ogw/g/signing/n': b64('P8') });
-    const settings = { macosNotary: { keyId: 'K', issuerId: 'I' }, signing: { macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } } };
-    const signing = await prepareSigning(ctxOf(ws), 'g', settings, 'STG', 'macos');
-    expect(signing.options).toMatchObject({ 'codesign/codesign': 3, 'notarization/notarization': 2 });
+    const hash = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+    const identities = (names: string) => `case "$1" in
+  -i) read -r line; echo "security -i $line" >> "$(dirname "$0")/calls.log";;
+  list-keychains) [ "$3" = "-s" ] || echo '    "/Users/x/login.keychain-db"';;
+  find-identity) printf '%s\n' ${names} '     1 valid identities found';;
+esac`;
+    const bin = fakeBin(ws, { security: identities(`'  1) ${hash} "Developer ID Application: Example (TEAM123456)"'`) });
+    const ctx = ctxOf(ws, bin.env);
+    const settings = { appleTeamId: 'TEAM123456', macosNotary: { keyId: 'K', issuerId: 'I' }, signing: { macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } } };
+    const signing = await prepareSigning(ctx, 'g', settings, 'STG', 'macos');
+    expect(signing.options).toMatchObject({ 'codesign/codesign': 3, 'codesign/identity': hash, 'codesign/apple_team_id': 'TEAM123456', 'notarization/notarization': 2 });
     expect(readFileSync(signing.credentials['notarization/api_key'] as string, 'utf8')).toBe('P8');
     expect(signing.credentials).toMatchObject({ 'codesign/certificate_password': 'cpw', 'notarization/api_uuid': 'I', 'notarization/api_key_id': 'K' });
+    const keychain = signing.keychain as string;
     await signing.cleanup();
-    const dev = await prepareSigning(ctxOf(ws), 'g', settings, 'DEV', 'macos');
+    const log = readFileSync(bin.log, 'utf8');
+    expect(log).toMatch(/security -i "import" "\S+cert\.p12" "-k" "\S+ogw\.keychain-db" "-P" "cpw" "-T" "\/usr\/bin\/codesign"/);
+    expect(log).toContain(`security list-keychains -d user -s ${keychain} /Users/x/login.keychain-db`);
+    expect(log).toContain(`security find-identity -v -p codesigning ${keychain}`);
+    expect(log).toMatch(/security list-keychains -d user -s \/Users\/x\/login\.keychain-db\n/);
+    expect(log).toContain(`security delete-keychain ${keychain}`);
+    const dev = await prepareSigning(ctx, 'g', settings, 'DEV', 'macos');
     expect(dev.options['notarization/notarization']).toBeUndefined();
-    await expect(prepareSigning(ctxOf(ws), 'g', { signing: settings.signing }, 'PROD', 'macos')).rejects.toThrow('macosNotary is missing');
+    expect(dev.options['codesign/identity']).toBe(hash);
+    await dev.cleanup();
+    await expect(prepareSigning(ctx, 'g', { ...settings, macosNotary: undefined }, 'PROD', 'macos')).rejects.toThrow('macosNotary is missing');
+    await expect(prepareSigning(ctx, 'g', { ...settings, appleTeamId: undefined }, 'PROD', 'macos')).rejects.toThrow('appleTeamId is missing');
+    // a certificate that is not Developer ID Application (e.g. Apple Distribution of the Mac App Store) is refused
+    fakeBin(ws, { security: identities(`'  1) ${hash} "Apple Distribution: Example (TEAM123456)"'`) });
+    await expect(prepareSigning(ctx, 'g', settings, 'STG', 'macos')).rejects.toThrow('must hold one Developer ID Application identity; it holds: Apple Distribution: Example (TEAM123456)');
+    expect(readFileSync(bin.log, 'utf8').match(/security delete-keychain/g)).toHaveLength(3);
   });
 
   it('quotes a security -i argument and refuses a line break', () => {
@@ -530,7 +553,28 @@ esac`,
     const project = readFileSync(join(bin.bin, 'project.godot'), 'utf8');
     expect(project).toContain('config/version="1.2.3"');
     expect(project).toMatch(/\n\[editor_plugins\]\n\nenabled=PackedStringArray\("res:\/\/addons\/ogw-native-ui\/plugin\.cfg", "res:\/\/addons\/ogw-push-fcm\/plugin\.cfg", "res:\/\/addons\/third\/plugin\.cfg"\)\n$/);
-    expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).not.toContain('plugins/');
+    const preset = readFileSync(join(bin.bin, 'preset.cfg'), 'utf8');
+    expect(preset).not.toContain('plugins/');
+    // webrtc-native has no android arm32 library: the export has only arm64-v8a
+    expect(preset).toContain('architectures/armeabi-v7a=false\narchitectures/arm64-v8a=true\n');
+  });
+
+  it('fails an export whose output names a GDExtension without its library', async () => {
+    expect(missingGdextensionLibraries('ok\nWARNING: No "arm32" library found for GDExtension: res://webrtc/webrtc.gdextension.\n  at: x\n')).toEqual([
+      'WARNING: No "arm32" library found for GDExtension: res://webrtc/webrtc.gdextension.',
+    ]);
+    expect(missingGdextensionLibraries('Library found for GDExtension\n')).toEqual([]);
+    const ws = makeWorkspace();
+    const release = join(ws.root, 'release');
+    const dir = prepare(ws, release, { godot: '4.5.1.stable', plugins: [] });
+    setSecrets(ws, {});
+    const warn = `case "$*" in *--export-*) echo 'WARNING: No "x86_64" library found for GDExtension: res://addons/w/w.gdextension.' >&2;; esac\n`;
+    const bin = fakeBin(ws, { godot: warn + GODOT });
+    vi.mocked(requireEngine).mockResolvedValue(join(bin.bin, 'godot'));
+    const ctx = ctxOf(ws, { ...bin.env, FAKE_DIR: bin.bin });
+    const game = await gameRepo(ws);
+    const input = { game, env: 'STG' as const, version: '1.2.3', platforms: ['linux'], settings: gameSettings(), outDir: join(dir, 'builds', 'stg-1.2.3'), iosPrivacy: [], privacyManifest: null };
+    await expect(godotBuild(ctx, input, 'linux')).rejects.toThrow('export of linux has a GDExtension without its library:\nWARNING: No "x86_64" library found for GDExtension: res://addons/w/w.gdextension.');
   });
 
   it('exports DEV android, macos and windows without signing values with free signing and records it on the artifact', async () => {

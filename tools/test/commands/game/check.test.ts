@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { coreRelease } from '../../../src/commands/core/api.ts';
+import { coreRelease, extractedAsset } from '../../../src/commands/core/api.ts';
 import { bulletStartsWith, deployBullets, bulletsByStart, HUMAN_PREP } from '../../../src/commands/game/lib/human-prep.ts';
 import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 import { CORE_SETTINGS, validGameSettings, writeRelease } from '../settings/fixtures.ts';
@@ -19,9 +19,19 @@ type Settings = GameSettingsFixture;
 
 let ws: TestWorkspace;
 
+/** The `engine.json` plugins of the release, whose `client-godot-plugins.zip` holds each `<plugin>/<platform>/`. */
+function writePlugins(dir: string, plugins: { name: string; platforms: string[] }[]): void {
+  writeFileSync(join(dir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', plugins }));
+  for (const { name, platforms } of plugins) for (const platform of platforms) mkdirSync(join(dir, name, platform), { recursive: true });
+}
+
 beforeEach(() => {
   ws = makeWorkspace();
-  vi.mocked(coreRelease).mockResolvedValue(writeRelease(join(ws.root, 'release')));
+  const release = writeRelease(join(ws.root, 'release'));
+  vi.mocked(coreRelease).mockResolvedValue(release);
+  // every asset of the release extracts to its folder
+  vi.mocked(extractedAsset).mockResolvedValue(release.dir);
+  writePlugins(release.dir, [{ name: 'ogw-secure-storage', platforms: ['android', 'ios', 'macos', 'windows', 'linux'] }]);
 });
 
 function writeSettings(settings: Settings): void {
@@ -49,6 +59,21 @@ describe('ogw game check', () => {
     const run = await check();
     expect(run).toEqual({ code: 0, stdout: 'pass\n', stderr: '' });
     expect(vi.mocked(coreRelease).mock.calls[0]?.[1]).toBe('1.2.0');
+  });
+
+  it('with --build, needs the native plugins of STG and PROD builds of the build platforms in the core release', async () => {
+    const dir = join(ws.root, 'release');
+    writePlugins(dir, [{ name: 'ogw-secure-storage', platforms: ['linux'] }, { name: 'ogw-iap-apple', platforms: ['ios'] }]);
+    expect(await errors((s) => {
+      s.buildPlatforms = ['linux', 'macos'];
+      s.signing = { macos: { certificate: 'c', certificatePassword: 'p', provisioningProfile: 'pp', notaryApiKey: 'n' } };
+      s.macosNotary = { keyId: 'K', issuerId: 'I' };
+      s.appleTeamId = 'ABCDE12345';
+    })).toEqual([
+      'native plugin: STG macos needs native plugin ogw-secure-storage: engine.json of core 1.2.0 has no ogw-secure-storage for macos',
+      'native plugin: PROD macos needs native plugin ogw-secure-storage: engine.json of core 1.2.0 has no ogw-secure-storage for macos',
+    ]);
+    expect((await ogw(ws, ['game', 'check', 'mygame'])).code).toBe(0);
   });
 
   it('gives the errors as JSON', async () => {
@@ -111,7 +136,7 @@ describe('ogw game check', () => {
     expect(await errors((s) => {
       s.buildPlatforms = ['linux'];
       s.signing = { android: { keystore: 'ks', password: 'pw' }, windows: { clientSecret: 'cs' }, macos: { certificate: 'c', certificatePassword: 'p', provisioningProfile: 'pp', notaryApiKey: 'n' } };
-    })).toEqual(['androidKeyAlias: missing', 'trustedSigning: missing', 'macosNotary: missing']);
+    })).toEqual(['androidKeyAlias: missing', 'trustedSigning: missing', 'macosNotary: missing', 'appleTeamId: missing']);
     // ios needs signing in every environment
     expect(await errors((s) => {
       s.buildPlatforms = ['ios'];

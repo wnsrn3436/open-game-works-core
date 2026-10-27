@@ -133,7 +133,7 @@ async function androidOptions(p: PresetContext): Promise<Record<string, unknown>
   return {
     'gradle_build/use_gradle_build': true,
     'gradle_build/export_format': p.env === 'DEV' ? 0 : 1,
-    'architectures/armeabi-v7a': true,
+    'architectures/armeabi-v7a': false,
     'architectures/arm64-v8a': true,
     'architectures/x86': false,
     'architectures/x86_64': false,
@@ -420,8 +420,14 @@ export async function checkPackage(outDir: string, platform: string, game: strin
   return devCode;
 }
 
-async function godotRun(ctx: Context, godot: string, root: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  await runOk(godot, ['--headless', '--path', join(root, 'client'), ...args], { env: { ...ctx.env, ...env }, timeoutMs: LIMITS.programMs });
+async function godotRun(ctx: Context, godot: string, root: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+  const result = await runOk(godot, ['--headless', '--path', join(root, 'client'), ...args], { env: { ...ctx.env, ...env }, timeoutMs: LIMITS.programMs });
+  return `${result.stdout}\n${result.stderr}`;
+}
+
+/** The lines of an export output in which Godot left a GDExtension without its library for an exported architecture. */
+export function missingGdextensionLibraries(output: string): string[] {
+  return output.split(/\r?\n/).filter((line) => /No "[^"]+" library found for GDExtension/.test(line)).map((line) => line.trim());
 }
 
 /** Launch values of the DEV export of check `device performance` or `web smoke` (`## device performance`, `## web smoke`). */
@@ -477,7 +483,10 @@ async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: s
       await writeFileAtomic(join(root, 'client', '.godot', 'export_credentials.cfg'), presetCfg({ name }, signing.credentials));
     }
     await godotRun(ctx, godot, root, ['--import'], signing.env);
-    await godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env);
+    const output = await godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env);
+    // Godot exports without the library and ends with code 0: the app would run without that plugin
+    const missing = missingGdextensionLibraries(output);
+    if (missing.length > 0) throw new OgwError(`export of ${platform} has a GDExtension without its library:\n${missing.join('\n')}`);
     // an export that made no page is reported by the output check of the caller
     if (platform === 'web' && exists(exportPath)) await installServiceWorker(join(root, 'client'), dirname(exportPath));
     if (platform === 'ios' && trackingRequested(input.settings) && signing.keychain !== undefined) {

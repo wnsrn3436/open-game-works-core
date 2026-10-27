@@ -35,12 +35,15 @@ const GH = `case "$1 $2" in
 esac`;
 
 let coreDir = '';
+const NATIVE_PLUGINS = [{ name: 'ogw-secure-storage', platforms: ['android', 'ios', 'macos', 'windows', 'linux'] }];
 
 function prepare(ws: TestWorkspace, coreSpec: object[] = [], coreSettings: object = {}): NodeJS.ProcessEnv {
   coreDir = join(ws.root, 'release');
   mkdirSync(coreDir, { recursive: true });
   writeFileSync(join(coreDir, 'core-spec.json'), JSON.stringify({ version: '1.0.0', modules: coreSpec }));
-  writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', buildTools: [] }));
+  writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', buildTools: [], plugins: NATIVE_PLUGINS }));
+  // check `native plugin`: every asset of the release extracts to `coreDir`
+  for (const platform of ['android', 'ios', 'macos', 'windows', 'linux']) mkdirSync(join(coreDir, 'ogw-secure-storage', platform), { recursive: true });
   writeFileSync(join(coreDir, 'core-settings.json'), JSON.stringify(coreSettings));
   writeFileSync(join(coreDir, 'core-settings.schema.json'), JSON.stringify({ type: 'object' }));
   writeFileSync(join(coreDir, 'core-settings-constraints.json'), '[]');
@@ -308,6 +311,19 @@ describe('build start DEV and STG', () => {
     expect((await runsOf(ws))[0]).toMatchObject({ iteration: 1, referenceCommit: head });
   });
 
+  it('refuses an STG build whose core release lacks a native plugin the platforms need, and not a DEV build', async () => {
+    const ws = makeWorkspace();
+    const env = prepare(ws);
+    const dir = setupGame(ws);
+    writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', buildTools: [], plugins: [{ name: 'ogw-native-ui', platforms: ['linux'] }] }));
+    const out = await ogw(ws, ['build', 'start', 'g', 'STG'], { env });
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('check native plugin:\nSTG linux needs native plugin ogw-secure-storage: engine.json of core 1.0.0 has no ogw-secure-storage for linux');
+    expect(await runsOf(ws)).toEqual([]);
+    expect(git(dir, 'branch', '--list', 'build/*')).toBe('');
+    expect((await ogw(ws, ['build', 'start', 'g', 'DEV'], { env })).code).toBe(0);
+  });
+
   it('registers the run only while main is still the planned start commit', async () => {
     const ws = makeWorkspace();
     const env = prepare(ws);
@@ -527,7 +543,7 @@ describe('build start tools and PROD bundle patches', () => {
 
 describe('build start host checks of build procedure 1', () => {
   function engineJson(buildTools: object[]): void {
-    writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', buildTools }));
+    writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', buildTools, plugins: NATIVE_PLUGINS }));
   }
 
   it('probes an installed build tool with downloads and a version printed on stderr', async () => {

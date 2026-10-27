@@ -5,6 +5,7 @@
 - platform
 - bundle export
 - signing
+- native plugin
 - device performance
 - web smoke
 
@@ -16,10 +17,10 @@
 2. For STG and PROD, changes the `LogCore.log_debug(...)` lines by the `LogCore` row of `engines/godot.md` `## engine behavior` of the `client-core` skill
 3. Writes `generated/build_info.json` and `application/config/version` of `project.godot`. `generated/build_info.json` is a JSON object keyed by the `BuildInfo` field names of `BootstrapCore`: `app_id` is game settings `appId`, `app_version` is the version, `environment` is the environment name, `platform` is the platform, `server_url` is that environment's `serverUrl` (an empty string when there is none), `game_update_url` is `server_url` followed by `/update/deploy_list.json`, `update_trust_keys` is a `{key_id, public_key}` for each item of that environment's `updatePublicKeys` (`key_id` is the key ID of `game-update`), `adapters` is that environment's `adapters`, `ad_units` is the ad unit IDs of that platform keyed by the ID value of the placement (read from `id_registry.json` of the `id-registry` branch) as a decimal string, and `instance_id` is an empty string. DEV adds the value of DEV secret `devAccess` as `dev_access`. When a placement of `adUnits` is not in `id_registry.json`, it fails
 4. Writes `export_presets.cfg`
-5. Puts in the signing values. For ios, does the keychain and provisioning profile preparation of `## signing`
+5. Puts in the signing values. For ios and macos without free signing, does the keychain preparation of `## signing`, and for ios also the provisioning profile preparation
 6. `godot --headless --path client --import`
 7. Runs `godot --headless --path client --export-<debug|release> "<preset>" <output file>` with `--export-debug` for DEV and `--export-release` for STG and PROD. For ios when game settings `consent.trackingRequest` is `true`, it then puts the localized `NSUserTrackingUsageDescription` into the `.ipa` before the keychain of `## signing` is deleted: it unpacks the `.ipa` with `ditto -x -k`, and for each language of game settings `supportedLanguages` writes `NSUserTrackingUsageDescription` of `Payload/<app>.app/<language with `-` replaced by `_`>.lproj/InfoPlist.strings` (made with `plutil -create xml1` when it does not exist) as the text of that language with `plutil -replace`. The text is the translation of reserved string `[auth_tracking_usage]`, and the source text for a missing translation. Then it re-signs the app bundle with `codesign --force` using the entitlements read with `codesign -d --entitlements <file> --xml`, the signing identity of that environment (DEV `Apple Development`, STG and PROD `Apple Distribution`) and the keychain of `## signing`, and packs `Payload` into the `.ipa` again with `ditto -c -k --sequesterRsrc --keepParent`
-8. When the exit code is not 0 or a named output file (the files starting with `<game>`, `index.html` for web) is missing, it fails
+8. When the exit code is not 0, the output of the export has a line with `No "<architecture>" library found for GDExtension`, or a named output file (the files starting with `<game>`, `index.html` for web) is missing, it fails
 9. When the file list inside the made package has a target of `exclude_filter`, or the app bundle root inside the ios `.ipa` has no `PrivacyInfo.xcprivacy`, it fails
 10. For windows without free signing, signs the output files by `## signing`. When signing fails, it fails
 
@@ -57,7 +58,7 @@
 
 | platform | preset `platform` | architecture | output file |
 |---|---|---|---|
-| android | `Android` | `arm64-v8a`, `armeabi-v7a` | `<game>.aab` (`gradle_build/export_format=1`) for STG and PROD, `<game>.apk` (`0`) for DEV |
+| android | `Android` | `arm64-v8a` | `<game>.aab` (`gradle_build/export_format=1`) for STG and PROD, `<game>.apk` (`0`) for DEV |
 | ios | `iOS` | `arm64` | `<game>.ipa` |
 | macos | `macOS` | `universal` | `<game>.zip` |
 | windows | `Windows Desktop` | `x86_64` | `<game>.exe`, `<game>.pck` and all files the export wrote in the same folder (GDExtension libraries and the libraries they use) |
@@ -87,13 +88,13 @@ In a bundle patch build, `ogw build run` makes the bundle files in the order bel
   |---|---|
   | android | `keystore`(base64 keystore file), `password` |
   | ios | `developmentCertificate`(base64 p12, Apple Development), `developmentCertificatePassword`, `developmentProvisioningProfile`(base64, iOS App Development), `distributionCertificate`(base64 p12, Apple Distribution), `distributionCertificatePassword`, `distributionProvisioningProfile`(base64, App Store) |
-  | macos | `certificate`(base64 p12), `certificatePassword`, `provisioningProfile`(base64), `notaryApiKey`(base64) |
+  | macos | `certificate`(base64 p12, Developer ID Application), `certificatePassword`, `provisioningProfile`(base64, Developer ID), `notaryApiKey`(base64) |
   | windows | `clientSecret`(client secret of the game settings `trustedSigning.clientId` app) |
 
 - Values that are files are unpacked into a temporary folder outside the build workspace and the game repo, and deleted when the export ends
 - android passes them through the environment variables `GODOT_ANDROID_KEYSTORE_DEBUG_PATH`, `GODOT_ANDROID_KEYSTORE_DEBUG_USER`, `GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD` (DEV) and `GODOT_ANDROID_KEYSTORE_RELEASE_PATH`, `GODOT_ANDROID_KEYSTORE_RELEASE_USER`, `GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD` (STG and PROD) of the export process. `_PATH` is the file unpacked from `keystore`, `_USER` is game settings `androidKeyAlias`, and `_PASSWORD` is `password`
 - The signing values of ios and macos and the game settings `macosNotary` values of macos are written in `.godot/export_credentials.cfg` of the build workspace and deleted when the export ends. Signing values are not written in `export_presets.cfg`
-- In the signing items of the macos preset, `codesign/codesign` is `3` (Xcode codesign), and `codesign/provisioning_profile` is the file unpacked from `provisioningProfile`. `.godot/export_credentials.cfg` gets `codesign/certificate_file` (the file unpacked from `certificate`) and `codesign/certificate_password` (`certificatePassword`). STG and PROD set `notarization/notarization` to `2` (notarytool) and write `notarization/api_uuid` (`macosNotary.issuerId`), `notarization/api_key_id` (`macosNotary.keyId`) and `notarization/api_key` (the file unpacked from `notaryApiKey`) in the credentials
+- In the signing items of the macos preset, `codesign/codesign` is `3` (Xcode codesign), `codesign/identity` is the SHA-1 hash of the valid code signing identity that `security find-identity -v -p codesigning` lists in the keychain of the preparation below, `codesign/apple_team_id` is game settings `appleTeamId`, and `codesign/provisioning_profile` is the file unpacked from `provisioningProfile`. When that keychain does not hold exactly one identity whose name starts with `Developer ID Application:`, the export fails. `.godot/export_credentials.cfg` gets `codesign/certificate_file` (the file unpacked from `certificate`) and `codesign/certificate_password` (`certificatePassword`). STG and PROD set `notarization/notarization` to `2` (notarytool) and write `notarization/api_uuid` (`macosNotary.issuerId`), `notarization/api_key_id` (`macosNotary.keyId`) and `notarization/api_key` (the file unpacked from `notaryApiKey`) in the credentials
 - windows sets `codesign/enable` of the export preset to `false`, and after the export signs all `.exe` and `.dll` files of the output in Azure Trusted Signing with `jsign`. `jsign` and the Java runtime that runs it are the platform `windows` items of `engine.json` `buildTools`
   - The access token is obtained with the client credentials flow of Microsoft Entra ID. The tenant is game settings `trustedSigning.tenantId`, the client ID is `trustedSigning.clientId`, the client secret is `clientSecret` of `signing.windows`, and the scope is `https://codesigning.azure.net/.default`
   - The `jsign` arguments are `--storetype TRUSTEDSIGNING`, the host of `trustedSigning.endpoint` for `--keystore`, `file:<path>` of a temporary file holding the access token for `--storepass`, `<trustedSigning.account>/<trustedSigning.certificateProfile>` for `--alias`, `--tsaurl http://timestamp.acs.microsoft.com`, `--tsmode RFC3161` and `--alg SHA-256`
@@ -101,13 +102,30 @@ In a bundle patch build, `ogw build run` makes the bundle files in the order bel
 - STG and PROD of macos also do notarization
 - free signing (`## platform build` of [`build`](../SKILL.md)): android passes the debug keystore in `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` of the environment variables above, `androiddebugkey` in `_USER` and `android` in `_PASSWORD`. The macos preset sets `codesign/codesign` to `1` (Built-in, ad-hoc) and does not write `codesign/provisioning_profile` and `.godot/export_credentials.cfg`. windows does not run `jsign`
 - ios uses the keys starting with `development` for DEV and the keys starting with `distribution` for STG and PROD. In the export preset, `application/export_method_debug` is Development (`1`), `application/export_method_release` is App Store (`0`), `application/code_sign_identity_debug` is `Apple Development`, and `application/code_sign_identity_release` is `Apple Distribution`. Game settings `appleTeamId` goes in `application/app_store_team_id`, and the `UUID` of that environment's provisioning profile goes in `application/provisioning_profile_uuid_debug` for DEV and in `application/provisioning_profile_uuid_release` for STG and PROD
-- Before the export, ios does the following
+- Before the export, ios and macos without free signing do 1 to 3 below, and ios also does 4
   1. Creates a keychain with a random password in a temporary folder, unlocks it and turns off its auto-lock
   2. Imports the certificate of that environment with its certificate password, and sets the key partition list to `apple-tool:,apple:,codesign:` so that `codesign` uses the key without asking
   3. Adds that keychain to the front of the user keychain search list
   4. Puts the provisioning profile of that environment, named `<UUID>.mobileprovision`, in `~/Library/MobileDevice/Provisioning Profiles/` and `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`. It does not put it in a folder that already has a file of the same name
-- When the ios export ends, on success or failure, restores the user keychain search list to its state before 1, deletes the keychain of 1, and deletes the files put in 4
+- When the ios or macos export ends, on success or failure, restores the user keychain search list to its state before 1, deletes the keychain of 1, and deletes the files put in 4
 - `.godot/export_credentials.cfg`, keystores, certificates and provisioning profiles are not committed. The build workspace is deleted when the build ends
+
+## native plugin
+
+Check `native plugin` of `## build-time check` of [`build`](../SKILL.md) looks at each target platform other than web of an STG or PROD build. The build of a platform needs each plugin of the table below whose condition holds and whose target platforms in the native plugin table of `engines/godot.md` of the `client-core` skill include that platform. The check fails for each needed plugin that has no item in `plugins` of `engine.json` of the game settings core version whose `platforms` include that platform, or whose `<plugin>/<platform>/` the core release asset `client-godot-plugins.zip` lacks. `ogw game check --build` runs the same check for STG and PROD of every platform of game settings `buildPlatforms`.
+
+| plugin | condition |
+|---|---|
+| `ogw-secure-storage` | always (`AuthCore` is in every game) |
+| `ogw-apple-signin` | `adapters.login-apple` of that environment is not `fake` |
+| `ogw-google-signin` | `adapters.login-google` of that environment is not `fake` |
+| `ogw-iap-apple` | `adapters.iap-apple` of that environment is not `fake` |
+| `ogw-iap-google` | `adapters.iap-google` of that environment is not `fake` |
+| `ogw-ads-admob` | `adapters.ads` of that environment is not `fake` |
+| `ogw-push-fcm` | `adapters.push-fcm` of that environment is not `fake` |
+| `ogw-push-apns` | `adapters.push-apns` of that environment is not `fake` |
+| `ogw-notification` | the modules the game uses include `PushCore` |
+| `ogw-tracking` | game settings `consent.trackingRequest` is `true` |
 
 ## device performance
 

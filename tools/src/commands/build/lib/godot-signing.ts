@@ -20,7 +20,7 @@ export interface Signing {
   env: NodeJS.ProcessEnv;
   options: Record<string, unknown>;
   credentials: Record<string, unknown>;
-  /** iOS: the temporary keychain that holds the signing certificate until `cleanup`. */
+  /** iOS, macOS: the temporary keychain that holds the signing certificate until `cleanup`. */
   keychain?: string;
   cleanup(): Promise<void>;
 }
@@ -86,29 +86,64 @@ function searchList(out: string): string[] {
     .filter((l) => l.length > 0);
 }
 
+/** The temporary keychain of a signing folder and the user keychain search list before it (`## signing`). */
+interface SigningKeychain {
+  path: string;
+  previous: string[];
+}
+
+async function signingKeychain(ctx: Context, dir: string): Promise<SigningKeychain> {
+  return { path: join(dir, 'ogw.keychain-db'), previous: searchList(await sec(ctx, ['list-keychains', '-d', 'user'])) };
+}
+
+/** Restores the user keychain search list and deletes the keychain; each step runs even when another failed. */
+async function removeKeychain(ctx: Context, keychain: SigningKeychain): Promise<void> {
+  await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...keychain.previous]).catch(() => undefined);
+  await sec(ctx, ['delete-keychain', keychain.path]).catch(() => undefined);
+}
+
+/**
+ * Creates the keychain with a random password, unlocked without auto-lock, imports the certificate with its password
+ * so that `codesign` uses the key without asking, and puts the keychain at the front of the user search list.
+ */
+async function importCertificate(ctx: Context, keychain: SigningKeychain, p12: string, certPassword: string): Promise<void> {
+  const password = randomBytes(24).toString('base64url');
+  await secSecret(ctx, ['create-keychain', '-p', password, keychain.path]);
+  await secSecret(ctx, ['unlock-keychain', '-p', password, keychain.path]);
+  await sec(ctx, ['set-keychain-settings', keychain.path]);
+  await secSecret(ctx, ['import', p12, '-k', keychain.path, '-P', certPassword, '-T', '/usr/bin/codesign']);
+  await secSecret(ctx, ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain.path]);
+  await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain.path, ...keychain.previous]);
+}
+
+/**
+ * The SHA-1 hash of the one valid code signing identity of the keychain, which must be a `Developer ID Application`
+ * certificate (`build` engines/godot.md `## signing`).
+ */
+export async function developerIdIdentity(ctx: Context, keychain: string): Promise<string> {
+  const out = await sec(ctx, ['find-identity', '-v', '-p', 'codesigning', keychain]);
+  const identities = [...out.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]*)"/gm)].map((m) => ({ hash: m[1] as string, name: m[2] as string }));
+  const developerId = identities.filter((identity) => identity.name.startsWith('Developer ID Application:'));
+  if (developerId.length !== 1) {
+    throw new OgwError(`the macos signing certificate must hold one Developer ID Application identity; it holds: ${identities.map((i) => i.name).join(', ') || 'none'}`);
+  }
+  return (developerId[0] as { hash: string }).hash;
+}
+
 async function ios(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const kind = env === 'DEV' ? 'development' : 'distribution';
   const dir = await tempDir(ctx);
-  const keychain = join(dir, 'ogw.keychain-db');
-  const password = randomBytes(24).toString('base64url');
-  const previous = searchList(await sec(ctx, ['list-keychains', '-d', 'user']));
+  const keychain = await signingKeychain(ctx, dir);
   const placed: string[] = [];
   const cleanup = async (): Promise<void> => {
-    await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...previous]).catch(() => undefined);
-    await sec(ctx, ['delete-keychain', keychain]).catch(() => undefined);
+    await removeKeychain(ctx, keychain);
     for (const file of placed) await rm(file, { force: true });
     await rm(dir, { recursive: true, force: true });
   };
   try {
-    await secSecret(ctx, ['create-keychain', '-p', password, keychain]);
-    await secSecret(ctx, ['unlock-keychain', '-p', password, keychain]);
-    await sec(ctx, ['set-keychain-settings', keychain]);
     const p12 = join(dir, 'cert.p12');
     await writeFile(p12, Buffer.from(secretOf(ctx, game, settings, 'ios', `${kind}Certificate`), 'base64'), { mode: 0o600 });
-    const certPassword = secretOf(ctx, game, settings, 'ios', `${kind}CertificatePassword`);
-    await secSecret(ctx, ['import', p12, '-k', keychain, '-P', certPassword, '-T', '/usr/bin/codesign']);
-    await secSecret(ctx, ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain]);
-    await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain, ...previous]);
+    await importCertificate(ctx, keychain, p12, secretOf(ctx, game, settings, 'ios', `${kind}CertificatePassword`));
     const profile = join(dir, 'profile.mobileprovision');
     await writeFile(profile, Buffer.from(secretOf(ctx, game, settings, 'ios', `${kind}ProvisioningProfile`), 'base64'), { mode: 0o600 });
     const uuid = await profileUuid(ctx, profile);
@@ -121,7 +156,7 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
       placed.push(target);
     }
     const suffix = env === 'DEV' ? 'debug' : 'release';
-    return { env: {}, options: { [`application/provisioning_profile_uuid_${suffix}`]: uuid }, credentials: {}, keychain, cleanup };
+    return { env: {}, options: { [`application/provisioning_profile_uuid_${suffix}`]: uuid }, credentials: {}, keychain: keychain.path, cleanup };
   } catch (error) {
     await cleanup();
     throw error;
@@ -130,25 +165,39 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
 
 async function macos(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const dir = await tempDir(ctx);
+  let keychain: SigningKeychain | null = null;
+  const cleanup = async (): Promise<void> => {
+    if (keychain !== null) await removeKeychain(ctx, keychain);
+    await rm(dir, { recursive: true, force: true });
+  };
   const write = async (name: string, key: string): Promise<string> => {
     const path = join(dir, name);
     await writeFile(path, Buffer.from(secretOf(ctx, game, settings, 'macos', key), 'base64'), { mode: 0o600 });
     return path;
   };
-  const credentials: Record<string, unknown> = {
-    'codesign/certificate_file': await write('cert.p12', 'certificate'),
-    'codesign/certificate_password': secretOf(ctx, game, settings, 'macos', 'certificatePassword'),
-  };
-  const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/provisioning_profile': await write('profile.provisionprofile', 'provisioningProfile') };
-  if (env !== 'DEV') {
+  try {
+    const p12 = await write('cert.p12', 'certificate');
+    const certPassword = secretOf(ctx, game, settings, 'macos', 'certificatePassword');
+    const team = settings.appleTeamId;
+    if (typeof team !== 'string' || team === '') throw new OgwError('game settings appleTeamId is missing');
     const notary = settings.macosNotary as { keyId?: string; issuerId?: string } | undefined;
-    if (!notary?.keyId || !notary.issuerId) throw new OgwError('game settings macosNotary is missing');
-    options['notarization/notarization'] = 2;
-    credentials['notarization/api_uuid'] = notary.issuerId;
-    credentials['notarization/api_key_id'] = notary.keyId;
-    credentials['notarization/api_key'] = await write('notary.p8', 'notaryApiKey');
+    if (env !== 'DEV' && (!notary?.keyId || !notary.issuerId)) throw new OgwError('game settings macosNotary is missing');
+    const credentials: Record<string, unknown> = { 'codesign/certificate_file': p12, 'codesign/certificate_password': certPassword };
+    const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/apple_team_id': team, 'codesign/provisioning_profile': await write('profile.provisionprofile', 'provisioningProfile') };
+    if (env !== 'DEV' && notary?.keyId && notary.issuerId) {
+      options['notarization/notarization'] = 2;
+      credentials['notarization/api_uuid'] = notary.issuerId;
+      credentials['notarization/api_key_id'] = notary.keyId;
+      credentials['notarization/api_key'] = await write('notary.p8', 'notaryApiKey');
+    }
+    keychain = await signingKeychain(ctx, dir);
+    await importCertificate(ctx, keychain, p12, certPassword);
+    options['codesign/identity'] = await developerIdIdentity(ctx, keychain.path);
+    return { env: {}, options, credentials, keychain: keychain.path, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
   }
-  return { env: {}, options, credentials, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
 const NONE: Signing = { env: {}, options: {}, credentials: {}, cleanup: () => Promise.resolve() };

@@ -81,6 +81,9 @@ function prepare(ws: TestWorkspace, patch: Record<string, unknown> = {}): { dir:
   const cdnRow = { dataType: 'none', description: 'cdn', source: 'cdn-r2', purposes: [], linked: false, tracking: false, shared: false, optional: false, platforms: [], condition: null };
   writeFileSync(join(release, 'core-spec.json'), JSON.stringify({ modules: [{ name: 'game-update', side: 'server', adapters: ['cdn-r2'], collectedData: [cdnRow] }] }));
   writeFileSync(join(release, '1.0.0', 'manifest.json'), JSON.stringify({ coreSchemaVersion: 4 }));
+  // check `native plugin`: every asset of the release extracts to `release`
+  writeFileSync(join(release, 'engine.json'), JSON.stringify({ plugins: [{ name: 'ogw-secure-storage', platforms: ['android', 'linux'] }] }));
+  for (const platform of ['android', 'linux']) mkdirSync(join(release, 'ogw-secure-storage', platform), { recursive: true });
   const dir = setupGame(ws, 'g', { ...patch }, {
     'data/version.txt': 'p1 d1',
     'server/core/Dockerfile': 'FROM node',
@@ -116,7 +119,7 @@ describe('build run', () => {
     expect(out.code).toBe(0);
     const r = result(dir, 'dev-0.1.0');
     expect(r.checks.map((c) => `${c.name}:${c.result}`)).toEqual([
-      'DEV code:pass', 'license:pass', 'adapter:pass', 'admob:pass', 'banned word:pass', 'privacy:pass', 'secret:pass', 'placeholder:pass', 'device performance:unknown',
+      'DEV code:pass', 'license:pass', 'adapter:pass', 'admob:pass', 'banned word:pass', 'privacy:pass', 'native plugin:pass', 'secret:pass', 'placeholder:pass', 'device performance:unknown',
     ]);
     expect(r.artifacts).toEqual([{ platform: 'linux', path: 'builds/dev-0.1.0/linux' }, { platform: 'android', path: 'builds/dev-0.1.0/android' }]);
     expect(r.serverImage).toEqual({ name: 'ghcr.io/example/game-server', tag: 'dev-0.1.0', digest: 'sha256:pushed' });
