@@ -78,6 +78,7 @@ callback
   - When a fetch fails or does not finish within `ads-reward.keyFetchTimeoutMs`, does not change the cache and leaves an `error` log
 - When the signature matches, answers HTTP 200. The result of the handling below does not change the HTTP status. Except: a DB failure and a hook throw at step 4 of the grant order are HTTP 500
 - When the reward notify ID of a callback whose signature matched is not a lowercase UUID v4, or the user ID is not a decimal string without leading 0 from 1 to 2^63−1, does not grant, without `claim_notify` and without a transaction, and leaves a `warn` log
+- When the adapter is `ads-admob` and the ad unit that `parse` extracted from a callback whose signature matched equals none of the parts after `/` of the ad unit IDs in `environments.<ENV>.adUnits` (every placement and every platform), does not grant, without `claim_notify` and without a transaction, and leaves a `security` log (`reason` `ad_callback_ad_unit`). An empty ad unit equals none of them
 - The reward notify ID is handled only once with `idempotency.claim_notify` (source is the adapter name), in the same transaction as the grant. With `DUPLICATE`, HTTP 200 without handling
 - The callback opens `storage.run_user_transaction` with the user ID of the query, and in it reads the ticket by key (user ID of the query, reward notify ID). When `run_user_transaction` is `WITHDRAWN`, there is no ticket, or the state is neither `Issued` nor `Claimed`, does not grant and leaves a `warn` log. A reward notify ID of another user has no ticket at that key
 - grant order. The grant is one out-of-request change of the ticket user that the `run_user_transaction` above opened. Steps 1 to 2 run inside one `storage.run_savepoint`
@@ -143,6 +144,7 @@ none
 | unusable ticket | `AD_REWARD_NOT_FOUND` | `AD_REWARD_NOT_FOUND` | none |
 | ticket whose grant failed | `INTERNAL` | `INTERNAL` | `error` log at grant time |
 | callback signature mismatch, key ID not in the usable key list | HTTP 403 | none | `security` log(`reason` `ad_callback_signature`) |
+| the ad unit of an `ads-admob` callback whose signature matched is not an ad unit of `environments.<ENV>.adUnits` | HTTP 200, no grant | none | `security` log(`reason` `ad_callback_ad_unit`) |
 | `BeginAdReward` of a placement that is not `Rewarded` | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | `validate_ad_reward` rejection | `GameError` of the hook | `GameError` of the hook | none |
 | `grant_ad_extra` failure in the grant order | undoes step 1 and changes the ticket to `Failed` | none | `error` log |
@@ -174,6 +176,7 @@ Added `CoreError`: `AD_LIMIT_REACHED`, `AD_REWARD_PENDING`, `AD_REWARD_NOT_FOUND
 | `ads-reward.keyFetchTimeoutMs` | integer | core | content | time limit of the call that fetches the ad network signature key list. 1 or more |
 | `ads-reward.callbackRateLimitPerMinute` | integer | core | content | limit per IP in one minute window on the number of callbacks whose format or signature failed. 1 or more |
 | `environments.<ENV>.adapters.ads` | string? | game | none | ads adapter name. `null` means this environment has no ads adapter |
+| `environments.<ENV>.adUnits` | object | game | none | per environment, the AdMob ad unit ID of each platform for each placement ID name |
 | `idempotency.maxNotifyIdBytes` | integer | core | content | max bytes of a notify ID. When it is less than 36, the server does not start |
 | `routing.externalMaxResponseBytes` | integer | core | content | max bytes of an external service response body. When a body exceeds it, that call is a failure |
 
@@ -184,8 +187,8 @@ settings constraint
 | `ads-reward.claimWaitMs` | 2 | `NetworkCore.requestTimeoutMs` |
 
 - The key `ads` of the per-environment `adapters` of game settings chooses the adapter. The values are `fake`, `ads-admob`. Client `AdCore` also chooses the ads adapter with the same key
-- adapter interface: `parse(query)` → key ID, signed string, signature, reward notify ID, user ID, or a format error. A format error is a query that cannot be split into parameters, or a signature or key ID parameter that is missing, in a different position or in a wrong value format. The reward notify ID and the user ID are values the client sets, so `parse` does not look at their value format and returns a missing value as the empty string. `fetch_keys()` → a key per key ID, or a failure. `verify(signed string, signature, key)` → whether it matches. `fetch_keys` calls the adapter's key source
-- `ads-admob` is AdMob server-side verification. In the query, `custom_data` is the reward notify ID, `user_id` is the user ID decimal string, `key_id` is the key ID, and `signature` and `key_id` are the last two parameters of the query. The signed string is the part of the query before `&signature=`, and the signature is an ECDSA P-256 SHA-256 signature written in base64url. The server's key source fetches `keys`(`keyId`, `base64`) of `https://www.gstatic.com/admob/reward/verifier-keys.json` and returns that array as the value. `base64` is an SPKI DER public key
+- adapter interface: `parse(query)` → key ID, signed string, signature, reward notify ID, user ID, ad unit, or a format error. A format error is a query that cannot be split into parameters, or a signature or key ID parameter that is missing, in a different position or in a wrong value format. The reward notify ID and the user ID are values the client sets, so `parse` does not look at their value format and returns a missing value as the empty string. `parse` returns a missing ad unit as the empty string. `fetch_keys()` → a key per key ID, or a failure. `verify(signed string, signature, key)` → whether it matches. `fetch_keys` calls the adapter's key source
+- `ads-admob` is AdMob server-side verification. In the query, `custom_data` is the reward notify ID, `user_id` is the user ID decimal string, `ad_unit` is the ad unit (the number that follows `/` in the ad unit ID), `key_id` is the key ID, and `signature` and `key_id` are the last two parameters of the query. The signed string is the part of the query before `&signature=`, and the signature is an ECDSA P-256 SHA-256 signature written in base64url. The server's key source fetches `keys`(`keyId`, `base64`) of `https://www.gstatic.com/admob/reward/verifier-keys.json` and returns that array as the value. `base64` is an SPKI DER public key
 
 ## data
 
@@ -227,6 +230,7 @@ reserved ID: `[ad_reward_mail]` → row of `mail_template`
 - Instead of signature verification, `FakeAdCallback` reads the ticket by key (user ID of the access token, reward notify ID). When there is no ticket or it is neither `Issued` nor `Claimed`, `AD_REWARD_NOT_FOUND`. Otherwise, without opening a new user transaction, it runs `idempotency.claim_notify` (source `fake`) and the grant order in the ctx of the cheat. With `DUPLICATE`, an empty response without a grant. The changed UserState, `item_changes`, `item_mails` go in that cheat response
 - STG·PROD servers do not have `FakeAdCallback`
 - The query of the fake ads adapter is `notify_id=<reward notify ID>&user_id=<user ID decimal string>&key_id=<key ID decimal string>&signature=<signature>`, with the parameters in this order. The signed string is the part of the query before `&signature=`, and the signature is the HMAC-SHA256 of the UTF-8 of the signed string computed with the 32 byte key of that key ID, written in base64url without padding. Value format: `key_id` is a decimal string without leading 0 from 0 to 2^63−1, and `signature` is 43 characters of canonical base64url without padding. When a parameter is missing, the order differs, or the value format of `key_id`, `signature` is wrong, it is a format error
+- `parse` of the fake ads adapter returns the empty string as the ad unit
 - `fetch_keys` of the fake ads adapter returns the key list that the `testing.fake` controller (service `ads`) set. When none is set, it is one 32 byte secure random key with key ID 1 that the server instance made at start. The operation names of the controller are `parse`, `fetch_keys`, `verify`, and `calls()` records all three. `set_result` sets the `{key_id, key}` list of `fetch_keys` (key is 32 bytes), and `set_failure` sets the failure condition of `fetch_keys`. `rejected` is the same as `communication_failure`. `sign_callback`(reward notify ID, user ID, key ID) returns a query signed with that key
 
 core cheat request field
@@ -240,6 +244,7 @@ core cheat request field
 - `BeginAdReward` → callback → `ClaimAdReward` grants `reward` once with source `AdReward`
 - Even when the callback of the same reward notify ID comes twice, grants only once
 - A callback with a wrong signature is HTTP 403 and does not grant
+- On a test server with `ads-admob` in the real adapter list, a key set with `set_key_source` and `environments.<ENV>.adUnits` holding `ca-app-pub-1/222` for one placement, a signed callback whose `ad_unit` is `333` is HTTP 200, does not grant and leaves a `security` log (`reason` `ad_callback_ad_unit`), and a signed callback of the same reward notify ID whose `ad_unit` is `222` sent after it grants
 - Sending a query made with `sign_callback` of the `fake` controller (service `ads`) to `GET /ads/callback/fake?<query>` with `testing.send_raw` grants, and a query signed with another key and a query with a key ID that is not in the key list are HTTP 403
 - On the `STG` test server, `GET /ads/callback/fake` and `GET /ads/callback/admob` are HTTP 404
 - Callbacks of a ticket of another user and of `Replaced`, `Expired` tickets do not grant

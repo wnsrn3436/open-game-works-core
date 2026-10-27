@@ -86,7 +86,7 @@ routing is the entry point of the server process. Modules other than `testing` d
   - A core `rpc` of a prepared module has no server field validator made by the contract tool. On a server instance that includes DEV code, the same applies to the core cheats of the prepared modules
   - `client_data_version` is missing or is not in the `<protocol hash>-<data hash>` format
   - `compat_client_data_version` exists and is not in the `<protocol hash>-<data hash>` format, or its protocol hash equals that of `client_data_version`
-- At server start, routing registers job `storage_sweep` (period `routing.storageSweepIntervalMs`) with `server-time.schedule_job`. The job calls `storage.sweep_expired` and right after it `run_user_changes`. When either is `FAILED`, leaves an `error` log
+- At server start, routing registers job `storage_sweep` (period `routing.storageSweepIntervalMs`) with `server-time.schedule_job`. The job calls `storage.sweep_expired` and right after it `run_user_changes`. For each table of the failed table list of `sweep_expired`, leaves one `error` log holding the table name and the DB error code. When `run_user_changes` is `FAILED`, leaves an `error` log
 - When a module returns a failure during server start, leaves the reason in an `error` log and the server does not start
 
 ### path
@@ -229,7 +229,7 @@ Added `CoreError`: `INVALID_REQUEST`, `RATE_LIMITED`, `MAINTENANCE`, `BANNED`, `
 | `routing.maxBodyBytes` | integer | core | content | maximum bytes of the request body |
 | `routing.bodyReadTimeoutMs` | integer | core | content | time limit for reading the whole body |
 | `routing.userRateLimitPerMinute` | integer | core | content | request count limit per user in one minute window |
-| `routing.ipRateLimitPerMinute` | integer | core | content | IP counter limit per IP in one minute window |
+| `routing.ipRateLimitPerMinute` | integer | core | content | IP counter limit per IP in one minute window. A game that expects players who share one IP (e.g. internet cafe, school, office or event Wi-Fi) raises it in game settings `core` |
 | `environments.<ENV>.trustedProxyCount` | integer | game | none | number of proxies trusted when finding the client IP in that environment |
 | `environments.<ENV>.serverUrl` | string | game | none | server address from which `BanDetail.deletion_url` is made. The rule for making it is the web account deletion page address of `auth` |
 | `environments.<ENV>.corsAllowedOrigins` | array<string> | game | none | allowed origin list of that environment. LOCAL allows every localhost origin |
@@ -302,3 +302,4 @@ none
 - A request with the same protocol hash and a different data hash is handled through the handler when `is_data_update_ready` is `false`, and is `DATA_UPDATE_REQUIRED` when it is `true`. When `X-Ogw-Client-Version` is an empty string, it is always `DATA_UPDATE_REQUIRED`
 - `core/FinishPlaySession`, `core/ContinuePlaySession` and `core/ReportMatchResult` requests with the same protocol hash and only a different data hash are handled through the handler even when `is_data_update_ready` is `true` or `X-Ogw-Client-Version` is an empty string, and other requests under the same condition are `DATA_UPDATE_REQUIRED`. Those three requests are `APP_UPDATE_REQUIRED` when their protocol hash differs from both `client_data_version` and `compat_client_data_version`
 - When `run_game_transaction` of a rate counter is `FAILED`, the handler is not called, the result is `INTERNAL`, and an `error` log is left
+- When the failed table list of `storage.sweep_expired` has two tables, job `storage_sweep` leaves two `error` logs, each with one of those table names and its DB error code, and calls `run_user_changes`
