@@ -142,9 +142,10 @@ games/<game>/
 1. The content agent edits `design.md`, client content code, server content code, data and contract together
 2. Regression tests, static checks, completeness checks and row simulation run. Regression tests are all the tests that the content agent wrote together with the features it made
 3. The play agent reads `play-guide.md`, plays the instance with real input, then gives feedback. Feedback is written per observation, not as a total score
-4. The judge agent plays in a new context and writes the judge result comparing with the baseline game and the gameplay video of the reference game. Each iteration, the harness tool writes the judge result and the defect list into the loop iteration record, and decides success from the judge result and the completeness check
+4. Judge agents play in new contexts and write judge results comparing with the baseline game and the gameplay video of the reference game. Several judge agents judge an iteration with the sides `A` and `B` swapped between them, and the harness tool counts their votes per element. Each iteration, the harness tool writes the judge results, the votes and the defect list into the loop iteration record, and decides success from the votes and the completeness check
 5. When the loop stops, the lead agent reports to the human with the loop end record. A human makes builds with the `build` command. The human's feedback becomes the input of the next loop through `update game`. The loop does not wait for the human midway
 
+- An iteration is a fun iteration or a completeness iteration. A fun iteration tries one change aimed at fun and runs only the checks that block play, so that it is short; a completeness iteration fixes defects and runs every check. Success is judged only in a completeness iteration
 - `brief.md` is written or edited only in iteration 1 of the loop. To change it, a human requests it with `update game`. An edit keeps to the brief
 - The content agent edits `play-guide.md` together with the game
 - When it starts work, the content agent reads `design.md` before the code

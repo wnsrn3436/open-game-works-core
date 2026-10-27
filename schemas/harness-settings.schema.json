@@ -18,6 +18,7 @@
     "webSmokeCpuThrottleRate",
     "webSmokeBootTimeoutMs",
     "loopStop",
+    "loop",
     "reviewRounds",
     "codeCheck",
     "rigCheck",
@@ -191,6 +192,41 @@
         },
         "successJudges": {
           "description": "The number of success confirmation judges",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "loop": {
+      "description": "Values of the loop iteration kinds and the step 4 judges. `## iteration` of the `game-loop` skill defines their meaning",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "funIterations",
+        "judgeVotes",
+        "judgePanel",
+        "variants"
+      ],
+      "properties": {
+        "funIterations": {
+          "description": "The number of fun iterations in a row after which the next iteration is a completeness iteration",
+          "type": "integer",
+          "minimum": 1
+        },
+        "judgeVotes": {
+          "description": "The number of step 4 judges of an iteration with a baseline game",
+          "type": "integer",
+          "minimum": 2
+        },
+        "judgePanel": {
+          "description": "Agent CLI, model and effort of the step 4 judges in turn. Empty: every judge uses `agents.judge`",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agent"
+          }
+        },
+        "variants": {
+          "description": "The number of variants the content agent makes in a fun iteration",
           "type": "integer",
           "minimum": 1
         }
