@@ -87,6 +87,8 @@ export interface AgentMeta {
   mergeCommitted?: boolean;
   /** The agent CLI, model and effort that replace the role's harness settings `agents.<role>`; absent or null: those. */
   agent?: AgentSettings | null;
+  /** content: the k of a variant agent of `ogw loop variants` (`game-loop` `## iteration` 1); absent or null otherwise. */
+  variant?: number | null;
   /** content with Claude Code: the session the agent CLI starts or continues. */
   session?: AgentSession | null;
   /** spec review: the lines of what `ogw agent wait` wrote to the spec debt lists, once (`recordSpecDebt`). */

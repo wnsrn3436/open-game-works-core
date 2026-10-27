@@ -103,8 +103,13 @@ export interface EvaluateSite {
   telemetry(pair: JudgePair, k: number): string;
   /** Absolute path of the `ogw measure` raw data of a play instance. */
   measure(instance: string): string;
-  /** The result file and evidence folder of a judge agent that starts without a run; null for an agent of the open run. */
+  /**
+   * The result file and evidence folder of a judge agent; null for the place `ogw agent` gives a judge of the open run.
+   * A judge with a place starts without a run unless `judgePlaceInRun` is true.
+   */
   judgePlace(pair: JudgePair, k: number): CalibrationPlace | null;
+  /** True when a judge with a place of `judgePlace` starts in the open run (`ogw loop variants`). */
+  judgePlaceInRun?: boolean;
 }
 
 /** What the judging and play machinery runs with. `ogw loop evaluate` and `ogw judge calibrate` make it. */
@@ -342,7 +347,8 @@ async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
 async function startJob(state: State, slot: Slot, input: string): Promise<void> {
   checkStopped(state);
   const place = slot.role === 'judge' ? state.plan.site.judgePlace(slot.pair, slot.k) : null;
-  const agent = slot.role === 'judge' ? { agent: slot.agent, ...(place === null ? {} : { calibration: place }) } : {};
+  const placed = place === null ? {} : state.plan.site.judgePlaceInRun === true ? { runPlace: place } : { calibration: place };
+  const agent = slot.role === 'judge' ? { agent: slot.agent, ...placed } : {};
   slot.job = await startAgentJob(state.ctx, { role: slot.role, game: state.plan.game.name, input, ...agent });
   state.jobs.add(slot.job);
   state.active.push(slot);

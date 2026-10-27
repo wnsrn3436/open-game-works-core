@@ -69,6 +69,28 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     await expect(startAgentJob(ctx, { role: 'play', game: 'g', input, calibration: { output, evidence } })).rejects.toThrow('a calibration place is given only to role judge');
   });
 
+  it('runs a judge of ogw loop variants in the open run, with its result file and captures at its run place', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n' }, { iteration: 2 });
+    const fake = fakeAgentCli(ws, "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png'); fs.writeFileSync(output, 'capture ' + process.cwd() + '/captures/shot.png\\n');");
+    const input = join(ws.root, 'judge.json');
+    writeFileSync(input, JSON.stringify({ A: { instance: 'a', playGuide: join(root, 'play-guide.md') }, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const output = join(root, 'records/loops/r1/judge-2-v1-1.md');
+    const evidence = join(root, 'records/loops/r1/evidence/judge-2-v1-1');
+    const id = await startAgentJob(ctx, { role: 'judge', game: 'g', input, runPlace: { output, evidence } });
+    const waited = await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env });
+    expect(waited).toMatchObject({ code: 0, stdout: `${output}\n` });
+    expect(readFileSync(output, 'utf8')).toBe(`capture ${evidence}/shot.png\n`);
+    expect(fake.calls()[0]?.prompt).toContain('- run: r1\n- iteration: 2');
+    // the place is not counted as the k-th judge of the iteration
+    expect((await readJob(id, ws.env)).meta).toMatchObject({ run: 'r1', iteration: 2, k: null });
+    const outside = startAgentJob(ctx, { role: 'judge', game: 'g', input, runPlace: { output: join(root, 'records/loops/x.md'), evidence } });
+    await expect(outside).rejects.toThrow('a run result file is a .md file in');
+    const both = startAgentJob(ctx, { role: 'judge', game: 'g', input, runPlace: { output, evidence }, calibration: { output, evidence } });
+    await expect(both).rejects.toThrow('a run place is given only to role judge, without a calibration place');
+  });
+
   it('moves every named secret out of the old store before the play sandbox starts', async () => {
     const ws = makeWorkspace();
     const settings = { environments: { PROD: { secrets: { deploySsh: 'ssh-prod' } } } };

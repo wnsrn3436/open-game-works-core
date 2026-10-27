@@ -81,6 +81,48 @@ describe('ogw agent: content', () => {
     expect(flag5).toBe('--session-id');
   });
 
+  it('runs a variant agent in its own worktree of the work branch HEAD with a new session, which no later content agent continues', async () => {
+    const ws = makeWorkspace();
+    const inputs = Object.fromEntries([1, 3].map((n) => [`records/loops/r1/content-input-${String(n)}.md`, '## kind\nfun\n']));
+    const kinds = [1, 2, 3].map((iteration) => ({ iteration, kind: 'fun' }));
+    const { root, game } = await gameWithRun(ws, { ...inputs, 'records/loops/r1/content-input-2-v2.md': '## kind\nfun\n\n## variant\n\n- variant: 2 of 2\n- element: no friction\n' }, { data: { loop: { kinds } } });
+    const keep = [
+      "const at = process.argv.indexOf('--session-id');",
+      "if (at > 0) { const dir = process.env.CLAUDE_CONFIG_DIR + '/projects/-games-g'; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(dir + '/' + process.argv[at + 1] + '.jsonl', '{}\\n'); }",
+      "fs.writeFileSync('client.gd', 'variant'); fs.writeFileSync(output, 'report\\n');",
+      "if (process.cwd().includes('agent-')) { execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'variant']); }",
+    ].join('\n');
+    const fake = fakeAgentCli(ws, keep);
+    const iteration = async (n: number): Promise<void> => {
+      await changeRuns(game, (runs) => {
+        (runs[0] as { iteration: number }).iteration = n;
+      });
+    };
+    // iteration 1: a content agent in the checkout, whose session file is kept
+    expect((await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'records/loops/r1/content-input-1.md')], fake.env, root)).waited.code).toBe(0);
+    commitAll(root, 'iteration 1');
+    // iteration 2: a variant agent, in a fun iteration after a fun iteration, starts a new session in its worktree
+    await iteration(2);
+    const base = sh(root, 'git', ['rev-parse', 'HEAD']).trim();
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const id = await startAgentJob(ctx, { role: 'content', game: 'g', input: join(root, 'records/loops/r1/content-input-2-v2.md'), variant: 2 });
+    const worktree = join(ws.worktrees, 'g', `agent-${id}`);
+    const output = join(worktree, 'records/loops/r1/content-2-v2.md');
+    expect(await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env })).toMatchObject({ code: 0, stdout: `${output}\n` });
+    const call = fake.calls().at(-1);
+    expect(call?.cwd).toBe(worktree);
+    expect(call?.prompt).toContain(`- output: ${output}\n- run: r1\n- iteration: 2`);
+    expect(call?.argv[7]).toBe('--session-id');
+    expect((await readJob(id, ws.env)).meta).toMatchObject({ variant: 2, branch: `agent/${id}`, place: { kind: 'game-worktree', branch: 'loop/r1', baseCommit: base } });
+    expect(sh(root, 'git', ['log', '--format=%s', `${base}..agent/${id}`]).trim().split('\n')).toContain('variant');
+    expect(sh(root, 'git', ['rev-parse', 'HEAD']).trim()).toBe(base);
+    // iteration 3 after the variant iteration: no session of a content agent that was not a variant agent, so a new one
+    await iteration(3);
+    expect((await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'records/loops/r1/content-input-3.md')], fake.env, root)).waited.code).toBe(0);
+    expect(fake.calls().at(-1)?.argv[7]).toBe('--session-id');
+    await expect(startAgentJob(ctx, { role: 'resource', game: 'g', input: join(root, 'records/loops/r1/content-input-3.md'), variant: 1 })).rejects.toThrow('a variant is a positive integer given only to role content');
+  });
+
   it('runs a content agent with the agent CLI, model and effort given to the job instead of harness settings', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'records/loops/r1/content-input-1.md': '## kind\nfun\n' });
