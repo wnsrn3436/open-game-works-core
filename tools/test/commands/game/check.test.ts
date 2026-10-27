@@ -374,28 +374,70 @@ describe('ogw game check', () => {
 });
 
 describe('ogw game check --defaults', () => {
-  it('lists schema defaults and core settings defaults the game does not write', async () => {
-    const run = await check((s) => (s.core = { 'UICore.theme': { color: 'red' }, 'auth.maxAgeYears': 100 }), ['--defaults']);
+  /** A release whose modules depend on each other, and whose core settings have a retention key. */
+  function writeModules(): void {
+    const dir = join(ws.root, 'release');
+    const spec = JSON.parse(readFileSync(join(dir, 'core-spec.json'), 'utf8')) as { modules: { name: string; dependencies?: string[] }[] };
+    for (const m of spec.modules) m.dependencies = m.name === 'UICore' ? ['NetworkCore'] : [];
+    writeFileSync(join(dir, 'core-spec.json'), JSON.stringify(spec));
+    writeFileSync(join(dir, 'core-settings.json'), JSON.stringify({ ...CORE_SETTINGS, 'item-ledger.historyRetentionMs': 7776000000 }));
+  }
+
+  it('lists the defaults of the modules the game uses, values to know first, with units and meanings', async () => {
+    writeModules();
+    const run = await check((s) => (s.core = { 'UICore.theme': { color: 'red' }, 'NetworkCore.requestTimeoutMs': 5000 }), ['--defaults']);
     expect(run.code).toBe(0);
     const lines = run.stdout.trim().split('\n');
-    expect(lines).toContain('sourceLanguage = "en" (schema default)');
-    expect(lines).toContain('loopIterationLimit = 20 (schema default)');
-    expect(lines).toContain('environments.DEV.containerLog.maxBytes = 104857600 (schema default)');
-    expect(lines).toContain('uiCheckScreens.0.keyboard = 0 (schema default)');
-    expect(lines).toContain('consent.ageBandBoundaries = [13,14,16,18,19] (schema default)');
-    expect(lines).toContain('core.NetworkCore.requestTimeoutMs = 10000 (core settings)');
+    expect(lines[0]).toBe('## values to know');
+    expect(lines[1]).toBe('core.item-ledger.historyRetentionMs = 90 d (core settings): duration for which history and `once_key` are kept');
+    expect(lines).toContain('pushConsent.nightStartMinute = 21:00 (schema default): The minute of the device-local day at which the night window starts. e.g. 1320 is 22:00');
+    expect(lines).toContain('uiQuality.settleLimitMs = 3 s (schema default): ' + 'The longest real time UI quality check reads `get_state` after the command that opens a screen, waiting for `ui_flow` `false` and `finite_tweens` 0 so that the opening presentation has ended. A core whose `get_state` has neither field is waited for this whole time');
+    expect(lines.some((l) => l.startsWith('consent.ageBandBoundaries = [13,14,16,18,19] (schema default): '))).toBe(true);
+    expect(lines.some((l) => l.startsWith('environments.PROD.adapters.cdn = cdn-r2 (ogw game derive): '))).toBe(true);
+    // the rest: game settings, then one group per module in name order
+    const groups = lines.filter((l) => l.startsWith('## '));
+    expect(groups).toEqual(['## values to know', '## game settings', '## BootstrapCore', '## UICore']);
+    expect(lines).toContain('sourceLanguage = en (schema default): The language of the source text written in text columns. BCP 47 tag');
+    expect(lines).toContain('dailyResetOffsetMs = 00:00 UTC (schema default): ' + 'The ms by which the game day boundary is offset from UTC 00:00. The game day of server-time and TimeCore and the Daily, Weekly and Monthly reset boundaries all use this value. Midnight of timezone UTC+h is -h × 3600000. Not changed after the first PROD build, because the meaning of saved game days and reset times would change');
+    expect(lines).toContain('environments.DEV.containerLog.maxBytes = 104857600 (schema default): The bytes at which a log file of one container moves to a new file');
+    expect(lines).toContain('core.BootstrapCore.realtimeRelayOnly = false (core settings): whether the P2P transport outside a dev run is made relay-only');
+    // a key the harness specs do not have has no meaning; a partly written object gives the leaves not written
     expect(lines).toContain('core.UICore.theme.size = 2 (core settings)');
     expect(lines.some((l) => l.startsWith('core.UICore.theme.color'))).toBe(false);
-    expect(lines.some((l) => l.startsWith('core.auth.maxAgeYears'))).toBe(false);
+    // written, or of a module the game does not use (InputBlockCore, auth)
+    expect(lines.some((l) => l.startsWith('core.NetworkCore'))).toBe(false);
+    expect(lines.some((l) => l.startsWith('core.InputBlockCore') || l.startsWith('core.auth'))).toBe(false);
     expect(lines.some((l) => l.startsWith('appId'))).toBe(false);
+  });
+
+  it('includes the defaults of a dependency of a listed module', async () => {
+    writeModules();
+    const run = await check(() => undefined, ['--defaults']);
+    expect(run.stdout).toContain('## NetworkCore\ncore.NetworkCore.requestTimeoutMs = 10 s (core settings): duration from the start of a send until timeout\n');
   });
 
   it('gives the list as JSON', async () => {
     makeGame(ws, 'mygame', { 'settings.json': validGameSettings() });
     const run = await ogw(ws, ['game', 'check', 'mygame', '--defaults', '--json']);
-    const data = JSON.parse(run.stdout) as { defaults: { path: string; value: unknown; source: string }[] };
-    expect(data.defaults).toContainEqual({ path: 'gamepadSupported', value: false, source: 'schema default' });
-    expect(data.defaults).toContainEqual({ path: 'core.BootstrapCore.realtimeRelayOnly', value: false, source: 'core settings' });
+    const data = JSON.parse(run.stdout) as { defaults: Record<string, unknown>[] };
+    expect(data.defaults).toContainEqual({
+      path: 'gamepadSupported',
+      value: false,
+      source: 'schema default',
+      group: 'game settings',
+      display: 'false',
+      meaning: 'Whether every screen can be operated with a gamepad. When true, the UI quality check does the gamepad focus check',
+    });
+    expect(data.defaults).toContainEqual({
+      path: 'loopIterationLimit',
+      value: 20,
+      source: 'schema default',
+      group: 'values to know',
+      display: '20',
+      meaning: expect.stringMatching(/^The maximum number of loop iterations/) as unknown,
+    });
+    // every game settings schema default has a meaning
+    expect(data.defaults.filter((d) => d.source !== 'core settings' && d.meaning === null)).toEqual([]);
   });
 
   it('fails without coreVersion', async () => {
