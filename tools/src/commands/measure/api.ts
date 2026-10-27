@@ -7,7 +7,9 @@ import { requireOpenRun } from '../../lib/runstate.ts';
 import { getInstance } from '../instance/api.ts';
 import { automationRequest } from '../instance/automation.ts';
 import { readTelemetryRaw } from '../telemetry/api.ts';
-import { metricValue, toTelemetry, type Sample } from '../telemetry/lib/metrics.ts';
+import { showFile } from '../../lib/git.ts';
+import { freeScenes } from '../telemetry/lib/compare.ts';
+import { metricValue, toTelemetry, type FreeScenes, type Sample } from '../telemetry/lib/metrics.ts';
 import { rowProblems, targetRows } from './lib/targets.ts';
 
 /** A design target: a row of `## feel targets` or `## tuning targets`. */
@@ -40,9 +42,9 @@ export function parseTargets(design: string): Target[] {
   });
 }
 
-export function measureTargets(targets: readonly Target[], samples: readonly Sample[]): MeasuredTarget[] {
+export function measureTargets(targets: readonly Target[], samples: readonly Sample[], free: FreeScenes = null): MeasuredTarget[] {
   return targets.map((t) => {
-    const value = metricValue(t.metric, samples);
+    const value = metricValue(t.metric, samples, free);
     const result = value === null ? 'unknown' : value >= t.min && value <= t.max ? 'in' : 'out';
     return { ...t, value, result };
   });
@@ -85,8 +87,10 @@ export async function measure(ctx: Context, gameName: string, collected: readonl
   rejectRepeated(collected.map((c) => c.instance));
   const commits = [...new Set(collected.map((c) => c.commit))];
   if (commits.length > 1) throw new OgwError(`the measured instances are of different commits: ${commits.join(', ')}`);
-  const targets = measureTargets(parseTargets(await readText(join(game.root, 'design.md'))), collected.map(sampleOf));
   const commit = (collected[0] as Collected).commit;
+  const guide = await showFile(game.root, commit, 'play-guide.md');
+  const free = guide === null ? null : freeScenes(guide.toString('utf8'));
+  const targets = measureTargets(parseTargets(await readText(join(game.root, 'design.md'))), collected.map(sampleOf), free);
   const path = join(game.root, 'records', 'loops', run.name, `measure-${String(run.iteration)}.json`);
   await writeJsonAtomic(path, {
     commit,

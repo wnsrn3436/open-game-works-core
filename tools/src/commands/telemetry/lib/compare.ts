@@ -1,5 +1,6 @@
 import { sectionLines } from '../../build/lib/markdown.ts';
-import { metricValue, type Telemetry } from './metrics.ts';
+import { cell, column, parseTable } from '../../loop/lib/markdown.ts';
+import { metricValue, type FreeScenes, type Telemetry } from './metrics.ts';
 
 /** Elements of judge `## fun judgement criteria` and the metrics of their `telemetry` column. */
 export const ELEMENTS: readonly { element: string; metrics: readonly string[]; failureOnly: boolean }[] = [
@@ -37,6 +38,14 @@ function better(metric: string, a: number, b: number): 'A' | 'B' {
   return (higherIsBetter ? a > b : a < b) ? 'A' : 'B';
 }
 
+/** An `input_latency_ms` difference of at most one frame at 60 fps is not a difference. */
+const FRAME_MS = 17;
+
+function metricDistance(metric: string, a: number, b: number): number {
+  if (metric === 'input_latency_ms' && Math.abs(a - b) <= FRAME_MS) return 0;
+  return distance(a, b);
+}
+
 function margin(d: number): ElementComparison['margin'] {
   if (d < 0.15) return 'slight';
   if (d < 0.3) return 'clear';
@@ -52,13 +61,13 @@ function judge(metrics: MetricComparison[]): Pick<ElementComparison, 'winner' | 
   return { winner: better(top.metric, top.a as number, top.b as number), margin: margin(d) };
 }
 
-/** `ogw telemetry compare`: per element the metric values, d, winner and margin. */
-export function compareTelemetry(a: Telemetry, b: Telemetry, noFailure: boolean): ElementComparison[] {
+/** `ogw telemetry compare`: per element the metric values, d, winner and margin. `freeA`, `freeB` come from each play guide. */
+export function compareTelemetry(a: Telemetry, b: Telemetry, noFailure: boolean, freeA: FreeScenes = null, freeB: FreeScenes = null): ElementComparison[] {
   return ELEMENTS.map(({ element, metrics, failureOnly }) => {
     const rows = metrics.map((metric) => {
-      const va = metricValue(metric, [{ telemetry: a, state: {} }]);
-      const vb = metricValue(metric, [{ telemetry: b, state: {} }]);
-      return { metric, a: va, b: vb, d: va !== null && vb !== null ? distance(va, vb) : null };
+      const va = metricValue(metric, [{ telemetry: a, state: {} }], freeA);
+      const vb = metricValue(metric, [{ telemetry: b, state: {} }], freeB);
+      return { metric, a: va, b: vb, d: va !== null && vb !== null ? metricDistance(metric, va, vb) : null };
     });
     if (failureOnly && noFailure) return { element, metrics: rows, winner: 'n/a', margin: '' };
     return { element, metrics: rows, ...judge(rows) };
@@ -69,6 +78,22 @@ export function compareTelemetry(a: Telemetry, b: Telemetry, noFailure: boolean)
 export function failureIsNone(playGuide: string): boolean {
   const lines = sectionLines(playGuide, 'failure');
   return lines !== null && lines.length === 1 && (lines[0] as string).trim() === 'none';
+}
+
+/** The free scenes of `## play mode` of a play guide (`FreeScenes`); null when it has no scene of another mode. */
+export function freeScenes(playGuide: string): FreeScenes {
+  const table = parseTable(sectionLines(playGuide, 'play mode') ?? []);
+  if (!table) return null;
+  const sceneCol = column(table, 'scene');
+  const modeCol = column(table, 'mode');
+  if (sceneCol < 0 || modeCol < 0) return null;
+  const free = new Set<string>();
+  let other = false;
+  for (const row of table.rows) {
+    if (cell(row, modeCol) === 'free') free.add(cell(row, sceneCol));
+    else other = true;
+  }
+  return other ? free : null;
 }
 
 function num(value: number | null): string {

@@ -5,6 +5,7 @@ import {
   judgeSectionText,
   judgeVerdict,
   observations,
+  referenceRows,
   vsBaselineOf,
   vsReferenceOf,
 } from '../../../../src/commands/loop/lib/results.ts';
@@ -71,6 +72,15 @@ describe('vs reference', () => {
     expect(vsReferenceOf(judge([], ['| A | game feel | pass | r | e |', '| A | x | unknown | r | e |']), 'A')).toBe('unknown');
     expect(vsReferenceOf(judge([], ['| A | game feel | n/a | r | e |']), 'A')).toBe('unknown');
     expect(vsReferenceOf(judge([], ['| A | game feel | unknown | r | e |', '| A | x | fail | r | e |']), 'A')).toBe('fail');
+  });
+
+  it('reads the table with instance columns when a presentation counts table comes first', () => {
+    const text = judge([], ['| A | game feel | pass | r | e |', '| B | game feel | fail | r | e |']).replace(
+      '## vs reference\n\n',
+      '## vs reference\n\n### presentation counts\n\n| screen | panel layers | idle motion | press feedback |\n|---|---|---|---|\n| lobby | 3 | 2 | 1 |\n\n',
+    );
+    expect(vsReferenceOf(text, 'A')).toBe('pass');
+    expect(referenceRows(text).map((r) => [r.instance, r.result])).toEqual([['A', 'pass'], ['B', 'fail']]);
   });
 
   it('throws when the table cannot be read', () => {

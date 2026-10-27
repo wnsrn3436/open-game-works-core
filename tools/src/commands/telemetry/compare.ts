@@ -3,12 +3,11 @@ import { expectPositionals, nonNegativeInt, positional, str, type CommandArgs, t
 import { OgwError } from '../../lib/errors.ts';
 import { readText } from '../../lib/fsx.ts';
 import { readTelemetry } from './api.ts';
-import { compareTelemetry, failureIsNone, formatComparison } from './lib/compare.ts';
+import { compareTelemetry, failureIsNone, formatComparison, freeScenes } from './lib/compare.ts';
 import { windowTelemetry, type Telemetry } from './lib/metrics.ts';
 
-async function guideNone(ctx: Context, file: string | undefined): Promise<boolean> {
-  if (file === undefined) return false;
-  return failureIsNone(await readText(resolve(ctx.cwd, file)));
+async function guideText(ctx: Context, file: string | undefined): Promise<string | null> {
+  return file === undefined ? null : readText(resolve(ctx.cwd, file));
 }
 
 /** The window of one instance (`--from-a`/`--to-a` or `--from-b`/`--to-b`), or undefined when not given. */
@@ -37,11 +36,14 @@ export const compare: CommandDef = {
     const windowA = windowOption(args, 'a');
     const windowB = windowOption(args, 'b');
     if ((windowA === undefined) !== (windowB === undefined)) throw new OgwError('the windows of A and B go together');
-    const noFailure = (await guideNone(ctx, str(args, 'guide-a'))) || (await guideNone(ctx, str(args, 'guide-b')));
+    const guideA = await guideText(ctx, str(args, 'guide-a'));
+    const guideB = await guideText(ctx, str(args, 'guide-b'));
+    const noFailure = [guideA, guideB].some((guide) => guide !== null && failureIsNone(guide));
     const cut = (t: Telemetry, w: { from: number; to: number } | undefined): Telemetry => (w === undefined ? t : windowTelemetry(t, w.from, w.to));
     const a = cut(await readTelemetry(ctx, positional(args, 0, 'instance A')), windowA);
     const b = cut(await readTelemetry(ctx, positional(args, 1, 'instance B')), windowB);
-    const elements = compareTelemetry(a, b, noFailure);
+    const free = (guide: string | null) => (guide === null ? null : freeScenes(guide));
+    const elements = compareTelemetry(a, b, noFailure, free(guideA), free(guideB));
     return { text: formatComparison(elements), data: { elements } };
   },
 };

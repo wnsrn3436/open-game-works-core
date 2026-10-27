@@ -250,7 +250,7 @@ How `ogw loop evaluate` calculates `ogw measure` of [`game-loop`](../skills/game
 - `ogw measure <game> --collect <instance id> --out <file>`: writes the raw data of that instance (`get_telemetry` result, `get_state` result, instance id, instance commit) to the file. When the instance is not of that game, was started with a save fixture, `get_telemetry` or `get_state` fails, or the telemetry is not a JSON object or has no `started_at`, it does not write and fails
 - `ogw measure <game> --collected <file>...`: calculates from files that `--collect` wrote. The telemetry of the files is checked by the same conditions
 - `ogw measure <game> <instance id>...`: collects the raw data of each instance and calculates right away
-- The calculation runs only when the game has an open run, no instance appears twice, and all instances have the same commit. One instance is one sample. The result file is `records/loops/<run>/measure-<iteration>.json` of that run, and the targets are read from `design.md` of the game repo
+- The calculation runs only when the game has an open run, no instance appears twice, and all instances have the same commit. One instance is one sample. The result file is `records/loops/<run>/measure-<iteration>.json` of that run, and the targets are read from `design.md` of the game repo. The free scenes of the metrics are read from `play-guide.md` of the instance commit; when that commit has none, no scene is a free scene
 
 ## generation call
 

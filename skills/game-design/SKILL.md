@@ -49,19 +49,20 @@ It has the headings below in this order. Under a heading not decided yet, write 
 - `## feel targets` and `## tuning targets` are tables with the columns `metric`, `min`, `max`, `data`. `metric` is one metric name below, `min` and `max` are integers, and `data` is the data table and column that change that value, or an empty cell when there is none. e.g. `reward_interval_ms` | 30000 | 60000 | `stage.reward_every`
 - A goal that cannot be measured by a metric is not written as a target. When editing, bring the value of `ogw measure` into the range
 - Metrics are calculated from the telemetry and `QAState` of the play instances that `ogw measure` started without a save fixture. When there is no value, the metric is `unknown`. When the number of values is even, the median is the smaller of the two middle values
+- The scene at a time is the `scene_key` of the last `scene_loads` whose `at` is at or before that time. A free scene is a scene whose mode in `## play mode` of `play-guide.md` of the commit of that instance is `free`. The free scene time of a span is the device time of the span during which the scene is a free scene. When `## play mode` has no scene of another mode, no scene is a free scene, so `first_reward_ms`, `goal_interval_ms` and `idle_span_ms` include the time the agent took between inputs
 
 | metric | value |
 |---|---|
 | `input_latency_ms` | The median of the input `latency_ms` values that are not `null` |
 | `no_response_permille` | The number of inputs whose `latency_ms` is `null` × 1000 ÷ the number of inputs. The remainder is dropped |
-| `feedback_per_input` | The median of the per-input sums of the number of `feedback` |
-| `first_reward_ms` | Per instance, the `play_at` of the first `rewards` (ms elapsed since the telemetry start). The median of those values |
+| `feedback_per_input` | The median of the per-input numbers of feedback kinds whose count in `feedback` is greater than 0 (at most 5) |
+| `first_reward_ms` | Per instance, the `play_at` of the first `rewards` (ms elapsed since the telemetry start) minus the free scene time from the telemetry start to the `at` of that reward, and 0 when that is below 0. The median of those values |
 | `reward_interval_ms` | Per instance, the `play_at` difference of each two consecutive `rewards`. The median of all those values |
-| `goal_interval_ms` | The median of `duration_ms` of `goal_intervals` |
+| `goal_interval_ms` | The median of `duration_ms` of `goal_intervals` minus the free scene time from its `start_at` to its `end_at`, and 0 when that is below 0 |
 | `goal_input_count` | The median of `input_count` of `goal_intervals` |
 | `fail_count` | Per instance, the number of `Fail` marks. The median of those values |
-| `restart_delay_ms` | The median of the `play_at` difference from a `Fail` mark to the first `Restart` mark after it |
-| `idle_span_ms` | The median of `duration_ms` of the `idle_spans` that have `end_at` and whose `start_at` is at least the `at` of the first `inputs` of that instance. 0 when there are no such `idle_spans` |
+| `restart_delay_ms` | For each `Fail` mark that has a `Restart` mark after it, the `at` difference from the last `inputs` after that `Fail` mark and at or before the first such `Restart` mark to that `Restart` mark; none when there is no such input. The median of those values |
+| `idle_span_ms` | The median of `duration_ms` of the `idle_spans` that have `end_at`, whose `start_at` is at least the `at` of the first `inputs` of that instance, and whose scene at `start_at` is not a free scene. 0 when there are no such `idle_spans` |
 | `scene_load_ms` | The maximum of `duration_ms` of `scene_loads` |
 | `content.<field>` | Per instance, the `<field>` integer of `QAState` `content` when play ends. The median of those values |
 

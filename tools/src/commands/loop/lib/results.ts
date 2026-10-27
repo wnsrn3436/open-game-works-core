@@ -16,6 +16,21 @@ function tableOf(text: string, heading: string): Table | null {
 }
 
 /**
+ * The `## vs reference` table: the first table of the section whose header has `instance`, as the section can also
+ * hold the `presentation counts` table; else the first table.
+ */
+function referenceTable(text: string): Table | null {
+  const lines = section(text, 'vs reference');
+  if (lines === null) return null;
+  for (let i = 0; i < lines.length; i++) {
+    if (parseTable(lines.slice(i, i + 2)) === null) continue;
+    const table = parseTable(lines.slice(i));
+    if (table && column(table, 'instance') >= 0) return table;
+  }
+  return parseTable(lines);
+}
+
+/**
  * `vs baseline` from the element winners turned to the side of this commit's instance (`game-loop` `## iteration` 4).
  * Throws when the table cannot be read.
  */
@@ -46,7 +61,7 @@ export function vsBaselineOf(text: string, instanceSide: 'A' | 'B'): VsBaseline 
 
 /** `vs reference` of the rows of this commit's side. Throws when the table cannot be read. */
 export function vsReferenceOf(text: string, instanceSide: 'A' | 'B'): VsReference {
-  const table = tableOf(text, 'vs reference');
+  const table = referenceTable(text);
   if (!table) throw new Error('`## vs reference` table missing');
   const instanceCol = column(table, 'instance');
   const resultCol = column(table, 'result');
@@ -108,7 +123,7 @@ export interface ReferenceRow {
 
 /** Rows of the `## vs reference` table; empty when the table is missing. */
 export function referenceRows(text: string): ReferenceRow[] {
-  const table = tableOf(text, 'vs reference');
+  const table = referenceTable(text);
   if (!table) return [];
   const cols = ['instance', 'element', 'result', 'reason', 'evidence'].map((name) => column(table, name));
   return table.rows.map((row) => {
