@@ -6,9 +6,10 @@ import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
+import { withLock } from '../../../lib/lock.ts';
 import { runOk } from '../../../lib/proc.ts';
 import { newSecretFolder } from '../../../lib/secret-files.ts';
-import { gameSecretService } from '../../../lib/secrets.ts';
+import { gameSecretService, ogwKeychainFolder } from '../../../lib/secrets.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { buildToolProgram, hostPlatform } from '../../env/api.ts';
 import type { BuildTool } from './host.ts';
@@ -86,34 +87,42 @@ function searchList(out: string): string[] {
     .filter((l) => l.length > 0);
 }
 
-/** The temporary keychain of a signing folder and the user keychain search list before it (`## signing`). */
-interface SigningKeychain {
-  path: string;
-  previous: string[];
+/** The keychain search list lock of `## signing`, shared by the ogw processes of the OS user. */
+function searchListLock(env: NodeJS.ProcessEnv): string {
+  return join(ogwKeychainFolder(env), 'search-list.lock');
 }
 
-async function signingKeychain(ctx: Context, dir: string): Promise<SigningKeychain> {
-  return { path: join(dir, 'ogw.keychain-db'), previous: searchList(await sec(ctx, ['list-keychains', '-d', 'user'])) };
-}
+const userSearchList = async (ctx: Context): Promise<string[]> => searchList(await sec(ctx, ['list-keychains', '-d', 'user']));
 
-/** Restores the user keychain search list and deletes the keychain; each step runs even when another failed. */
-async function removeKeychain(ctx: Context, keychain: SigningKeychain): Promise<void> {
-  await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...keychain.previous]).catch(() => undefined);
-  await sec(ctx, ['delete-keychain', keychain.path]).catch(() => undefined);
+/**
+ * Takes the keychain out of the user keychain search list as it is now and deletes the keychain, inside the keychain
+ * search list lock; each step runs even when another failed.
+ */
+async function removeKeychain(ctx: Context, keychain: string): Promise<void> {
+  await withLock(searchListLock(ctx.env), async () => {
+    const list = await userSearchList(ctx).catch(() => null);
+    if (list !== null) await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...list.filter((k) => k !== keychain)]).catch(() => undefined);
+    await sec(ctx, ['delete-keychain', keychain]).catch(() => undefined);
+  }).catch(() => undefined);
 }
 
 /**
- * Creates the keychain with a random password, unlocked without auto-lock, imports the certificate with its password
- * so that `codesign` uses the key without asking, and puts the keychain at the front of the user search list.
+ * Creates the keychain with a random password at the front of the user keychain search list, inside the keychain
+ * search list lock, unlocks it without auto-lock, and imports the certificate with its password so that `codesign`
+ * uses the key without asking.
  */
-async function importCertificate(ctx: Context, keychain: SigningKeychain, p12: string, certPassword: string): Promise<void> {
+async function importCertificate(ctx: Context, keychain: string, p12: string, certPassword: string): Promise<void> {
   const password = randomBytes(24).toString('base64url');
-  await secSecret(ctx, ['create-keychain', '-p', password, keychain.path]);
-  await secSecret(ctx, ['unlock-keychain', '-p', password, keychain.path]);
-  await sec(ctx, ['set-keychain-settings', keychain.path]);
-  await secSecret(ctx, ['import', p12, '-k', keychain.path, '-P', certPassword, '-T', '/usr/bin/codesign']);
-  await secSecret(ctx, ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain.path]);
-  await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain.path, ...keychain.previous]);
+  await withLock(searchListLock(ctx.env), async () => {
+    // `create-keychain` also adds the keychain to the search list
+    const list = (await userSearchList(ctx)).filter((k) => k !== keychain);
+    await secSecret(ctx, ['create-keychain', '-p', password, keychain]);
+    await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain, ...list]);
+  });
+  await secSecret(ctx, ['unlock-keychain', '-p', password, keychain]);
+  await sec(ctx, ['set-keychain-settings', keychain]);
+  await secSecret(ctx, ['import', p12, '-k', keychain, '-P', certPassword, '-T', '/usr/bin/codesign']);
+  await secSecret(ctx, ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain]);
 }
 
 /**
@@ -133,7 +142,7 @@ export async function developerIdIdentity(ctx: Context, keychain: string): Promi
 async function ios(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const kind = env === 'DEV' ? 'development' : 'distribution';
   const dir = await tempDir(ctx);
-  const keychain = await signingKeychain(ctx, dir);
+  const keychain = join(dir, 'ogw.keychain-db');
   const placed: string[] = [];
   const cleanup = async (): Promise<void> => {
     await removeKeychain(ctx, keychain);
@@ -156,7 +165,7 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
       placed.push(target);
     }
     const suffix = env === 'DEV' ? 'debug' : 'release';
-    return { env: {}, options: { [`application/provisioning_profile_uuid_${suffix}`]: uuid }, credentials: {}, keychain: keychain.path, cleanup };
+    return { env: {}, options: { [`application/provisioning_profile_uuid_${suffix}`]: uuid }, credentials: {}, keychain, cleanup };
   } catch (error) {
     await cleanup();
     throw error;
@@ -165,7 +174,7 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
 
 async function macos(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const dir = await tempDir(ctx);
-  let keychain: SigningKeychain | null = null;
+  let keychain: string | null = null;
   const cleanup = async (): Promise<void> => {
     if (keychain !== null) await removeKeychain(ctx, keychain);
     await rm(dir, { recursive: true, force: true });
@@ -190,10 +199,10 @@ async function macos(ctx: Context, game: string, settings: GameSettings, env: En
       credentials['notarization/api_key_id'] = notary.keyId;
       credentials['notarization/api_key'] = await write('notary.p8', 'notaryApiKey');
     }
-    keychain = await signingKeychain(ctx, dir);
+    keychain = join(dir, 'ogw.keychain-db');
     await importCertificate(ctx, keychain, p12, certPassword);
-    options['codesign/identity'] = await developerIdIdentity(ctx, keychain.path);
-    return { env: {}, options, credentials, keychain: keychain.path, cleanup };
+    options['codesign/identity'] = await developerIdIdentity(ctx, keychain);
+    return { env: {}, options, credentials, keychain, cleanup };
   } catch (error) {
     await cleanup();
     throw error;

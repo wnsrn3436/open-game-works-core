@@ -102,12 +102,12 @@ In a bundle patch build, `ogw build run` makes the bundle files in the order bel
 - STG and PROD of macos also do notarization
 - free signing (`## platform build` of [`build`](../SKILL.md)): android passes the debug keystore in `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` of the environment variables above, `androiddebugkey` in `_USER` and `android` in `_PASSWORD`. The macos preset sets `codesign/codesign` to `1` (Built-in, ad-hoc) and does not write `codesign/provisioning_profile` and `.godot/export_credentials.cfg`. windows does not run `jsign`
 - ios uses the keys starting with `development` for DEV and the keys starting with `distribution` for STG and PROD. In the export preset, `application/export_method_debug` is Development (`1`), `application/export_method_release` is App Store (`0`), `application/code_sign_identity_debug` is `Apple Development`, and `application/code_sign_identity_release` is `Apple Distribution`. Game settings `appleTeamId` goes in `application/app_store_team_id`, and the `UUID` of that environment's provisioning profile goes in `application/provisioning_profile_uuid_debug` for DEV and in `application/provisioning_profile_uuid_release` for STG and PROD
-- Before the export, ios and macos without free signing do 1 to 3 below, and ios also does 4
-  1. Creates a keychain with a random password in a temporary folder, unlocks it and turns off its auto-lock
+- Before the export, ios and macos without free signing do 1 and 2 below, and ios also does 3
+  1. Creates a keychain with a random password in a temporary folder and sets the user keychain search list to that keychain followed by the list read just before the creation, then unlocks the keychain and turns off its auto-lock
   2. Imports the certificate of that environment with its certificate password, and sets the key partition list to `apple-tool:,apple:,codesign:` so that `codesign` uses the key without asking
-  3. Adds that keychain to the front of the user keychain search list
-  4. Puts the provisioning profile of that environment, named `<UUID>.mobileprovision`, in `~/Library/MobileDevice/Provisioning Profiles/` and `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`. It does not put it in a folder that already has a file of the same name
-- When the ios or macos export ends, on success or failure, restores the user keychain search list to its state before 1, deletes the keychain of 1, and deletes the files put in 4
+  3. Puts the provisioning profile of that environment, named `<UUID>.mobileprovision`, in `~/Library/MobileDevice/Provisioning Profiles/` and `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`. It does not put it in a folder that already has a file of the same name
+- When the ios or macos export ends, on success or failure, sets the user keychain search list to the list read at that time without the keychain of 1, deletes the keychain of 1, and deletes the files put in 3
+- The keychain search list lock is a lock that all `ogw` processes of the OS user share. The read of the user keychain search list, the keychain creation and the list change of 1 run in one hold of that lock, and so do the read, the list change and the keychain deletion at the end of the export. An ios export and a macos export that run at the same time keep each other's keychain in the list
 - `.godot/export_credentials.cfg`, keystores, certificates and provisioning profiles are not committed. The build workspace is deleted when the build ends
 
 ## native plugin

@@ -228,7 +228,7 @@ describe('signing', () => {
   find-identity) printf '%s\n' ${names} '     1 valid identities found';;
 esac`;
     const bin = fakeBin(ws, { security: identities(`'  1) ${hash} "Developer ID Application: Example (TEAM123456)"'`) });
-    const ctx = ctxOf(ws, bin.env);
+    const ctx = ctxOf(ws, { ...bin.env, HOME: tmp() });
     const settings = { appleTeamId: 'TEAM123456', macosNotary: { keyId: 'K', issuerId: 'I' }, signing: { macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } } };
     const signing = await prepareSigning(ctx, 'g', settings, 'STG', 'macos');
     expect(signing.options).toMatchObject({ 'codesign/codesign': 3, 'codesign/identity': hash, 'codesign/apple_team_id': 'TEAM123456', 'notarization/notarization': 2 });
@@ -293,6 +293,41 @@ esac`,
     expect(log).toMatch(/security list-keychains -d user -s \/Users\/x\/login\.keychain-db\n/);
     expect(log).toMatch(/security delete-keychain \S+ogw\.keychain-db/);
     await expect(profileUuid(ctxOf(ws, { PATH: '/nonexistent' }), 'x')).rejects.toThrow();
+  });
+
+  it('keeps the keychains of ios and macos exports that run at the same time in the user search list', async () => {
+    const ws = makeWorkspace();
+    const b64 = (s: string) => Buffer.from(s).toString('base64');
+    setSecrets(ws, { 'ogw/g/signing/dc': b64('P12'), 'ogw/g/signing/dcp': 'pw', 'ogw/g/signing/dpp': b64('PROFILE'), 'ogw/g/signing/c': b64('P12'), 'ogw/g/signing/cp': 'cpw', 'ogw/g/signing/pp': b64('PROFILE'), 'ogw/g/signing/n': b64('P8') });
+    const hash = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+    // a search list kept in a file, with a pause between its read and its write; creating a keychain adds it and deleting removes it
+    const bin = fakeBin(ws, {
+      security: `L="$(dirname "$0")/list.txt"; [ -f "$L" ] || echo /Users/x/login.keychain-db > "$L"
+case "$1" in
+  -i) read -r line; case "$line" in '"create-keychain"'*) k=$(printf '%s' "$line" | sed 's/.*"\\([^"]*\\)"$/\\1/'); sleep 0.05; printf '%s\\n' "$k" >> "$L";; esac;;
+  list-keychains) if [ "$4" = "-s" ]; then shift 4; sleep 0.05; printf '%s\\n' "$@" > "$L"; else sleep 0.05; sed 's/^/    "/; s/$/"/' "$L"; fi;;
+  delete-keychain) grep -vxF "$2" "$L" > "$L.new"; mv "$L.new" "$L";;
+  cms) echo '<plist><dict><key>UUID</key><string>ABC-123</string></dict></plist>';;
+  find-identity) echo '  1) ${hash} "Developer ID Application: Example (TEAM123456)"'; echo '     1 valid identities found';;
+esac`,
+    });
+    const list = (): string[] => readFileSync(join(bin.bin, 'list.txt'), 'utf8').trim().split('\n');
+    const ctx = ctxOf(ws, { ...bin.env, HOME: tmp() });
+    const settings = {
+      appleTeamId: 'TEAM123456',
+      macosNotary: { keyId: 'K', issuerId: 'I' },
+      signing: { ios: { distributionCertificate: 'dc', distributionCertificatePassword: 'dcp', distributionProvisioningProfile: 'dpp' }, macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } },
+    };
+    const [ios, macos] = await Promise.all([prepareSigning(ctx, 'g', settings, 'STG', 'ios'), prepareSigning(ctx, 'g', settings, 'STG', 'macos')]);
+    expect(list().sort()).toEqual([ios.keychain, macos.keychain, '/Users/x/login.keychain-db'].sort());
+    await ios.cleanup();
+    expect(list()).toEqual([macos.keychain, '/Users/x/login.keychain-db']);
+    await macos.cleanup();
+    expect(list()).toEqual(['/Users/x/login.keychain-db']);
+    // the ends of two exports at the same time leave no keychain behind
+    const again = await Promise.all([prepareSigning(ctx, 'g', settings, 'STG', 'ios'), prepareSigning(ctx, 'g', settings, 'STG', 'macos')]);
+    await Promise.all(again.map((signing) => signing.cleanup()));
+    expect(list()).toEqual(['/Users/x/login.keychain-db']);
   });
 
   it('signs windows files with jsign and an Entra token', async () => {
