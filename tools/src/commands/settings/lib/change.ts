@@ -26,20 +26,38 @@ export function mayChange(role: Role | 'lead', kind: TargetKind, owner: string |
   return role === 'core' && kind === 'core';
 }
 
-/** One line per changed path the caller may not change. */
+/** The game settings `humanDecided` path that `path` equals or is below, or null. */
+export function lockingPath(humanDecided: unknown, path: string): string | null {
+  if (!Array.isArray(humanDecided)) return null;
+  const lock = humanDecided.find((locked): locked is string => typeof locked === 'string' && (path === locked || path.startsWith(`${locked}.`)));
+  return lock ?? null;
+}
+
+/**
+ * One line per changed path the caller may not change: by its `x-owner`, and for a role other than `lead`, a game
+ * settings path equal to or below a path of game settings `humanDecided`.
+ */
 export async function permissionIssues(ctx: Context, target: Target, next: JsonObject, allowTool: boolean): Promise<string[]> {
   const role = await callerRole(ctx);
   const lines: string[] = [];
   const denied: string[] = [];
   // the owner of a `core.` key of game settings comes from the core release of the `coreVersion` being written
   const result = withValue(ctx, target, next);
+  // `humanDecided` itself is not a content item, so a role other than `lead` reads the locks it cannot change
+  const humanDecided = target.kind === 'game' && role !== 'lead' ? target.value.humanDecided : undefined;
   for (const path of changedPaths(target.value, next)) {
     const text = display(path);
     if (denied.some((parent) => text.startsWith(`${parent}.`))) continue;
     const { owner } = await locatePath(result, path);
-    if (mayChange(role, target.kind, owner, allowTool)) continue;
+    if (!mayChange(role, target.kind, owner, allowTool)) {
+      denied.push(text);
+      lines.push(`role ${role} cannot change ${text}${owner === undefined ? '' : ` (x-owner ${owner})`}`);
+      continue;
+    }
+    const lock = lockingPath(humanDecided, text);
+    if (lock === null) continue;
     denied.push(text);
-    lines.push(`role ${role} cannot change ${text}${owner === undefined ? '' : ` (x-owner ${owner})`}`);
+    lines.push(`role ${role} cannot change ${text}: a human decided ${lock} (humanDecided)`);
   }
   return lines;
 }

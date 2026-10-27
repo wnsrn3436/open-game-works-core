@@ -797,6 +797,16 @@
       "description": "Written only when changing core settings values. Checked against the core settings schema of coreVersion. Keys whose x-owner is human in the core settings schema of coreVersion are edited by a human",
       "type": "object",
       "x-owner": "content"
+    },
+    "humanDecided": {
+      "description": "Game settings paths whose values a human decided. e.g. `appId`, `core.auth.childAgeYears`. `ogw settings set` refuses a role other than the lead agent a change to such a path or a path below it. Each path has a value written in game settings, also when it equals the default",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "x-owner": "human"
     }
   },
   "$defs": {

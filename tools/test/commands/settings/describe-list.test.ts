@@ -172,7 +172,9 @@ describe('ogw settings list', () => {
       'core.UICore.theme.size',
       'core.UICore.theme.dark',
     ]);
-    expect((await list('game', 'mygame', '--owner', 'human')).stdout).toBe('core.NetworkCore.requestTimeoutMs: Request timeout.\n');
+    expect((await list('game', 'mygame', '--owner', 'human')).stdout).toBe(
+      'humanDecided: Game settings paths whose values a human decided.\ncore.NetworkCore.requestTimeoutMs: Request timeout.\n',
+    );
   });
 
   it('lists missing setup stage values, including values a condition requires, and no build stage value', async () => {

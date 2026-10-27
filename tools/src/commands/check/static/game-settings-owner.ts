@@ -6,15 +6,16 @@ import { openRun } from '../../../lib/runstate.ts';
 import { loadSchema, schemaPath, withDefaults } from '../../../lib/settings.ts';
 import { lastProdTagName } from '../../build/lib/names.ts';
 import { coreReleaseOfGame } from '../../core/api.ts';
-import { gameCheckErrors } from '../../settings/api.ts';
+import { gameCheckErrors, gameSettingsValue } from '../../settings/api.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { isRecord } from './lib/json-pos.ts';
 import { keyLine } from './option-entry.ts';
 
 /**
  * game settings owner: game settings fail `ogw game check`; a game settings item whose schema `x-owner` is not
- * `content`, or a game settings `core` key whose core settings schema `x-owner` is `human`, differs from the open run's
- * reference commit (skipped without an open run or before the reference commit is set); with a PROD tag,
+ * `content`, a game settings `core` key whose core settings schema `x-owner` is `human`, or the value at a path of the
+ * reference commit's `humanDecided`, differs from the open run's reference commit (skipped without an open run or
+ * before the reference commit is set); with a PROD tag,
  * `dailyResetOffsetMs` or `nicknameUnique` differs from the last `prod-<version>` tag (schema defaults filled in).
  */
 export const NAME = 'game settings owner';
@@ -67,6 +68,11 @@ function coreKeyLine(text: string, key: string): number {
   return text.includes(`"${key}"`) ? keyLine(text, key) : keyLine(text, key.split('.').pop() ?? key);
 }
 
+/** Line of a `humanDecided` path in the settings text: its core settings key, else its last key. */
+function humanDecidedLine(text: string, path: string): number {
+  return path.startsWith('core.') ? coreKeyLine(text, path.slice('core.'.length)) : keyLine(text, path.split('.').pop() ?? path);
+}
+
 async function settingsAt(sc: StaticContext, rev: string): Promise<Record<string, unknown>> {
   const bytes = await showFile(sc.root, rev, 'settings.json');
   if (!bytes) return {};
@@ -81,6 +87,12 @@ async function referenceFindings(sc: StaticContext, current: Record<string, unkn
   const out: Finding[] = [];
   for (const key of humanItems(schema)) {
     if (!isDeepStrictEqual(current[key], ref[key])) out.push(finding(NAME, at('settings.json', keyLine(text, key)), `\`${key}\` is not a content item and differs from the run reference commit ${run.referenceCommit}`));
+  }
+  const decided = Array.isArray(ref.humanDecided) ? ref.humanDecided.filter((p): p is string => typeof p === 'string') : [];
+  for (const path of decided) {
+    if (!isDeepStrictEqual(gameSettingsValue(current, path), gameSettingsValue(ref, path))) {
+      out.push(finding(NAME, at('settings.json', humanDecidedLine(text, path)), `\`${path}\` is in humanDecided and differs from the run reference commit ${run.referenceCommit}`));
+    }
   }
   const release = await coreReleaseOfGame(sc.ctx, sc.game);
   const coreSchema = JSON.parse(await readFile(join(release.dir, 'core-settings.schema.json'), 'utf8')) as unknown;

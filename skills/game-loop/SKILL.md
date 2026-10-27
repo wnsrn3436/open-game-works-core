@@ -27,7 +27,8 @@ description: The procedure by which the lead agent of the `create game` and `upd
    - `export_user_snapshot` and `import_user_snapshot` are called only through `ogw clone user`, `export_game_state` and `import_game_state` only through `ogw clone game-state`, and `import_guild` only through `ogw clone guild`. Snapshots are not received as files
    - The lead agent writes the reproduction steps in order and the evidence (capture path, log, server response) in `## reproduction` of `request.md`. If it cannot reproduce the problem, it writes the steps it tried and their results. Then it stops that instance with `ogw instance stop <id>`
 4. The lead agent writes each moment that the request sets or changes and that is not in `## moments` of `records/setup/reference/reference.md` in `## judge moments` of `request.md`, one per line, as `` - `<moment name>`: <description> ``. The name is snake_case. The description is the path from the first screen to that moment; for a moment that comes only after time passes (e.g. the moment of receiving the rewards accumulated while not connected), it also gives the duration (ms) that must pass on that path. If the request does not state moments, the lead agent sets them from the request and appends `(set by lead agent)` after the name
-5. If 2 was started, the lead agent waits for it with `ogw job wait <id>`. Then it commits `request.md`
+5. For `update game`, the lead agent writes with `ogw settings set` each game settings value that the request decides, and adds its path to `humanDecided` in the same call. A value at or below a `humanDecided` path is changed only when the request asks for that change
+6. If 2 was started, the lead agent waits for it with `ogw job wait <id>`. Then it commits `request.md` and game settings
 
 ## iteration
 
