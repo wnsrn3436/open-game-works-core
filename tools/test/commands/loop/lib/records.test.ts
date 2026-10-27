@@ -74,6 +74,7 @@ const DATA: IterationRecordData = {
   baseline: 'b0',
   confirms: null,
   kind: 'completeness',
+  variants: null,
   checks: [{ name: 'regression test', result: 'pass', path: 'p' }, { name: 'static check', result: 'pass', path: 'p' }, { name: 'no blocker', result: 'pass', path: 'p' }, { name: 'full flow', result: 'pass', path: 'p' }],
   judges: [
     { ...judgeEntry({ omittedMoments: ['boss'] }), moments: '`A` wins', loserBetter: '' },
@@ -97,8 +98,8 @@ const DATA: IterationRecordData = {
 describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
-    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
-    expect(text).toContain('- confirms: none\n- kind: completeness\n');
+    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
+    expect(text).toContain('- confirms: none\n- kind: completeness\n\n## variants\n\nnone\n');
     expect(text).toContain('- status: done\n- agent: claude-code m1 high\n- A: c1\n- B: b0\n- vs reference: pass\n- omitted moments: boss\n');
     expect(text).toContain('- agent: codex m2 medium\n');
     expect(text).toContain(
@@ -128,6 +129,19 @@ describe('iteration record', () => {
       'p2',
     );
     expect(fun).toMatchObject({ kind: 'fun', vsBaseline: 'indistinguishable', vsReference: null });
+    // the variants of `ogw loop variants`, one row each
+    const variants = renderIterationRecord({
+      ...DATA,
+      kind: 'fun',
+      variants: [
+        { k: 1, element: 'tension and release', commit: 'v1', vsBaseline: 'better', chosen: true },
+        { k: 2, element: 'no friction', commit: null, vsBaseline: null, chosen: false },
+      ],
+    });
+    expect(variants).toContain(
+      '## variants\n\n| k | element | commit | vs baseline | chosen |\n|---|---|---|---|---|\n| 1 | tension and release | v1 | better | yes |\n| 2 | no friction | none | none | no |\n\n## checks',
+    );
+    expect(parseIterationRecord(variants, 2, 'p2')).toMatchObject({ commit: 'c1', kind: 'fun', vsBaseline: 'better' });
     // no baseline game: `## votes` is none and vs reference comes from the step 4 judge
     const alone = parseIterationRecord(renderIterationRecord({ ...DATA, votes: null }), 1, 'p1');
     expect(renderIterationRecord({ ...DATA, votes: null })).toContain('## votes\n\nnone\n');
@@ -143,7 +157,7 @@ describe('iteration record', () => {
   it('writes none for steps that did not run', () => {
     const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [] });
     expect(text).toBe(
-      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n',
+      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n',
     );
     const parsed = parseIterationRecord(text, 2, 'p');
     expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0, vsBaseline: null, vsReference: null });

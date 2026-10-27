@@ -16,10 +16,11 @@ import {
 } from './defects.ts';
 import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
-import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVotes } from './iteration-record.ts';
+import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
-import { abs, confirmOf, iterationKind, iterationResults, readGameText, runRel, type IterationResults } from './run.ts';
+import { abs, confirmOf, iterationKind, iterationResults, readGameText, readRunJson, runRel, type IterationResults } from './run.ts';
+import type { VariantsFile } from './variants.ts';
 
 /** `ogw loop record`: defect list merge, status change, and the loop iteration record. */
 
@@ -135,16 +136,23 @@ function votesOf(evaluate: EvaluateFile | null): RecordVotes | null {
   return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [] };
 }
 
+/** `## variants`: the variants of `variants-<n>.json`; null without that file. */
+async function variantsOf(game: GameRepo, run: RunState): Promise<RecordVariant[] | null> {
+  return (await readRunJson<VariantsFile>(game, run, `variants-${String(run.iteration)}.json`))?.variants ?? null;
+}
+
 async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[]): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
   const performanceFailed = check !== null && checkResult(check, 'performance') === 'fail';
   const rel = runRel(run, `iteration-${n}.md`);
+  const variants = await variantsOf(game, run);
   await writeFileAtomic(abs(game, rel), renderIterationRecord({
     commit: check?.commit ?? null,
     baseline: evaluate?.baseline ?? null,
     confirms: confirmOf(run, run.iteration),
     kind: kindOf(run, evaluate),
+    variants,
     checks: check ? checkNames(check).map((name) => ({ name, result: checkResult(check, name), path: checkRel })) : [],
     judges: evaluate ? await judgesOf(game, evaluate) : null,
     votes: votesOf(evaluate),

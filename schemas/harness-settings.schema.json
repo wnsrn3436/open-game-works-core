@@ -236,7 +236,7 @@
           }
         },
         "variants": {
-          "description": "The number of variants the content agent makes in a fun iteration",
+          "description": "The number of variant agents that `ogw loop variants` starts in a fun iteration. 1: the lead agent calls one content agent",
           "type": "integer",
           "minimum": 1
         }

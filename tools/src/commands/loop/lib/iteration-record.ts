@@ -27,6 +27,8 @@ export interface IterationRecordData {
   /** The candidate iteration this confirmation iteration confirms; null for any other iteration. */
   confirms: number | null;
   kind: IterationKind;
+  /** The variants of `ogw loop variants` of the iteration; null when it did not run. */
+  variants: RecordVariant[] | null;
   checks: { name: string; result: string; path: string }[];
   /** null when steps 3 and 4 did not run. */
   judges: RecordJudge[] | null;
@@ -39,6 +41,23 @@ export interface IterationRecordData {
   load: { platform: string | null; hostLoad: unknown }[] | null;
   /** Keys that became `temporary` since the previous iteration (`game-loop` `## loop iteration record`). */
   temporary: string[];
+}
+
+/** A row of `## variants`. */
+export interface RecordVariant {
+  k: number;
+  element: string;
+  commit: string | null;
+  vsBaseline: VsBaseline | null;
+  chosen: boolean;
+}
+
+function variantsBlock(variants: readonly RecordVariant[] | null): string {
+  if (variants === null) return 'none';
+  return renderTable(
+    ['k', 'element', 'commit', 'vs baseline', 'chosen'],
+    variants.map((v) => [String(v.k), v.element, v.commit ?? 'none', v.vsBaseline ?? 'none', v.chosen ? 'yes' : 'no']),
+  );
 }
 
 /** `## votes`: the step 4 judges together. */
@@ -102,6 +121,7 @@ export function renderIterationRecord(data: IterationRecordData): string {
       'commit',
       `- instance: ${data.commit ?? 'none'}\n- baseline: ${data.baseline ?? 'none'}\n- confirms: ${data.confirms === null ? 'none' : String(data.confirms)}\n- kind: ${data.kind}`,
     ],
+    ['variants', variantsBlock(data.variants)],
     ['checks', checks],
     ['judge', judge],
     ['votes', votesBlock(data.votes)],

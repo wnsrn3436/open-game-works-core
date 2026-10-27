@@ -14,6 +14,7 @@ import { loopResume } from './resume.ts';
 import { loopStart } from './start.ts';
 import { loopStatus } from './status.ts';
 import { loopSync } from './sync.ts';
+import { loopVariants } from './variants.ts';
 import { loopVerdict } from './verdict.ts';
 
 export const commands: CommandDef[] = [
@@ -25,6 +26,7 @@ export const commands: CommandDef[] = [
   loopInput,
   loopDispatch,
   loopSync,
+  loopVariants,
   loopEvaluate,
   loopFindings,
   loopRecord,

@@ -106,6 +106,19 @@ describe('ogw loop resume', () => {
     );
   });
 
+  it('removes the worktrees and branches of the variant agents that were not merged, and continues at step 1', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 2, startedAt: 5 });
+    const left = await addJob(g.ws, { status: 'done', meta: { role: 'content', run: 'update-1', iteration: 2, variant: 1, input: '/v1.md' } });
+    const merged = await addJob(g.ws, { status: 'done', meta: { role: 'content', run: 'update-1', iteration: 1, variant: 2, input: '/v2.md', merged: true } });
+    const content = await addJob(g.ws, { status: 'done', meta: { role: 'content', run: 'update-1', iteration: 1, input: '/c.md' } });
+    const worktrees = [left, merged, content].map((job) => join(g.ws.worktrees, 'g', `agent-${job.id}`));
+    worktrees.forEach((wt, i) => git(g.root, 'worktree', 'add', '-q', '-b', `agent/${[left, merged, content][i]?.id ?? ''}`, wt));
+    const out = await ogw(g.ws, ['loop', 'resume', 'g']);
+    expect(out.stdout).toBe(['checked out loop/update-1', `removed ${worktrees[0] ?? ''}`, `removed agent/${left.id}`, 'nothing to sync', 'resume at: iteration 2 1', ''].join('\n'));
+    expect(worktrees.map((wt) => existsSync(wt))).toEqual([false, true, true]);
+  });
+
   it('gives the build step', async () => {
     const g = setupGame();
     await openBuildRun(g, { iteration: 1 });
