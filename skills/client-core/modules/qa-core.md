@@ -209,6 +209,7 @@ The play record that the judge agent and performance check read. Times (`started
 - advanced ms: while step mode is off, the passage of real elapsed time of `TimeCore`; while it is on, the game time that `step` and the 1 ms of input commands advanced (including the steps of a lockstep match). So time that neither `step` nor an input command advanced while step mode is on, and time spent in the background, are not included
 
 - input: one input command. Its time is when the first device input of that command was put in
+- release input: an input of `touch_up`, `key_up`, `mouse_up`, `pad_button_up`. It only ends a press, so it is not recorded in `inputs`, a feedback event or response event is not counted for it, and it is not counted in `input_count` of `goal_intervals`. It is an input for `idle_spans` and the softlock judgement
 - feedback event: the events below. The feedback kind column gives the feedback kind in telemetry
 
   | event | emitting module | feedback kind |
@@ -225,11 +226,11 @@ The play record that the judge agent and performance check read. Times (`started
 
   | item | rule |
   |---|---|
-  | `inputs` | per input `at`, `command`, `latency_ms` (until the first response event after the input. `null` when there is none within `QACore.feedbackWindowMs`), `feedback` (count per feedback kind) |
+  | `inputs` | per input that is not a release input `at`, `command`, `latency_ms` (until the first response event after the input. `null` when there is none within `QACore.feedbackWindowMs`), `feedback` (count per feedback kind) |
   | `rewards` | For each `ItemChange` of `UserStateCore.ItemChangedEvent` whose change amount (the big encoding pair `delta`, `big_delta` of the contract) is 1 or more and whose `source` is not `Cheat` or `PlaySessionRefund`: `at`, `play_at`, `kind` (`Item`), `id` (item ID value), `amount` (the change amount; 2^53−1 when it exceeds 2^53−1). For each `Reward` mark: `at`, `play_at`, `kind` (`Mark`), `id` (ID value of the mark), `amount` (1) |
   | `marks` | per `mark` `at`, `play_at`, `kind` |
   | `idle_spans` | When a span with no input and no state event is longer than `QACore.idleThresholdMs`: `start_at`, `end_at`, `duration_ms` (advanced ms in that span). For a span still going on at `get_telemetry`, `end_at` and `duration_ms` are `null` |
-  | `goal_intervals` | For each span from the telemetry start or the previous `Goal` mark to the next `Goal` mark: `start_at`, `end_at`, `duration_ms` (advanced ms in that span), `input_count` |
+  | `goal_intervals` | For each span from the telemetry start or the previous `Goal` mark to the next `Goal` mark: `start_at`, `end_at`, `duration_ms` (advanced ms in that span), `input_count` (inputs that are not release inputs) |
   | `scene_loads` | per `SceneCore.SceneStartedEvent` `at`, `scene_key`, `duration_ms` |
 
 - A feedback event is counted in the `feedback` of the last input among the inputs whose time is within `QACore.feedbackWindowMs`
@@ -376,8 +377,9 @@ The whole module is DEV code. STG·PROD builds have no QACore, no DEV registrati
 - After `set_content_state` is called again, `content` of the next `get_state` is the value of the later callback. For a callback that returns a value that is not a JSON object, `content` is `{}` and there is one error log for that callback
 - When `SoundCore.SoundPlayedEvent` and `TweenCore.TweenStartedEvent` come d ms of test clock after a `tap`, `latency_ms` of that input is d and `feedback` is `Sound` 1, `Tween` 1. Events after `QACore.feedbackWindowMs` are not counted, and when there is no response event within it, `latency_ms` is `null`
 - When a `Response` mark comes d ms of test clock after a `tap` without a feedback event, `latency_ms` of that input is d and `feedback` is empty
+- When `key_up` comes after `key_down` of the same key and `SoundCore.SoundPlayedEvent` comes d ms of test clock after the `key_down`, within `QACore.feedbackWindowMs`, `inputs` has only the `key_down`, its `latency_ms` is d and its `feedback` is `Sound` 1
 - For each `ItemChange` of `UserStateCore.ItemChangedEvent` with a change amount of 1 or more, one row of `kind` `Item` whose `amount` is the change amount is recorded in `rewards`, and when `big_delta` is `12345678901234567890`, `amount` is 2^53−1. One with a change amount of 0 or less or whose `source` is `Cheat` or `PlaySessionRefund` is not recorded. For each `Reward` mark, one row of `kind` `Mark` is recorded
-- Each kind of `mark` is recorded in `marks`, and the number of inputs between two `Goal`s is `input_count` of `goal_intervals`
+- Each kind of `mark` is recorded in `marks`, and the number of inputs that are not release inputs between two `Goal`s is `input_count` of `goal_intervals`
 - When `QACore.idleThresholdMs` + 1 passes without input and state event, `idle_spans` has one span
 - For each `SceneCore.SceneStartedEvent`, one entry with that event's `scene_key` and `duration_ms` is recorded in `scene_loads`
 - After `QACore.telemetryMaxRecords` + 1 inputs, `inputs` holds the limit count and `dropped` is 1. After `clear_telemetry`, every item is empty and `dropped` is 0

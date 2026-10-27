@@ -827,6 +827,14 @@ describe('ogw loop end-record', () => {
     const synced = read(g.root, `${R}/end.md`);
     expect(synced).toContain(`- merged iteration: 2 (${R}/iteration-2.md)\n- merged iteration no blocker: fail\n- merged iteration performance: unknown\n- merged iteration full flow: unknown\n`);
     expect(synced).toContain('- merged iteration UI quality: unknown\n- merged tree not checked as a whole\n\n## failures');
+    // the same when the commit to merge is the commit of the last check file
+    await setRun(g, (run) => {
+      (run.data.loop as { prepareMerge: object }).prepareMerge = { commit: c10, withSyncedWork: true, mainHead: 'm', baseCommit: 'm', created: true };
+    });
+    expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
+    const syncedLast = read(g.root, `${R}/end.md`);
+    expect(syncedLast).toContain(`- completeness check of iteration 10 (${c10})\n- no blocker: pass\n- performance: unknown\n- full flow: unknown\n- UI quality: unknown\n- merged tree not checked as a whole\n\n## failures`);
+    expect(syncedLast).not.toContain('merged iteration:');
   });
 
   it('lists the resources temporary at the commit to merge, and none without that commit', async () => {
