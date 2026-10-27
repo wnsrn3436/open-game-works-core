@@ -19,6 +19,7 @@
     "webSmokeBootTimeoutMs",
     "loopStop",
     "loop",
+    "calibration",
     "reviewRounds",
     "codeCheck",
     "rigCheck",
@@ -227,6 +228,33 @@
         },
         "variants": {
           "description": "The number of variants the content agent makes in a fun iteration",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "calibration": {
+      "description": "Values of judge calibration. `## judge calibration` of the `game-loop` skill defines their meaning",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nullPairs",
+        "orderRuns",
+        "degradeLatencyMs"
+      ],
+      "properties": {
+        "nullPairs": {
+          "description": "The number of null pairs",
+          "type": "integer",
+          "minimum": 1
+        },
+        "orderRuns": {
+          "description": "The number of judges of the order pair per side assignment",
+          "type": "integer",
+          "minimum": 1
+        },
+        "degradeLatencyMs": {
+          "description": "The input latency (ms) of the baseline instances of the degraded pair",
           "type": "integer",
           "minimum": 1
         }
