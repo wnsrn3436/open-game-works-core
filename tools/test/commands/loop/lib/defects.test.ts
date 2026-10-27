@@ -187,9 +187,29 @@ describe('confirmedBy', () => {
   const evaluate = (play: 'done' | 'failed', judge: 'done' | 'failed'): EvaluateFile => ({
     commit: 'c',
     baseline: null,
+    kind: 'completeness',
+    elements: [],
     measure: null,
+    votes: null,
+    vsBaseline: null,
+    vsReference: 'pass',
     plays: [{ result: 'p', instance: 'i', platform: 'web', moment: null, status: play }],
-    judges: [{ kind: 'main', result: 'j', A: 'a', B: null, instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'pass', status: judge }],
+    judges: [
+      {
+        kind: 'main',
+        result: 'j',
+        agent: { cli: 'claude-code', model: 'm', effort: 'high' },
+        A: 'a',
+        B: null,
+        instanceSide: 'A',
+        omittedMoments: [],
+        votes: null,
+        lostMoments: [],
+        vsReference: 'pass',
+        telemetry: null,
+        status: judge,
+      },
+    ],
   });
   const none = { check: null, measure: null, evaluate: null };
   const checkDefect = d({ source: 'check', evidence: ['records/loops/r/check-1.json#performance'] });

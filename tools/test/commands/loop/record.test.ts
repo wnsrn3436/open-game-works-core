@@ -60,6 +60,18 @@ const JUDGE = [
   '',
 ].join('\n');
 
+const AGENT = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' };
+
+/** A judge entry of `evaluate-<n>.json` with the fields a test does not look at filled in. */
+function judgeOf(fields: Record<string, unknown>): Record<string, unknown> {
+  return { agent: AGENT, omittedMoments: [], votes: null, lostMoments: [], telemetry: null, status: 'done', ...fields };
+}
+
+/** The `evaluate-<n>.json` fields of the step 4 judges together and the kind. */
+function together(fields: Record<string, unknown> = {}): Record<string, unknown> {
+  return { kind: 'completeness', elements: ['game feel'], votes: null, vsBaseline: null, vsReference: 'unknown', ...fields };
+}
+
 async function iterationOne(): Promise<{ g: TestGame; sha: string }> {
   const g = setupGame();
   await openLoopRun(g, { iteration: 1 });
@@ -84,9 +96,10 @@ async function iterationOne(): Promise<{ g: TestGame; sha: string }> {
       { result: `${R}/play-1-2.md`, instance: 'i2', platform: 'web', moment: null, status: 'failed' },
     ],
     judges: [
-      { kind: 'main', result: `${R}/judge-1-1.md`, A: 'base0', B: sha, instanceSide: 'B', omittedMoments: ['boss'], vsBaseline: 'better', vsReference: 'fail', status: 'done' },
-      { kind: 'success', result: `${R}/judge-1-2.md`, A: sha, B: 'base0', instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'unknown', status: 'failed' },
+      judgeOf({ kind: 'main', result: `${R}/judge-1-1.md`, A: 'base0', B: sha, instanceSide: 'B', omittedMoments: ['boss'], vsReference: 'fail' }),
+      judgeOf({ kind: 'success', result: `${R}/judge-1-2.md`, A: sha, B: 'base0', instanceSide: 'A', vsReference: 'unknown', status: 'failed', agent: { ...AGENT, cli: 'codex' } }),
     ],
+    ...together({ votes: [{ element: 'game feel', this: 2, baseline: 0, decision: 'this' }], vsBaseline: 'better', vsReference: 'fail' }),
     measure: `${R}/measure-1.json`,
   });
   commit(g.root);
@@ -126,7 +139,7 @@ describe('ogw loop findings', () => {
     write(g.root, `${R}/judge-1-1.md`, reference('B'));
     write(g.root, `${R}/judge-1-3.md`, reference('A'));
     const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as { judges: object[] };
-    evaluate.judges.push({ kind: 'success', result: `${R}/judge-1-3.md`, A: sha, B: 'base0', instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'fail', status: 'done' });
+    evaluate.judges.push(judgeOf({ kind: 'success', result: `${R}/judge-1-3.md`, A: sha, B: 'base0', instanceSide: 'A', vsReference: 'fail' }));
     write(g.root, `${R}/evaluate-1.json`, evaluate);
     commit(g.root);
     await ogw(g.ws, ['loop', 'findings', 'g']);
@@ -256,11 +269,16 @@ describe('ogw loop record', () => {
       ['old', 'major', 'fixed'],
     ]);
     const record = read(g.root, `${R}/iteration-1.md`);
-    expect(record).toContain(`## commit\n\n- instance: ${sha}\n- baseline: base0\n`);
+    expect(record).toContain(`## commit\n\n- instance: ${sha}\n- baseline: base0\n- confirms: none\n- kind: completeness\n`);
     expect(record).toContain('| static check | fail | records/loops/update-1/check-1.json |');
     expect(record).toContain('| performance | fail | records/loops/update-1/check-1.json |');
-    expect(record).toContain(`### ${R}/judge-1-1.md\n\n- kind: main\n- status: done\n- A: base0\n- B: ${sha}\n- vs baseline: better\n- vs reference: fail\n- omitted moments: boss\n\n#### moments\n\n\`B\` is better at core action. reason: faster\n\n#### loser better\n\nA had music`);
-    expect(record).toContain(`### ${R}/judge-1-2.md\n\n- kind: success\n- status: failed`);
+    expect(record).toContain(
+      `### ${R}/judge-1-1.md\n\n- kind: main\n- status: done\n- agent: claude-code claude-opus-5-5 high\n- A: base0\n- B: ${sha}\n- vs reference: fail\n- omitted moments: boss\n\n#### moments\n\n\`B\` is better at core action. reason: faster\n\n#### loser better\n\nA had music`,
+    );
+    expect(record).toContain(`### ${R}/judge-1-2.md\n\n- kind: success\n- status: failed\n- agent: codex claude-opus-5-5 high\n`);
+    expect(record).toContain(
+      '## votes\n\n- vs baseline: better\n- vs reference: fail\n\n| element | this | baseline | decision |\n|---|---|---|---|\n| game feel | 2 | 0 | this |\n\n## play\n',
+    );
     expect(record).toContain(`#### moments\n\nnone\n\n#### loser better\n\nnone`);
     expect(record).toContain(`| ${R}/play-1-1.md | 1 | 0 | 1 | 1 |\n| ${R}/play-1-2.md | 0 | 1 | 0 | 0 |`);
     expect(record).toContain('| start-stuck | blocker | design | lobby |');
@@ -420,7 +438,8 @@ describe('ogw loop record', () => {
         { result: `${R}/play-2-1.md`, instance: 'i1', platform: 'web', moment: null, status: 'failed' },
         { result: `${R}/play-2-2.md`, instance: 'i2', platform: 'web', moment: null, status: 'done' },
       ],
-      judges: [{ kind: 'main', result: `${R}/judge-2-1.md`, A: 'c', B: null, instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'unknown', status: 'failed' }],
+      judges: [judgeOf({ kind: 'main', result: `${R}/judge-2-1.md`, A: 'c', B: null, instanceSide: 'A', vsReference: 'unknown', status: 'failed' })],
+      ...together(),
       measure: `${R}/measure-2.json`,
     });
     const found = (id: string, source: string): object => ({ source, severity: 'minor', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: ['e'], id, drop: null });
@@ -448,7 +467,7 @@ describe('ogw loop record', () => {
     write(g.root, `${R}/findings-2.json`, { findings: [], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     const record = read(g.root, `${R}/iteration-2.md`);
-    expect(record).toContain('## judge\n\nnone\n\n## play\n\nnone\n');
+    expect(record).toContain('## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n');
     expect(record).toContain('## measurements\n\nnone\n\n## load\n\nnone\n');
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).previous).toBeNull();
   });
@@ -560,7 +579,7 @@ describe('ogw loop baseline and verdict', () => {
     await setRun(g, (run) => {
       run.data.loop = { verdict: { iteration: 2, reason: 'confirm', evidence: [] } };
     });
-    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 3\nconfirms iteration 2\n');
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 3\nconfirms iteration 2\nkind: completeness\n');
     expect((await ogw(g.ws, ['loop', 'baseline', 'g'])).stdout).toBe('c2\n');
     const input = await ogw(g.ws, ['loop', 'input', 'g', 'content']);
     expect(input).toMatchObject({ code: 1, stderr: expect.stringContaining('iteration 3 confirms iteration 2') as unknown });
@@ -570,16 +589,16 @@ describe('ogw loop baseline and verdict', () => {
     });
     const fourth = await ogw(g.ws, ['loop', 'next', 'g']);
     expect(fourth.stderr).toBe('');
-    expect(fourth.stdout).toBe('iteration 4\nconfirms iteration 2\n');
+    expect(fourth.stdout).toBe('iteration 4\nconfirms iteration 2\nkind: completeness\n');
     await setRun(g, (run) => {
       (run.data.loop as { verdict: unknown }).verdict = { iteration: 4, reason: 'continue', evidence: [] };
     });
-    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 5\n');
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 5\nkind: completeness\n');
     // a confirm verdict of an earlier iteration does not make the next one a confirmation iteration
     await setRun(g, (run) => {
       (run.data.loop as { verdict: unknown }).verdict = { iteration: 2, reason: 'confirm', evidence: [] };
     });
-    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 6\n');
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 6\nkind: completeness\n');
     expect(((await currentRun(g)).data.loop as { confirms: unknown }).confirms).toEqual([
       { iteration: 3, candidate: 2 },
       { iteration: 4, candidate: 2 },
@@ -666,9 +685,10 @@ describe('ogw loop baseline and verdict', () => {
     write(g.root, `${R}/evaluate-1.json`, {
       commit: 'c', baseline: 'b', plays: [], measure: null,
       judges: [
-        { kind: 'main', result: `${R}/judge-1-1.md`, A: 'c', B: 'b', instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'pass', status: 'done' },
-        { kind: 'success', result: `${R}/judge-1-2.md`, A: 'c', B: 'b', instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'pass', status: 'done' },
+        judgeOf({ kind: 'main', result: `${R}/judge-1-1.md`, A: 'c', B: 'b', instanceSide: 'A', vsReference: 'pass' }),
+        judgeOf({ kind: 'success', result: `${R}/judge-1-2.md`, A: 'c', B: 'b', instanceSide: 'A', vsReference: 'pass' }),
       ],
+      ...together({ vsBaseline: 'better', vsReference: 'pass' }),
     });
     expect((await ogw(g.ws, ['loop', 'verdict', 'g'])).stdout).toBe('continue\n');
     write(g.root, `${R}/iteration-1.md`, recordText('pass'));
@@ -782,7 +802,8 @@ describe('ogw loop end-record', () => {
       commit: sha,
       baseline: null,
       plays: [],
-      judges: [{ kind: 'main', result: `${R}/judge-${String(n)}-1.md`, A: sha, B: null, instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'fail', status: 'done' }],
+      judges: [judgeOf({ kind: 'main', result: `${R}/judge-${String(n)}-1.md`, A: sha, B: null, instanceSide: 'A', vsReference: 'fail' })],
+      ...together({ vsReference: 'fail' }),
       measure: null,
     });
     write(g.root, 'game.txt', 'v2');

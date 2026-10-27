@@ -1,4 +1,6 @@
-import { rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readdir, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { agentContext, markAgentRunning, runLogPath } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
@@ -11,7 +13,7 @@ import { listJobs, startJob } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { isInside, withoutExtension } from '../../../lib/paths.ts';
 import { changeOpenRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
-import { ROLES, type Role } from '../../../lib/settings.ts';
+import { ROLES, type AgentSettings, type HarnessSettings, type Role } from '../../../lib/settings.ts';
 import { hardeningRecordName, parseHardeningRecordName } from '../../build/lib/names.ts';
 import { moduleSpecs } from '../../review/lib/definitions.ts';
 import { parseReviewInput, targetSlug } from '../../review/lib/input.ts';
@@ -21,6 +23,8 @@ import { newAgentFolder } from './files.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { AGENT_LOG_FOLDER, GAME_ROLES, type AgentMeta } from './meta.ts';
 import { preparePlayInput } from './play-input.ts';
+import { agentCli, agentSettings, type AgentSession } from './cli-command.ts';
+import { iterationKind } from '../../loop/lib/run.ts';
 
 export interface AgentRequest {
   role: string;
@@ -37,6 +41,8 @@ export interface AgentRequest {
    * it, main of `open-game-works-core-impl/` (core) or HEAD of the harness repo (tool).
    */
   baseCommit?: string;
+  /** The agent CLI, model and effort instead of harness settings `agents.<role>`. */
+  agent?: AgentSettings;
 }
 
 function checkRequest(request: AgentRequest): Role {
@@ -88,6 +94,7 @@ function baseMeta(role: Role, input: string, taskInput: string, request: AgentRe
     merged: false,
     retryRoot: request.retryRoot ?? '',
     retryNumber: request.retryNumber ?? 0,
+    agent: request.agent ?? null,
   };
 }
 
@@ -212,6 +219,42 @@ export async function nextOrder(ctx: Context, game: GameRepo, role: 'play' | 'ju
   });
 }
 
+/** The default config folder of Claude Code: `CLAUDE_CONFIG_DIR` when set, else `~/.claude`. */
+function claudeConfigDir(env: NodeJS.ProcessEnv): string {
+  const set = env.CLAUDE_CONFIG_DIR;
+  return set !== undefined && set !== '' ? set : join(env.HOME ?? homedir(), '.claude');
+}
+
+/** Whether Claude Code keeps the session file of `id`: `projects/<project folder>/<id>.jsonl` of its config folder. */
+export async function claudeSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
+  const projects = join(claudeConfigDir(env), 'projects');
+  const folders = await readdir(projects).catch(() => [] as string[]);
+  return folders.some((folder) => exists(join(projects, folder, `${id}.jsonl`)));
+}
+
+/** The session of the content agent of iteration `n - 1` of the run: its last job's, when it kept one. */
+async function previousContentSession(ctx: Context, game: GameRepo, run: RunState): Promise<string | null> {
+  const previous = (await listJobs(ctx.env))
+    .filter((job) => job.command === 'agent' && job.meta.role === 'content' && job.meta.game === game.name && job.meta.run === run.name && job.meta.iteration === run.iteration - 1)
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .at(-1);
+  const session = previous?.meta.session as AgentSession | null | undefined;
+  return session === undefined || session === null ? null : session.id;
+}
+
+/**
+ * The Claude Code session of a content agent (`game-loop` `## sub-agent`): in a fun iteration whose previous iteration
+ * is a fun iteration of the run, the session of the previous content agent continued, when its file is kept; else a
+ * new session. null when the content agent CLI is not Claude Code.
+ */
+async function contentSession(ctx: Context, game: GameRepo, run: RunState, meta: AgentMeta, settings: HarnessSettings): Promise<AgentSession | null> {
+  if (agentCli(meta.agent ?? agentSettings(settings, 'content')) !== 'claude-code') return null;
+  const continues = meta.retryNumber === 0 && run.iteration > 1 && iterationKind(run, run.iteration) === 'fun' && iterationKind(run, run.iteration - 1) === 'fun';
+  const previous = continues ? await previousContentSession(ctx, game, run) : null;
+  if (previous !== null && (await claudeSessionKept(ctx.env, previous))) return { id: previous, resume: true };
+  return { id: randomUUID(), resume: false };
+}
+
 async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta): Promise<string> {
   const game = await ctx.game(meta.game as string);
   const run = await requireOpenRun(game);
@@ -223,6 +266,7 @@ async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta): Promis
     meta.folder = game.root;
     meta.output = join(game.root, 'records', 'loops', run.name, `content-${String(run.iteration)}.md`);
     meta.runLog = runLogPath(meta.output);
+    meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
     return launchJob(ctx, meta);
   }
   const { branch, baseCommit } = await branchOf(game);

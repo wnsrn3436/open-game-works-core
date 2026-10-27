@@ -1,5 +1,5 @@
 import type { Context } from '../../lib/command.ts';
-import type { Role } from '../../lib/settings.ts';
+import type { AgentSettings, Role } from '../../lib/settings.ts';
 import { mergeAgents, type MergeFailure } from './lib/merge.ts';
 import { outcomeOf } from './lib/outcome.ts';
 import { startAgent } from './lib/prepare.ts';
@@ -14,6 +14,8 @@ export interface AgentJobOptions {
   game?: string;
   input: string;
   modules?: string[];
+  /** The agent CLI, model and effort instead of harness settings `agents.<role>`. */
+  agent?: AgentSettings;
 }
 
 /** Starts `ogw agent <role> ... --background` and returns the job id. */

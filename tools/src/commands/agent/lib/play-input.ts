@@ -15,6 +15,7 @@ const PATH_FIELDS: Record<'play' | 'judge', PathField[]> = {
   judge: [
     { path: ['A', 'playGuide'], name: () => 'play-guide-A.md' },
     { path: ['B', 'playGuide'], name: () => 'play-guide-B.md' },
+    { path: ['telemetry'], name: () => 'telemetry.md' },
   ],
 };
 
@@ -100,6 +101,7 @@ export async function preparePlayInput(role: 'play' | 'judge', givenInput: strin
     const key = field.path[field.path.length - 1] as string;
     if (!parent || !(key in parent)) continue;
     const value = parent[key];
+    if (value === null) continue;
     if (typeof value !== 'string') throw new OgwError(`${role} input ${field.path.join('.')} is not a path`);
     const source = resolve(dirname(givenInput), value);
     if (!exists(source)) throw new OgwError(`${role} input ${field.path.join('.')}: file not found: ${source}`);

@@ -2,7 +2,8 @@ import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists } from '../../../lib/fsx.ts';
 import { jobsDir, readJob, updateJob, type JobRecord } from '../../../lib/jobs.ts';
-import type { Role } from '../../../lib/settings.ts';
+import type { AgentSettings, Role } from '../../../lib/settings.ts';
+import type { AgentSession } from './cli-command.ts';
 
 /** Roles that work in a game: every role except `core` and `review`. */
 export const GAME_ROLES: readonly Role[] = [
@@ -84,9 +85,18 @@ export interface AgentMeta {
   outputWritten?: boolean;
   /** Set when `ogw agent merge` has committed the merge, before it removes the worktree and sets `merged`. */
   mergeCommitted?: boolean;
+  /** The agent CLI, model and effort that replace the role's harness settings `agents.<role>`; absent or null: those. */
+  agent?: AgentSettings | null;
+  /** content with Claude Code: the session the agent CLI starts or continues. */
+  session?: AgentSession | null;
   /** spec review: the lines of what `ogw agent wait` wrote to the spec debt lists, once (`recordSpecDebt`). */
   debtLines?: string[];
   [key: string]: unknown;
+}
+
+/** The agent CLI, model and effort of the job: its own, else harness settings `agents.<role>`. */
+export function jobAgentSettings(meta: AgentMeta, fromSettings: () => AgentSettings): AgentSettings {
+  return meta.agent ?? fromSettings();
 }
 
 export function agentMeta(job: JobRecord): AgentMeta {

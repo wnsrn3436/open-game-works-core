@@ -307,7 +307,7 @@ describe('build start DEV and STG', () => {
       name: 'build-dev-0.1.0', kind: 'build', branch: 'build/dev-0.1.0', baseCommit: head, referenceCommit: head, env: 'DEV', version: '0.1.0',
       platforms: ['linux'], bundleFor: null, closedAt: null, data: { build: { retries: 0, bundle: null, startCommit: head } },
     });
-    expect((await ogw(ws, ['loop', 'next', 'g'], { env })).stdout).toBe('iteration 1\n');
+    expect((await ogw(ws, ['loop', 'next', 'g'], { env })).stdout).toBe('iteration 1\nkind: completeness\n');
     expect((await runsOf(ws))[0]).toMatchObject({ iteration: 1, referenceCommit: head });
   });
 

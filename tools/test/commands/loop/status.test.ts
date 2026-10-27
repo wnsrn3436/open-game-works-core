@@ -31,6 +31,7 @@ describe('ogw loop status of a build run', () => {
         'run: build-stg-0.2.0',
         'kind: build',
         'iteration: 1',
+        'iteration kind: completeness',
         `base commit: ${base}`,
         'last iteration record: records/loops/build-stg-0.2.0/iteration-1.md',
         `job ${job.id} resource done not merged`,

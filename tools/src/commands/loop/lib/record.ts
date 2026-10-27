@@ -14,12 +14,12 @@ import {
   type FindingsFile,
   type ReportRow,
 } from './defects.ts';
-import { checkNames, checkResult, type CheckFile, type EvaluateFile, type MeasureFile } from './files.ts';
+import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
-import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay } from './iteration-record.ts';
+import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
-import { abs, confirmOf, iterationResults, readGameText, runRel, type IterationResults } from './run.ts';
+import { abs, confirmOf, iterationKind, iterationResults, readGameText, runRel, type IterationResults } from './run.ts';
 
 /** `ogw loop record`: defect list merge, status change, and the loop iteration record. */
 
@@ -124,6 +124,17 @@ async function newTemporary(game: GameRepo, run: RunState, commit: string | null
   return (await temporaryAt(game, commit)).filter((key) => !before.has(key));
 }
 
+/** The iteration kind: that of the evaluate file, else the one `ogw loop next` kept. */
+function kindOf(run: RunState, evaluate: EvaluateFile | null): IterationKind {
+  return evaluate?.kind ?? iterationKind(run, run.iteration);
+}
+
+/** `## votes`: the step 4 judges together; null without a baseline game or an evaluate file. */
+function votesOf(evaluate: EvaluateFile | null): RecordVotes | null {
+  if (evaluate === null || evaluate.baseline === null) return null;
+  return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [] };
+}
+
 async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[]): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
@@ -133,8 +144,10 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
     commit: check?.commit ?? null,
     baseline: evaluate?.baseline ?? null,
     confirms: confirmOf(run, run.iteration),
+    kind: kindOf(run, evaluate),
     checks: check ? checkNames(check).map((name) => ({ name, result: checkResult(check, name), path: checkRel })) : [],
     judges: evaluate ? await judgesOf(game, evaluate) : null,
+    votes: votesOf(evaluate),
     plays: evaluate ? await playsOf(game, evaluate) : null,
     defects,
     measurements: measure?.targets ?? null,

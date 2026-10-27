@@ -530,10 +530,13 @@ describe('play and judge input', () => {
     writeFileSync(join(dir, 'guide-b.md'), 'B');
     writeFileSync(join(dir, 'clip.webm'), 'V');
     writeFileSync(join(dir, 'loss.mp4'), 'L');
+    writeFileSync(join(dir, 'telemetry-1-1.md'), 'T');
     const input = {
       A: { instance: 'i1', playGuide: join(dir, 'guide-a.md') },
       B: { instance: 'i2', playGuide: join(dir, 'guide-b.md') },
       fixtures: [{ moment: { name: 'm', description: 'd' }, A: 'i3', B: null }],
+      elements: ['game feel'],
+      telemetry: join(dir, 'telemetry-1-1.md'),
       reference: {
         name: 'R',
         moments: [
@@ -555,6 +558,7 @@ describe('play and judge input', () => {
       ...input,
       A: { instance: 'i1', playGuide: join(folder, 'input', 'play-guide-A.md') },
       B: { instance: 'i2', playGuide: join(folder, 'input', 'play-guide-B.md') },
+      telemetry: join(folder, 'input', 'telemetry.md'),
       reference: {
         name: 'R',
         moments: [
@@ -567,14 +571,15 @@ describe('play and judge input', () => {
     });
     expect(readFileSync(join(folder, 'input', 'reference-video-1.webm'), 'utf8')).toBe('V');
     expect(readFileSync(join(folder, 'input', 'reference-video-2.mp4'), 'utf8')).toBe('L');
+    expect(readFileSync(join(folder, 'input', 'telemetry.md'), 'utf8')).toBe('T');
   });
 
   it('skips missing fields and fails on non-JSON input or a missing file', async () => {
     const dir = await newTempFolder('ogw-test-input-');
     writeFileSync(join(dir, 'g.md'), 'G');
-    writeFileSync(join(dir, 'judge.json'), JSON.stringify({ A: { instance: 'i1', playGuide: join(dir, 'g.md') }, B: null, fixtures: [] }));
+    writeFileSync(join(dir, 'judge.json'), JSON.stringify({ A: { instance: 'i1', playGuide: join(dir, 'g.md') }, B: null, fixtures: [], telemetry: null, reference: null }));
     const ok = await preparePlayInput('judge', join(dir, 'judge.json'), join(dir, 'f1'));
-    expect(JSON.parse(readFileSync(ok.input, 'utf8'))).toMatchObject({ B: null });
+    expect(JSON.parse(readFileSync(ok.input, 'utf8'))).toMatchObject({ B: null, telemetry: null, reference: null });
     writeFileSync(join(dir, 'bad.json'), 'not json');
     await expect(preparePlayInput('play', join(dir, 'bad.json'), join(dir, 'f2'))).rejects.toThrow('play input is not JSON');
     writeFileSync(join(dir, 'arr.json'), '[]');

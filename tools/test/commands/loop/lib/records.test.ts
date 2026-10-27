@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { baselineFrom } from '../../../../src/commands/loop/lib/baseline.ts';
 import type { Defect, DefectsFile } from '../../../../src/commands/loop/lib/defects.ts';
 import { checkNames, checkResult, gateOf, successPrecondition, type CheckFile, type JudgeEntry } from '../../../../src/commands/loop/lib/files.ts';
-import { gatePassed, mainOf, parseIterationRecord, renderIterationRecord, type IterationRecordData, type ParsedJudge, type ParsedRecord } from '../../../../src/commands/loop/lib/iteration-record.ts';
+import { gatePassed, mainJudges, parseIterationRecord, renderIterationRecord, type IterationRecordData, type ParsedJudge, type ParsedRecord } from '../../../../src/commands/loop/lib/iteration-record.ts';
 import { newRunState } from '../../../../src/lib/runstate.ts';
 import { candidateEvidence, confirmEvidence, verdict, type VerdictInput } from '../../../../src/commands/loop/lib/verdict.ts';
 import type { CheckResult } from '../../../../src/commands/check/api.ts';
@@ -29,7 +29,7 @@ describe('check file', () => {
     expect(checkResult(file, 'performance')).toBe('unknown');
     expect(checkResult(file, 'row simulation')).toBe('unknown');
     expect(gateOf(file)).toBe('pass');
-    const passing = { vsBaseline: 'better', vsReference: 'pass' } as const;
+    const passing = { kind: 'completeness', vsBaseline: 'better', vsReference: 'pass' } as const;
     expect(successPrecondition(passing, (name) => checkResult(file, name))).toBe(false);
     file.checks.push({ name: 'performance', platform: 'ios', result: 'fail', failures: [], warnings: [] });
     expect(checkResult(file, 'performance')).toBe('fail');
@@ -37,10 +37,12 @@ describe('check file', () => {
     expect(gateOf({ commit: 'c', checks: [] } as unknown as CheckFile)).toBeNull();
     expect(gateOf({ ...check({}), gate: 'unknown' } as unknown as CheckFile)).toBeNull();
     expect(successPrecondition(passing, (name) => checkResult(check(ALL_PASS), name))).toBe(true);
-    expect(successPrecondition(null, () => 'pass')).toBe(false);
-    expect(successPrecondition({ vsBaseline: null, vsReference: 'pass' }, () => 'pass')).toBe(true);
-    expect(successPrecondition({ vsBaseline: 'worse', vsReference: 'pass' }, () => 'pass')).toBe(false);
-    expect(successPrecondition({ vsBaseline: 'better', vsReference: 'unknown' }, () => 'pass')).toBe(false);
+    // a fun iteration is never a candidate iteration
+    expect(successPrecondition({ ...passing, kind: 'fun' }, () => 'pass')).toBe(false);
+    expect(successPrecondition({ ...passing, vsReference: null }, () => 'pass')).toBe(false);
+    expect(successPrecondition({ ...passing, vsBaseline: null }, () => 'pass')).toBe(true);
+    expect(successPrecondition({ ...passing, vsBaseline: 'worse' }, () => 'pass')).toBe(false);
+    expect(successPrecondition({ ...passing, vsReference: 'unknown' }, () => 'pass')).toBe(false);
     expect(checkNames({ commit: 'c', gate: 'fail', checks: [...check({ custom: 'pass', 'UI quality': 'pass', 'regression test': 'fail' }).checks] })).toEqual([
       'regression test',
       'UI quality',
@@ -53,12 +55,15 @@ function judgeEntry(fields: Partial<JudgeEntry>): JudgeEntry {
   return {
     kind: 'main',
     result: 'records/loops/r/judge-1-1.md',
+    agent: { cli: 'claude-code', model: 'm1', effort: 'high' },
     A: 'c1',
     B: 'b0',
     instanceSide: 'A',
     omittedMoments: [],
-    vsBaseline: 'better',
+    votes: null,
+    lostMoments: [],
     vsReference: 'pass',
+    telemetry: null,
     status: 'done',
     ...fields,
   };
@@ -68,11 +73,20 @@ const DATA: IterationRecordData = {
   commit: 'c1',
   baseline: 'b0',
   confirms: null,
+  kind: 'completeness',
   checks: [{ name: 'regression test', result: 'pass', path: 'p' }, { name: 'static check', result: 'pass', path: 'p' }, { name: 'no blocker', result: 'pass', path: 'p' }, { name: 'full flow', result: 'pass', path: 'p' }],
   judges: [
     { ...judgeEntry({ omittedMoments: ['boss'] }), moments: '`A` wins', loserBetter: '' },
-    { ...judgeEntry({ kind: 'success', B: null, vsBaseline: null, vsReference: 'unknown', status: 'failed' }), moments: '', loserBetter: 'x' },
+    { ...judgeEntry({ kind: 'success', B: null, agent: { cli: 'codex', model: 'm2', effort: 'medium' }, vsReference: 'unknown', status: 'failed' }), moments: '', loserBetter: 'x' },
   ],
+  votes: {
+    vsBaseline: 'better',
+    vsReference: 'pass',
+    elements: [
+      { element: 'game feel', this: 2, baseline: 0, decision: 'this' },
+      { element: 'no friction', this: 1, baseline: 1, decision: 'uncertain' },
+    ],
+  },
   plays: [{ result: 'records/loops/r/play-1-1.md', counts: { blocker: 1, major: 0, minor: 2, none: 3 } }],
   defects: [],
   measurements: [{ metric: 'fps', min: 30, max: 60, value: null, result: 'unknown', data: null }],
@@ -83,7 +97,13 @@ const DATA: IterationRecordData = {
 describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
-    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## checks', '## judge', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
+    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
+    expect(text).toContain('- confirms: none\n- kind: completeness\n');
+    expect(text).toContain('- status: done\n- agent: claude-code m1 high\n- A: c1\n- B: b0\n- vs reference: pass\n- omitted moments: boss\n');
+    expect(text).toContain('- agent: codex m2 medium\n');
+    expect(text).toContain(
+      '## votes\n\n- vs baseline: better\n- vs reference: pass\n\n| element | this | baseline | decision |\n|---|---|---|---|\n| game feel | 2 | 0 | this |\n| no friction | 1 | 1 | uncertain |\n',
+    );
     expect(text).toContain('## temporary resources\n\n- `icon/a`\n- `image/b`\n');
     expect(text).toContain('- omitted moments: boss');
     expect(text).toContain('| records/loops/r/play-1-1.md | 1 | 0 | 2 | 3 |');
@@ -94,11 +114,25 @@ describe('iteration record', () => {
     expect(parsed.commit).toBe('c1');
     expect(parsed.checks.get('full flow')).toBe('pass');
     expect(parsed.judges).toEqual([
-      { result: 'records/loops/r/judge-1-1.md', kind: 'main', status: 'done', vsBaseline: 'better', vsReference: 'pass' },
+      { result: 'records/loops/r/judge-1-1.md', kind: 'main', status: 'done', vsBaseline: null, vsReference: 'pass' },
       { result: 'records/loops/r/judge-1-1.md', kind: 'success', status: 'failed', vsBaseline: null, vsReference: 'unknown' },
     ]);
     expect(gatePassed(parsed)).toBe(true);
-    expect(mainOf(parsed)?.vsBaseline).toBe('better');
+    expect(parsed).toMatchObject({ kind: 'completeness', vsBaseline: 'better', vsReference: 'pass' });
+    expect(mainJudges(parsed).map((j) => j.kind)).toEqual(['main']);
+    // a fun iteration: its kind, no vs reference
+    const fun = parseIterationRecord(
+      renderIterationRecord({ ...DATA, kind: 'fun', votes: { vsBaseline: 'indistinguishable', vsReference: null, elements: [] } }),
+      2,
+      'p2',
+    );
+    expect(fun).toMatchObject({ kind: 'fun', vsBaseline: 'indistinguishable', vsReference: null });
+    // no baseline game: `## votes` is none and vs reference comes from the step 4 judge
+    const alone = parseIterationRecord(renderIterationRecord({ ...DATA, votes: null }), 1, 'p1');
+    expect(renderIterationRecord({ ...DATA, votes: null })).toContain('## votes\n\nnone\n');
+    expect(alone).toMatchObject({ vsBaseline: null, vsReference: 'pass' });
+    // a record without a kind line is of a completeness iteration
+    expect(parseIterationRecord('## commit\n\n- instance: c\n', 1, 'p').kind).toBe('completeness');
     expect(parsed.confirms).toBeNull();
     expect(parsed.playBlockers).toBe(1);
     const confirming = parseIterationRecord(renderIterationRecord({ ...DATA, confirms: 3 }), 4, 'p4');
@@ -106,23 +140,28 @@ describe('iteration record', () => {
   });
 
   it('writes none for steps that did not run', () => {
-    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, plays: null, measurements: null, load: null, temporary: [] });
-    expect(text).toBe('## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n');
+    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [] });
+    expect(text).toBe(
+      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n',
+    );
     const parsed = parseIterationRecord(text, 2, 'p');
-    expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0 });
-    expect(mainOf(parsed)).toBeNull();
+    expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0, vsBaseline: null, vsReference: null });
+    expect(mainJudges(parsed)).toEqual([]);
     expect(gatePassed(parsed)).toBe(false);
     expect(parseIterationRecord('', 1, 'p').checks.size).toBe(0);
   });
 });
 
-function record(iteration: number, commit: string | null, gate: boolean, vsBaseline: ParsedRecord['judges']): ParsedRecord {
+type Vs = 'better' | 'worse' | 'indistinguishable' | null;
+
+function record(iteration: number, commit: string | null, gate: boolean, vsBaseline: Vs | undefined): ParsedRecord {
   const checks = new Map<string, string>(['regression test', 'static check', 'no blocker', 'full flow'].map((n) => [n, gate ? 'pass' : 'fail']));
-  return { iteration, path: `p${String(iteration)}`, commit, confirms: null, checks, judges: vsBaseline, playBlockers: 0 };
+  const judges: ParsedRecord['judges'] = vsBaseline === undefined ? null : [{ result: 'j', kind: 'main', status: 'done', vsBaseline: null, vsReference: 'pass' }];
+  return { iteration, path: `p${String(iteration)}`, commit, confirms: null, kind: 'completeness', checks, judges, vsBaseline: vsBaseline ?? null, vsReference: 'pass', playBlockers: 0 };
 }
 
-function judged(vs: 'better' | 'worse' | 'indistinguishable' | null): ParsedRecord['judges'] {
-  return [{ result: 'j', kind: 'main', status: 'done', vsBaseline: vs, vsReference: 'pass' }];
+function judged(vs: Vs): Vs {
+  return vs;
 }
 
 describe('baseline', () => {
@@ -131,7 +170,7 @@ describe('baseline', () => {
     const update = newRunState({ name: 'r', kind: 'loop', command: 'update', branch: 'b', baseCommit: 'base' });
     expect(baselineFrom(create, [])).toBeNull();
     expect(baselineFrom(update, [])).toBe('base');
-    const records = [record(1, 'c1', false, null), record(2, 'c2', true, judged(null)), record(3, 'c3', true, judged('indistinguishable')), record(4, 'c4', true, judged('better')), record(5, null, true, judged('better'))];
+    const records = [record(1, 'c1', false, undefined), record(2, 'c2', true, judged(null)), record(3, 'c3', true, judged('indistinguishable')), record(4, 'c4', true, judged('better')), record(5, null, true, judged('better'))];
     expect(baselineFrom(create, records)).toBe('c4');
     expect(baselineFrom(create, records.slice(0, 3))).toBe('c2');
     expect(baselineFrom(update, records.slice(0, 3))).toBe('base');
@@ -146,15 +185,19 @@ function defects(list: Partial<Defect>[]): DefectsFile {
   };
 }
 
-function successRecord(iteration: number, judges: Partial<ParsedJudge>[], checks: Record<string, string> = ALL_PASS): ParsedRecord {
+function successRecord(iteration: number, judges: Partial<ParsedJudge>[], checks: Record<string, string> = ALL_PASS, together: Partial<ParsedRecord> = {}): ParsedRecord {
   return {
     iteration,
     path: `p${String(iteration)}`,
     commit: 'c1',
     confirms: null,
+    kind: 'completeness',
     checks: new Map(Object.entries(checks)),
-    judges: judges.map((j) => ({ result: 'records/loops/r/judge-2-1.md', kind: 'main', status: 'done', vsBaseline: 'better', vsReference: 'pass', ...j })),
+    judges: judges.map((j) => ({ result: 'records/loops/r/judge-2-1.md', kind: 'main', status: 'done', vsBaseline: null, vsReference: 'pass', ...j })),
+    vsBaseline: 'better',
+    vsReference: 'pass',
     playBlockers: 0,
+    ...together,
   };
 }
 
@@ -168,26 +211,30 @@ describe('verdict', () => {
     defects: null,
     unhandled: [],
   };
-  const passing = [{ vsBaseline: 'indistinguishable' as const }, { kind: 'success', result: 's1' }, { kind: 'success', result: 's2' }];
-  const success = [successRecord(2, passing)];
+  const passing = [{ result: 'records/loops/r/judge-2-1.md' }, { result: 'records/loops/r/judge-2-2.md' }, { kind: 'success', result: 's1' }, { kind: 'success', result: 's2' }];
+  const success = [successRecord(2, passing, ALL_PASS, { vsBaseline: 'indistinguishable' })];
 
   it('gives success from the record of this iteration with its evidence', () => {
     expect(verdict({ ...base, records: success })).toEqual({
       reason: 'success',
-      evidence: ['records/loops/r/judge-2-1.md', 's1', 's2', 'records/loops/r/check-2.json'],
+      evidence: ['records/loops/r/judge-2-1.md', 'records/loops/r/judge-2-2.md', 's1', 's2', 'records/loops/r/check-2.json'],
     });
     // the record of an earlier iteration does not give success
     expect(verdict({ ...base, iteration: 3, records: success }).reason).toBe('continue');
-    expect(verdict({ ...base, records: [successRecord(2, [{ vsBaseline: null }, ...passing.slice(1)])] }).reason).toBe('success');
+    expect(verdict({ ...base, records: [successRecord(2, passing, ALL_PASS, { vsBaseline: null })] }).reason).toBe('success');
+    // a fun iteration is not a candidate iteration
+    expect(verdict({ ...base, records: [successRecord(2, passing, ALL_PASS, { kind: 'fun' })] }).reason).toBe('continue');
   });
 
   it('is not success when a condition fails', () => {
     const fewer = [{}, { kind: 'success' }];
     const failedSuccess = [{}, { kind: 'success' }, { kind: 'success', vsReference: 'unknown' as const }];
-    const worse = [{ vsBaseline: 'worse' as const }, { kind: 'success' }, { kind: 'success' }];
-    const refFail = [{ vsReference: 'fail' as const }, { kind: 'success' }, { kind: 'success' }];
     const noMain = [{ kind: 'success' }, { kind: 'success' }];
-    for (const judges of [fewer, failedSuccess, worse, refFail, noMain, []]) expect(verdict({ ...base, records: [successRecord(2, judges)] }).reason).toBe('continue');
+    for (const judges of [fewer, failedSuccess, noMain, []]) expect(verdict({ ...base, records: [successRecord(2, judges)] }).reason).toBe('continue');
+    const all = [{}, { kind: 'success' }, { kind: 'success' }];
+    for (const together of [{ vsBaseline: 'worse' as const }, { vsReference: 'fail' as const }, { vsReference: null }]) {
+      expect(verdict({ ...base, records: [successRecord(2, all, ALL_PASS, together)] }).reason).toBe('continue');
+    }
     expect(verdict({ ...base, records: [successRecord(2, passing, { ...ALL_PASS, 'UI quality': 'fail' })] }).reason).toBe('continue');
     const noPerformance: Record<string, string> = { ...ALL_PASS };
     delete noPerformance.performance;
@@ -203,11 +250,11 @@ describe('verdict', () => {
     const unhandled = ['job-r', 'job-t'];
     expect(verdict({ ...base, records: success, unhandled })).toEqual({
       reason: 'confirm',
-      evidence: ['records/loops/r/judge-2-1.md', 's1', 's2', 'unhandled worker job job-r', 'unhandled worker job job-t'],
+      evidence: ['records/loops/r/judge-2-1.md', 'records/loops/r/judge-2-2.md', 's1', 's2', 'unhandled worker job job-r', 'unhandled worker job job-t'],
     });
     expect(verdict({ ...base, records: success, unhandled, defects: defects([{ id: 'x', repeatedDefect: 3 }]) }).reason).toBe('repeated defect');
     expect(verdict({ ...base, iteration: 5, records: [successRecord(5, passing)], unhandled }).reason).toBe('limit reached');
-    expect(verdict({ ...base, records: [successRecord(2, [{ vsReference: 'fail' }])], unhandled }).reason).toBe('continue');
+    expect(verdict({ ...base, records: [successRecord(2, [{}], ALL_PASS, { vsReference: 'fail' })], unhandled }).reason).toBe('continue');
   });
 
   it('passes a confirmation iteration with the candidate conditions and no play blocker', () => {

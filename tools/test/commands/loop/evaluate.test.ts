@@ -15,6 +15,7 @@ interface FakeInstance {
   fixtureText?: string | null;
   db?: string;
   played?: boolean;
+  client?: string;
   root: string;
   startedAt: number;
 }
@@ -24,6 +25,8 @@ interface FakeAgent {
   role: string;
   input: Record<string, unknown>;
   output: string;
+  /** The agent CLI, model and effort `ogw loop evaluate` gave the job. */
+  agent?: { cli?: string; model: string; effort: string };
 }
 
 interface Fake {
@@ -81,7 +84,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     const root = join(fake.root, '..', 'instances', id);
     const fixture = opts.fixture as string | undefined;
     const fixtureText = fixture === undefined ? undefined : existsSync(fixture) ? readFileSync(fixture, 'utf8') : null;
-    const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, root, startedAt: 100 };
+    const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, client: opts.client as string | undefined, root, startedAt: 100 };
     fake.instances.push(info);
     fake.runningAtStart.push(fake.running.size + fake.others);
     const stops = fake.stopped.length;
@@ -109,11 +112,12 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
   return {
-    startAgentJob: vi.fn((_ctx: unknown, options: { role: 'play' | 'judge'; input: string }) => {
+    startAgentJob: vi.fn((_ctx: unknown, options: { role: 'play' | 'judge'; input: string; agent?: FakeAgent['agent'] }) => {
       const id = `a${String(fake.agents.length + 1)}`;
       counters[options.role]++;
       const output = path.join(fake.root, 'records', 'loops', fake.run, `${options.role}-1-${String(counters[options.role])}.md`);
-      fake.agents.push({ id, role: options.role, input: JSON.parse(fs.readFileSync(options.input, 'utf8')) as Record<string, unknown>, output });
+      const input = JSON.parse(fs.readFileSync(options.input, 'utf8')) as Record<string, unknown>;
+      fake.agents.push({ id, role: options.role, input, output, ...(options.agent === undefined ? {} : { agent: options.agent }) });
       fake.agentStarting(id);
       return Promise.resolve(id);
     }),
@@ -162,6 +166,22 @@ vi.mock('../../../src/commands/measure/api.ts', () => ({
     const out = join(fake.root, 'records', 'loops', fake.run, 'measure-1.json');
     writeFileSync(out, '{"commit":"x","targets":[]}\n');
     return Promise.resolve({ path: out, commit: 'x', targets: [] });
+  }),
+}));
+
+/** The bot runs of the shared telemetry: by instance id, the telemetry, or null for a run that did not reach every step. */
+const bots = vi.hoisted(() => ({ runs: [] as { id: string; commit: string }[], fail: new Set<string>() }));
+
+vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
+  botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {
+    const commit = fake.instances.find((i) => i.id === instance.id)?.commit ?? '';
+    bots.runs.push({ id: instance.id, commit });
+    if (bots.fail.has(commit)) return Promise.resolve(null);
+    // this commit answers input 30 ms late, the baseline 90 ms
+    const latency = bots.runs.length === 1 ? 30 : 90;
+    const telemetry = { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: latency, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
+    return Promise.resolve({ telemetry, guide: null });
   }),
 }));
 
@@ -245,6 +265,8 @@ beforeEach(() => {
   measure.collected = [];
   measure.collect = [];
   measure.dead = [];
+  bots.runs = [];
+  bots.fail = new Set();
   evaluateDeps.pollMs = 0;
   evaluateDeps.random = () => 0.1;
   let ms = 1000;
@@ -260,8 +282,8 @@ describe('ogw loop evaluate', () => {
       if (agent.role === 'play') {
         const tries = (plays.get(String(agent.input.platform)) ?? 0) + 1;
         const instance = String(agent.input.instance);
-        // the first play agent fails once
-        if (instance === 'i7') return null;
+        // the boss play agent fails once
+        if (instance === 'i11') return null;
         plays.set(instance, tries);
         return '## coverage\n\nunknown: none\n\n## observations\n\n1 | lobby | tap | ok | fine | none | c.png\n';
       }
@@ -269,7 +291,7 @@ describe('ogw loop evaluate', () => {
       const isThis = fake.instances.find((i) => i.id === sideA)?.commit === head;
       const side = isThis ? 'A' : 'B';
       const n = fake.agents.filter((a) => a.role === 'judge').indexOf(agent);
-      return judgeText(side, side, n === 2 ? 'fail' : 'pass');
+      return judgeText(side, side, n === 3 ? 'fail' : 'pass');
     };
     // the working tree file is not the one the instances get: the work branch HEAD file is
     write(g.root, 'client/dev/bot/fixtures/boss.json', '{"steps": [1]}\n');
@@ -282,11 +304,19 @@ describe('ogw loop evaluate', () => {
     expect(file.measure).toBe(`${R}/measure-1.json`);
     // ogw loop input did not ask for memorable_moment in this run
     expect(file.memorableMoment).toBeUndefined();
+    const agent = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' };
+    const entry = { agent, omittedMoments: [], votes: { 'game feel': 'this', 'tension and release': null, progression: null, 'one more run': null, 'no friction': null, presentation: null }, lostMoments: [], telemetry: null, status: 'done' };
     expect(file.judges).toEqual([
-      { kind: 'main', result: `${R}/judge-1-1.md`, A: head, B: base, instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'pass', status: 'done' },
-      { kind: 'success', result: `${R}/judge-1-2.md`, A: head, B: base, instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'pass', status: 'done' },
-      { kind: 'success', result: `${R}/judge-1-3.md`, A: head, B: base, instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'fail', status: 'done' },
+      { kind: 'main', result: `${R}/judge-1-1.md`, A: head, B: base, instanceSide: 'A', vsReference: 'pass', ...entry },
+      { kind: 'main', result: `${R}/judge-1-2.md`, A: base, B: head, instanceSide: 'B', vsReference: 'pass', ...entry },
+      { kind: 'success', result: `${R}/judge-1-3.md`, A: head, B: base, instanceSide: 'A', vsReference: 'pass', ...entry },
+      { kind: 'success', result: `${R}/judge-1-4.md`, A: head, B: base, instanceSide: 'A', vsReference: 'fail', ...entry },
     ]);
+    expect(file).toMatchObject({ kind: 'completeness', elements: ['game feel', 'tension and release', 'progression', 'one more run', 'no friction', 'presentation'], vsBaseline: 'better', vsReference: 'pass' });
+    expect(file.votes?.[0]).toEqual({ element: 'game feel', this: 2, baseline: 0, decision: 'this' });
+    expect(file.votes?.slice(1).every((v) => v.decision === 'indistinguishable')).toBe(true);
+    // every judge runs with harness settings agents.judge while loop.judgePanel is empty
+    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.agent)).toEqual(Array.from({ length: 4 }, () => agent));
     expect(file.plays.map((p) => [p.platform, p.moment, p.status])).toEqual([
       ['android', null, 'done'],
       ['web', null, 'done'],
@@ -295,7 +325,12 @@ describe('ogw loop evaluate', () => {
     ]);
     expect(file.plays[3]).toEqual({ result: '', instance: '', platform: 'android', moment: 'broken', status: 'failed' });
     // main judge: this commit, baseline, boss pair; broken fixtures are null
-    const mainInput = fake.agents[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string }; fixtures: unknown[]; reference: unknown };
+    const mainInput = fake.agents[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string }; fixtures: unknown[]; reference: unknown; elements: string[]; telemetry: unknown };
+    expect(mainInput.elements).toEqual(file.elements);
+    expect(mainInput.telemetry).toBeNull();
+    // the second step 4 judge: the other side
+    expect((fake.agents[1]?.input as { A: { instance: string } }).A.instance).toBe('i5');
+    expect(fake.instances.find((i) => i.id === 'i5')?.commit).toBe(base);
     expect(mainInput.A).toEqual({ instance: 'i1', playGuide: join(g.root, '..', 'instances', 'i1', 'play-guide.md') });
     expect(mainInput.B.instance).toBe('i2');
     expect(mainInput.fixtures).toEqual([
@@ -319,14 +354,14 @@ describe('ogw loop evaluate', () => {
     expect(existsSync(i3?.fixture ?? '')).toBe(false);
     // the play and judge agents play the client main of the instances without a save fixture: no dev account
     expect(fake.instances.map((i) => [i.id, i.played === true])).toEqual(fake.instances.map((i) => [i.id, i.fixture === undefined]));
-    expect(fake.instances.filter((i) => i.platform !== undefined).map((i) => [i.id, i.platform])).toEqual([['i5', 'android'], ['i6', 'web']]);
-    expect(file.plays[2]).toMatchObject({ instance: 'i8', result: `${R}/play-1-4.md` });
-    expect(fake.stopped).toContain('i7');
+    expect(fake.instances.filter((i) => i.platform !== undefined).map((i) => [i.id, i.platform])).toEqual([['i9', 'android'], ['i10', 'web']]);
+    expect(file.plays[2]).toMatchObject({ instance: 'i12', result: `${R}/play-1-4.md` });
+    expect(fake.stopped).toContain('i11');
     const playInputs = fake.agents.filter((a) => a.role === 'play').map((a) => a.input);
-    expect(playInputs[0]).toEqual({ instance: 'i5', playGuide: join(g.root, '..', 'instances', 'i5', 'play-guide.md'), moment: null });
+    expect(playInputs[0]).toEqual({ instance: 'i9', playGuide: join(g.root, '..', 'instances', 'i9', 'play-guide.md'), moment: null });
     expect(playInputs.find((p) => p.moment !== null)).toMatchObject({ moment: { name: 'boss', description: 'reach the boss' } });
-    expect(read(g.root, `${R}/play-1-1.md`)).toBe('## coverage\n\nunknown: none\ndevice ms: i5\nscenes: lobby\n\n## observations\n\n1 | lobby | tap | ok | fine | none | c.png\n');
-    expect(measure.collect.map(([id]) => id).sort()).toEqual(['i5', 'i6']);
+    expect(read(g.root, `${R}/play-1-1.md`)).toBe('## coverage\n\nunknown: none\ndevice ms: i9\nscenes: lobby\n\n## observations\n\n1 | lobby | tap | ok | fine | none | c.png\n');
+    expect(measure.collect.map(([id]) => id).sort()).toEqual(['i10', 'i9']);
     expect(measure.collect[0]?.[1]).toBe(join(g.root, `${R}/evidence/measure-1/${measure.collect[0]?.[0] ?? ''}.json`));
     expect(measure.collected).toHaveLength(1);
     expect(fake.running.size).toBe(0);
@@ -334,7 +369,7 @@ describe('ogw loop evaluate', () => {
     const committed = git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n');
     expect(committed).toContain(`${R}/evaluate-1.json`);
     expect(committed).toContain(`${R}/measure-1.json`);
-    expect(committed).toContain(`${R}/judge-1-3.md`);
+    expect(committed).toContain(`${R}/judge-1-4.md`);
     expect(committed).toContain(`${R}/play-1-1.md`);
     expect(committed.some((p) => p.includes('evidence'))).toBe(false);
   });
@@ -347,10 +382,10 @@ describe('ogw loop evaluate', () => {
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g', '--json']);
     expect(out.code).toBe(0);
     const file = JSON.parse(out.stdout) as EvaluateFile;
-    expect(file.plays).toEqual([{ result: '', instance: 'i4', platform: 'android', moment: null, status: 'failed' }]);
-    expect(fake.agents.filter((a) => a.role === 'play').map((a) => a.input.instance)).toEqual(['i3', 'i4']);
+    expect(file.plays).toEqual([{ result: '', instance: 'i6', platform: 'android', moment: null, status: 'failed' }]);
+    expect(fake.agents.filter((a) => a.role === 'play').map((a) => a.input.instance)).toEqual(['i5', 'i6']);
     // completeness not all pass: no success judges
-    expect(file.judges.map((j) => j.kind)).toEqual(['main']);
+    expect(file.judges.map((j) => j.kind)).toEqual(['main', 'main']);
     expect(file.measure).toBeNull();
     expect(measure.collected).toEqual([]);
   });
@@ -362,20 +397,28 @@ describe('ogw loop evaluate', () => {
     fake.respond = (agent) => (agent.role === 'play' ? null : 'no tables');
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.code).toBe(0);
-    expect(out.stdout).toContain('judge main failed vs baseline none vs reference unknown');
+    expect(out.stdout).toContain('judge main failed claude-code claude-opus-5-5 high side A vs reference unknown');
+    expect(out.stdout).toContain('vs baseline indistinguishable\nvs reference unknown');
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.judges).toHaveLength(1);
-    expect(file.judges[0]).toMatchObject({ status: 'failed', vsBaseline: null, vsReference: 'unknown', result: '' });
+    expect(file.judges).toHaveLength(2);
+    expect(file.judges[0]).toMatchObject({ status: 'failed', votes: null, vsReference: 'unknown', result: '' });
+    expect(file.votes?.every((v) => v.this === 0 && v.baseline === 0)).toBe(true);
     expect(git(g.root, 'ls-files', `${R}/measure-1.json`)).toBe('');
   });
 
   it('puts this commit in B by the coin and judges without a baseline in a create run', async () => {
     const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
     evaluateDeps.random = () => 0.7;
-    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('B', 'B', 'fail'));
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+      return judgeText(side, side, 'fail');
+    };
     await ogw(g.ws, ['loop', 'evaluate', 'g']);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.judges[0]).toMatchObject({ A: base, B: head, instanceSide: 'B', vsBaseline: 'better', vsReference: 'fail' });
+    expect(file.judges[0]).toMatchObject({ A: base, B: head, instanceSide: 'B', vsReference: 'fail' });
+    expect(file.judges[1]).toMatchObject({ A: head, B: base, instanceSide: 'A', vsReference: 'fail' });
+    expect(file).toMatchObject({ vsBaseline: 'better', vsReference: 'fail' });
 
     const c = setupGame({ playInstances: 1, backgroundRetryLimit: 0 });
     await openLoopRun(c, { name: 'create-1', command: 'create', iteration: 1 });
@@ -393,7 +436,24 @@ describe('ogw loop evaluate', () => {
     await ogw(c.ws, ['loop', 'evaluate', 'g']);
     const created = readJsonFile(c.root, 'records/loops/create-1/evaluate-1.json') as EvaluateFile;
     expect(created.baseline).toBeNull();
-    expect(created.judges).toEqual([{ kind: 'main', result: 'records/loops/create-1/judge-1-1.md', A: chead, B: null, instanceSide: 'A', omittedMoments: [], vsBaseline: null, vsReference: 'unknown', status: 'done' }]);
+    // no baseline game: one step 4 judge, no votes
+    expect(created.judges).toEqual([
+      {
+        kind: 'main',
+        result: 'records/loops/create-1/judge-1-1.md',
+        agent: { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' },
+        A: chead,
+        B: null,
+        instanceSide: 'A',
+        omittedMoments: [],
+        votes: null,
+        lostMoments: [],
+        vsReference: 'unknown',
+        telemetry: null,
+        status: 'done',
+      },
+    ]);
+    expect(created).toMatchObject({ votes: null, vsBaseline: null, vsReference: 'unknown' });
     expect(fake.agents[0]?.input).toMatchObject({ B: null, fixtures: [], reference: { name: 'Hollow Run', presentation: 'Glow Town' } });
   });
 
@@ -457,27 +517,27 @@ describe('ogw loop evaluate', () => {
 
   it('retries a failed judge as a new agent on new instances with the same A and B', async () => {
     const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 1 });
-    // main judge: this commit in B; a redraw on retry would put it in A
-    const coins = [0.7, 0.7, 0.7];
+    // first step 4 judge: this commit in B; a redraw on retry would put it in A
+    const coins = [0.7, 0.1, 0.1];
     evaluateDeps.random = () => coins.shift() ?? 0.1;
     const runningAtRetry: string[] = [];
     fake.respond = (agent, k) => {
       if (agent.role === 'play') return null;
       if (k === 1) return 'no tables';
-      if (k === 2) runningAtRetry.push(...fake.running);
+      if (k === 3) runningAtRetry.push(...fake.running);
       return judgeText('B', 'B', 'fail');
     };
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
     const judges = fake.agents.filter((a) => a.role === 'judge');
-    expect(judges).toHaveLength(2);
+    expect(judges).toHaveLength(3);
     const ids = (agent: FakeAgent): string[] => {
       const input = agent.input as { A: { instance: string }; B: { instance: string }; fixtures: { A: string | null; B: string | null }[] };
       return [input.A.instance, input.B.instance, ...input.fixtures.flatMap((f) => [f.A, f.B]).filter((i): i is string => i !== null)];
     };
     const first = ids(judges[0] as FakeAgent);
-    const second = ids(judges[1] as FakeAgent);
+    const second = ids(judges[2] as FakeAgent);
     expect(first).toHaveLength(4);
     expect(second).toHaveLength(4);
     expect(second.filter((id) => first.includes(id))).toEqual([]);
@@ -487,9 +547,12 @@ describe('ogw loop evaluate', () => {
     expect(second.map(commitOf)).toEqual(first.map(commitOf));
     expect(second.map(commitOf)).toEqual([base, head, base, head]);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.judges).toEqual([
-      { kind: 'main', result: `${R}/judge-1-2.md`, A: base, B: head, instanceSide: 'B', omittedMoments: [], vsBaseline: 'better', vsReference: 'fail', status: 'done' },
+    expect(file.judges.map((j) => [j.kind, j.result, j.A, j.B, j.instanceSide, j.vsReference, j.status])).toEqual([
+      ['main', `${R}/judge-1-3.md`, base, head, 'B', 'fail', 'done'],
+      ['main', `${R}/judge-1-2.md`, head, base, 'A', 'unknown', 'done'],
     ]);
+    // one vote each way: uncertain
+    expect(file.votes?.[0]).toEqual({ element: 'game feel', this: 1, baseline: 1, decision: 'uncertain' });
   });
 
   it('stops its agents and instances on SIGTERM before it lets the signal end the process', async () => {
@@ -626,17 +689,20 @@ describe('ogw loop evaluate', () => {
     fake.respond = (agent) => {
       if (agent.role === 'play') return '## coverage\n\nunknown: none\n';
       const n = fake.agents.filter((a) => a.role === 'judge').indexOf(agent);
-      return judgeText('A', 'A', n === 1 ? 'fail' : 'pass');
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+      return judgeText(side, side, n === 2 ? 'fail' : 'pass');
     };
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
-    // main judge (this commit, baseline, boss pair), then the play and the boss play after it stopped,
-    // then one success judge; the second does not fit beside the first and is not called after it failed
-    expect(fake.runningAtStart).toEqual([0, 1, 2, 3, 0, 1, 0, 1, 2, 3]);
+    // each step 4 judge (this commit, baseline, boss pair) in its own group, the second after the first stopped, then
+    // the play and the boss play, then one success judge; the second does not fit beside the first and is not called
+    // after it failed
+    expect(fake.runningAtStart).toEqual([0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 0, 1, 2, 3]);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.judges.map((j) => [j.kind, j.vsReference])).toEqual([['main', 'pass'], ['success', 'fail']]);
+    expect(file.judges.map((j) => [j.kind, j.vsReference])).toEqual([['main', 'pass'], ['main', 'pass'], ['success', 'fail']]);
     expect(file.judges[0]?.A).toBe(head);
-    expect(fake.agents.filter((a) => a.role === 'judge')).toHaveLength(2);
+    expect(file.judges[1]?.B).toBe(head);
+    expect(fake.agents.filter((a) => a.role === 'judge')).toHaveLength(3);
     expect(fake.running.size).toBe(0);
   });
 
@@ -653,24 +719,26 @@ describe('ogw loop evaluate', () => {
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.code).toBe(0);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.judges.map((j) => [j.kind, j.instanceSide, j.A, j.B, j.vsBaseline, j.vsReference])).toEqual([
-      ['main', 'A', head, base, 'better', 'pass'],
-      ['success', 'B', base, head, 'better', 'pass'],
-      ['success', 'A', head, base, 'better', 'pass'],
+    // the step 4 judges take one coin and then alternate; each success judge takes its own coin
+    expect(file.judges.map((j) => [j.kind, j.instanceSide, j.A, j.B, j.vsReference])).toEqual([
+      ['main', 'A', head, base, 'pass'],
+      ['main', 'B', base, head, 'pass'],
+      ['success', 'B', base, head, 'pass'],
+      ['success', 'A', head, base, 'pass'],
     ]);
   });
 
   it('keeps a play whose client cannot answer telemetry or measure as done without its raw data', async () => {
     const { g } = await loop();
-    measure.dead = ['i5'];
+    measure.dead = ['i9'];
     fake.respond = (agent) => (agent.role === 'play' ? '## coverage\n\nunknown: none\n\n## observations\n\n1 | lobby | tap | crash | stuck | blocker | c.png\n' : judgeText('A', 'A', 'fail'));
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.plays.filter((p) => p.moment === null).map((p) => [p.instance, p.status])).toEqual([['i5', 'done'], ['i6', 'done']]);
+    expect(file.plays.filter((p) => p.moment === null).map((p) => [p.instance, p.status])).toEqual([['i9', 'done'], ['i10', 'done']]);
     expect(read(g.root, `${R}/play-1-1.md`)).toBe('## coverage\n\nunknown: none\n- telemetry: unknown (get_telemetry failed: client channel closed)\n\n## observations\n\n1 | lobby | tap | crash | stuck | blocker | c.png\n');
-    expect(measure.collected).toEqual([[join(g.root, `${R}/evidence/measure-1/i6.json`)]]);
+    expect(measure.collected).toEqual([[join(g.root, `${R}/evidence/measure-1/i10.json`)]]);
     expect(file.measure).toBe(`${R}/measure-1.json`);
     expect(fake.running.size).toBe(0);
   });
@@ -747,7 +815,96 @@ describe('ogw loop evaluate', () => {
     expect(out.code).toBe(0);
     expect(fake.instances.every((i) => i.db === 'postgresql')).toBe(true);
     const file = readJsonFile(g.root, 'records/loops/build-stg-0.2.0/evaluate-1.json') as EvaluateFile;
-    expect(file.judges.map((j) => j.kind)).toEqual(['main']);
+    expect(file.judges.map((j) => j.kind)).toEqual(['main', 'main']);
+    expect(file.kind).toBe('completeness');
     expect(file.baseline).toBe(git(g.root, 'rev-parse', 'main'));
+  });
+  it('judges a fun iteration with the judge panel, the fun elements, no reference, no save fixture instance and no success judge', async () => {
+    const panel = [
+      { cli: 'codex', model: 'gpt-x', effort: 'high' },
+      { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'medium' },
+    ];
+    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 3, judgePanel: panel, variants: 1 } });
+    write(g.root, 'client/dev/bot/fixtures/memorable_moment.json', '{"steps": []}\n');
+    commit(g.root);
+    await setRun(g, (run) => {
+      run.data['memorable moment'] = true;
+      run.data.loop = { kinds: [{ iteration: 1, kind: 'fun' }] };
+    });
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return '## coverage\n\nunknown: none\n';
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+      return judgeText(side, side, 'pass').replace(/## vs reference[\s\S]*$/, '## vs reference\n\nnone\n');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file).toMatchObject({ kind: 'fun', elements: ['game feel', 'tension and release', 'no friction'], vsBaseline: 'better', vsReference: null });
+    expect(file.memorableMoment).toBeUndefined();
+    expect(file.votes).toEqual([
+      { element: 'game feel', this: 3, baseline: 0, decision: 'this' },
+      { element: 'tension and release', this: 0, baseline: 0, decision: 'indistinguishable' },
+      { element: 'no friction', this: 0, baseline: 0, decision: 'indistinguishable' },
+    ]);
+    // three step 4 judges on alternating sides with the panel in turn; no success judge
+    expect(file.judges.map((j) => [j.kind, j.instanceSide, j.agent.model, j.vsReference])).toEqual([
+      ['main', 'A', 'gpt-x', null],
+      ['main', 'B', 'claude-sonnet-5-5', null],
+      ['main', 'A', 'gpt-x', null],
+    ]);
+    const judges = fake.agents.filter((a) => a.role === 'judge');
+    expect(judges.map((a) => a.agent)).toEqual([panel[0], panel[1], panel[0]]);
+    for (const judge of judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], telemetry: null, reference: null });
+    // no save fixture instance and no play of a moment
+    expect(fake.instances.filter((i) => i.fixture !== undefined)).toEqual([]);
+    expect(file.plays.map((p) => p.moment)).toEqual([null]);
+    expect(out.stdout).toContain('judge main done codex gpt-x high side A vs reference none');
+    expect(out.stdout).toContain('votes game feel: this 3 baseline 0 this');
+  });
+
+  it('shares the telemetry of one bot run per commit with every judge, named by its sides', async () => {
+    const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    const goal = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
+    write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal });
+    commit(g.root);
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+      return judgeText(side, side, 'pass');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    // two headless instances first, this commit and the baseline game, stopped before the judges start
+    expect(fake.instances.slice(0, 2).map((i) => [i.commit, i.client, i.played])).toEqual([[head, 'headless', undefined], [base, 'headless', undefined]]);
+    expect(bots.runs.map((r) => r.commit)).toEqual([head, base]);
+    expect(fake.stopped.slice(0, 2).sort()).toEqual(['i1', 'i2']);
+    const first = join(g.root, `${R}/evidence/telemetry-1-1.md`);
+    const second = join(g.root, `${R}/evidence/telemetry-1-2.md`);
+    expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 30, B 90');
+    expect(read(g.root, `${R}/evidence/telemetry-1-2.md`)).toContain('input_latency_ms: A 90, B 30');
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.map((j) => [j.kind, j.instanceSide, j.telemetry])).toEqual([
+      ['main', 'A', first],
+      ['main', 'B', second],
+      ['success', 'A', first],
+      ['success', 'A', first],
+    ]);
+    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([first, second, first, first]);
+    // evidence is not committed
+    expect(git(g.root, 'ls-files', `${R}/evidence`)).toBe('');
+
+    // a bot run that does not reach every step: no telemetry for any judge
+    fake.instances = [];
+    fake.agents = [];
+    counters.judge = 0;
+    counters.play = 0;
+    bots.runs = [];
+    bots.fail = new Set([base]);
+    rmSync(join(g.root, `${R}/evidence`), { recursive: true, force: true });
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([null, null, null, null]);
+    expect(existsSync(first)).toBe(false);
   });
 });

@@ -57,6 +57,12 @@
     "plateau": 3,
     "successJudges": 2
   },
+  "loop": {
+    "funIterations": 3,
+    "judgeVotes": 2,
+    "judgePanel": [],
+    "variants": 1
+  },
   "reviewRounds": 3,
   "codeCheck": {
     "maxComplexity": 15

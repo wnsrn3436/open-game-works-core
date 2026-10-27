@@ -1,10 +1,14 @@
 import { cell, column, parseTable, section, sectionText, splitRow, type Table } from './markdown.ts';
-import type { VsBaseline, VsReference } from './files.ts';
+import type { Vote, VsReference } from './files.ts';
 
-/** Judge result tables read for `vs baseline` and `vs reference` (`agents/judge.md` `## judge result`). */
+/** What `ogw loop evaluate` reads from a judge result (`agents/judge.md` `## judge result`). */
 export interface JudgeVerdict {
-  vsBaseline: VsBaseline | null;
-  vsReference: VsReference;
+  /** Per element of `elements`, the vote; null without a baseline game. */
+  votes: Record<string, Vote> | null;
+  /** The judge moments put in the judge at which `## moments` says the other side is better. */
+  lostMoments: string[];
+  /** null when the iteration has no `vs reference` (a fun iteration). */
+  vsReference: VsReference | null;
 }
 
 const WINNERS = new Set(['A', 'B', 'indistinguishable', 'n/a']);
@@ -44,33 +48,25 @@ export function lostMoments(text: string, instanceSide: 'A' | 'B', judgeMoments:
 }
 
 /**
- * `vs baseline` from the element winners turned to the side of this commit's instance (`game-loop` `## iteration` 4).
- * A judge moment lost in `## moments` keeps it from `better`. Throws when the table cannot be read.
+ * The vote of each element of `elements` (`game-loop` `## iteration` 4): the winner of its `## vs baseline` row restated
+ * relative to this commit's side. `indistinguishable`, `n/a` and an element without a row are no vote. Throws when
+ * the table cannot be read.
  */
-export function vsBaselineOf(text: string, instanceSide: 'A' | 'B', judgeMoments: readonly string[] = []): VsBaseline {
+export function votesOf(text: string, instanceSide: 'A' | 'B', elements: readonly string[]): Record<string, Vote> {
   const table = tableOf(text, 'vs baseline');
   if (!table) throw new Error('`## vs baseline` table missing');
+  const elementCol = column(table, 'element');
   const winnerCol = column(table, 'winner');
-  const marginCol = column(table, 'margin');
-  if (column(table, 'element') < 0 || winnerCol < 0 || marginCol < 0) throw new Error('`## vs baseline` columns missing');
-  let won = 0;
-  let lost = 0;
-  // a decisive loss or a lost judge moment keeps it from `better`
-  let blocked = lostMoments(text, instanceSide, judgeMoments).length > 0;
+  if (elementCol < 0 || winnerCol < 0) throw new Error('`## vs baseline` columns missing');
+  const votes: Record<string, Vote> = Object.fromEntries(elements.map((e) => [e, null]));
   for (const row of table.rows) {
     const winner = cell(row, winnerCol);
     if (!WINNERS.has(winner)) throw new Error(`unknown winner ${winner}`);
-    if (winner === 'n/a' || winner === 'indistinguishable') continue;
-    if (winner === instanceSide) {
-      won++;
-    } else {
-      lost++;
-      if (cell(row, marginCol) === 'decisive') blocked = true;
-    }
+    const element = cell(row, elementCol).replace(/`/g, '').trim();
+    if (!(element in votes) || (winner !== 'A' && winner !== 'B')) continue;
+    votes[element] = winner === instanceSide ? 'this' : 'baseline';
   }
-  if (won > lost && !blocked) return 'better';
-  if (lost > won) return 'worse';
-  return 'indistinguishable';
+  return votes;
 }
 
 /** `vs reference` of the rows of this commit's side. Throws when the table cannot be read. */
@@ -92,13 +88,19 @@ export function vsReferenceOf(text: string, instanceSide: 'A' | 'B'): VsReferenc
 }
 
 /**
- * Both verdicts. `withBaseline` false: `vs baseline` is not read and is null. `judgeMoments`: the names of the save
- * fixture moments put in that judge.
+ * What a judge result gives. `withBaseline` false: no votes. `withReference` false (a fun iteration): `## vs reference`
+ * is not read. `judgeMoments`: the names of the save fixture moments put in that judge. Throws when a table it reads
+ * cannot be read.
  */
-export function judgeVerdict(text: string, instanceSide: 'A' | 'B', withBaseline: boolean, judgeMoments: readonly string[] = []): JudgeVerdict {
+export function judgeVerdict(
+  text: string,
+  instanceSide: 'A' | 'B',
+  options: { withBaseline: boolean; withReference: boolean; elements: readonly string[]; judgeMoments?: readonly string[] },
+): JudgeVerdict {
   return {
-    vsBaseline: withBaseline ? vsBaselineOf(text, instanceSide, judgeMoments) : null,
-    vsReference: vsReferenceOf(text, instanceSide),
+    votes: options.withBaseline ? votesOf(text, instanceSide, options.elements) : null,
+    lostMoments: options.withBaseline ? lostMoments(text, instanceSide, options.judgeMoments ?? []) : [],
+    vsReference: options.withReference ? vsReferenceOf(text, instanceSide) : null,
   };
 }
 

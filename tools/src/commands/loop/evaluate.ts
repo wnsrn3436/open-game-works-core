@@ -4,7 +4,7 @@ import { LIMITS } from '../../lib/limits.ts';
 import { runBaseline } from './lib/baseline.ts';
 import { evaluate } from './lib/evaluate.ts';
 import { gateOf, type CheckFile } from './lib/files.ts';
-import { gameSettings, memorableMomentAsked, openTarget, readRunJson, runRel } from './lib/run.ts';
+import { gameSettings, iterationKind, memorableMomentAsked, openTarget, readRunJson, runRel } from './lib/run.ts';
 import { readJudgeMoments, requireReference } from './lib/setup.ts';
 
 const USAGE = 'ogw loop evaluate <game> [--db postgresql]';
@@ -32,14 +32,17 @@ export const loopEvaluate: CommandDef = {
     const platforms = (await gameSettings(ctx, game)).buildPlatforms ?? [];
     if (platforms.length === 0) throw new OgwError('game settings buildPlatforms is empty');
     const settings = await ctx.settings();
+    const kind = iterationKind(run, run.iteration);
     const { file, path } = await evaluate(ctx, {
       game,
       run,
       check,
       commit: check.commit,
       baseline: await runBaseline(game, run),
-      moments: run.kind === 'loop' ? await readJudgeMoments(game, runRel(run, 'request.md')) : [],
+      // a fun iteration starts no save fixture instance: the judge moments are judged in completeness iterations
+      moments: run.kind === 'loop' && kind === 'completeness' ? await readJudgeMoments(game, runRel(run, 'request.md')) : [],
       reference,
+      kind,
       platforms,
       settings,
       db,
@@ -47,7 +50,11 @@ export const loopEvaluate: CommandDef = {
     });
     const lines = [
       path,
-      ...file.judges.map((j) => `judge ${j.kind} ${j.status} vs baseline ${j.vsBaseline ?? 'none'} vs reference ${j.vsReference}`),
+      `kind ${file.kind}`,
+      ...file.judges.map((j) => `judge ${j.kind} ${j.status} ${j.agent.cli} ${j.agent.model} ${j.agent.effort} side ${j.instanceSide} vs reference ${j.vsReference ?? 'none'}`),
+      ...(file.votes ?? []).map((v) => `votes ${v.element}: this ${String(v.this)} baseline ${String(v.baseline)} ${v.decision}`),
+      `vs baseline ${file.vsBaseline ?? 'none'}`,
+      `vs reference ${file.vsReference ?? 'none'}`,
       ...file.plays.map((p) => `play ${p.status} ${p.result}`),
       `measure ${file.measure ?? 'none'}`,
     ];

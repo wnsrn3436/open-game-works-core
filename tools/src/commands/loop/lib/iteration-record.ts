@@ -4,13 +4,14 @@ import { gitRaw } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { DEFECT_COLUMNS, defectRow, type Defect } from './defects.ts';
-import { GATE_CHECKS, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
+import { GATE_CHECKS, type ElementVotes, type IterationKind, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
 import { cell, column, document, parseTable, renderTable, section } from './markdown.ts';
 import { abs, runRel } from './run.ts';
+import { combinedVsReference } from './votes.ts';
 
 /** Loop iteration record `records/loops/<run>/iteration-<n>.md` (`game-loop` `## loop iteration record`). */
 
-export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'A' | 'B' | 'vsBaseline' | 'vsReference' | 'omittedMoments' | 'status'> {
+export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'agent' | 'A' | 'B' | 'vsReference' | 'omittedMoments' | 'status'> {
   moments: string;
   loserBetter: string;
 }
@@ -25,9 +26,12 @@ export interface IterationRecordData {
   baseline: string | null;
   /** The candidate iteration this confirmation iteration confirms; null for any other iteration. */
   confirms: number | null;
+  kind: IterationKind;
   checks: { name: string; result: string; path: string }[];
   /** null when steps 3 and 4 did not run. */
   judges: RecordJudge[] | null;
+  /** The votes of the step 4 judges; null when there is no baseline game or steps 3 and 4 did not run. */
+  votes: RecordVotes | null;
   plays: RecordPlay[] | null;
   defects: Defect[];
   measurements: MeasureTarget[] | null;
@@ -37,16 +41,23 @@ export interface IterationRecordData {
   temporary: string[];
 }
 
+/** `## votes`: the step 4 judges together. */
+export interface RecordVotes {
+  vsBaseline: VsBaseline | null;
+  vsReference: VsReference | null;
+  elements: ElementVotes[];
+}
+
 function judgeBlock(judge: RecordJudge): string {
   return [
     `### ${judge.result}`,
     '',
     `- kind: ${judge.kind}`,
     `- status: ${judge.status}`,
+    `- agent: ${judge.agent.cli} ${judge.agent.model} ${judge.agent.effort}`,
     `- A: ${judge.A}`,
     `- B: ${judge.B ?? 'none'}`,
-    `- vs baseline: ${judge.vsBaseline ?? 'none'}`,
-    `- vs reference: ${judge.vsReference}`,
+    `- vs reference: ${judge.vsReference ?? 'none'}`,
     `- omitted moments: ${judge.omittedMoments.length > 0 ? judge.omittedMoments.join(', ') : 'none'}`,
     '',
     '#### moments',
@@ -57,6 +68,14 @@ function judgeBlock(judge: RecordJudge): string {
     '',
     judge.loserBetter.trim() === '' ? 'none' : judge.loserBetter.trim(),
   ].join('\n');
+}
+
+function votesBlock(votes: RecordVotes | null): string {
+  if (votes === null) return 'none';
+  const lines = `- vs baseline: ${votes.vsBaseline ?? 'none'}\n- vs reference: ${votes.vsReference ?? 'none'}`;
+  if (votes.elements.length === 0) return lines;
+  const table = renderTable(['element', 'this', 'baseline', 'decision'], votes.elements.map((v) => [v.element, String(v.this), String(v.baseline), v.decision]));
+  return `${lines}\n\n${table}`;
 }
 
 export function renderIterationRecord(data: IterationRecordData): string {
@@ -79,9 +98,13 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ? renderTable(['platform', 'hostLoad'], data.load.map((l) => [l.platform ?? 'none', JSON.stringify(l.hostLoad ?? null)]))
     : 'none';
   return document([
-    ['commit', `- instance: ${data.commit ?? 'none'}\n- baseline: ${data.baseline ?? 'none'}\n- confirms: ${data.confirms === null ? 'none' : String(data.confirms)}`],
+    [
+      'commit',
+      `- instance: ${data.commit ?? 'none'}\n- baseline: ${data.baseline ?? 'none'}\n- confirms: ${data.confirms === null ? 'none' : String(data.confirms)}\n- kind: ${data.kind}`,
+    ],
     ['checks', checks],
     ['judge', judge],
+    ['votes', votesBlock(data.votes)],
     ['play', play],
     ['defects', defects],
     ['measurements', measurements],
@@ -95,8 +118,10 @@ export interface ParsedJudge {
   result: string;
   kind: string;
   status: string;
+  /** null when the line is `none` (a fun iteration). */
+  vsReference: VsReference | null;
+  /** The `- vs baseline:` line a record of one step 4 judge has; null without it. */
   vsBaseline: VsBaseline | null;
-  vsReference: VsReference;
 }
 
 export interface ParsedRecord {
@@ -105,9 +130,15 @@ export interface ParsedRecord {
   commit: string | null;
   /** The candidate iteration of a confirmation iteration; null for any other iteration. */
   confirms: number | null;
+  /** `completeness` when `## commit` has no `- kind:` line. */
+  kind: IterationKind;
   checks: Map<string, string>;
   /** null when `## judge` is `none`. */
   judges: ParsedJudge[] | null;
+  /** `vs baseline` of the step 4 judges together; null without one. */
+  vsBaseline: VsBaseline | null;
+  /** `vs reference` of the step 4 judges together; null without one (a fun iteration, no step 4 judge). */
+  vsReference: VsReference | null;
   /** Sum of the `blocker` column of `## play`; 0 when it is `none`. */
   playBlockers: number;
 }
@@ -125,13 +156,14 @@ function parseJudges(lines: readonly string[]): ParsedJudge[] | null {
   let result = '';
   const flush = (): void => {
     if (!block) return;
+    const vsReference = bullet(block, 'vs reference') ?? 'unknown';
     const vsBaseline = bullet(block, 'vs baseline');
     judges.push({
       result,
       kind: bullet(block, 'kind') ?? '',
       status: bullet(block, 'status') ?? '',
+      vsReference: vsReference === 'none' ? null : (vsReference as VsReference),
       vsBaseline: vsBaseline === null || vsBaseline === 'none' ? null : (vsBaseline as VsBaseline),
-      vsReference: (bullet(block, 'vs reference') ?? 'unknown') as VsReference,
     });
   };
   for (const line of lines) {
@@ -147,9 +179,35 @@ function parseJudges(lines: readonly string[]): ParsedJudge[] | null {
   return judges;
 }
 
-export function parseIterationRecord(text: string, iteration: number, path: string): ParsedRecord {
-  const commitLines = section(text, 'commit') ?? [];
-  const commit = bullet(commitLines, 'instance');
+/** A `- <key>: <value>` line value; null when it is `none`. */
+function valueOrNull(value: string): string | null {
+  return value === 'none' ? null : value;
+}
+
+/** `vs reference` of the step 4 judges of `## judge` together; null in a fun iteration or without one. */
+function referenceOfJudges(kind: IterationKind, main: readonly ParsedJudge[]): VsReference | null {
+  if (kind === 'fun' || main.length === 0) return null;
+  return combinedVsReference(main.map((j) => ({ status: j.status === 'failed' ? 'failed' : 'done', vsReference: j.vsReference })));
+}
+
+/**
+ * The two values of the step 4 judges together: from `## votes`; without its lines (no baseline game), `vs reference`
+ * from the step 4 judges of `## judge` of a completeness iteration, and `vs baseline` from the line of a record that
+ * has one step 4 judge with it.
+ */
+function together(text: string, kind: IterationKind, judges: readonly ParsedJudge[] | null): { vsBaseline: VsBaseline | null; vsReference: VsReference | null } {
+  const lines = section(text, 'votes') ?? [];
+  const main = (judges ?? []).filter((j) => j.kind === 'main');
+  const vsBaseline = bullet(lines, 'vs baseline');
+  const vsReference = bullet(lines, 'vs reference');
+  return {
+    vsBaseline: vsBaseline === null ? (main[0]?.vsBaseline ?? null) : (valueOrNull(vsBaseline) as VsBaseline | null),
+    vsReference: vsReference === null ? referenceOfJudges(kind, main) : (valueOrNull(vsReference) as VsReference | null),
+  };
+}
+
+/** `## checks`: the result of each check name. */
+function parseChecks(text: string): Map<string, string> {
   const checks = new Map<string, string>();
   const table = parseTable(section(text, 'checks') ?? []);
   if (table) {
@@ -157,17 +215,28 @@ export function parseIterationRecord(text: string, iteration: number, path: stri
     const resultCol = column(table, 'result');
     for (const row of table.rows) checks.set(cell(row, nameCol), cell(row, resultCol));
   }
+  return checks;
+}
+
+export function parseIterationRecord(text: string, iteration: number, path: string): ParsedRecord {
+  const commitLines = section(text, 'commit') ?? [];
+  const commit = bullet(commitLines, 'instance');
+  const checks = parseChecks(text);
   const confirms = bullet(commitLines, 'confirms');
   const play = parseTable(section(text, 'play') ?? []);
   const blockerCol = play ? column(play, 'blocker') : -1;
   const playBlockers = play && blockerCol >= 0 ? play.rows.reduce((sum, row) => sum + (Number(cell(row, blockerCol)) || 0), 0) : 0;
+  const kind: IterationKind = bullet(commitLines, 'kind') === 'fun' ? 'fun' : 'completeness';
+  const judges = parseJudges(section(text, 'judge') ?? []);
   return {
     iteration,
     path,
     commit: commit === null || commit === 'none' ? null : commit,
     confirms: confirms === null || confirms === 'none' || !/^[0-9]+$/.test(confirms) ? null : Number(confirms),
+    kind,
     checks,
-    judges: parseJudges(section(text, 'judge') ?? []),
+    judges,
+    ...together(text, kind, judges),
     playBlockers,
   };
 }
@@ -211,8 +280,9 @@ export async function iterationRecords(game: GameRepo, run: RunState): Promise<P
   return records;
 }
 
-export function mainOf(record: ParsedRecord): ParsedJudge | null {
-  return record.judges?.find((j) => j.kind === 'main') ?? null;
+/** The step 4 judges of the record. */
+export function mainJudges(record: ParsedRecord): ParsedJudge[] {
+  return (record.judges ?? []).filter((j) => j.kind === 'main');
 }
 
 export function gatePassed(record: ParsedRecord): boolean {

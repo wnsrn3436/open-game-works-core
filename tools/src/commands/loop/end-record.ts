@@ -12,7 +12,7 @@ import { addedCoreProposals } from '../build/lib/report-sections.ts';
 import { LIST_PATH, temporaryKeys, unknownLicenseKeys } from '../resource/lib/list.ts';
 import type { DefectsFile } from './lib/defects.ts';
 import { checkResult, COMPLETENESS_CHECKS, mainJudge, type CheckFile, type EvaluateFile } from './lib/files.ts';
-import { iterationRecords, mainOf, type ParsedRecord } from './lib/iteration-record.ts';
+import { iterationRecords, type ParsedRecord } from './lib/iteration-record.ts';
 import { document } from './lib/markdown.ts';
 import { abs, coreUpgrade, loopData, openTarget, readRunJson, runRel } from './lib/run.ts';
 
@@ -47,7 +47,7 @@ async function mergeLines(game: GameRepo, run: RunState): Promise<string[]> {
   const prepared = loopData(run).prepareMerge;
   const commit = prepared?.commit ?? null;
   const record = await mergedRecord(game, run);
-  const lines = [`merge commit: ${commit ?? 'none'}`, `vs baseline: ${(record ? mainOf(record)?.vsBaseline : null) ?? 'none'}`];
+  const lines = [`merge commit: ${commit ?? 'none'}`, `vs baseline: ${record?.vsBaseline ?? 'none'}`];
   if (!prepared) lines.push('not merged: ogw loop prepare-merge has not run');
   else if (prepared.failed !== undefined) lines.push(`not merged: ogw loop prepare-merge failed: ${oneLine(prepared.failed)}`);
   else if (prepared.mainHead !== prepared.baseCommit) lines.push(`not merged: main HEAD ${prepared.mainHead} is not the work branch base ${prepared.baseCommit}`);

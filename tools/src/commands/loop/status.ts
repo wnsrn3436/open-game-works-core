@@ -3,7 +3,7 @@ import { openRun } from '../../lib/runstate.ts';
 import { listInstances } from '../instance/api.ts';
 import { committedRecordPaths } from './lib/iteration-record.ts';
 import { isAgentJob, roleOf, runJobs } from './lib/jobs.ts';
-import { loopData } from './lib/run.ts';
+import { iterationKind, loopData } from './lib/run.ts';
 
 const USAGE = 'ogw loop status <game>';
 
@@ -27,10 +27,12 @@ export const loopStatus: CommandDef = {
     const instances = (await listInstances(ctx, { game: game.name })).filter((i) => i.startedAt >= run.startedAt).map((i) => i.id);
     const tasks = data.tasks.map((t) => ({ role: t.role, input: t.input, retries: t.retries }));
     const gaveUp = data.tasks.filter((t) => t.gaveUp).map((t) => ({ input: t.input, lastFailure: t.lastFailure }));
+    const iterationKindOf = run.iteration === 0 ? null : iterationKind(run, run.iteration);
     const lines = [
       `run: ${run.name}`,
       `kind: ${run.kind}`,
       `iteration: ${String(run.iteration)}`,
+      `iteration kind: ${iterationKindOf ?? 'none'}`,
       `base commit: ${run.baseCommit}`,
       `last iteration record: ${lastRecord ?? 'none'}`,
       ...jobs.map((j) => `job ${j.id} ${j.command} ${j.status}${j.merged === null ? '' : j.merged ? ' merged' : ' not merged'}`),
@@ -44,6 +46,7 @@ export const loopStatus: CommandDef = {
         run: run.name,
         kind: run.kind,
         iteration: run.iteration,
+        iterationKind: iterationKindOf,
         baseCommit: run.baseCommit,
         lastRecord,
         jobs,

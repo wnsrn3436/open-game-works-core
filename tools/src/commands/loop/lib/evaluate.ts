@@ -8,14 +8,28 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, showFile } from '../../../lib/git.ts';
 import { killJob, readJob } from '../../../lib/jobs.ts';
 import type { RunState } from '../../../lib/runstate.ts';
-import type { HarnessSettings } from '../../../lib/settings.ts';
+import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, startAgentJob } from '../../agent/api.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
 import { collectMeasure, measureCollected } from '../../measure/api.ts';
 import { telemetrySummary } from '../../telemetry/api.ts';
-import { checkResult, successPrecondition, type CheckFile, type EvaluateFile, type JudgeEntry, type PlayEntry } from './files.ts';
+import {
+  checkResult,
+  elementsOf,
+  successPrecondition,
+  type CheckFile,
+  type EvaluateFile,
+  type IterationKind,
+  type JudgeAgent,
+  type JudgeEntry,
+  type PlayEntry,
+  type VsBaseline,
+  type VsReference,
+} from './files.ts';
 import { appendCoverage, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
+import { botRun, comparisonText, scenarioAtHead, type BotRun } from './shared-telemetry.ts';
+import { combinedVsBaseline, combinedVsReference, countVotes } from './votes.ts';
 import { MEMORABLE_MOMENT, type Moment, type Reference } from './setup.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
@@ -55,8 +69,13 @@ export interface EvaluatePlan {
   baseline: string | null;
   moments: Moment[];
   reference: Reference;
+  /** The iteration kind: a fun iteration has no save fixture instance, no `vs reference` and no success judge. */
+  kind: IterationKind;
   platforms: string[];
-  settings: Pick<HarnessSettings, 'maxConcurrentInstances' | 'instanceWaitTimeoutMs' | 'playInstances' | 'backgroundRetryLimit' | 'loopStop'>;
+  settings: Pick<
+    HarnessSettings,
+    'maxConcurrentInstances' | 'instanceWaitTimeoutMs' | 'playInstances' | 'backgroundRetryLimit' | 'loopStop' | 'loop' | 'agents'
+  >;
   db: 'postgresql' | undefined;
   /** True when `ogw loop input` asked for the judge moment `memorable_moment` in this run. */
   memorableMoment: boolean;
@@ -69,6 +88,8 @@ interface Spec {
   commit: string;
   platform?: string;
   fixture?: string;
+  /** The headless instance of a bot run (the shared telemetry). */
+  headless?: boolean;
 }
 
 interface PlaySlot {
@@ -87,6 +108,11 @@ interface PlaySlot {
 interface JudgeSlot {
   role: 'judge';
   kind: 'main' | 'success';
+  /** The order of a step 4 judge from 1; 0 for a success judge. */
+  k: number;
+  agent: AgentSettings;
+  /** Absolute path of the judge input `telemetry`, or null. */
+  telemetry: string | null;
   side: 'A' | 'B';
   moments: Moment[];
   omitted: string[];
@@ -101,7 +127,7 @@ type Slot = PlaySlot | JudgeSlot;
 interface Group {
   size: number;
   slots: Slot[];
-  /** Success judges wait for the step 4 judge and start only when the rest of `success` holds. */
+  /** Success judges wait for the step 4 judges and start only when the rest of `success` holds. */
   gate: 'none' | 'success';
 }
 
@@ -149,8 +175,8 @@ export async function fixturesAtHead(ctx: Context, plan: EvaluatePlan): Promise<
   return dir;
 }
 
-/** Instances of one judge: this commit and the baseline, then a pair per judge moment, within `maxConcurrentInstances`. */
-function judgeSlot(plan: EvaluatePlan, kind: 'main' | 'success'): { slot: JudgeSlot; size: number } {
+/** The moments whose save fixture instances a judge gets, and those left out by `maxConcurrentInstances`. */
+function judgeMoments(plan: EvaluatePlan): { included: Moment[]; omitted: string[]; size: number } {
   const perGame = plan.baseline === null ? 1 : 2;
   const max = plan.settings.maxConcurrentInstances;
   const included: Moment[] = [];
@@ -159,33 +185,61 @@ function judgeSlot(plan: EvaluatePlan, kind: 'main' | 'success'): { slot: JudgeS
     if (max === null || (included.length + 2) * perGame <= max) included.push(moment);
     else omitted.push(moment.name);
   }
-  const side = plan.baseline === null || evaluateDeps.random() < 0.5 ? 'A' : 'B';
-  const slot: JudgeSlot = { role: 'judge', kind, side, moments: included, omitted, attempts: 0, instances: [], job: null, entry: null };
-  return { slot, size: (included.length + 1) * perGame };
+  return { included, omitted, size: (included.length + 1) * perGame };
+}
+
+/** Instances of one judge: this commit and the baseline, then a pair per judge moment, within `maxConcurrentInstances`. */
+function judgeGroup(plan: EvaluatePlan, kind: 'main' | 'success', k: number, side: 'A' | 'B', agent: AgentSettings): Group {
+  const { included, omitted, size } = judgeMoments(plan);
+  const slot: JudgeSlot = { role: 'judge', kind, k, agent, telemetry: null, side, moments: included, omitted, attempts: 0, instances: [], job: null, entry: null };
+  return { size, slots: [slot], gate: kind === 'success' ? 'success' : 'none' };
+}
+
+/** The agent CLI, model and effort of the k-th step 4 judge: `loop.judgePanel` in turn, else `agents.judge`. */
+export function judgeAgent(settings: EvaluatePlan['settings'], k: number): AgentSettings {
+  const panel = settings.loop.judgePanel;
+  if (panel.length > 0) return panel[(k - 1) % panel.length] as AgentSettings;
+  const judge = settings.agents.judge;
+  if (judge === undefined) throw new OgwError('harness settings agents.judge is missing');
+  return judge;
+}
+
+/** The side of this commit's instance by the coin: below 0.5 is `A`. */
+function drawSide(): 'A' | 'B' {
+  return evaluateDeps.random() < 0.5 ? 'A' : 'B';
 }
 
 function playSlot(spec: Spec, platform: string, moment: Moment | null, measure: boolean): PlaySlot {
   return { role: 'play', spec, platform, moment, measure, attempts: 0, instance: null, job: null, entry: null };
 }
 
+/**
+ * Groups in start order (`game-loop` `## iteration` 3): each step 4 judge (`loop.judgeVotes` with a baseline game,
+ * else one; the first on a random side, each next on the other side), the `playInstances` plays, a play per judge
+ * moment, and in a completeness iteration of a loop run the success judges (a random side each, with the agent of the
+ * first step 4 judge).
+ */
 export function planGroups(plan: EvaluatePlan): Group[] {
   const groups: Group[] = [];
-  const main = judgeSlot(plan, 'main');
-  groups.push({ size: main.size, slots: [main.slot], gate: 'none' });
+  const count = plan.baseline === null ? 1 : plan.settings.loop.judgeVotes;
+  const first = plan.baseline === null ? 'A' : drawSide();
+  for (let k = 1; k <= count; k++) {
+    const side = k % 2 === 1 ? first : first === 'A' ? 'B' : 'A';
+    groups.push(judgeGroup(plan, 'main', k, side, judgeAgent(plan.settings, k)));
+  }
   const plays: Slot[] = [];
   for (let k = 0; k < plan.settings.playInstances; k++) {
     const platform = plan.platforms[k % plan.platforms.length] as string;
     plays.push(playSlot({ commit: plan.commit, platform }, platform, null, true));
   }
   groups.push({ size: plays.length, slots: plays, gate: 'none' });
-  const first = plan.platforms[0] as string;
+  const firstPlatform = plan.platforms[0] as string;
   for (const moment of plan.moments) {
-    groups.push({ size: 1, slots: [playSlot({ commit: plan.commit, fixture: fixturePath(plan, moment) }, first, moment, false)], gate: 'none' });
+    groups.push({ size: 1, slots: [playSlot({ commit: plan.commit, fixture: fixturePath(plan, moment) }, firstPlatform, moment, false)], gate: 'none' });
   }
-  if (plan.run.kind === 'loop') {
+  if (plan.run.kind === 'loop' && plan.kind === 'completeness') {
     for (let i = 0; i < plan.settings.loopStop.successJudges; i++) {
-      const judge = judgeSlot(plan, 'success');
-      groups.push({ size: judge.size, slots: [judge.slot], gate: 'success' });
+      groups.push(judgeGroup(plan, 'success', 0, plan.baseline === null ? 'A' : drawSide(), judgeAgent(plan.settings, 1)));
     }
   }
   return groups;
@@ -209,10 +263,10 @@ function startFailureReason(error: unknown): StartFailure['reason'] | null {
 /** Starts an instance; null when a save fixture step failed (`game-loop` "An instance that could not be started with its save fixture is not put in"). */
 async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
   checkStopped(state);
-  const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: 'window' };
+  const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: spec.headless === true ? 'headless' : 'window' };
   if (spec.platform !== undefined) options.platform = spec.platform;
   if (spec.fixture !== undefined) options.fixture = spec.fixture;
-  else options.played = true;
+  else if (spec.headless !== true) options.played = true;
   if (state.plan.db) options.db = state.plan.db;
   const reserved: string[] = [];
   try {
@@ -238,7 +292,8 @@ async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
 /** Starts the agent job of a slot once its instances started; a signal during the instance starts stops the run first. */
 async function startJob(state: State, slot: Slot, input: string): Promise<void> {
   checkStopped(state);
-  slot.job = await startAgentJob(state.ctx, { role: slot.role, game: state.plan.game.name, input });
+  const agent = slot.role === 'judge' ? { agent: slot.agent } : {};
+  slot.job = await startAgentJob(state.ctx, { role: slot.role, game: state.plan.game.name, input, ...agent });
   state.jobs.add(slot.job);
   state.active.push(slot);
 }
@@ -282,12 +337,8 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
     slot.instances.push(...[fa, fb].filter((i): i is InstanceInfo => i !== null));
     fixtures.push({ moment, A: fa?.id ?? null, B: fb?.id ?? null });
   }
-  const input = await inputFile(state, 'judge', {
-    A: guide(a),
-    B: guide(b),
-    fixtures,
-    reference: { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments },
-  });
+  const reference = plan.kind === 'fun' ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
+  const input = await inputFile(state, 'judge', { A: guide(a), B: guide(b), fixtures, elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
   await startJob(state, slot, input);
 }
 
@@ -384,28 +435,53 @@ async function finishPlay(state: State, slot: PlaySlot, output: string): Promise
   slot.entry = { result: rel(state, output), instance: instance.id, platform: slot.platform, moment: slot.moment?.name ?? null, status: 'done' };
 }
 
+function judgeAgentOf(agent: AgentSettings): JudgeAgent {
+  return { cli: agent.cli ?? 'claude-code', model: agent.model, effort: agent.effort };
+}
+
 function judgeEntry(state: State, slot: JudgeSlot, output: string | null, verdict: JudgeVerdict | null): JudgeEntry {
   const { A, B } = sides(state.plan, slot);
   return {
     kind: slot.kind,
     result: rel(state, output),
+    agent: judgeAgentOf(slot.agent),
     A,
     B,
     instanceSide: slot.side,
     omittedMoments: slot.omitted,
-    vsBaseline: verdict?.vsBaseline ?? null,
-    vsReference: verdict?.vsReference ?? 'unknown',
+    votes: verdict?.votes ?? null,
+    lostMoments: verdict?.lostMoments ?? [],
+    vsReference: state.plan.kind === 'fun' ? null : (verdict?.vsReference ?? 'unknown'),
+    telemetry: slot.telemetry,
     status: verdict ? 'done' : 'failed',
   };
 }
 
-/** Opens or closes the success judges after the step 4 judge; closes them after a success judge that did not pass. */
+/** The step 4 judges together (`game-loop` `## iteration` 4): the votes, `vs baseline` and `vs reference`. */
+export function together(plan: Pick<EvaluatePlan, 'baseline' | 'kind' | 'settings'>, main: readonly JudgeEntry[]): Pick<EvaluateFile, 'votes' | 'vsBaseline' | 'vsReference'> {
+  const votes = plan.baseline === null ? null : countVotes(main, elementsOf(plan.kind), plan.settings.loop.judgeVotes);
+  const vsBaseline: VsBaseline | null = votes === null ? null : combinedVsBaseline(votes, main.some((j) => j.lostMoments.length > 0));
+  const vsReference: VsReference | null = plan.kind === 'fun' ? null : combinedVsReference(main);
+  return { votes, vsBaseline, vsReference };
+}
+
+function mainEntries(state: State): JudgeEntry[] | null {
+  const main = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.kind === 'main');
+  return main.every((s) => s.entry !== null) ? main.map((s) => s.entry as JudgeEntry) : null;
+}
+
+/**
+ * Opens or closes the success judges once every step 4 judge ended (`game-loop` `## stop`); closes them after a success
+ * judge that did not pass.
+ */
 function updateSuccessGate(state: State, slot: JudgeSlot, entry: JudgeEntry): void {
   if (slot.kind === 'success') {
     if (entry.vsReference !== 'pass') state.successGate = 'closed';
     return;
   }
-  const open = successPrecondition(entry, (name) => checkResult(state.plan.check, name));
+  const main = mainEntries(state);
+  if (main === null) return;
+  const open = successPrecondition({ kind: state.plan.kind, ...together(state.plan, main) }, (name) => checkResult(state.plan.check, name));
   state.successGate = open ? 'open' : 'closed';
 }
 
@@ -417,7 +493,12 @@ async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> 
 /** Reads the judge result; null when its tables cannot be read. */
 async function readVerdict(state: State, slot: JudgeSlot, output: string): Promise<JudgeVerdict | null> {
   try {
-    return judgeVerdict(await readFile(output, 'utf8'), slot.side, state.plan.baseline !== null, slot.moments.map((m) => m.name));
+    return judgeVerdict(await readFile(output, 'utf8'), slot.side, {
+      withBaseline: state.plan.baseline !== null,
+      withReference: state.plan.kind === 'completeness',
+      elements: elementsOf(state.plan.kind),
+      judgeMoments: slot.moments.map((m) => m.name),
+    });
   } catch {
     return null;
   }
@@ -493,6 +574,46 @@ function abortOnSignal(state: State): () => void {
   return off;
 }
 
+/** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
+async function botRunOf(state: State, commit: string, scenario: NonNullable<Awaited<ReturnType<typeof scenarioAtHead>>>): Promise<BotRun | null> {
+  let instance: InstanceInfo | null = null;
+  try {
+    instance = await start(state, { commit, headless: true });
+    return instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.pollMs);
+  } catch (error) {
+    checkStopped(state);
+    state.ctx.log(`shared telemetry: no bot run of ${commit}: ${firstLine(error)}`);
+    return null;
+  } finally {
+    await stop(state, instance);
+  }
+}
+
+/**
+ * The shared telemetry (`game-loop` `## iteration` 4): with a baseline game, the bot runs of the scenario of the work
+ * branch HEAD on this commit and the baseline game commit, compared with `A` and `B` of each step 4 judge in
+ * `evidence/telemetry-<iteration>-<k>.md`. A success judge gets the file of the first step 4 judge of its side. Without
+ * both runs every judge gets `telemetry` null.
+ */
+async function shareTelemetry(state: State): Promise<void> {
+  const { plan } = state;
+  if (plan.baseline === null) return;
+  const scenario = await scenarioAtHead(plan.game, state.ctx.env);
+  if (scenario === null) return;
+  const [mine, theirs] = await Promise.all([botRunOf(state, plan.commit, scenario), botRunOf(state, plan.baseline, scenario)]);
+  checkStopped(state);
+  if (mine === null || theirs === null) return;
+  const judges = state.all.filter((s): s is JudgeSlot => s.role === 'judge');
+  for (const slot of judges.filter((j) => j.kind === 'main')) {
+    const path = abs(plan.game, runRel(plan.run, `evidence/telemetry-${String(plan.run.iteration)}-${String(slot.k)}.md`));
+    await writeFileAtomic(path, slot.side === 'A' ? comparisonText(mine, theirs) : comparisonText(theirs, mine));
+    slot.telemetry = path;
+  }
+  for (const slot of judges.filter((j) => j.kind === 'success')) {
+    slot.telemetry = judges.find((j) => j.kind === 'main' && j.side === slot.side)?.telemetry ?? null;
+  }
+}
+
 async function runSlots(state: State): Promise<void> {
   while (state.queue.length > 0 || state.active.length > 0) {
     checkStopped(state);
@@ -507,11 +628,12 @@ async function runSlots(state: State): Promise<void> {
 }
 
 /**
- * Why the step 4 judge did not get `memorable_moment` when it was asked for: `missing` without its `## judge moments`
- * line or its save fixture at the work branch HEAD, `omitted` when that judge did not put it in. undefined otherwise.
+ * Why the step 4 judges did not get `memorable_moment` when it was asked for, in a completeness iteration: `missing`
+ * without its `## judge moments` line or its save fixture at the work branch HEAD, `omitted` when the judges did not put
+ * it in (they all put in the same moments). undefined otherwise.
  */
 function memorableMomentGap(plan: EvaluatePlan, judges: readonly JudgeEntry[]): EvaluateFile['memorableMoment'] {
-  if (!plan.memorableMoment) return undefined;
+  if (!plan.memorableMoment || plan.kind === 'fun') return undefined;
   const fixture = plan.fixtureDir === undefined ? false : exists(join(plan.fixtureDir, `${MEMORABLE_MOMENT}.json`));
   if (!fixture || !plan.moments.some((m) => m.name === MEMORABLE_MOMENT)) return 'missing';
   return judges.find((j) => j.kind === 'main')?.omittedMoments.includes(MEMORABLE_MOMENT) === true ? 'omitted' : undefined;
@@ -562,6 +684,7 @@ async function evaluateWith(ctx: Context, plan: EvaluatePlan): Promise<{ file: E
   });
   const off = abortOnSignal(state);
   try {
+    await shareTelemetry(state);
     await runSlots(state);
   } catch (error) {
     await abort(state);
@@ -578,10 +701,21 @@ async function evaluateWith(ctx: Context, plan: EvaluatePlan): Promise<{ file: E
   else await rm(abs(plan.game, measureRel), { force: true });
   const { plays, judges } = entries(state);
   const gap = memorableMomentGap(plan, judges);
-  const file: EvaluateFile = { commit: plan.commit, baseline: plan.baseline, plays, judges, measure, ...(gap === undefined ? {} : { memorableMoment: gap }) };
+  const file: EvaluateFile = {
+    commit: plan.commit,
+    baseline: plan.baseline,
+    kind: plan.kind,
+    elements: elementsOf(plan.kind),
+    plays,
+    judges,
+    ...together(plan, judges.filter((j) => j.kind === 'main')),
+    measure,
+    ...(gap === undefined ? {} : { memorableMoment: gap }),
+  };
   const path = runRel(plan.run, `evaluate-${n}.json`);
   await writeJsonAtomic(abs(plan.game, path), file);
   const written = [measure, ...plays.map((p) => p.result), ...judges.map((j) => j.result)];
+  // the telemetry files are evidence, which is not committed
   const paths = written.filter((r): r is string => r !== null && r !== '' && exists(abs(plan.game, r)));
   if (measure === null && hadMeasure) paths.push(measureRel);
   await commitPaths(plan.game.root, [path, ...paths], `loop ${plan.run.name}: evaluate ${n}`, { env: ctx.env });

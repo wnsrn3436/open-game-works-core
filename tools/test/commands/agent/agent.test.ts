@@ -1,11 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hardeningRecords } from '../../../src/commands/loop/lib/findings.ts';
 import { formatReviewInput } from '../../../src/commands/review/lib/input.ts';
 import { instancesDir } from '../../../src/commands/instance/lib/records.ts';
 import { jobsDir, readJob } from '../../../src/lib/jobs.ts';
-import { requireOpenRun } from '../../../src/lib/runstate.ts';
+import { changeRuns, requireOpenRun } from '../../../src/lib/runstate.ts';
+import { createContext } from '../../../src/lib/command.ts';
+import { startAgentJob } from '../../../src/commands/agent/api.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { privateTempDir } from '../../../src/lib/secret-files.ts';
 import { ogw, commitAll, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
@@ -38,6 +40,59 @@ describe('ogw agent: content', () => {
     expect(readdirSync(dir).filter((f) => f.endsWith('.json')).sort()).toEqual(['otheragent.json']);
   });
 
+  it('continues the session of the content agent of the previous fun iteration of the run when its file is kept', async () => {
+    const ws = makeWorkspace();
+    const inputs = Object.fromEntries([1, 2, 3, 4].map((n) => [`records/loops/r1/content-input-${String(n)}.md`, '## kind\nfun\n']));
+    const kinds = [1, 2, 3, 4].map((iteration) => ({ iteration, kind: iteration === 3 ? 'completeness' : 'fun' }));
+    const { root, game } = await gameWithRun(ws, inputs, { data: { loop: { kinds } } });
+    // the fake Claude Code keeps the session file of a new session, as `claude -p` does in its config folder
+    const keep = [
+      "const at = process.argv.indexOf('--session-id');",
+      "if (at > 0) { const dir = process.env.CLAUDE_CONFIG_DIR + '/projects/-games-g'; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(dir + '/' + process.argv[at + 1] + '.jsonl', '{}\\n'); }",
+      WRITE_OUTPUT,
+    ].join('\n');
+    const fake = fakeAgentCli(ws, keep);
+    const iterate = async (n: number): Promise<string[]> => {
+      await changeRuns(game, (runs) => {
+        (runs[0] as { iteration: number }).iteration = n;
+      });
+      const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, `records/loops/r1/content-input-${String(n)}.md`)], fake.env, root);
+      expect(waited.code).toBe(0);
+      return fake.calls().at(-1)?.argv.slice(7) ?? [];
+    };
+    // iteration 1: a new session
+    const [flag1, first] = await iterate(1);
+    expect(flag1).toBe('--session-id');
+    // iteration 2, a fun iteration after a fun iteration: the session of iteration 1 continued
+    expect(await iterate(2)).toEqual(['--resume', first]);
+    // iteration 3 is a completeness iteration, and iteration 4 follows it: new sessions
+    const [flag3, third] = await iterate(3);
+    expect(flag3).toBe('--session-id');
+    expect(third).not.toBe(first);
+    const [flag4] = await iterate(4);
+    expect(flag4).toBe('--session-id');
+    // a session whose file is not kept is not continued
+    rmSync(join(ws.env.CLAUDE_CONFIG_DIR as string, 'projects'), { recursive: true, force: true });
+    await changeRuns(game, (runs) => {
+      (runs[0] as unknown as { data: { loop: { kinds: object[] } } }).data.loop.kinds.push({ iteration: 5, kind: 'fun' });
+    });
+    writeFileSync(join(root, 'records/loops/r1/content-input-5.md'), '## kind\nfun\n');
+    const [flag5] = await iterate(5);
+    expect(flag5).toBe('--session-id');
+  });
+
+  it('runs a content agent with the agent CLI, model and effort given to the job instead of harness settings', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'records/loops/r1/content-input-1.md': '## kind\nfun\n' });
+    const fake = fakeAgentCli(ws, WRITE_OUTPUT);
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const id = await startAgentJob(ctx, { role: 'content', game: 'g', input: join(root, 'records/loops/r1/content-input-1.md'), agent: { cli: 'codex', model: 'gpt-x', effort: 'low' } });
+    expect((await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
+    // Codex: no session option
+    expect(fake.calls()[0]?.argv).toEqual(['exec', '--model', 'gpt-x', '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+    expect((await readJob(id, ws.env)).meta).toMatchObject({ agent: { cli: 'codex', model: 'gpt-x', effort: 'low' }, session: null });
+  });
+
   it('starts the CLI in the game checkout with the prompt, writes and commits the run log', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'records/loops/r1/content-input-1.md': '## request\nnone\n' });
@@ -47,7 +102,10 @@ describe('ogw agent: content', () => {
     const output = join(root, 'records/loops/r1/content-1.md');
     expect(waited).toMatchObject({ code: 0, stdout: `${output}\n` });
     const [call] = fake.calls();
-    expect(call?.argv).toEqual(['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--permission-mode', 'bypassPermissions']);
+    // a new Claude Code session with the id kept in the job
+    expect(call?.argv.slice(0, 8)).toEqual(['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--permission-mode', 'bypassPermissions', '--session-id']);
+    expect(call?.argv[8]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(call?.argv).toHaveLength(9);
     expect(call?.cwd).toBe(root);
     expect(call?.prompt).toContain('## purpose');
     expect(call?.prompt).toContain(`- input: ${input}\n- output: ${output}\n- run: r1\n- iteration: 1\n`);

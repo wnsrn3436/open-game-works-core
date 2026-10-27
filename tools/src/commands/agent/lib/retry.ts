@@ -56,6 +56,7 @@ export async function retryAgent(ctx: Context, id: string): Promise<string> {
       taskInput: original,
       retryRoot: root,
       retryNumber: n,
+      ...(meta.agent === undefined || meta.agent === null ? {} : { agent: meta.agent }),
     });
   });
 }

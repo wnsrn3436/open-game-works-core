@@ -34,11 +34,12 @@ import {
   SANDBOX_DROPPED_ENV,
   userServicesBlocked,
   withoutSessionFiles,
+  withSession,
   type Blocked,
   type CliCommand,
 } from './cli-command.ts';
 import { AGENT_TEMP_FOLDER, agentFolderPrefix, move, osTempFolder } from './files.ts';
-import { AGENT_LOG_FOLDER, agentCliLog, changeAgentMeta, readAgentJob, type AgentMeta } from './meta.ts';
+import { AGENT_LOG_FOLDER, agentCliLog, changeAgentMeta, jobAgentSettings, readAgentJob, type AgentMeta } from './meta.ts';
 import { buildPrompt } from './prompt.ts';
 import { instancesDir } from '../../instance/lib/records.ts';
 import { stopInstancesOfAgent } from '../../instance/api.ts';
@@ -587,7 +588,9 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   const before = await fileStamp(meta.output);
   const afterEnv = await afterCliEnv(ctx.env, meta);
   // `runWithBroker` removes the sandbox profile folder this makes
-  const toRun = await cliToRun(ctx, meta.role, agentSettings(settings, meta.role), ws, logPath, socket, meta.folder);
+  const agent = jobAgentSettings(meta, () => agentSettings(settings, meta.role));
+  const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder);
+  if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = withSession(agentCli(agent), toRun.command, meta.session ?? null);
   const cli = await runWithBroker(id, ctx, meta, toRun, { prompt, logPath, socket, runLog: meta.runLog, afterEnv });
   const written = await wroteOutput(meta.output, before);
   await changeAgentMeta(id, ctx.env, (m) => {

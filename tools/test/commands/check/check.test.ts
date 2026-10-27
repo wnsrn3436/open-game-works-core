@@ -312,12 +312,12 @@ describe('ogw check run log summary', () => {
   });
 });
 
-async function openRun(iteration: number): Promise<void> {
+async function openRun(iteration: number, data: Record<string, unknown> = {}): Promise<void> {
   const settings = await loadHarnessSettings(ws.env);
   const game = await resolveGame(workspaceFrom(settings, ws.env), 'g', ws.root);
   const base = await head(game.root);
   await changeRuns(game, (runs) => {
-    runs.push(newRunState({ name: 'create-1', kind: 'loop', branch: 'loop/create-1', baseCommit: base, iteration, command: 'create' }));
+    runs.push(newRunState({ name: 'create-1', kind: 'loop', branch: 'loop/create-1', baseCommit: base, iteration, command: 'create', data }));
   });
 }
 
@@ -368,6 +368,26 @@ describe('ogw check --loop', () => {
     expect(calls).toContain('set_text_scale 1300');
     // the loop imported client/ before the checks: the static type check does not import again
     expect(staticCheck).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ name: 'g' }), { db: 'postgresql', imported: true });
+  });
+
+  it('runs only the regression test, the static check and the bot playtest in a fun iteration', async () => {
+    const root = setupGame(ws, { 'server/tests/a.test.ts': "it('a', () => { expect(1).toBe(1); });\n" });
+    await openRun(2, { loop: { kinds: [{ iteration: 2, kind: 'fun' }] } });
+    serveClient();
+    const run = await ogw(ws, ['check', 'g', '--loop']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('regression test: pass\nstatic check: pass\nno blocker: pass\nfull flow: pass\nresult file: records/loops/create-1/check-2.json\ngate: pass\n');
+    const file = JSON.parse(readFileSync(join(root, 'records/loops/create-1/check-2.json'), 'utf8')) as { checks: { name: string; result: string }[]; gate: string };
+    expect(file.checks.map((c) => [c.name, c.result])).toEqual([
+      ['regression test', 'pass'],
+      ['static check', 'pass'],
+      ['no blocker', 'pass'],
+      ['full flow', 'pass'],
+    ]);
+    expect(file.gate).toBe('pass');
+    // one headless instance: the bot playtest
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless' }]);
   });
 
   it('imports the client once, before any instance starts, and the regression test does not import again', async () => {

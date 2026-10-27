@@ -8,7 +8,8 @@ import { changeOpenRun, type RunState } from '../../lib/runstate.ts';
 import { releasedProposals } from '../core/api.ts';
 import { DEFECT_COLUMNS, defectRow, type DefectsFile, type DefectStatus } from './lib/defects.ts';
 import { document, renderTable } from './lib/markdown.ts';
-import { abs, confirmOf, coreUpgrade, MEMORABLE_MOMENT_KEY, openTarget, readRunJson, runFileExists, runRel } from './lib/run.ts';
+import type { IterationKind } from './lib/files.ts';
+import { abs, confirmOf, coreUpgrade, iterationKind, MEMORABLE_MOMENT_KEY, openTarget, readRunJson, runFileExists, runRel } from './lib/run.ts';
 import { ART_DIRECTION_FILE, MEMORABLE_MOMENT, NAME_FILE, readJudgeMoments } from './lib/setup.ts';
 
 const USAGE = 'ogw loop input <game> content [--brief]';
@@ -76,9 +77,11 @@ async function requestBody(game: GameRepo, run: RunState, brief: boolean): Promi
 
 const INPUT_STATUSES: readonly DefectStatus[] = ['open', 'reopened', 'awaiting confirmation'];
 
-async function defectsBody(game: GameRepo, run: RunState): Promise<string> {
+/** The defects of `## defects`: `open`, `reopened`, `awaiting confirmation`; in a fun iteration only `blocker` ones. */
+async function defectsBody(game: GameRepo, run: RunState, kind: IterationKind): Promise<string> {
   const file = await readRunJson<DefectsFile>(game, run, 'defects.json');
-  const defects = INPUT_STATUSES.flatMap((status) => (file?.defects ?? []).filter((d) => d.status === status));
+  const listed = (file?.defects ?? []).filter((d) => kind !== 'fun' || d.severity === 'blocker');
+  const defects = INPUT_STATUSES.flatMap((status) => listed.filter((d) => d.status === status));
   return defects.length > 0 ? renderTable([...DEFECT_COLUMNS], defects.map(defectRow)) : 'none';
 }
 
@@ -103,10 +106,12 @@ export const loopInput: CommandDef = {
     }
     const n = run.iteration;
     const previous = `iteration-${String(n - 1)}.md`;
+    const kind = iterationKind(run, n);
     const text = document([
+      ['kind', kind],
       ['request', await requestBody(game, run, brief)],
       ['previous record', runFileExists(game, run, previous) ? runRel(run, previous) : 'none'],
-      ['defects', await defectsBody(game, run)],
+      ['defects', await defectsBody(game, run, kind)],
     ]);
     const rel = runRel(run, `content-input-${String(n)}.md`);
     await writeFileAtomic(abs(game, rel), text);

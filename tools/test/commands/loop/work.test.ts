@@ -66,6 +66,10 @@ describe('ogw loop input', () => {
     expect(out.stdout).toBe(`${join(g.root, 'records/loops/create-1/content-input-1.md')}\n`);
     expect(read(g.root, 'records/loops/create-1/content-input-1.md')).toBe(
       [
+        '## kind',
+        '',
+        'completeness',
+        '',
         '## request',
         '',
         'records/loops/create-1/request.md',
@@ -123,6 +127,25 @@ describe('ogw loop input', () => {
         '| re | minor | data | w | a\\|b | y | e1, e2 | check | reopened |\n' +
         '| aw | minor | data | w | a\\|b | y | e1, e2 | check | awaiting confirmation |\n',
     );
+    expect(text).toMatch(/^## kind\n\ncompleteness\n\n## request\n/);
+    // a fun iteration: only the blocker defects
+    write(g.root, 'records/loops/update-1/defects.json', {
+      defects: [
+        { ...defect, id: 'op', status: 'open' },
+        { ...defect, id: 'bl', severity: 'blocker', status: 'reopened' },
+        { ...defect, id: 'fb', severity: 'blocker', status: 'fixed' },
+      ],
+      previous: null,
+      recordedBy: 'iteration-2',
+    });
+    commit(g.root);
+    await setRun(g, (run) => {
+      run.data.loop = { kinds: [{ iteration: 3, kind: 'fun' }] };
+    });
+    expect((await ogw(g.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
+    const fun = read(g.root, 'records/loops/update-1/content-input-3.md');
+    expect(fun).toMatch(/^## kind\n\nfun\n\n## request\n/);
+    expect(fun).toContain('## defects\n\n| id | severity | owner | where | what | why | evidence | source | status |\n|---|---|---|---|---|---|---|---|---|\n| bl | blocker | data | w | a\\|b | y | e1, e2 | check | reopened |\n');
   });
 
   it('takes --brief only in iteration 1 of an update run, and none for a build run', async () => {
@@ -146,7 +169,7 @@ describe('ogw loop input', () => {
     await openBuildRun(b, { iteration: 1 });
     expect((await ogw(b.ws, ['loop', 'input', 'g', 'content', '--brief'])).code).toBe(1);
     expect((await ogw(b.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
-    expect(read(b.root, 'records/loops/build-stg-0.2.0/content-input-1.md')).toMatch(/^## request\n\nnone\n/);
+    expect(read(b.root, 'records/loops/build-stg-0.2.0/content-input-1.md')).toMatch(/^## kind\n\ncompleteness\n\n## request\n\nnone\n/);
   });
 
   it('fails before the first iteration and without the content word', async () => {

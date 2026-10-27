@@ -6,7 +6,7 @@ import { exists, readJsonIfExists } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { openRun, type RunState } from '../../../lib/runstate.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../../lib/settings.ts';
-import type { CheckFile, EvaluateFile, MeasureFile } from './files.ts';
+import type { CheckFile, EvaluateFile, IterationKind, MeasureFile } from './files.ts';
 
 /** A resource or translation task: the jobs that came from one first input. */
 export interface TaskState {
@@ -54,6 +54,12 @@ export interface ConfirmRecord {
   candidate: number;
 }
 
+/** The kind `ogw loop next` gave an iteration (`game-loop` `## iteration`). */
+export interface KindRecord {
+  iteration: number;
+  kind: IterationKind;
+}
+
 /** Fields the loop commands keep in `run.data.loop`. */
 export interface LoopData {
   tasks: TaskState[];
@@ -66,6 +72,8 @@ export interface LoopData {
   confirms: ConfirmRecord[];
   /** Done jobs whose last merge failed for a reason other than a conflict or a `ogw data` failure. */
   stuck: StuckJob[];
+  /** Iteration kinds of the run, in iteration order. */
+  kinds: KindRecord[];
 }
 
 export interface StuckJob {
@@ -93,16 +101,9 @@ export function memorableMomentAsked(run: RunState): boolean {
 
 /** `run.data.loop`, created with defaults. The object is the one in the run, so changes stay in it. */
 export function loopData(run: RunState): LoopData {
-  const current = run.data.loop as Partial<LoopData> | undefined;
-  const data: LoopData = {
-    tasks: current?.tasks ?? [],
-    handled: current?.handled ?? [],
-    merges: current?.merges ?? [],
-    verdict: current?.verdict ?? null,
-    prepareMerge: current?.prepareMerge ?? null,
-    confirms: current?.confirms ?? [],
-    stuck: current?.stuck ?? [],
-  };
+  const current = (run.data.loop ?? {}) as Partial<LoopData>;
+  const defaults: LoopData = { tasks: [], handled: [], merges: [], verdict: null, prepareMerge: null, confirms: [], stuck: [], kinds: [] };
+  const data: LoopData = { ...defaults, ...current };
   run.data.loop = data;
   return data;
 }
@@ -111,6 +112,16 @@ export function loopData(run: RunState): LoopData {
 export function confirmOf(run: RunState, n: number): number | null {
   const current = run.data.loop as Partial<LoopData> | undefined;
   return current?.confirms?.find((c) => c.iteration === n)?.candidate ?? null;
+}
+
+/**
+ * The kind of iteration `n`: the one `ogw loop next` kept for a loop run; `completeness` for a build run, whose
+ * iterations run every check, and for an iteration without one.
+ */
+export function iterationKind(run: RunState, n: number): IterationKind {
+  if (run.kind !== 'loop') return 'completeness';
+  const current = run.data.loop as Partial<LoopData> | undefined;
+  return current?.kinds?.find((k) => k.iteration === n)?.kind ?? 'completeness';
 }
 
 export function coreUpgrade(run: RunState): CoreUpgradeData | null {
