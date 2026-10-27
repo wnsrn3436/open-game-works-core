@@ -50,18 +50,20 @@ interface Running {
   port: number;
   token: string;
   commandTimeoutMs: number;
+  /** `--input-latency` of the instance, 0 without it. */
+  inputLatencyMs: number;
 }
 
 async function running(ctx: Context, instanceId: string, access: Access): Promise<Running> {
   if (access === 'play') {
     const play = await readPlayAccess(instanceId, ctx.env);
-    return { port: play.port, token: play.token, commandTimeoutMs: play.commandTimeoutMs };
+    return { port: play.port, token: play.token, commandTimeoutMs: play.commandTimeoutMs, inputLatencyMs: play.inputLatencyMs ?? 0 };
   }
   const record = await readRecord(instanceId, ctx.env);
   if (record.status !== 'running' || !record.control || !record.plan) {
     throw new OgwError(`instance ${instanceId} is not running (${record.status})`);
   }
-  return { port: record.control.port, token: record.control.token, commandTimeoutMs: record.plan.commandTimeoutMs };
+  return { port: record.control.port, token: record.control.token, commandTimeoutMs: record.plan.commandTimeoutMs, inputLatencyMs: record.plan.inputLatencyMs ?? 0 };
 }
 
 /** POSTs a JSON body to the control channel of a supervisor and returns its JSON answer. */
@@ -132,8 +134,8 @@ export async function automationRequest(
   options: AutomationOptions = {},
 ): Promise<AutomationResponse> {
   const access = options.access ?? 'full';
-  const { port, token, commandTimeoutMs } = await running(ctx, instanceId, access);
-  const timeoutMs = options.timeoutMs ?? requestTimeoutMs(commandTimeoutMs, command, args);
+  const { port, token, commandTimeoutMs, inputLatencyMs } = await running(ctx, instanceId, access);
+  const timeoutMs = options.timeoutMs ?? requestTimeoutMs(commandTimeoutMs, command, args) + inputLatencyMs;
   // the supervisor writes frames only for the full token; with the play token this process writes them
   const supervisorFrames = options.framesDir !== undefined && access === 'full';
   const body = { client, command, args, timeoutMs, ...(supervisorFrames ? { framesDir: options.framesDir } : {}) };

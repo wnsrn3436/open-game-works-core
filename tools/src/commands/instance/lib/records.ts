@@ -62,6 +62,8 @@ export interface InstancePlan {
   targetFps?: number;
   /** The client `main` writes its frames and sound to `file` with the engine's movie maker (`ogw video`). */
   movie?: { file: string; resolution: [number, number] };
+  /** `--input-latency`: the ms by which the supervisor delays each input command to the client `main`; absent: none. */
+  inputLatencyMs?: number;
 }
 
 /** Dev account of the client `main` when no play or judge agent plays it. */
@@ -170,6 +172,8 @@ export interface PlayAccess {
   feedbackWindowMs: number | null;
   /** `InstancePlan.targetFps`; null when the plan has none. */
   targetFps: number | null;
+  /** `InstancePlan.inputLatencyMs`; absent in a file written before it existed: 0. */
+  inputLatencyMs?: number;
 }
 
 async function playAccessPath(id: string, env: NodeJS.ProcessEnv): Promise<string> {
