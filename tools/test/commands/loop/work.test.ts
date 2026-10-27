@@ -7,6 +7,11 @@ import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write } from './helpers.ts';
 
+const MEMORABLE = (request: string): string =>
+  `- judge moment \`memorable_moment\`: add the line \`\`- \`memorable_moment\`: <description>\`\` to \`## judge moments\` of \`${request}\`, where <description> is` +
+  ' the path from the first screen to the moment of `## memorable moment` of `brief.md` and, for a moment that comes only after time passes, the' +
+  ' duration (ms) that must pass on that path, and make the save fixture `client/dev/bot/fixtures/memorable_moment.json` for it';
+
 const mocks = vi.hoisted(() => ({
   startAgentJob: vi.fn(),
   agentOutcome: vi.fn(),
@@ -69,6 +74,7 @@ describe('ogw loop input', () => {
         '- Write `brief.md`',
         '- Write the game name per language in `records/setup/name.md` as the source text of reserved string `[app_name]` and as glossary rows',
         '- Write `## art direction` of `design.md` from `records/setup/art-direction.md`',
+        MEMORABLE('records/loops/create-1/request.md'),
         '- save fixture `client/dev/bot/fixtures/boss_fight.json` for judge moment `boss_fight`: beat the first boss',
         '- save fixture `client/dev/bot/fixtures/offline_reward.json` for judge moment `offline_reward`: wait 60000 ms then open',
         '- core version raised to `1.2.0`',
@@ -86,6 +92,7 @@ describe('ogw loop input', () => {
       ].join('\n'),
     );
     expect(git(g.root, 'log', '-1', '--name-only', '--format=')).toBe('records/loops/create-1/content-input-1.md');
+    expect((await currentRun(g)).data['memorable moment']).toBe(true);
   });
 
   it('writes the previous record and the open defects in status order', async () => {
@@ -123,7 +130,14 @@ describe('ogw loop input', () => {
     await openLoopRun(g, { iteration: 1 });
     const out = await ogw(g.ws, ['loop', 'input', 'g', 'content', '--brief']);
     expect(out.code).toBe(0);
-    expect(read(g.root, 'records/loops/update-1/content-input-1.md')).toContain('\n\n- Revise `brief.md`\n');
+    expect(read(g.root, 'records/loops/update-1/content-input-1.md')).toContain(`\n\n- Revise \`brief.md\`\n${MEMORABLE('records/loops/update-1/request.md')}\n`);
+    expect((await currentRun(g)).data['memorable moment']).toBe(true);
+    // an update run without --brief keeps its brief and asks for no memorable moment
+    const kept = setupGame();
+    await openLoopRun(kept, { iteration: 1 });
+    expect((await ogw(kept.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
+    expect(read(kept.root, 'records/loops/update-1/content-input-1.md')).not.toContain('memorable_moment');
+    expect((await currentRun(kept)).data['memorable moment']).toBeUndefined();
     await setRun(g, (run) => {
       run.iteration = 2;
     });

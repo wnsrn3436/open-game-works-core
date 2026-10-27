@@ -5,10 +5,11 @@ import type { GameRepo } from '../../../lib/game.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { buildTagName, parseHardeningRecordName } from '../../build/lib/names.ts';
 import { isSeverity, type Finding, type FindingsFile } from './defects.ts';
-import type { CheckFile, MeasureFile } from './files.ts';
+import type { CheckFile, EvaluateFile, MeasureFile } from './files.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeDefects, observations, referenceRows } from './results.ts';
 import { abs, confirmOf, iterationResults, readGameText, runRel } from './run.ts';
+import { MEMORABLE_MOMENT } from './setup.ts';
 
 /** Finding collection of `game-loop` `## defect list`. */
 
@@ -90,6 +91,20 @@ export function judgeFindings(text: string, side: 'A' | 'B', judgePath: string):
   return [...defects, ...reference];
 }
 
+/** The finding of a `memorable_moment` the step 4 judge did not get (`game-loop` `## defect list`); none when it got it. */
+export function memorableMomentFindings(evaluate: EvaluateFile, evaluatePath: string): Finding[] {
+  if (evaluate.memorableMoment === undefined) return [];
+  return [finding({
+    source: 'judge',
+    severity: 'minor',
+    owner: 'design',
+    where: `judge moment: ${MEMORABLE_MOMENT}`,
+    what: `${MEMORABLE_MOMENT} ${evaluate.memorableMoment}`,
+    why: 'the judge does not see the memorable moment of `brief.md`',
+    evidence: [evaluatePath],
+  })];
+}
+
 /** Splits off findings whose `where`, `what` or `evidence` is empty. */
 export function sortOut(findings: readonly Finding[]): FindingsFile {
   const kept: Finding[] = [];
@@ -108,6 +123,7 @@ export async function iterationFindings(game: GameRepo, run: RunState, n: number
   const { checkRel, check, evaluate, measure } = await iterationResults(game, run, n);
   if (check) all.push(...checkFindings(check, checkRel));
   if (evaluate) {
+    all.push(...memorableMomentFindings(evaluate, runRel(run, `evaluate-${String(n)}.json`)));
     if (evaluate.measure !== null && measure) all.push(...measureFindings(measure, evaluate.measure));
     for (const play of evaluate.plays.filter((p) => p.status === 'done')) {
       const text = await readGameText(game, play.result);

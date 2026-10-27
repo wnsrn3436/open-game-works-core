@@ -4,12 +4,12 @@ import { OgwError } from '../../lib/errors.ts';
 import { exists, writeFileAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { commitPaths, showFile } from '../../lib/git.ts';
-import type { RunState } from '../../lib/runstate.ts';
+import { changeOpenRun, type RunState } from '../../lib/runstate.ts';
 import { releasedProposals } from '../core/api.ts';
 import { DEFECT_COLUMNS, defectRow, type DefectsFile, type DefectStatus } from './lib/defects.ts';
 import { document, renderTable } from './lib/markdown.ts';
-import { abs, confirmOf, coreUpgrade, openTarget, readRunJson, runFileExists, runRel } from './lib/run.ts';
-import { ART_DIRECTION_FILE, NAME_FILE, readJudgeMoments } from './lib/setup.ts';
+import { abs, confirmOf, coreUpgrade, MEMORABLE_MOMENT_KEY, openTarget, readRunJson, runFileExists, runRel } from './lib/run.ts';
+import { ART_DIRECTION_FILE, MEMORABLE_MOMENT, NAME_FILE, readJudgeMoments } from './lib/setup.ts';
 
 const USAGE = 'ogw loop input <game> content [--brief]';
 
@@ -28,6 +28,11 @@ function runFileExistsAt(game: GameRepo, rel: string): boolean {
   return exists(join(game.root, rel));
 }
 
+/** True when iteration 1 of this run writes or revises `brief.md`, so its content input asks for `memorable_moment`. */
+function asksMemorableMoment(run: RunState, brief: boolean): boolean {
+  return run.kind === 'loop' && run.iteration === 1 && (run.command === 'create' || brief);
+}
+
 async function firstIterationItems(game: GameRepo, run: RunState, brief: boolean): Promise<string[]> {
   const items: string[] = [];
   if (run.command === 'create') items.push('- Write `brief.md`');
@@ -38,6 +43,14 @@ async function firstIterationItems(game: GameRepo, run: RunState, brief: boolean
     items.push(`- Write \`## art direction\` of \`design.md\` from \`${ART_DIRECTION_FILE}\``);
   }
   if (brief) items.push('- Revise `brief.md`');
+  if (asksMemorableMoment(run, brief)) {
+    items.push(
+      `- judge moment \`${MEMORABLE_MOMENT}\`: add the line \`\`- \`${MEMORABLE_MOMENT}\`: <description>\`\` to \`## judge moments\` of` +
+        ` \`${runRel(run, 'request.md')}\`, where <description> is the path from the first screen to the moment of \`## memorable moment\` of` +
+        ' `brief.md` and, for a moment that comes only after time passes, the duration (ms) that must pass on that path, and make the save' +
+        ` fixture \`client/dev/bot/fixtures/${MEMORABLE_MOMENT}.json\` for it`,
+    );
+  }
   for (const moment of await readJudgeMoments(game, runRel(run, 'request.md'))) {
     items.push(`- save fixture \`client/dev/bot/fixtures/${moment.name}.json\` for judge moment \`${moment.name}\`: ${moment.description}`);
   }
@@ -98,6 +111,11 @@ export const loopInput: CommandDef = {
     const rel = runRel(run, `content-input-${String(n)}.md`);
     await writeFileAtomic(abs(game, rel), text);
     await commitPaths(game.root, [rel], `loop ${run.name}: content input ${String(n)}`, { env: ctx.env });
+    if (asksMemorableMoment(run, brief)) {
+      await changeOpenRun(game, (open) => {
+        open.data[MEMORABLE_MOMENT_KEY] = true;
+      });
+    }
     const path = abs(game, rel);
     return { text: path, data: { path, rel } };
   },

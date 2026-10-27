@@ -54,6 +54,8 @@ export interface EvaluateFile {
   plays: PlayEntry[];
   judges: JudgeEntry[];
   measure: string | null;
+  /** Set when `memorable_moment` was asked for and the step 4 judge did not get it (`game-loop` `## iteration` 3). */
+  memorableMoment?: 'missing' | 'omitted';
 }
 
 export const COMPLETENESS_CHECKS = ['no blocker', 'performance', 'no placeholder', 'full flow', 'UI quality'] as const;

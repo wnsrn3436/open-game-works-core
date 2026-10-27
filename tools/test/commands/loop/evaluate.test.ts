@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateDeps } from '../../../src/commands/loop/lib/evaluate.ts';
 import type { EvaluateFile } from '../../../src/commands/loop/lib/files.ts';
 import { ogw } from '../../helpers/workspace.ts';
-import { commit, git, openBuildRun, openLoopRun, read, readJsonFile, REFERENCE_MD, setupGame, write, type TestGame } from './helpers.ts';
+import { commit, git, openBuildRun, openLoopRun, read, readJsonFile, REFERENCE_MD, setRun, setupGame, write, type TestGame } from './helpers.ts';
 
 interface FakeInstance {
   id: string;
@@ -280,6 +280,8 @@ describe('ogw loop evaluate', () => {
     expect(file.commit).toBe(head);
     expect(file.baseline).toBe(base);
     expect(file.measure).toBe(`${R}/measure-1.json`);
+    // ogw loop input did not ask for memorable_moment in this run
+    expect(file.memorableMoment).toBeUndefined();
     expect(file.judges).toEqual([
       { kind: 'main', result: `${R}/judge-1-1.md`, A: head, B: base, instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'pass', status: 'done' },
       { kind: 'success', result: `${R}/judge-1-2.md`, A: head, B: base, instanceSide: 'A', omittedMoments: [], vsBaseline: 'better', vsReference: 'pass', status: 'done' },
@@ -408,6 +410,35 @@ describe('ogw loop evaluate', () => {
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.judges[0]?.omittedMoments).toEqual(['broken']);
     expect((fake.agents[0]?.input as { fixtures: unknown[] }).fixtures).toHaveLength(1);
+  });
+
+  it('records memorable_moment omitted when the step 4 judge did not get it', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0, maxConcurrentInstances: 4 });
+    write(g.root, `${R}/request.md`, '## judge moments\n\n- `boss`: reach the boss\n- `memorable_moment`: reach the tower, wait 5000 ms\n');
+    write(g.root, 'client/dev/bot/fixtures/memorable_moment.json', '{"steps": []}\n');
+    commit(g.root);
+    await setRun(g, (run) => {
+      run.data['memorable moment'] = true;
+    });
+    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'fail'));
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges[0]?.omittedMoments).toEqual(['memorable_moment']);
+    expect(file.memorableMoment).toBe('omitted');
+  });
+
+  it('records memorable_moment missing without its judge moment line or its save fixture at the work branch HEAD', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    // the line is there but the save fixture is only in the working tree
+    write(g.root, `${R}/request.md`, '## judge moments\n\n- `memorable_moment`: reach the tower\n');
+    commit(g.root);
+    write(g.root, 'client/dev/bot/fixtures/memorable_moment.json', '{"steps": []}\n');
+    await setRun(g, (run) => {
+      run.data['memorable moment'] = true;
+    });
+    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'fail'));
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    expect((readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile).memorableMoment).toBe('missing');
   });
 
   it('fails when no room opens within instanceWaitTimeoutMs while evaluate holds no instance', async () => {

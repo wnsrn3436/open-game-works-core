@@ -137,6 +137,26 @@ describe('ogw loop findings', () => {
     ]);
   });
 
+  it('makes a finding of a memorable_moment the step 4 judge did not get', async () => {
+    const { g } = await iterationOne();
+    const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as Record<string, unknown>;
+    write(g.root, `${R}/evaluate-1.json`, { ...evaluate, memorableMoment: 'omitted' });
+    commit(g.root);
+    await ogw(g.ws, ['loop', 'findings', 'g']);
+    const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
+    expect(file.findings.filter((f) => f.where === 'judge moment: memorable_moment')).toEqual([{
+      id: null,
+      drop: null,
+      source: 'judge',
+      severity: 'minor',
+      owner: 'design',
+      where: 'judge moment: memorable_moment',
+      what: 'memorable_moment omitted',
+      why: 'the judge does not see the memorable moment of `brief.md`',
+      evidence: [`${R}/evaluate-1.json`],
+    }]);
+  });
+
   it('takes only blocker play observations in a confirmation iteration', async () => {
     const { g } = await iterationOne();
     await setRun(g, (run) => {
