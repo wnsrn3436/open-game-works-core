@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { check, timing } from '../../../src/commands/check/check.ts';
 import { instanceProcesses, instanceServerLog } from '../../../src/commands/check/lib/instance-probe.ts';
+import { fpsSampling } from '../../../src/commands/check/lib/performance.ts';
 import { staticCheck } from '../../../src/commands/check/static-api.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../src/commands/core/api.ts';
 import { runData } from '../../../src/commands/data/api.ts';
@@ -24,6 +25,7 @@ vi.mock('../../../src/commands/instance/automation.ts', () => ({
   restartClient: async (...args: Parameters<typeof import('./helpers.ts').fakeRestartClient>) => (await import('./helpers.ts')).fakeRestartClient(...args),
 }));
 vi.mock('../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
+vi.mock('../../../src/lib/display.ts', () => ({ hostRefreshHz: () => Promise.resolve(null) }));
 vi.mock('../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
 vi.mock('../../../src/commands/check/static-api.ts', () => ({ staticCheck: vi.fn() }));
 vi.mock('../../../src/commands/core/api.ts', () => ({ coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
@@ -35,10 +37,13 @@ vi.mock('../../../src/commands/core/lib/postgres.ts', () => ({
 }));
 
 const saved = { ...timing };
+const savedSampling = { ...fpsSampling };
 timing.pollMs = 1;
 timing.sampleMs = 20;
+fpsSampling.intervalMs = 0;
 afterAll(() => {
   Object.assign(timing, saved);
+  Object.assign(fpsSampling, savedSampling);
 });
 
 const SETTINGS = {
@@ -91,9 +96,13 @@ function setupGame(ws: TestWorkspace, files: Record<string, string | object> = {
   });
 }
 
+/** get_stats calls of an instance after which its tap ends (the fps sampler of the performance check reads them). */
+const TICKS = 6;
+
 function serveClient(): string[] {
   const calls: string[] = [];
-  vi.mocked(automationRequest).mockImplementation(fakeAutomation((command, args) => {
+  const stats = new Map<string, number>();
+  const answer = fakeAutomation((command, args) => {
     calls.push([command, ...args].join(' '));
     switch (command) {
       case 'get_state':
@@ -112,7 +121,14 @@ function serveClient(): string[] {
       default:
         return ok(null);
     }
-  }));
+  });
+  vi.mocked(automationRequest).mockImplementation(async (c, id, command, args) => {
+    if (command === 'get_stats') stats.set(id, (stats.get(id) ?? 0) + 1);
+    // a tap of the performance check ends after the sampler read enough ticks; another instance reads none
+    const until = Date.now() + 500;
+    while (command === 'tap' && (stats.get(id) ?? 0) < TICKS && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 1));
+    return answer(c, id, command, args);
+  });
   return calls;
 }
 

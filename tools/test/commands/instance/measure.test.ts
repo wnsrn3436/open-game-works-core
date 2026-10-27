@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STANDARD_JOBS } from '../../../src/commands/generation/lib/standard.ts';
+import { fpsSampling } from '../../../src/commands/check/lib/performance.ts';
 import { firstCount, measureHost, nextCount } from '../../../src/commands/instance/measure.ts';
 import { ogw, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 
@@ -18,6 +19,9 @@ interface State {
   seenRoots: string[];
   starting: number;
   maxStarting: number;
+  /** get_stats calls per instance, and the inputs waiting for more of them. */
+  stats: Record<string, number>;
+  waiters: (() => void)[];
 }
 
 const state = vi.hoisted(
@@ -34,6 +38,8 @@ const state = vi.hoisted(
     seenRoots: [],
     starting: 0,
     maxStarting: 0,
+    stats: {},
+    waiters: [],
   }),
 );
 
@@ -66,18 +72,28 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
   instanceServerLog: () => Promise.resolve(''),
 }));
 
+vi.mock('../../../src/lib/display.ts', () => ({ hostRefreshHz: () => Promise.resolve(null) }));
+
+/** get_stats calls of an instance after which its first input ends, so the fps sampler reads enough ticks. */
+const TICKS = 6;
+
 vi.mock('../../../src/commands/instance/automation.ts', () => ({
-  automationRequest: (_ctx: unknown, id: string, command: string, args: string[]) => {
-    state.calls.push(`${id} ${command} ${args.join(' ')}`.trim());
-    if (state.crashAt !== null && state.running.size >= state.crashAt) return Promise.reject(new Error('automation channel closed'));
-    if (command === 'get_stats' && state.statsFailAt !== null && state.running.size >= state.statsFailAt) return Promise.reject(new Error('client ended'));
+  automationRequest: async (_ctx: unknown, id: string, command: string, args: string[]) => {
+    if (command !== 'get_stats' && command !== 'get_state') state.calls.push(`${id} ${command} ${args.join(' ')}`.trim());
+    if (state.crashAt !== null && state.running.size >= state.crashAt) throw new Error('automation channel closed');
+    if (command === 'get_stats') {
+      state.stats[id] = (state.stats[id] ?? 0) + 1;
+      for (const wake of state.waiters.splice(0)) wake();
+      if (state.statsFailAt !== null && state.running.size >= state.statsFailAt) throw new Error('client ended');
+    }
+    while (command === 'tap' && (state.stats[id] ?? 0) < TICKS) await new Promise<void>((resolve) => state.waiters.push(resolve));
     const results: Record<string, unknown> = {
       get_state: { boot_stage: 'Done', scene_key: 'battle', score: 3 },
       get_telemetry: { goal_intervals: [{}] },
-      get_stats: { fps: 120 / state.running.size },
+      get_stats: { fps: 120 / state.running.size, quality_level: '' },
       'battle.bot_next_input': { command: 'tap', args: ['enemy'] },
     };
-    return Promise.resolve({ ok: true, result: results[command] ?? null, bytes: Buffer.alloc(0), frames: [] });
+    return { ok: true, result: results[command] ?? null, bytes: Buffer.alloc(0), frames: [] };
   },
   restartClient: (_ctx: unknown, id: string, _client: unknown, options: { command?: string; args?: string[] } = {}) => {
     state.calls.push(`${id} ${options.command ?? 'restart'} ${(options.args ?? []).join(' ')}`.trim());
@@ -122,6 +138,7 @@ function setup(): { ws: TestWorkspace; env: NodeJS.ProcessEnv } {
 
 // the first count of a host with no measured value is half its CPU count: 2 here
 measureHost.cpus = () => 4;
+fpsSampling.intervalMs = 0;
 
 afterEach(() => {
   state.running.clear();
@@ -134,6 +151,8 @@ afterEach(() => {
   state.seenRoots = [];
   state.starting = 0;
   state.maxStarting = 0;
+  state.stats = {};
+  state.waiters = [];
 });
 
 describe('ogw instance measure', () => {
@@ -231,7 +250,7 @@ describe('ogw instance measure', () => {
     expect(run.code).toBe(0);
     const target = (JSON.parse(run.stdout) as { targets: { value: number; detail: string }[] }).targets[0];
     expect(target?.value).toBe(2);
-    expect(target?.detail).toMatch(/^instance i\d+: the fps sample failed: client ended$/);
+    expect(target?.detail).toMatch(/^instance i\d+: no scene got 2 fps samples outside scene loads$/);
     expect(state.running.size).toBe(0);
   });
 

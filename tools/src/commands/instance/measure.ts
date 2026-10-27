@@ -11,8 +11,8 @@ import { extractArchive } from '../env/lib/files.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import { compareVersions, parseVersion } from '../env/lib/pep440.ts';
 import { readEnvResult, writeEnvResult, type InstanceMeasureTarget, type MeasuredRun } from '../env/lib/results.ts';
-import { fpsHolds, sampleFps } from '../check/lib/performance.ts';
-import { parseScenario, runScenario, type Scenario } from '../check/lib/scenario.ts';
+import { MIN_SCENE_SAMPLES, fpsHolds, measureScenario } from '../check/lib/performance.ts';
+import { parseScenario, type Scenario } from '../check/lib/scenario.ts';
 import { runStandardStage } from '../generation/lib/standard.ts';
 import { startInstance, stopInstance, type InstanceInfo, type InstanceOptions } from './api.ts';
 import { gameTargetFps } from './lib/prepare.ts';
@@ -97,25 +97,17 @@ async function gameTargets(ctx: Context): Promise<Target[]> {
   return targets;
 }
 
-/** An fps sample request that failed: the instance did not hold the count (for example its client ended). */
-class SampleFailed extends Error {}
-
 /**
- * Runs the scenario on one instance, sampling fps after each step. `holds` is true when it ran to the end and kept
- * `targetFps`; a failed fps sample is a count that did not hold, with its reason.
+ * Runs the scenario on one instance with the fps sampler of the `performance` judgement alongside it. `holds` is true
+ * when it ran to the end and kept the fps bound; a run in which no scene got enough fps samples did not hold, with its
+ * reason.
  */
 async function scenarioHolds(ctx: Context, id: string, scenario: Scenario, targetFps: number): Promise<{ holds: boolean; reason: string | null }> {
-  const samples = new Map<string, number[]>();
-  const afterStep = (): Promise<void> => sampleFps(ctx, id, samples).catch((error: unknown) => {
-    throw new SampleFailed(`instance ${id}: the fps sample failed: ${(error as Error).message}`);
-  });
-  try {
-    const outcome = await runScenario(ctx, id, scenario, { pollMs: measureTiming.pollMs, afterStep });
-    return { holds: outcome.stop === null && fpsHolds(samples, targetFps), reason: null };
-  } catch (error) {
-    if (error instanceof SampleFailed) return { holds: false, reason: error.message };
-    throw error;
-  }
+  const measured = await measureScenario(ctx, id, scenario, { quality: false, pollMs: measureTiming.pollMs, targetFps, onHost: true });
+  if (measured.kind !== 'done' || measured.outcome.stop !== null) return { holds: false, reason: null };
+  if (fpsHolds(measured.samples)) return { holds: true, reason: null };
+  const judged = [...measured.samples.values()].some((values) => values.length >= MIN_SCENE_SAMPLES);
+  return { holds: false, reason: judged ? null : `instance ${id}: no scene got ${String(MIN_SCENE_SAMPLES)} fps samples outside scene loads` };
 }
 
 /**

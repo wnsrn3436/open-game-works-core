@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consoleText, openHeadless } from '../../../../src/commands/build/lib/chromium.ts';
 import { buildCheckOf, clientCheckTiming, didNotRun, serveFolder, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
 import { devicePerformance } from '../../../../src/commands/build/lib/device-performance.ts';
+import { fpsSampling } from '../../../../src/commands/check/lib/performance.ts';
 import { webSmoke } from '../../../../src/commands/build/lib/web-smoke.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../../src/commands/core/api.ts';
 import { runData } from '../../../../src/commands/data/api.ts';
@@ -124,6 +125,7 @@ function chromiumCalls(s: Setup): Record<string, unknown>[] {
 
 beforeEach(() => {
   clientCheckTiming.pollMs = 20;
+  fpsSampling.intervalMs = 10;
   clientCheckTiming.bootLimitMs = 4000;
   vi.mocked(runData).mockResolvedValue({ exitCode: 0, lines: [], stderr: '' });
   vi.mocked(gameModules).mockResolvedValue({ client: [], server: [] });
@@ -363,7 +365,8 @@ describe('device performance', () => {
   it('passes: apk with launch values, adb install and reverse, launch, fps per scene, uninstall', async () => {
     const s = await setup();
     vi.mocked(gameModules).mockResolvedValue({ client: ['RealtimeCore', 'QualityCore'], server: [] });
-    s.config({ clients: { main: { state: { scene_key: 'battle' }, results: { get_stats: { ok: true, result: { fps: 60 } } } } }, telemetry: { goal_intervals: [{}], scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] } });
+    // the tap lasts long enough for the fps sampler to read several ticks
+    s.config({ clients: { main: { state: { scene_key: 'battle' }, delayMs: { tap: 300 }, results: { get_stats: { ok: true, result: { fps: 60 } } } } }, telemetry: { goal_intervals: [{}], scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] } });
     const check = await devicePerformance(s.input);
     expect(check).toEqual({ name: 'device performance', result: 'pass', details: [] });
     expect(vi.mocked(udpReaches).mock.calls[0]?.slice(1)).toEqual(['emulator-5554', '192.168.0.9']);
@@ -384,18 +387,20 @@ describe('device performance', () => {
     expect(s.requests().slice(0, 2)).toEqual(['get_state', 'extract_logs']);
     expect(s.requests()).toContain('get_stats');
     expect(s.requests()).toContain('set_quality_level High');
-    expect(JSON.parse(readFileSync(join(s.dir, 'builds/dev-0.1.0/device-performance/samples.json'), 'utf8'))).toEqual({
-      device: 'emulator-5554', samples: { battle: [60] }, scene_loads: [{ scene_key: 'battle', duration_ms: 100 }],
-    });
+    const record = JSON.parse(readFileSync(join(s.dir, 'builds/dev-0.1.0/device-performance/samples.json'), 'utf8')) as { device: string; samples: { battle: unknown[] }; scene_loads: unknown };
+    expect(record).toMatchObject({ device: 'emulator-5554', scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] });
+    expect(record.samples.battle.length).toBeGreaterThanOrEqual(2);
+    // a client on a device has no refresh rate bound: the bound is targetFps 30 − 1
+    expect(new Set(record.samples.battle.map((v) => JSON.stringify(v)))).toEqual(new Set(['{"fps":60,"boundFps":29}']));
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(1);
   });
 
   it('fails below targetFps (DEV warns), and fails as not run to the end (DEV warns) when the scenario stops or set_quality_level fails', async () => {
     const s = await setup();
-    s.config({ clients: { main: { state: { scene_key: 'lobby' }, results: { get_stats: { ok: true, result: { fps: 20 } } } } }, telemetry: { goal_intervals: [{}], scene_loads: [] } });
+    s.config({ clients: { main: { state: { scene_key: 'lobby' }, delayMs: { tap: 300 }, results: { get_stats: { ok: true, result: { fps: 20 } } } } }, telemetry: { goal_intervals: [{}], scene_loads: [] } });
     expect(await devicePerformance(s.input)).toEqual({
       name: 'device performance', result: 'warn',
-      details: ['lobby: fps 5 percentile 20 is below targetFps 30 (1 samples)'],
+      details: [expect.stringMatching(/^lobby: fps 5 percentile 20 is below the fps bound 29 \(\d+ samples\)$/)],
     });
     expect((await devicePerformance({ ...s.input, env: 'STG' })).result).toBe('fail');
     s.config({ clients: { main: { fail: { tap: 'no tap' } } } });

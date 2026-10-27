@@ -7,10 +7,11 @@ import { listInstances, startInstance, stopInstance } from '../../../../src/comm
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
 import { HostLoadSampler, hostProbe, type HostProbe } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
-import { fpsHolds, percentile5, performanceCheck, platformProfiles, type PerformanceOptions } from '../../../../src/commands/check/lib/performance.ts';
+import { hostRefreshHz } from '../../../../src/lib/display.ts';
+import { fpsBound, fpsHolds, fpsSampling, frameLimitFps, keptSamples, percentile5Sample, performanceCheck, platformProfiles, type FpsTick, type PerformanceOptions } from '../../../../src/commands/check/lib/performance.ts';
 import type { CheckResult } from '../../../../src/commands/check/api.ts';
 import type { Scenario } from '../../../../src/commands/check/lib/scenario.ts';
-import { doneState, fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
+import { doneState, fakeContext, notOk, ok } from '../helpers.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
@@ -18,31 +19,80 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
 }));
 vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
+vi.mock('../../../../src/lib/display.ts', () => ({ hostRefreshHz: vi.fn() }));
 
 const ctx = fakeContext();
 
-describe('platformProfiles and percentile5', () => {
+describe('platformProfiles', () => {
   it('takes the first mobile and the first other platform', () => {
     expect(platformProfiles(['web', 'ios', 'android', 'macos'])).toEqual(['ios', 'web']);
     expect(platformProfiles(['linux'])).toEqual(['linux']);
     expect(platformProfiles(['android'])).toEqual(['android']);
     expect(platformProfiles([])).toEqual([]);
   });
+});
 
-  it('5 percentile by nearest rank', () => {
-    expect(percentile5([60])).toBe(60);
-    expect(percentile5(Array.from({ length: 20 }, (_, i) => 60 - i))).toBe(41);
-    expect(percentile5(Array.from({ length: 21 }, (_, i) => 60 - i))).toBe(41);
-    expect(percentile5([])).toBe(0);
-    expect(percentile5(Array.from({ length: 60 }, (_, i) => i + 1))).toBe(3);
-    expect(percentile5(Array.from({ length: 61 }, (_, i) => i + 1))).toBe(4);
-    expect(percentile5([5, 1, 3])).toBe(1);
+/** A settled tick of `scene` with `fps` and bound 59, whose load key is `key`. */
+function tick(scene: string, fps: number | null, key = scene, settled = true): FpsTick {
+  return { scene, settled, loadKey: key, fps, boundFps: 59 };
+}
+
+describe('fps samples and bound', () => {
+  it('5 percentile of fps − bound by nearest rank', () => {
+    const at = (fps: number[], bound = 59): number | undefined => percentile5Sample(fps.map((f) => ({ fps: f, boundFps: bound })))?.fps;
+    expect(at([60])).toBe(60);
+    expect(at(Array.from({ length: 20 }, (_, i) => 60 - i))).toBe(41);
+    expect(at(Array.from({ length: 21 }, (_, i) => 60 - i))).toBe(41);
+    expect(percentile5Sample([])).toBeNull();
+    expect(at(Array.from({ length: 61 }, (_, i) => i + 1))).toBe(4);
+    expect(percentile5Sample([{ fps: 40, boundFps: 29 }, { fps: 50, boundFps: 59 }])).toEqual({ fps: 50, boundFps: 59 });
   });
 
-  it('holds when the 5 percentile of every scene reaches targetFps', () => {
-    expect(fpsHolds(new Map([['a', [60]], ['b', [59]]]), 60)).toBe(false);
-    expect(fpsHolds(new Map([['a', [60]], ['b', [61, 90]]]), 60)).toBe(true);
-    expect(fpsHolds(new Map(), 60)).toBe(true);
+  it('the bound is the smallest of targetFps, refresh rate and frame limit, minus 1', () => {
+    expect(fpsBound(60, null, null)).toBe(59);
+    expect(fpsBound(60, 120, null)).toBe(59);
+    expect(fpsBound(120, 60, null)).toBe(59);
+    expect(fpsBound(60, 120, 30)).toBe(29);
+    const levels = { Low: { frameLimitPermille: 500 }, High: { frameLimitPermille: 1000 }, Tiny: { frameLimitPermille: 1 } };
+    expect(frameLimitFps(60, levels, 'Low')).toBe(30);
+    expect(frameLimitFps(45, levels, 'Low')).toBe(22);
+    expect(frameLimitFps(60, levels, 'Tiny')).toBe(1);
+    expect(frameLimitFps(60, levels, 'High')).toBe(60);
+    expect(frameLimitFps(60, levels, '')).toBeNull();
+    expect(frameLimitFps(60, levels, 'Ultra')).toBeNull();
+    expect(frameLimitFps(60, null, 'Low')).toBeNull();
+  });
+
+  it('keeps only the ticks that neither have a scene load nor follow one', () => {
+    const ticks: FpsTick[] = [
+      tick('lobby', 10), // no tick before
+      tick('lobby', 11), // the tick before has a scene load
+      tick('lobby', 60),
+      tick('lobby', null),
+      tick('battle', 12), // scene_key changed
+      tick('battle', 13),
+      tick('battle', 50),
+      tick('battle', 14, 'battle', false), // in a transition
+      tick('battle', 15),
+      tick('battle', 51),
+      tick('battle', 16, 'battle reloaded'), // last_scene_load_ms or boot_ms changed
+      tick('battle', 17, 'battle reloaded'),
+      null, // a request failed
+      tick('battle', 18, 'battle reloaded'),
+      tick('battle', 19, 'battle reloaded'),
+      tick('battle', 52, 'battle reloaded'),
+    ];
+    const { samples, missed } = keptSamples(ticks);
+    expect(Object.fromEntries([...samples].map(([scene, values]) => [scene, values.map((v) => v.fps)]))).toEqual({ lobby: [60], battle: [50, 51, 52] });
+    expect([...missed]).toEqual(['lobby']);
+  });
+
+  it('holds when a scene is judged and every judged scene keeps its bound', () => {
+    const of = (fps: number[]): { fps: number; boundFps: number }[] => fps.map((f) => ({ fps: f, boundFps: 59 }));
+    expect(fpsHolds(new Map([['a', of([59, 59])], ['b', of([58, 90])]]))).toBe(false);
+    expect(fpsHolds(new Map([['a', of([59, 60])], ['b', of([10])]]))).toBe(true);
+    expect(fpsHolds(new Map([['a', of([59])]]))).toBe(false);
+    expect(fpsHolds(new Map())).toBe(false);
   });
 });
 
@@ -95,25 +145,36 @@ const scenario: Scenario = {
   goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 },
 };
 
-function fakeGame(fps: Record<string, number[]>, loads: unknown, overrides: Record<string, unknown> = {}): string[] {
+/** get_stats calls per scene after which an input step of the scenario ends, so the sampler reads enough ticks. */
+const TICKS_PER_SCENE = 6;
+
+function fakeGame(fps: Record<string, number>, loads: unknown, overrides: Record<string, unknown> = {}): string[] {
   const calls: string[] = [];
   let scene = 'lobby';
-  const taken: Record<string, number> = {};
-  vi.mocked(automationRequest).mockImplementation(fakeAutomation((command, args) => {
-    calls.push([command, ...args].join(' '));
+  const read: Record<string, number> = {};
+  const waiters: (() => void)[] = [];
+  const reply = (command: string, args: string[]): Awaited<ReturnType<typeof automationRequest>> => {
     if (command in overrides) return overrides[command] as Awaited<ReturnType<typeof automationRequest>>;
     if (command === 'go_to_scene') scene = args[0] ?? '';
-    if (command === 'get_state') return ok(doneState({ scene_key: scene }));
+    if (command === 'get_state') return ok(doneState({ scene_key: scene, in_transition: false }));
     if (command === 'get_stats') {
-      const list = fps[scene] ?? [];
-      const i = taken[scene] ?? 0;
-      taken[scene] = i + 1;
-      return ok(i < list.length ? { fps: list[i] } : {});
+      read[scene] = (read[scene] ?? 0) + 1;
+      for (const wake of waiters.splice(0)) wake();
+      return ok(scene in fps ? { fps: fps[scene], quality_level: '', last_scene_load_ms: 5, boot_ms: 7 } : { quality_level: '' });
     }
     if (command === 'get_telemetry') return ok({ goal_intervals: [{}], scene_loads: loads });
     if (command === 'extract_logs') return ok([]);
     return ok(null);
-  }));
+  };
+  vi.mocked(automationRequest).mockImplementation(async (_c, _i, command, args) => {
+    if (command !== 'get_stats' && command !== 'get_state' && command !== 'get_telemetry') calls.push([command, ...args].join(' '));
+    // an input waits until the sampler has read the scene often enough
+    if (command === 'tap') {
+      const at = scene;
+      while ((read[at] ?? 0) < TICKS_PER_SCENE) await new Promise<void>((resolve) => waiters.push(resolve));
+    }
+    return reply(command, args);
+  });
   return calls;
 }
 
@@ -132,6 +193,8 @@ function options(root: string, extra: Partial<PerformanceOptions> = {}): Perform
 }
 
 beforeEach(() => {
+  fpsSampling.intervalMs = 0;
+  vi.mocked(hostRefreshHz).mockReset().mockResolvedValue(null);
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
   vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
@@ -139,9 +202,9 @@ beforeEach(() => {
 });
 
 describe('performanceCheck', () => {
-  it('samples fps per scene after each step, judges p5 and scene loads, and writes hostLoad', async () => {
+  it('samples fps per scene alongside the scenario, drops the ticks of scene loads, judges p5 and scene loads, and writes hostLoad', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const calls = fakeGame({ lobby: [60], battle: [59, 61] }, [
+    const calls = fakeGame({ lobby: 59, battle: 58 }, [
       { at: 1, scene_key: 'lobby', duration_ms: 3000 },
       { at: 2, scene_key: 'battle', duration_ms: 3001 },
     ]);
@@ -149,28 +212,41 @@ describe('performanceCheck', () => {
     expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'p1');
     expect(calls[0]).toBe('set_quality_level High');
+    const ev = ['ev/performance-android/samples.json'];
     expect(result).toEqual({
       name: 'performance',
       platform: 'android',
       result: 'fail',
       failures: [
-        { where: 'battle', message: 'fps 5 percentile 59 is below targetFps 60 (2 samples)', evidence: ['ev/performance-android/samples.json'] },
-        { where: 'battle', message: 'scene load 3001 ms is over loadingTimeLimitMs 3000', evidence: ['ev/performance-android/samples.json'] },
+        { where: 'battle', message: expect.stringMatching(/^fps 5 percentile 58 is below the fps bound 59 \(\d+ samples\)$/) as unknown, evidence: ev },
+        { where: 'battle', message: 'scene load 3001 ms is over loadingTimeLimitMs 3000', evidence: ev },
       ],
       warnings: [],
       hostLoad: { cpuMaxPercent: 90, memoryMaxPercent: 33, instancesMax: 1 },
     });
-    const record = JSON.parse(readFileSync(join(root, 'ev/performance-android/samples.json'), 'utf8')) as { samples: unknown };
-    expect(record.samples).toEqual({ lobby: [60], battle: [59, 61] });
+    const record = JSON.parse(readFileSync(join(root, 'ev/performance-android/samples.json'), 'utf8')) as { samples: Record<string, { fps: number; boundFps: number }[]> };
+    expect(new Set(record.samples.lobby?.map((v) => `${String(v.fps)}/${String(v.boundFps)}`))).toEqual(new Set(['59/59']));
+    expect(record.samples.lobby?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
+    expect(new Set(record.samples.battle?.map((v) => v.fps))).toEqual(new Set([58]));
   });
 
-  it('passes without QualityCore and with fast scenes', async () => {
+  it('passes without QualityCore at the fps bound', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const calls = fakeGame({ lobby: [60], battle: [60, 61] }, []);
+    const calls = fakeGame({ lobby: 59, battle: 61 }, []);
     const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { quality: false, db: 'postgresql' }));
     expect(result.result).toBe('pass');
     expect(calls).not.toContain('set_quality_level High');
     expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql' }, { beforeFailedStop: expect.any(Function) as unknown });
+  });
+
+  it('bounds the fps by the refresh rate of the host display', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    vi.mocked(hostRefreshHz).mockResolvedValue(50);
+    fakeGame({ lobby: 49, battle: 49 }, []);
+    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).result).toBe('pass');
+    fakeGame({ lobby: 49, battle: 48 }, []);
+    const slow = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect(slow.failures.map((f) => f.message)).toEqual([expect.stringMatching(/^fps 5 percentile 48 is below the fps bound 49 /) as unknown]);
   });
 
   it('is unknown when telemetry scene_loads, an fps sample of the run or of a scene is missing', async () => {
@@ -180,22 +256,23 @@ describe('performanceCheck', () => {
       const { result, failures } = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
       return { result, failures };
     };
-    fakeGame({ lobby: [60], battle: [60] }, 'not a list');
+    fakeGame({ lobby: 60, battle: 60 }, 'not a list');
     expect(await run()).toEqual({ result: 'unknown', failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'telemetry scene_loads is not a list: "not a list"', evidence: ev }] });
-    fakeGame({ lobby: [60], battle: [60] }, []);
-    const answer = vi.mocked(automationRequest).getMockImplementation();
+    fakeGame({ lobby: 60, battle: 60 }, []);
+    const answer = vi.mocked(automationRequest).getMockImplementation() as typeof automationRequest;
     let telemetryCalls = 0;
+    // the goal check reads telemetry; the read after the run fails
     vi.mocked(automationRequest).mockImplementation((c, i, command, args) => {
       if (command === 'get_telemetry' && ++telemetryCalls > 1) return Promise.resolve(notOk('no TelemetryCore'));
-      return (answer as typeof automationRequest)(c, i, command, args);
+      return answer(c, i, command, args);
     });
     expect(await run()).toEqual({ result: 'unknown', failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'get_telemetry returned ok false: "no TelemetryCore"', evidence: ev }] });
-    fakeGame({ lobby: [60] }, []);
+    fakeGame({ lobby: 60 }, []);
     expect(await run()).toEqual({ result: 'unknown', failures: [{ where: 'battle', message: 'no get_stats fps sample in this scene', evidence: ev }] });
     fakeGame({}, []);
-    expect(await run()).toEqual({ result: 'unknown', failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'no get_stats fps sample in the run', evidence: ev }] });
-    fakeGame({ lobby: [30] }, 'not a list');
-    expect(await run()).toEqual({ result: 'fail', failures: [{ where: 'lobby', message: 'fps 5 percentile 30 is below targetFps 60 (1 samples)', evidence: ev }] });
+    expect(await run()).toEqual({ result: 'unknown', failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'no get_stats fps sample in the run outside scene loads', evidence: ev }] });
+    fakeGame({ lobby: 30 }, 'not a list');
+    expect(await run()).toEqual({ result: 'fail', failures: [{ where: 'lobby', message: expect.stringMatching(/^fps 5 percentile 30 is below the fps bound 59 /) as unknown, evidence: ev }] });
   });
 
   it('is unknown when set_quality_level fails or the scenario stops', async () => {
@@ -216,7 +293,7 @@ describe('performanceCheck', () => {
 
   it('fails a stopped run on a scene load over the limit, without judging its partial fps', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    fakeGame({ lobby: [10] }, [{ scene_key: 'lobby', duration_ms: 9000 }, { scene_key: 'battle', duration_ms: 100 }], { go_to_scene: notOk('no scene') });
+    fakeGame({ lobby: 10 }, [{ scene_key: 'lobby', duration_ms: 9000 }, { scene_key: 'battle', duration_ms: 100 }], { go_to_scene: notOk('no scene') });
     const stopped = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
     expect(stopped.result).toBe('fail');
     expect(stopped.failures).toEqual([
@@ -226,10 +303,10 @@ describe('performanceCheck', () => {
 
   it('puts fps samples and scene loads without a scene key at the scenario file', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    fakeGame({ lobby: [10], battle: [10, 10] }, [{ duration_ms: 9000 }], { get_state: ok(doneState({ scene_key: null })) });
+    fakeGame({ lobby: 10, battle: 10 }, [{ duration_ms: 9000 }], { get_state: ok(doneState({ scene_key: null })) });
     const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
     expect(result.failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
-      'client/dev/bot/scenario.json:1 | fps 5 percentile 10 is below targetFps 60 (3 samples)',
+      expect.stringMatching(/^client\/dev\/bot\/scenario\.json:1 \| fps 5 percentile 10 is below the fps bound 59 \(\d+ samples\)$/),
       'client/dev/bot/scenario.json:1 | scene load 9000 ms is over loadingTimeLimitMs 3000',
     ]);
   });

@@ -75,11 +75,12 @@ async function onDevice(d: DeviceRun, apk: string): Promise<BuildCheck> {
     // the app did not boot on the device (crash, halt, error log, time limit): a blocker, not an unknown
     if (boot.kind !== 'done') return buildCheckOf(NAME, d.input.env, [checkResult('performance', 'android', [failure('boot', boot.message)])]);
     const quality = (await gameModules(ctx, d.input.game)).client.includes('QualityCore');
-    const measured = await measureScenario(ctx, d.instance.id, d.scenario, { quality, pollMs: clientCheckTiming.pollMs, blocker });
+    const targetFps = numberSetting(d.input, 'targetFps');
+    const measured = await measureScenario(ctx, d.instance.id, d.scenario, { quality, pollMs: clientCheckTiming.pollMs, targetFps, onHost: false, blocker });
     if (measured.kind === 'quality') return ranToEnd(NAME, d.input.env, buildCheckOf(NAME, d.input.env, [checkResult('performance', 'android', [failure('', measured.message)], true)]));
     const record = { device: d.serial, samples: Object.fromEntries(measured.samples), scene_loads: measured.sceneLoads };
     const evidence = [await writeEvidence(evidenceOf(d.input, 'device-performance'), 'samples.json', `${JSON.stringify(record, null, 2)}\n`)];
-    const limits = { targetFps: numberSetting(d.input, 'targetFps'), loadingTimeLimitMs: numberSetting(d.input, 'loadingTimeLimitMs') };
+    const limits = { loadingTimeLimitMs: numberSetting(d.input, 'loadingTimeLimitMs') };
     return ranToEnd(NAME, d.input.env, buildCheckOf(NAME, d.input.env, [performanceVerdict(measured, 'android', limits, evidence)]));
   } finally {
     await run('adb', ['-s', d.serial, 'uninstall', d.appId], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
