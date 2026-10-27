@@ -57,7 +57,8 @@ A harness for making server and client games of commercial quality, in which AI 
 - core proposal: a proposal in which the content agent states what core lacks. A human orders it applied with the `update core` command
 - runner: the harness tool that starts and stops instances. It handles the server process, clients, DB and ports
 - lead agent: the agent that receives a command and is responsible for it to the end. It calls sub-agents
-- harness settings: `settings.json` of the harness repo `open-game-works-core/`. Values that apply to the whole harness and values that differ per host
+- harness settings: `settings.json` of the harness repo `open-game-works-core/` with local harness settings merged over it. Values that apply to the whole harness and values that differ per host
+- local harness settings: `settings.local.json` of the harness repo. It is not committed, and holds the harness settings values of one user and one host
 - core settings: the core defaults in `open-game-works-core-impl/`
 - game settings: `games/<game>/settings.json`. Values per game. They can override core settings values, and a value not overridden uses the core settings default
 - external service: a service that we do not start and that an outside company operates. e.g. store payment, ads, push notification, social login, analytics, CDN
@@ -255,6 +256,8 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - Settings are filled one value at a time, so a missing required value does not block a write of `ogw settings set`. `ogw settings list --missing` and `ogw game check` catch missing required values
 - Harness settings values that differ per host are kept in `hosts` as one item per host id. `ogw settings` reads and writes a path without `hosts.<host id>.` (e.g. `maxConcurrentInstances`) as the path in the item of this host. Such a harness settings value that documents refer to, and that the harness tool reads and writes, is the value in the item of this host
 - The schema `x-owner` of a path follows the value of the deepest node, among the schema nodes that reach that path, that declares `x-owner`
+- The merge of local harness settings over `settings.json` merges object values key by key and replaces arrays and other values whole. The schema and condition checks of `ogw settings set` run on the merged value. Without `settings.local.json`, `settings.json` alone is harness settings
+- A harness settings path is local-scope when a schema node that reaches it declares `x-scope` `local` (e.g. `humanLanguage`, `agents`, `hosts`). `ogw settings set` writes a local-scope path, and a path that local harness settings already hold, to `settings.local.json`, and every other path to `settings.json`. A removed value is removed from both files. The committed values of local-scope paths in `settings.json` are generic defaults for every user
 - The default of a value that exists only in game settings is in the JSON schema of game settings
 - Secrets go in no settings. Settings hold only the names of secrets, and the values are read from the secret store of the host that runs
 

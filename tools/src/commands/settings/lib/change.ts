@@ -1,11 +1,13 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
-import { hostDefaults, type Role } from '../../../lib/settings.ts';
+import { hostDefaults, localHarnessSettingsPath, type HarnessSettingsFiles, type Role } from '../../../lib/settings.ts';
 import { callerRole } from '../api.ts';
 import { implConstraints } from './core-files.ts';
 import { constraintIssues, gameIssues } from './game-check.ts';
 import { changedPaths, display, isPlainObject, type JsonObject } from './json-path.ts';
+import { routeHarnessWrite } from './scope.ts';
 import { locatePath, withValue, type Target, type TargetKind } from './target.ts';
 import { schemaIssues, type Issue } from './validate.ts';
 
@@ -97,9 +99,21 @@ export async function settingsIssues(ctx: Context, target: Target, value: JsonOb
 }
 
 /**
+ * Writes the two harness settings files that hold `value` (`routeHarnessWrite`): only a file whose value changes, and
+ * `settings.local.json` first, so a stop between the writes leaves a moved host entry in both files, where the local
+ * one is used.
+ */
+async function writeHarnessFiles(ctx: Context, target: Target, files: HarnessSettingsFiles, value: JsonObject): Promise<void> {
+  const next = routeHarnessWrite(target.schema, files, await target.hostEntryId(value.hosts), value);
+  if (next.local !== null && !isDeepStrictEqual(next.local, files.local)) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), next.local);
+  if (!isDeepStrictEqual(next.shared, files.shared)) await writeJsonAtomic(target.file, next.shared);
+}
+
+/**
  * Writes `next` to the target file when the caller may change every changed path and the result
  * passes. The tool keeps the `name` of this host's harness settings `hosts` entry. A missing required value blocks only when it is the path being unset, because settings are
- * filled one value at a time (`game-setup` 4).
+ * filled one value at a time (`game-setup` 4). Harness settings `next` is the merged value, and is written to its two
+ * files (`writeHarnessFiles`).
  */
 export async function writeChecked(ctx: Context, target: Target, next: JsonObject, options: WriteOptions = {}): Promise<void> {
   const denied = await permissionIssues(ctx, target, next, options.allowTool === true);
@@ -108,5 +122,6 @@ export async function writeChecked(ctx: Context, target: Target, next: JsonObjec
   const issues = await settingsIssues(ctx, target, value);
   const blocking = issues.filter((i) => i.missing === undefined || i.missing === options.unsetPath).map((i) => i.message);
   if (blocking.length > 0) throw new OgwError(blocking.join('\n'), 1, { errors: blocking });
-  await writeJsonAtomic(target.file, value);
+  if (target.files === null) await writeJsonAtomic(target.file, value);
+  else await writeHarnessFiles(ctx, target, target.files, value);
 }

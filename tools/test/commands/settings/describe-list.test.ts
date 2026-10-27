@@ -95,6 +95,7 @@ describe('ogw settings describe', () => {
       allowed: { enum: ['fake', 'cdn-r2'] },
       default: null,
       xOwner: null,
+      xScope: null,
     });
   });
 

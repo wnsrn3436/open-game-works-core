@@ -275,7 +275,9 @@ describe('writeHarnessSettings', () => {
     harness.hosts = { [TEST_HOST_ID]: { name: 'old', measured: { 'flux2-klein': [{ result: 'failed' }] } } };
     await expect(writeHarnessSettings(ctx, harness)).rejects.toThrow(`role lead cannot change hosts.${TEST_HOST_ID}.measured (x-owner tool)`);
     await writeHarnessSettings(ctx, harness, { allowTool: true });
-    expect(readHarnessSettingsFile(path).hosts).toEqual({ [TEST_HOST_ID]: { name: hostname(), measured: { 'flux2-klein': [{ result: 'failed' }] } } });
+    // a host entry is a local-scope path: it goes to settings.local.json
+    expect(readHarnessSettingsFile(path).hosts).toBeUndefined();
+    expect(readHarnessSettingsFile(join(ws.harness, 'settings.local.json')).hosts).toEqual({ [TEST_HOST_ID]: { name: hostname(), measured: { 'flux2-klein': [{ result: 'failed' }] } } });
     harness.jobWaitTimeoutMs = -1;
     await expect(writeHarnessSettings(ctx, harness, { allowTool: true })).rejects.toThrow('jobWaitTimeoutMs: must be >= 1');
   });

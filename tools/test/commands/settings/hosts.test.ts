@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { concurrencyLimit } from '../../../src/commands/instance/lib/prepare.ts';
 import { typeRow } from '../../../src/commands/generation/check.ts';
+import { mergeSettings } from '../../../src/lib/json.ts';
 import { loadHarnessSettings } from '../../../src/lib/settings.ts';
 import { ogw, makeWorkspace, TEST_HOST_ID, type TestWorkspace } from '../../helpers/workspace.ts';
 
@@ -20,13 +21,21 @@ beforeEach(() => {
 
 const settingsCmd = (...argv: string[]) => ogw(ws, ['settings', ...argv]);
 
-function hosts(): Record<string, unknown> {
-  return (JSON.parse(readFileSync(path, 'utf8')) as { hosts: Record<string, unknown> }).hosts;
+function hostsOf(file: string): Record<string, unknown> {
+  if (!existsSync(file)) return {};
+  return (JSON.parse(readFileSync(file, 'utf8')) as { hosts?: Record<string, unknown> }).hosts ?? {};
 }
 
+/** `hosts` of harness settings: `settings.local.json` over `settings.json`. */
+function hosts(): Record<string, unknown> {
+  return mergeSettings(hostsOf(path), hostsOf(join(ws.harness, 'settings.local.json')));
+}
+
+/** Makes `value` the `hosts` of harness settings: `settings.json` holds it and there is no `settings.local.json`. */
 function writeHosts(value: Record<string, unknown>): void {
   const file = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   writeFileSync(path, JSON.stringify({ ...file, hosts: value }));
+  rmSync(join(ws.harness, 'settings.local.json'), { force: true });
 }
 
 describe('harness settings host values', () => {
@@ -45,8 +54,8 @@ describe('harness settings host values', () => {
       [OTHER]: OTHER_ENTRY,
       [TEST_HOST_ID]: { name: hostname(), playInstances: 2, maxConcurrentInstances: 4, testDevices: [{ platform: 'android', serial: 'e1' }] },
     });
-    expect((await settingsCmd('get', 'harness', 'playInstances')).stdout).toBe('2\n');
-    expect((await settingsCmd('get', 'harness', 'testDevices.0.serial')).stdout).toBe('"e1"\n');
+    expect((await settingsCmd('get', 'harness', 'playInstances')).stdout).toBe('2\nsource: local harness settings\n');
+    expect((await settingsCmd('get', 'harness', 'testDevices.0.serial')).stdout).toBe('"e1"\nsource: local harness settings\n');
     expect((await settingsCmd('set', 'harness', 'maxConcurrentInstances', '1')).stderr).toBe(`hosts.${TEST_HOST_ID}.maxConcurrentInstances: must be >= 2\n`);
     expect(await settingsCmd('unset', 'harness', 'playInstances')).toMatchObject({ code: 0, stdout: `unset hosts.${TEST_HOST_ID}.playInstances\n` });
     expect((await settingsCmd('get', 'harness', 'playInstances')).stdout).toBe('3\nsource: schema default\n');
@@ -58,7 +67,7 @@ describe('harness settings host values', () => {
     expect((await loadHarnessSettings(ws.env)).imageMethod).toBe('flux2-klein');
     expect(await settingsCmd('set', 'harness', 'imageMethod', '"sprite-gen-codex"')).toEqual({ code: 0, stdout: `set hosts.${TEST_HOST_ID}.imageMethod\n`, stderr: '' });
     expect(hosts()).toEqual({ [OTHER]: OTHER_ENTRY, [TEST_HOST_ID]: { name: hostname(), imageMethod: 'sprite-gen-codex' } });
-    expect((await settingsCmd('get', 'harness', 'imageMethod')).stdout).toBe('"sprite-gen-codex"\n');
+    expect((await settingsCmd('get', 'harness', 'imageMethod')).stdout).toBe('"sprite-gen-codex"\nsource: local harness settings\n');
     expect((await loadHarnessSettings(ws.env)).imageMethod).toBe('sprite-gen-codex');
     expect((await loadHarnessSettings({ ...ws.env, OGW_HOST_ID: OTHER })).imageMethod).toBe('flux2-klein');
     expect(await settingsCmd('unset', 'harness', 'imageMethod')).toMatchObject({ code: 0, stdout: `unset hosts.${TEST_HOST_ID}.imageMethod\n` });
