@@ -41,8 +41,8 @@ describe('ogw settings describe', () => {
   });
 
   it('gives allowed values and default', async () => {
-    const cdn = await describeCmd('game', 'mygame', 'environments.DEV.adapters.cdn');
-    expect(cdn.stdout).toBe('path: environments.DEV.adapters.cdn\nallowed: "fake" | "cdn-r2"\n');
+    const turn = await describeCmd('game', 'mygame', 'environments.DEV.adapters.turn');
+    expect(turn.stdout).toBe('path: environments.DEV.adapters.turn\nallowed: "fake" | "turn-coturn"\n');
     const limit = (await describeCmd('game', 'mygame', 'loopIterationLimit')).stdout.split('\n');
     expect(limit).toContain('type: integer');
     expect(limit).toContain('allowed: minimum 1');
@@ -87,12 +87,12 @@ describe('ogw settings describe', () => {
   });
 
   it('gives JSON', async () => {
-    const run = await ogw(ws, ['settings', 'describe', 'game', 'mygame', 'environments.DEV.adapters.cdn', '--json']);
+    const run = await ogw(ws, ['settings', 'describe', 'game', 'mygame', 'environments.DEV.adapters.turn', '--json']);
     expect(JSON.parse(run.stdout)).toEqual({
-      path: 'environments.DEV.adapters.cdn',
+      path: 'environments.DEV.adapters.turn',
       description: null,
       type: null,
-      allowed: { enum: ['fake', 'cdn-r2'] },
+      allowed: { enum: ['fake', 'turn-coturn'] },
       default: null,
       xOwner: null,
     });

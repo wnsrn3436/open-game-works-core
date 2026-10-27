@@ -70,7 +70,7 @@
       "x-owner": "content"
     },
     "appId": {
-      "description": "The reverse domain ID by which stores and the OS identify the app. e.g. com.example.mygame",
+      "description": "The reverse domain ID by which stores and the OS identify the app. e.g. com.example.mygame. Not changed after the first store release, because a changed ID is another app",
       "x-stage": "build",
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
@@ -102,6 +102,7 @@
       "default": 3
     },
     "targetFps": {
+      "description": "Target frame rate in frames per second. The frame limit of each `QualityCore` quality level and the fps bound of the performance check are made from it",
       "type": "integer",
       "minimum": 1,
       "default": 60
@@ -290,6 +291,7 @@
       ],
       "properties": {
         "TERMS": {
+          "description": "The terms of service",
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -298,16 +300,19 @@
           ],
           "properties": {
             "version": {
+              "description": "The version of the current document. Agreement is recorded per version",
               "type": "integer",
               "minimum": 1
             },
             "url": {
+              "description": "The address of the document. The scheme is `https`",
               "type": "string",
               "format": "uri"
             }
           }
         },
         "PRIVACY": {
+          "description": "The privacy policy",
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -316,10 +321,12 @@
           ],
           "properties": {
             "version": {
+              "description": "The version of the current document. Agreement is recorded per version",
               "type": "integer",
               "minimum": 1
             },
             "url": {
+              "description": "The address of the document. The scheme is `https`",
               "type": "string",
               "format": "uri"
             }
@@ -399,7 +406,7 @@
       "additionalProperties": false,
       "properties": {
         "monthlyBelowAge": {
-          "description": "For each age n (decimal string key), the monthly spend limit of users whose age band is less than n. A key is an age in `consent.ageBandBoundaries`. When several keys apply, the smallest value is used",
+          "description": "For each age n (decimal string key), the monthly spend limit of users whose age band is less than n. A key is an age in `consent.ageBandBoundaries`. When several keys apply, the smallest value is used. No limit when omitted",
           "type": "object",
           "propertyNames": {
             "pattern": "^[1-9][0-9]*$"
@@ -442,12 +449,14 @@
           "description": "Whether ad push is sent"
         },
         "nightStartMinute": {
+          "description": "The minute of the device-local day at which the night window starts. e.g. 1320 is 22:00",
           "type": "integer",
           "minimum": 0,
           "maximum": 1439,
           "default": 1260
         },
         "nightEndMinute": {
+          "description": "The minute of the device-local day at which the night window ends. e.g. 420 is 07:00",
           "type": "integer",
           "minimum": 0,
           "maximum": 1439,
@@ -1026,11 +1035,13 @@
           "default": {},
           "properties": {
             "maxBytes": {
+              "description": "The bytes at which a log file of one container moves to a new file",
               "type": "integer",
               "minimum": 1048576,
               "default": 104857600
             },
             "maxFiles": {
+              "description": "The most log files kept per container",
               "type": "integer",
               "minimum": 1,
               "default": 5
@@ -1214,6 +1225,7 @@
               ]
             },
             "cdn": {
+              "description": "The CDN adapter. `cdn-r2` is Cloudflare R2. `ogw game derive` fills it by the rules of the `game-setup` skill",
               "enum": [
                 "fake",
                 "cdn-r2"
