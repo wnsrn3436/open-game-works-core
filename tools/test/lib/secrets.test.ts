@@ -292,6 +292,28 @@ describe('movingSecretStore', () => {
     expect(store.get('c')).toBeNull();
     expect([...login.map]).toEqual([]);
   });
+
+  it('reads the login keychain no more once the marker has done true', async () => {
+    const dir = await newTempFolder('ogw-moving-');
+    const ogw = memoryEntries();
+    const login = memoryEntries();
+    const seen = counted(login);
+    const store = movingSecretStore(ogw, seen, seen, join(dir, MOVED_MARKER_FILE));
+    store.moveOld?.(['a']);
+    const reads = seen.reads();
+    // a value planted later, e.g. by an agent in the play and judge sandbox, which may write the login keychain
+    login.set('ogw/g/PROD/accessTokenKey', 'planted');
+    expect(store.get('ogw/g/PROD/accessTokenKey')).toBeNull();
+    store.moveOld?.(['ogw/g/PROD/accessTokenKey']);
+    store.set('b', 'v');
+    expect(seen.reads()).toBe(reads);
+    expect(ogw.map.has('ogw/g/PROD/accessTokenKey')).toBe(false);
+    // another process sees the mark in the file
+    const other = movingSecretStore(ogw, seen, seen, join(dir, MOVED_MARKER_FILE));
+    expect(other.get('ogw/g/PROD/accessTokenKey')).toBeNull();
+    other.moveOld?.(['c']);
+    expect(seen.reads()).toBe(reads);
+  });
 });
 
 /** Entries that count their reads, over `entries`. */
@@ -313,7 +335,7 @@ function counted(entries: SecretEntries): SecretEntries & { reads: () => number 
 }
 
 describe('movingSecretStore moveOld', () => {
-  it('moves every named value from the login keychain into the ogw keychain once, and again only for new names', async () => {
+  it('moves every named value from the login keychain into the ogw keychain once, and never again', async () => {
     const fake = await fakeSecurity();
     const folder = join(await newTempFolder('ogw-home-'), 'ogw');
     const keychain = join(folder, OGW_KEYCHAIN_FILE);
@@ -336,18 +358,32 @@ describe('movingSecretStore moveOld', () => {
     expect(ogw.get('ogw/g/DEV/none')).toBeNull();
     // the chunks go too; the login keychain keeps only the keychain password and the name nothing named
     expect([...login.map.keys()].sort()).toEqual([KEYCHAIN_PASSWORD_SERVICE, 'ogw/other/DEV/x', 'ogw/other/DEV/x#id3-0', 'ogw/other/DEV/x#id3-1', 'ogw/other/DEV/x#id3-2']);
-    expect(JSON.parse(readFileSync(join(folder, MOVED_MARKER_FILE), 'utf8'))).toEqual({ moved: [...named].sort() });
-    // cheap afterwards: no read of either keychain for names it moved
+    expect(JSON.parse(readFileSync(join(folder, MOVED_MARKER_FILE), 'utf8'))).toEqual({ moved: [...named].sort(), done: true });
+    // no read of either keychain afterwards, not even for a new name
     const reads = seen.reads();
     const calls = fake.calls().length;
     store.moveOld?.(named);
+    store.moveOld?.([...named, 'ogw/other/DEV/x']);
     expect(seen.reads()).toBe(reads);
     expect(fake.calls().length).toBe(calls);
-    // a new game: only its names
-    store.moveOld?.([...named, 'ogw/other/DEV/x']);
-    expect([...login.map.keys()]).toEqual([KEYCHAIN_PASSWORD_SERVICE]);
-    expect(store.get('ogw/other/DEV/x')).toBe('not named');
+    expect(login.map.has('ogw/other/DEV/x')).toBe(true);
+    expect(ogw.get('ogw/other/DEV/x')).toBeNull();
     expect(readdirSync(folder).filter((name) => name.includes('lock') || name.includes('tmp'))).toEqual([]);
+  });
+
+  it('moves the names a marker without done true lacks, then marks it done', async () => {
+    const dir = await newTempFolder('ogw-moving-');
+    const ogw = memoryEntries();
+    const login = memoryEntries();
+    login.set('a', 'moved before');
+    login.set('b', 'new name');
+    const marker = join(dir, MOVED_MARKER_FILE);
+    writeFileSync(marker, JSON.stringify({ moved: ['a'] }));
+    const store = movingSecretStore(ogw, login, login, marker);
+    store.moveOld?.(['a', 'b']);
+    expect(ogw.map.get('b')).toBe('new name');
+    expect(ogw.map.has('a')).toBe(false);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual({ moved: ['a', 'b'], done: true });
   });
 
   it('keeps the value already in the store and still removes the old one', async () => {
@@ -431,10 +467,10 @@ describe('Linux secret store', () => {
     expect(store.get('ogw/harness/k')).toBe('h');
     expect(readdirSync(folder).sort()).toEqual([MOVED_MARKER_FILE, 'ogw%2Fg%2FSTG%2Fkey', 'ogw%2Fharness%2Fk']);
     expect(statSync(join(folder, MOVED_MARKER_FILE)).mode & 0o777).toBe(0o600);
-    // a value read later moves then
+    // a value put there later is not read
     secretService.set('ogw/g/DEV/late', 'late');
-    expect(store.get('ogw/g/DEV/late')).toBe('late');
-    expect(secretService.map.has('ogw/g/DEV/late')).toBe(false);
+    expect(store.get('ogw/g/DEV/late')).toBeNull();
+    expect(secretService.map.has('ogw/g/DEV/late')).toBe(true);
     // no D-Bus session bus or no Secret Service
     const unreachable: SecretEntries = {
       get: () => {

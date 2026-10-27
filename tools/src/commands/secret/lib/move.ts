@@ -28,7 +28,7 @@ export async function knownSecretServices(ctx: Context): Promise<string[]> {
 
 /**
  * Moves every known secret still in the old store of this host (the login keychain, the Secret Service) into the
- * secret store (`tools/ogw.md` `## secret store`). It is cheap once the store has moved every known name.
+ * secret store (`tools/ogw.md` `## secret store`). Only the first run on a host moves; later runs read no store.
  */
 export async function moveOldSecrets(ctx: Context): Promise<void> {
   const store = ctx.secrets;
