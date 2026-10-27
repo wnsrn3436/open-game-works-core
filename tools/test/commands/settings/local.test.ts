@@ -70,8 +70,8 @@ describe('local harness settings', () => {
     expect(read(localPath)).toEqual({ humanLanguage: 'ko', agents: { play: { model: 'claude-haiku-5-5' } }, loop: { judgePanel: [judge] }, useLocalCore: true });
 
     expect(await settingsCmd('set', 'harness', 'loop.funIterations', '4', 'jobWaitTimeoutMs', '5000')).toMatchObject({ code: 0 });
-    expect(read(sharedPath)).toMatchObject({ loop: { funIterations: 4, judgePanel: [] }, jobWaitTimeoutMs: 5000 });
-    expect(read(localPath)).toEqual({ humanLanguage: 'ko', agents: { play: { model: 'claude-haiku-5-5' } }, loop: { judgePanel: [judge] }, useLocalCore: true });
+    expect(read(sharedPath)).toMatchObject({ loop: { funIterations: 3, judgePanel: [] }, jobWaitTimeoutMs: 5000 });
+    expect(read(localPath)).toEqual({ humanLanguage: 'ko', agents: { play: { model: 'claude-haiku-5-5' } }, loop: { judgePanel: [judge], funIterations: 4 }, useLocalCore: true });
 
     const settings = await loadHarnessSettings(ws.env);
     expect(settings.loop).toEqual({ funIterations: 4, judgeVotes: 2, judgePanel: [judge], variants: 1 });
@@ -149,12 +149,13 @@ describe('local harness settings', () => {
     expect((await settingsCmd('describe', 'harness', 'humanLanguage')).stdout).toContain('x-scope: local\n');
     expect((await settingsCmd('describe', 'harness', 'maxConcurrentInstances')).stdout).toContain('x-scope: local\n');
     expect((await settingsCmd('describe', 'harness', 'loop.judgePanel.0.model')).stdout).toContain('x-scope: local\n');
-    expect((await settingsCmd('describe', 'harness', 'loop.funIterations')).stdout).not.toContain('x-scope');
+    expect((await settingsCmd('describe', 'harness', 'loop.funIterations')).stdout).toContain('x-scope: local\n');
+    expect((await settingsCmd('describe', 'harness', 'jobWaitTimeoutMs')).stdout).not.toContain('x-scope');
     const rows = (JSON.parse((await settingsCmd('list', 'harness', '--json')).stdout) as { paths: { path: string; xScope: string | null }[] }).paths;
     const local = rows.filter((r) => r.xScope === 'local').map((r) => r.path);
     expect(local).toEqual(expect.arrayContaining(['humanLanguage', 'agents', 'agents.content.model', 'hosts', 'useLocalCore', 'loop.judgePanel', 'maxConcurrentInstances', 'measured']));
-    expect(local).not.toContain('loop');
-    expect(local).not.toContain('loop.funIterations');
+    expect(local).toEqual(expect.arrayContaining(['loop', 'loop.funIterations', 'loopStop']));
+    expect(local).not.toContain('jobWaitTimeoutMs');
   });
 });
 

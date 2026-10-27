@@ -135,7 +135,10 @@
     },
     "minCoreVersion": {
       "description": "The lowest core version of a game that this harness supports; null supports every version up to the core version of the harness (AGENTS.md `## repo`)",
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
       "x-owner": "human",
       "default": null
@@ -170,6 +173,7 @@
     },
     "loopStop": {
       "description": "Values of the loop stop judgement. `## stop` of the `game-loop` skill defines their meaning",
+      "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -203,6 +207,7 @@
     },
     "loop": {
       "description": "Values of the loop iteration kinds and the step 4 judges. `## iteration` of the `game-loop` skill defines their meaning",
+      "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -223,7 +228,6 @@
           "minimum": 2
         },
         "judgePanel": {
-          "x-scope": "local",
           "description": "Agent CLI, model and effort of the step 4 judges in turn. Empty: every judge uses `agents.judge`",
           "type": "array",
           "items": {
