@@ -70,7 +70,8 @@ export function privacyOptions(list: readonly StoreAnswer[]): Record<string, unk
   return options;
 }
 
-function xml(text: string): string {
+/** `text` escaped for the text of a plist XML element. */
+export function xml(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 

@@ -14,10 +14,12 @@ import type { ProdOrders } from './prodorder.ts';
 
 /** Where a build may go (`build` `## platform build`, external beta rule). */
 export function outlets(env: Env, platform: string): string {
-  const store = platform === 'android' || platform === 'ios' || platform === 'macos';
   if (env === 'STG' && platform === 'android') return 'Google Play open testing and closed testing';
-  if (env === 'STG' && (platform === 'ios' || platform === 'macos')) return 'TestFlight public link';
-  if (env === 'PROD' && store) return 'store review, internal testing, release';
+  if (env === 'STG' && platform === 'ios') return 'TestFlight public link';
+  // macos is signed with Developer ID and distributed directly, not through the Mac App Store
+  if (env === 'STG' && platform === 'macos') return 'direct download for testers';
+  if (env === 'PROD' && (platform === 'android' || platform === 'ios')) return 'store review, internal testing, release';
+  if (env === 'PROD' && platform === 'macos') return 'direct distribution: Steam, itch.io, web download';
   return 'none';
 }
 

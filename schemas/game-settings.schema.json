@@ -461,7 +461,7 @@
       "x-owner": "content"
     },
     "appleTeamId": {
-      "description": "Apple Developer Team ID. Used by `login-apple`, `push-apns` and ios signing. Required when `buildPlatforms` has ios, or when in at least one environment `adapters.login-apple` is `login-apple` or `adapters.push-apns` is not `fake`",
+      "description": "Apple Developer Team ID. Used by `login-apple`, `push-apns`, ios signing and macos signing. Required when `buildPlatforms` has ios, when `signing` has macos, or when in at least one environment `adapters.login-apple` is `login-apple` or `adapters.push-apns` is not `fake`",
       "x-stage": "build",
       "type": "string",
       "pattern": "^[A-Z0-9]{10}$"
@@ -1727,7 +1727,8 @@
       },
       "then": {
         "required": [
-          "macosNotary"
+          "macosNotary",
+          "appleTeamId"
         ]
       }
     },

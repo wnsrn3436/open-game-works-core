@@ -289,7 +289,7 @@ none
       artifacts: [
         { platform: 'android', path: 'builds/stg-0.3.0/android/g.aab' },
         { platform: 'ios', path: 'builds/stg-0.3.0/ios/g.ipa' },
-        { platform: 'macos', path: 'builds/stg-0.3.0/macos/g.pkg' },
+        { platform: 'macos', path: 'builds/stg-0.3.0/macos/g.zip' },
         { platform: 'web', path: 'builds/stg-0.3.0/web' },
       ],
     }));
@@ -300,7 +300,7 @@ none
       '',
       '- android: builds/stg-0.3.0/android/g.aab (Google Play open testing and closed testing)',
       '- ios: builds/stg-0.3.0/ios/g.ipa (TestFlight public link)',
-      '- macos: builds/stg-0.3.0/macos/g.pkg (TestFlight public link)',
+      '- macos: builds/stg-0.3.0/macos/g.zip (direct download for testers)',
       '- web: builds/stg-0.3.0/web (none)',
       '',
     ].join('\n'));
@@ -310,10 +310,10 @@ none
   it('writes the PROD outlets of android and macos', () => {
     const result = buildRun({
       env: 'PROD',
-      artifacts: [{ platform: 'android', path: 'a.aab' }, { platform: 'macos', path: 'm.pkg' }, { platform: 'windows', path: 'w.zip' }],
+      artifacts: [{ platform: 'android', path: 'a.aab' }, { platform: 'macos', path: 'm.zip' }, { platform: 'windows', path: 'w.zip' }],
     });
-    expect(artifactsBody('PROD', result)).toBe('- android: a.aab (store review, internal testing, release)\n- macos: m.pkg (store review, internal testing, release)\n- windows: w.zip (none)');
-    expect(artifactsBody('DEV', result)).toBe('- android: a.aab (none)\n- macos: m.pkg (none)\n- windows: w.zip (none)');
+    expect(artifactsBody('PROD', result)).toBe('- android: a.aab (store review, internal testing, release)\n- macos: m.zip (direct distribution: Steam, itch.io, web download)\n- windows: w.zip (none)');
+    expect(artifactsBody('DEV', result)).toBe('- android: a.aab (none)\n- macos: m.zip (none)\n- windows: w.zip (none)');
     const free = { ...result, artifacts: [{ platform: 'android', path: 'a.apk', freeSigning: 'debug keystore' }, { platform: 'linux', path: 'l' }] };
     expect(artifactsBody('DEV', free)).toBe('- android: a.apk (none) free signing: debug keystore\n- linux: l (none)');
   });

@@ -186,12 +186,65 @@ describe('ogw agent merge: game worktrees', () => {
   it('is a conflict when another file conflicts in git', async () => {
     const ws = makeWorkspace();
     const root = await gameForMerge(ws);
-    const id = await resourceJob(ws, root, "fs.writeFileSync('settings.json', '{\"a\": 1}\\n');");
+    const id = await resourceJob(ws, root, "fs.writeFileSync('resource/notes.txt', 'a\\n');");
+    writeFileSync(join(root, 'resource/notes.txt'), 'b\n');
+    commitAll(root, 'branch notes');
+    const run = await ogw(ws, ['agent', 'merge', id], { cwd: root });
+    expect(run.stdout).toBe(`not merged ${id}: conflict: resource/notes.txt\n`);
+    expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('discards the changes of a resource job outside its edit scope, conflicting ones included', async () => {
+    const ws = makeWorkspace();
+    const root = await gameForMerge(ws);
+    const extra = [
+      "fs.writeFileSync('settings.json', '{\"a\": 1}\\n');",
+      "fs.mkdirSync('data/tables', { recursive: true }); fs.writeFileSync('data/tables/reward.csv', 'id,amount\\n');",
+      "fs.writeFileSync('data/translations-note.md', 'x');",
+    ].join('\n');
+    const id = await resourceJob(ws, root, extra);
     writeFileSync(join(root, 'settings.json'), '{"a": 2}\n');
     commitAll(root, 'branch settings');
     const run = await ogw(ws, ['agent', 'merge', id], { cwd: root });
-    expect(run.stdout).toBe(`not merged ${id}: conflict: settings.json\n`);
+    expect(run).toMatchObject({ code: 0, stdout: `merged ${id}\n` });
+    expect(readFileSync(join(root, 'settings.json'), 'utf8')).toBe('{"a": 2}\n');
+    expect(existsSync(join(root, 'data/tables/reward.csv'))).toBe(false);
+    expect(existsSync(join(root, 'data/translations-note.md'))).toBe(false);
+    expect(readFileSync(join(root, 'resource/2d/hero.png'), 'utf8')).toBe('img');
+    // the run log of the job is in its edit scope
+    expect(sh(root, 'git', ['ls-files', 'records/loops/r1/resource-requests'])).toContain('hero-result-runs.json');
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('does not merge a hardening job that changed a path outside its edit scope, and keeps its worktree', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'in.md': 'x', 'server/a.ts': 'a\n', 'client/main.gd': 'm\n', 'data/tables/reward.csv': 'id,amount\n[gold],10\n' }, { kind: 'build', env: 'DEV', version: '1.0.0', branch: 'build/dev-1.0.0' });
+    const job = async (extra: string): Promise<string> => {
+      const fake = fakeAgentCli(ws, [
+        "fs.writeFileSync('server/a.ts', 'hardened\\n');",
+        extra,
+        "fs.writeFileSync(output, 'record');",
+        "execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'harden']);",
+      ].join('\n'));
+      const { id, waited } = await runAgent(ws, ['server-hardening', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
+      expect(waited.code).toBe(0);
+      return id;
+    };
+    const outside = await job("fs.writeFileSync('data/tables/reward.csv', 'id,amount\\n[gold],1\\n'); fs.writeFileSync('client/b.gd', 'x');");
+    const before = sh(root, 'git', ['rev-parse', 'HEAD']).trim();
+    const refused = await ogw(ws, ['agent', 'merge', outside, '--json'], { cwd: root });
+    expect(refused.code).toBe(1);
+    expect(JSON.parse(refused.stdout)).toEqual({ merged: [], failed: [{ id: outside, reason: 'outside scope', detail: 'client/b.gd, data/tables/reward.csv' }] });
+    expect(sh(root, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
+    expect(existsSync(join(ws.worktrees, 'g', `agent-${outside}`))).toBe(true);
+    expect(sh(root, 'git', ['branch', '--list', `agent/${outside}`])).toContain(`agent/${outside}`);
+    expect((await readJob(outside, ws.env)).meta.merged).toBe(false);
+    expect(data.calls).toEqual([]);
+    // the record and its run log are in its edit scope
+    const inside = await job('');
+    expect(await ogw(ws, ['agent', 'merge', inside], { cwd: root })).toMatchObject({ code: 0, stdout: `merged ${inside}\n` });
+    expect(readFileSync(join(root, 'server/a.ts'), 'utf8')).toBe('hardened\n');
+    expect(sh(root, 'git', ['ls-files', 'records/hardening'])).toBe('records/hardening/dev-1.0.0-server-1-runs.json\nrecords/hardening/dev-1.0.0-server-1.md\n');
   });
 
   it('does not merge when ogw data fails, and removes what the merge left', async () => {

@@ -24,8 +24,8 @@ import { ENVS, requireVersion, type Env } from './names.ts';
 import { adaptersOf } from './settingschecks.ts';
 import { matchesFilter, pckPaths } from './pck.ts';
 import type { PlatformBuild, PlatformBuildInput } from './platform.ts';
-import { iosIdentity, iosOptions, localizeTracking, trackingRequested, trackingSource, trackingTexts } from './godot-ios.ts';
-import { prepareSigning, signWindows, windowsSigner } from './godot-signing.ts';
+import { iosIdentity, iosOptions, localizeTracking, trackingRequested, trackingSource, trackingTexts, xml } from './godot-ios.ts';
+import { prepareSigning, signMacosApp, signWindows, windowsSigner, type Signing } from './godot-signing.ts';
 import { isZip, zipEntries } from './zip.ts';
 import { installServiceWorker, WEB_EXPORT_OPTIONS } from '../../../lib/godot-web.ts';
 
@@ -133,7 +133,7 @@ async function androidOptions(p: PresetContext): Promise<Record<string, unknown>
   return {
     'gradle_build/use_gradle_build': true,
     'gradle_build/export_format': p.env === 'DEV' ? 0 : 1,
-    'architectures/armeabi-v7a': true,
+    'architectures/armeabi-v7a': false,
     'architectures/arm64-v8a': true,
     'architectures/x86': false,
     'architectures/x86_64': false,
@@ -146,18 +146,43 @@ async function androidOptions(p: PresetContext): Promise<Record<string, unknown>
   };
 }
 
+/**
+ * The entitlements plist of a macOS export without free signing (`build` engines/godot.md `### export preset`):
+ * `com.apple.application-identifier` and `com.apple.developer.team-identifier`, which give the process its keychain
+ * access group, and `com.apple.developer.applesignin` when `adapters.login-apple` is `login-apple`.
+ */
+export function macosEntitlements(settings: GameSettings, env: Env): string {
+  const team = settings.appleTeamId;
+  if (typeof team !== 'string' || team === '') throw new OgwError('game settings appleTeamId is missing');
+  if (typeof settings.appId !== 'string' || settings.appId === '') throw new OgwError('game settings appId is missing');
+  const lines = [
+    '\t<key>com.apple.application-identifier</key>',
+    `\t<string>${xml(`${team}.${settings.appId}`)}</string>`,
+    '\t<key>com.apple.developer.team-identifier</key>',
+    `\t<string>${xml(team)}</string>`,
+  ];
+  if (adaptersOf(settings, env)['login-apple'] === 'login-apple') lines.push('\t<key>com.apple.developer.applesignin</key>', '\t<array>', '\t\t<string>Default</string>', '\t</array>');
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    '<dict>',
+    ...lines,
+    '</dict>',
+    '</plist>',
+    '',
+  ].join('\n');
+}
+
 async function macosOptions(p: PresetContext): Promise<Record<string, unknown>> {
   const options: Record<string, unknown> = {
     'binary_format/architecture': 'universal',
     'application/bundle_identifier': p.settings.appId,
     'application/icon': await icon(p.ctx, p.root, 1024, 'icon_1024.png'),
   };
-  if (adaptersOf(p.settings, p.env)['login-apple'] === 'login-apple') {
+  if (freeSigning(p.settings, p.env, 'macos') === null) {
     const plist = join(p.root, 'client', '.ogw-build', 'macos.entitlements');
-    await writeFileAtomic(
-      plist,
-      '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>com.apple.developer.applesignin</key>\n\t<array>\n\t\t<string>Default</string>\n\t</array>\n</dict>\n</plist>\n',
-    );
+    await writeFileAtomic(plist, macosEntitlements(p.settings, p.env));
     options['codesign/entitlements/custom_file'] = plist;
   }
   return options;
@@ -420,8 +445,14 @@ export async function checkPackage(outDir: string, platform: string, game: strin
   return devCode;
 }
 
-async function godotRun(ctx: Context, godot: string, root: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  await runOk(godot, ['--headless', '--path', join(root, 'client'), ...args], { env: { ...ctx.env, ...env }, timeoutMs: LIMITS.programMs });
+async function godotRun(ctx: Context, godot: string, root: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+  const result = await runOk(godot, ['--headless', '--path', join(root, 'client'), ...args], { env: { ...ctx.env, ...env }, timeoutMs: LIMITS.programMs });
+  return `${result.stdout}\n${result.stderr}`;
+}
+
+/** The lines of an export output in which Godot left a GDExtension without its library for an exported architecture. */
+export function missingGdextensionLibraries(output: string): string[] {
+  return output.split(/\r?\n/).filter((line) => /No "[^"]+" library found for GDExtension/.test(line)).map((line) => line.trim());
 }
 
 /** Launch values of the DEV export of check `device performance` or `web smoke` (`## device performance`, `## web smoke`). */
@@ -452,6 +483,22 @@ async function prepareWorkspace(ctx: Context, input: PlatformBuildInput, platfor
 }
 
 /**
+ * The steps of `## export` 7 after the Godot export, while the keychain of `## signing` exists: the web service worker,
+ * the localized iOS tracking text, and the macOS signing after the export.
+ */
+async function afterExport(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string, options: Record<string, unknown>, signing: Signing): Promise<void> {
+  // an export that made no page is reported by the output check of the caller
+  if (platform === 'web' && exists(exportPath)) await installServiceWorker(join(root, 'client'), dirname(exportPath));
+  if (platform === 'ios' && trackingRequested(input.settings) && signing.keychain !== undefined) {
+    const texts = await trackingTexts(root, input.settings.supportedLanguages ?? [], await trackingSource(root));
+    await localizeTracking(ctx, exportPath, texts, signing.keychain, iosIdentity(input.env));
+  }
+  if (platform === 'macos' && signing.macos !== undefined && signing.keychain !== undefined) {
+    await signMacosApp(ctx, exportPath, String(options['codesign/entitlements/custom_file']), signing.keychain, signing.macos);
+  }
+}
+
+/**
  * `## export` 2–7 in the build workspace. With `launchValues` it is the DEV export of a build-time check:
  * `generated/launch_values.json` instead of `generated/build_info.json`, and `generated/launch_values.json`
  * taken out of `exclude_filter`.
@@ -477,13 +524,11 @@ async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: s
       await writeFileAtomic(join(root, 'client', '.godot', 'export_credentials.cfg'), presetCfg({ name }, signing.credentials));
     }
     await godotRun(ctx, godot, root, ['--import'], signing.env);
-    await godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env);
-    // an export that made no page is reported by the output check of the caller
-    if (platform === 'web' && exists(exportPath)) await installServiceWorker(join(root, 'client'), dirname(exportPath));
-    if (platform === 'ios' && trackingRequested(input.settings) && signing.keychain !== undefined) {
-      const texts = await trackingTexts(root, input.settings.supportedLanguages ?? [], await trackingSource(root));
-      await localizeTracking(ctx, exportPath, texts, signing.keychain, iosIdentity(input.env));
-    }
+    const output = await godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env);
+    // Godot exports without the library and ends with code 0: the app would run without that plugin
+    const missing = missingGdextensionLibraries(output);
+    if (missing.length > 0) throw new OgwError(`export of ${platform} has a GDExtension without its library:\n${missing.join('\n')}`);
+    await afterExport(ctx, input, platform, root, exportPath, options, signing);
   } finally {
     await rm(join(root, 'client', '.godot', 'export_credentials.cfg'), { force: true });
     await signing.cleanup();

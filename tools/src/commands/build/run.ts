@@ -7,7 +7,7 @@ import type { GameRepo } from '../../lib/game.ts';
 import { currentBranch, showFile } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import type { GameSettings } from '../../lib/settings.ts';
-import { coreRelease } from '../core/api.ts';
+import { coreRelease, coreReleaseOfGame } from '../core/api.ts';
 import { runData, type DataRun } from '../data/api.ts';
 import { gameModules } from '../generate/api.ts';
 import { dataVersionsAt, protocolHash, readDataVersions, type DataVersions } from './lib/atcommit.ts';
@@ -18,6 +18,7 @@ import { type ClientCheckInput } from './lib/client-check.ts';
 import { devicePerformance } from './lib/device-performance.ts';
 import { webSmoke } from './lib/web-smoke.ts';
 import { buildTagName, buildTags, lastProdTag, tagCommit, type BuildTag } from './lib/names.ts';
+import { nativePluginProblems } from './lib/native-plugins.ts';
 import { buildBundle, buildPlatforms, type Artifact } from './lib/platform.ts';
 import { writePrivacy } from './lib/privacy.ts';
 import { compatibilityCheck, placeholderCheck, plain, staticChecks } from './lib/runchecks.ts';
@@ -93,6 +94,8 @@ async function preBuildChecks(b: Build, data: DataRun, versions: DataVersions | 
   const ws = await ctx.workspace();
   const list = needles(ctx, game.name, b.settings, open.env, ws.root);
   const checks: CheckWithHuman[] = [...(await staticChecks(ctx, game, open.env)), ...human.checks];
+  const plugins = await nativePluginProblems(ctx, await coreReleaseOfGame(ctx, game), b.settings, open.env, b.platforms, () => Promise.resolve(input.modules), game.name);
+  checks.push(plain('native plugin', open.env, plugins));
   // PROD uses the server image of the STG build, which this check covered
   if (open.env === 'STG' && versions !== null && (await bundleHasData(b, versions))) addDetails(checks.map((c) => c.check), 'DEV code', open.env, await serverImageDevCode(ctx, game, b.settings, open.env));
   checks.push(plain('secret', open.env, await scanRepo(game, list)));

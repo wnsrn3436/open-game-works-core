@@ -40,8 +40,8 @@ export interface SecretStore {
   get(service: string): string | null;
   set(service: string, value: string): void;
   /**
-   * Moves the values of `services` that the old store of this host still holds into this store; a store with no old
-   * store has none.
+   * Moves the values of `services` that the old store of this host still holds into this store, once per host: after
+   * that the store does not read the old store. A store with no old store has none.
    */
   moveOld?(services: readonly string[]): void;
 }
@@ -305,20 +305,21 @@ export function keychainEntries(options: KeychainOptions): SecretEntries {
 /** The exit code of `security` for an item that is not there (errSecItemNotFound). */
 const SECURITY_NOT_FOUND = 44;
 
-/** The services a marker file of `movingSecretStore` lists; none when it is missing or broken. */
-function readMarker(marker: string): string[] {
+/** The services a marker file of `movingSecretStore` lists and whether it has `"done": true`; none when it is missing or broken. */
+function readMarker(marker: string): { moved: string[]; done: boolean } {
   try {
-    const moved = (JSON.parse(readFileSync(marker, 'utf8')) as { moved?: unknown }).moved;
-    return Array.isArray(moved) ? moved.filter((service): service is string => typeof service === 'string') : [];
+    const value = JSON.parse(readFileSync(marker, 'utf8')) as { moved?: unknown; done?: unknown };
+    const moved = Array.isArray(value.moved) ? value.moved.filter((service): service is string => typeof service === 'string') : [];
+    return { moved, done: value.done === true };
   } catch {
-    return [];
+    return { moved: [], done: false };
   }
 }
 
 function writeMarker(marker: string, services: readonly string[]): void {
   const tmp = `${marker}.tmp-${String(process.pid)}-${randomChunkId()}`;
   try {
-    writeFileSync(tmp, `${JSON.stringify({ moved: [...services].sort() }, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(tmp, `${JSON.stringify({ moved: [...services].sort(), done: true }, null, 2)}\n`, { mode: 0o600 });
     renameSync(tmp, marker);
   } catch (error) {
     rmSync(tmp, { force: true });
@@ -329,23 +330,26 @@ function writeMarker(marker: string, services: readonly string[]): void {
 /**
  * A store over `store` that moves a value it lacks from `legacy` (the entries of `legacyStore`) into it, and removes
  * a value of `legacy` that `store` replaces, so a value stays in one place only. `moveOld` moves the services the
- * marker file `marker` does not list yet, under a lock, and then adds them to it.
+ * marker file `marker` does not list yet, under a lock, and then adds them to it with `"done": true`. Once the marker
+ * has `"done": true`, the store does not read `legacy` again: a value put there later (for example by an agent in the
+ * play and judge sandbox, which may write the login keychain) never becomes a secret.
  */
 export function movingSecretStore(store: SecretStore, legacyStore: SecretStore, legacy: SecretEntries, marker: string): SecretStore {
+  let doneSeen = false;
+  const done = (): boolean => {
+    doneSeen ||= readMarker(marker).done;
+    return doneSeen;
+  };
   const remove = (service: string): void => {
     const head = legacy.get(service);
     if (head === null) return;
     for (const entry of chunkEntries(service, head)) legacy.delete(entry);
     legacy.delete(service);
   };
-  const pending = (services: readonly string[]): string[] => {
-    const moved = new Set(readMarker(marker));
-    return [...new Set(services)].filter((service) => !moved.has(service));
-  };
   return {
     get(service) {
       const value = store.get(service);
-      if (value !== null) return value;
+      if (value !== null || done()) return value;
       const old = legacyStore.get(service);
       if (old === null) return null;
       store.set(service, old);
@@ -354,13 +358,16 @@ export function movingSecretStore(store: SecretStore, legacyStore: SecretStore, 
     },
     set(service, value) {
       store.set(service, value);
-      remove(service);
+      if (!done()) remove(service);
     },
     moveOld(services) {
-      if (pending(services).length === 0) return;
+      if (done()) return;
       mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
       withSyncLock(`${marker}.lock`, () => {
-        const todo = pending(services);
+        const current = readMarker(marker);
+        if (current.done) return;
+        const moved = new Set(current.moved);
+        const todo = [...new Set(services)].filter((service) => !moved.has(service));
         for (const service of todo) {
           const old = legacyStore.get(service);
           if (old === null) continue;
@@ -368,8 +375,9 @@ export function movingSecretStore(store: SecretStore, legacyStore: SecretStore, 
           if (store.get(service) === null) store.set(service, old);
           remove(service);
         }
-        if (todo.length > 0) writeMarker(marker, [...readMarker(marker), ...todo]);
+        writeMarker(marker, [...current.moved, ...todo]);
       });
+      doneSeen = true;
     },
   };
 }

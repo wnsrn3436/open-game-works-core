@@ -1,14 +1,15 @@
 import { randomBytes } from 'node:crypto';
-import { copyFile, link, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, link, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
+import { withLock } from '../../../lib/lock.ts';
 import { runOk } from '../../../lib/proc.ts';
-import { newSecretFolder } from '../../../lib/secret-files.ts';
-import { gameSecretService } from '../../../lib/secrets.ts';
+import { newPrivateTempFolder, newSecretFolder } from '../../../lib/secret-files.ts';
+import { gameSecretService, ogwKeychainFolder } from '../../../lib/secrets.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { buildToolProgram, hostPlatform } from '../../env/api.ts';
 import type { BuildTool } from './host.ts';
@@ -20,9 +21,21 @@ export interface Signing {
   env: NodeJS.ProcessEnv;
   options: Record<string, unknown>;
   credentials: Record<string, unknown>;
-  /** iOS: the temporary keychain that holds the signing certificate until `cleanup`. */
+  /** iOS, macOS: the temporary keychain that holds the signing certificate until `cleanup`. */
   keychain?: string;
+  /** macOS without free signing: the material of the macOS signing after the export. */
+  macos?: MacosSigning;
   cleanup(): Promise<void>;
+}
+
+/** The macOS signing after the export (`build` engines/godot.md `## signing`). */
+export interface MacosSigning {
+  /** SHA-1 hash of the Developer ID Application identity in the keychain. */
+  identity: string;
+  /** The Developer ID provisioning profile file, embedded as `Contents/embedded.provisionprofile`. */
+  profile: string;
+  /** STG, PROD: the App Store Connect API key file and IDs of `xcrun notarytool`; null for DEV, which is not notarized. */
+  notary: { key: string; keyId: string; issuerId: string } | null;
 }
 
 export const ENDPOINTS = { entraToken: 'https://login.microsoftonline.com' };
@@ -71,12 +84,23 @@ export function securityArg(value: string): string {
 /** A `security` command with a secret argument: the command reaches `security -i` through stdin, not its command line. */
 const secSecret = (ctx: Context, args: string[]): Promise<string> => sec(ctx, ['-i'], `${args.map(securityArg).join(' ')}\n`);
 
+/** The plist of a provisioning profile file, decoded with `security cms -D -i`. */
+export async function profilePlist(ctx: Context, file: string): Promise<string> {
+  return sec(ctx, ['cms', '-D', '-i', file]);
+}
+
 /** `UUID` of a provisioning profile file. */
 export async function profileUuid(ctx: Context, file: string): Promise<string> {
-  const plist = await sec(ctx, ['cms', '-D', '-i', file]);
+  const plist = await profilePlist(ctx, file);
   const m = /<key>UUID<\/key>\s*<string>([^<]+)<\/string>/.exec(plist);
   if (!m) throw new OgwError('provisioning profile has no UUID');
   return m[1] as string;
+}
+
+/** `com.apple.application-identifier` of `Entitlements` in a decoded macOS provisioning profile plist, or null. */
+export function profileApplicationIdentifier(plist: string): string | null {
+  const entitlements = /<key>Entitlements<\/key>\s*<dict>([^]*?)<\/dict>/.exec(plist)?.[1] ?? '';
+  return /<key>com\.apple\.application-identifier<\/key>\s*<string>([^<]*)<\/string>/.exec(entitlements)?.[1] ?? null;
 }
 
 function searchList(out: string): string[] {
@@ -86,29 +110,72 @@ function searchList(out: string): string[] {
     .filter((l) => l.length > 0);
 }
 
+/** The keychain search list lock of `## signing`, shared by the ogw processes of the OS user. */
+function searchListLock(env: NodeJS.ProcessEnv): string {
+  return join(ogwKeychainFolder(env), 'search-list.lock');
+}
+
+const userSearchList = async (ctx: Context): Promise<string[]> => searchList(await sec(ctx, ['list-keychains', '-d', 'user']));
+
+/**
+ * Takes the keychain out of the user keychain search list as it is now and deletes the keychain, inside the keychain
+ * search list lock; each step runs even when another failed.
+ */
+async function removeKeychain(ctx: Context, keychain: string): Promise<void> {
+  await withLock(searchListLock(ctx.env), async () => {
+    const list = await userSearchList(ctx).catch(() => null);
+    if (list !== null) await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...list.filter((k) => k !== keychain)]).catch(() => undefined);
+    await sec(ctx, ['delete-keychain', keychain]).catch(() => undefined);
+  }).catch(() => undefined);
+}
+
+/**
+ * Creates the keychain with a random password at the front of the user keychain search list, inside the keychain
+ * search list lock, unlocks it without auto-lock, and imports the certificate with its password so that `codesign`
+ * uses the key without asking.
+ */
+async function importCertificate(ctx: Context, keychain: string, p12: string, certPassword: string): Promise<void> {
+  const password = randomBytes(24).toString('base64url');
+  await withLock(searchListLock(ctx.env), async () => {
+    // `create-keychain` also adds the keychain to the search list
+    const list = (await userSearchList(ctx)).filter((k) => k !== keychain);
+    await secSecret(ctx, ['create-keychain', '-p', password, keychain]);
+    await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain, ...list]);
+  });
+  await secSecret(ctx, ['unlock-keychain', '-p', password, keychain]);
+  await sec(ctx, ['set-keychain-settings', keychain]);
+  await secSecret(ctx, ['import', p12, '-k', keychain, '-P', certPassword, '-T', '/usr/bin/codesign']);
+  await secSecret(ctx, ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain]);
+}
+
+/**
+ * The SHA-1 hash of the one valid code signing identity of the keychain, which must be a `Developer ID Application`
+ * certificate (`build` engines/godot.md `## signing`).
+ */
+export async function developerIdIdentity(ctx: Context, keychain: string): Promise<string> {
+  const out = await sec(ctx, ['find-identity', '-v', '-p', 'codesigning', keychain]);
+  const identities = [...out.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]*)"/gm)].map((m) => ({ hash: m[1] as string, name: m[2] as string }));
+  const developerId = identities.filter((identity) => identity.name.startsWith('Developer ID Application:'));
+  if (developerId.length !== 1) {
+    throw new OgwError(`the macos signing certificate must hold one Developer ID Application identity; it holds: ${identities.map((i) => i.name).join(', ') || 'none'}`);
+  }
+  return (developerId[0] as { hash: string }).hash;
+}
+
 async function ios(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const kind = env === 'DEV' ? 'development' : 'distribution';
   const dir = await tempDir(ctx);
   const keychain = join(dir, 'ogw.keychain-db');
-  const password = randomBytes(24).toString('base64url');
-  const previous = searchList(await sec(ctx, ['list-keychains', '-d', 'user']));
   const placed: string[] = [];
   const cleanup = async (): Promise<void> => {
-    await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...previous]).catch(() => undefined);
-    await sec(ctx, ['delete-keychain', keychain]).catch(() => undefined);
+    await removeKeychain(ctx, keychain);
     for (const file of placed) await rm(file, { force: true });
     await rm(dir, { recursive: true, force: true });
   };
   try {
-    await secSecret(ctx, ['create-keychain', '-p', password, keychain]);
-    await secSecret(ctx, ['unlock-keychain', '-p', password, keychain]);
-    await sec(ctx, ['set-keychain-settings', keychain]);
     const p12 = join(dir, 'cert.p12');
     await writeFile(p12, Buffer.from(secretOf(ctx, game, settings, 'ios', `${kind}Certificate`), 'base64'), { mode: 0o600 });
-    const certPassword = secretOf(ctx, game, settings, 'ios', `${kind}CertificatePassword`);
-    await secSecret(ctx, ['import', p12, '-k', keychain, '-P', certPassword, '-T', '/usr/bin/codesign']);
-    await secSecret(ctx, ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain]);
-    await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain, ...previous]);
+    await importCertificate(ctx, keychain, p12, secretOf(ctx, game, settings, 'ios', `${kind}CertificatePassword`));
     const profile = join(dir, 'profile.mobileprovision');
     await writeFile(profile, Buffer.from(secretOf(ctx, game, settings, 'ios', `${kind}ProvisioningProfile`), 'base64'), { mode: 0o600 });
     const uuid = await profileUuid(ctx, profile);
@@ -130,25 +197,77 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
 
 async function macos(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const dir = await tempDir(ctx);
+  let keychain: string | null = null;
+  const cleanup = async (): Promise<void> => {
+    if (keychain !== null) await removeKeychain(ctx, keychain);
+    await rm(dir, { recursive: true, force: true });
+  };
   const write = async (name: string, key: string): Promise<string> => {
     const path = join(dir, name);
     await writeFile(path, Buffer.from(secretOf(ctx, game, settings, 'macos', key), 'base64'), { mode: 0o600 });
     return path;
   };
-  const credentials: Record<string, unknown> = {
-    'codesign/certificate_file': await write('cert.p12', 'certificate'),
-    'codesign/certificate_password': secretOf(ctx, game, settings, 'macos', 'certificatePassword'),
-  };
-  const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/provisioning_profile': await write('profile.provisionprofile', 'provisioningProfile') };
-  if (env !== 'DEV') {
+  try {
+    const p12 = await write('cert.p12', 'certificate');
+    const certPassword = secretOf(ctx, game, settings, 'macos', 'certificatePassword');
+    const team = settings.appleTeamId;
+    if (typeof team !== 'string' || team === '') throw new OgwError('game settings appleTeamId is missing');
     const notary = settings.macosNotary as { keyId?: string; issuerId?: string } | undefined;
-    if (!notary?.keyId || !notary.issuerId) throw new OgwError('game settings macosNotary is missing');
-    options['notarization/notarization'] = 2;
-    credentials['notarization/api_uuid'] = notary.issuerId;
-    credentials['notarization/api_key_id'] = notary.keyId;
-    credentials['notarization/api_key'] = await write('notary.p8', 'notaryApiKey');
+    if (env !== 'DEV' && (!notary?.keyId || !notary.issuerId)) throw new OgwError('game settings macosNotary is missing');
+    const credentials: Record<string, unknown> = { 'codesign/certificate_file': p12, 'codesign/certificate_password': certPassword };
+    // Godot embeds a provisioning profile only for App Store distribution: the macOS signing after the export embeds it
+    const profile = await write('profile.provisionprofile', 'provisioningProfile');
+    const notaryKey = env !== 'DEV' && notary?.keyId && notary.issuerId ? { key: await write('notary.p8', 'notaryApiKey'), keyId: notary.keyId, issuerId: notary.issuerId } : null;
+    keychain = join(dir, 'ogw.keychain-db');
+    await importCertificate(ctx, keychain, p12, certPassword);
+    const identity = await developerIdIdentity(ctx, keychain);
+    const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/apple_team_id': team, 'codesign/identity': identity };
+    return { env: {}, options, credentials, keychain, macos: { identity, profile, notary: notaryKey }, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
   }
-  return { env: {}, options, credentials, cleanup: () => rm(dir, { recursive: true, force: true }) };
+}
+
+const run = (ctx: Context, cmd: string, args: string[]): Promise<string> =>
+  runOk(cmd, args, { env: ctx.env, timeoutMs: LIMITS.programMs }).then((r) => r.stdout);
+
+/**
+ * The macOS signing after the export (`build` engines/godot.md `## signing`): the `.app` of `zip` gets the provisioning
+ * profile as `Contents/embedded.provisionprofile` and is signed again with `entitlements`, the identity of `keychain`
+ * and the hardened runtime; STG and PROD then notarize it and staple the ticket; then `zip` is written again.
+ */
+export async function signMacosApp(ctx: Context, zip: string, entitlements: string, keychain: string, macos: MacosSigning): Promise<void> {
+  const dir = await newPrivateTempFolder('ogw-macos-', ctx.env);
+  try {
+    const unpacked = join(dir, 'unpacked');
+    await run(ctx, 'ditto', ['-x', '-k', zip, unpacked]);
+    const name = (await readdir(unpacked)).find((n) => n.endsWith('.app'));
+    if (name === undefined) throw new OgwError(`${zip} has no .app at its root`);
+    const app = join(unpacked, name);
+    await copyFile(macos.profile, join(app, 'Contents', 'embedded.provisionprofile'));
+    await run(ctx, 'codesign', ['--force', '--timestamp', '--options', 'runtime', '--entitlements', entitlements, '--sign', macos.identity, '--keychain', keychain, app]);
+    if (macos.notary !== null) {
+      const submitted = join(dir, `${name.slice(0, -'.app'.length)}.zip`);
+      await run(ctx, 'ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, submitted]);
+      const { key, keyId, issuerId } = macos.notary;
+      const out = await run(ctx, 'xcrun', ['notarytool', 'submit', submitted, '--key', key, '--key-id', keyId, '--issuer', issuerId, '--wait', '--no-progress', '--output-format', 'json']);
+      let result: { id?: unknown; status?: unknown; message?: unknown } = {};
+      try {
+        result = JSON.parse(out) as typeof result;
+      } catch {
+        throw new OgwError(`xcrun notarytool submit gave no JSON: ${out.trim()}`);
+      }
+      if (result.status !== 'Accepted') {
+        throw new OgwError(`notarization of ${name} ended with status ${String(result.status)} (submission ${String(result.id)}): ${String(result.message)}`);
+      }
+      await run(ctx, 'xcrun', ['stapler', 'staple', app]);
+    }
+    await rm(zip, { force: true });
+    await run(ctx, 'ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, zip]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 const NONE: Signing = { env: {}, options: {}, credentials: {}, cleanup: () => Promise.resolve() };

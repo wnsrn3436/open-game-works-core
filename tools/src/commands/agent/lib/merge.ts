@@ -3,10 +3,11 @@ import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { formatJson, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
-import type { RunLog } from '../../../lib/agentctx.ts';
+import { runLogPath, type RunLog } from '../../../lib/agentctx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commonDir, currentBranch, deleteBranch, git, gitRaw, head, revParse, showFile, statusLines, worktreeRemove } from '../../../lib/git.ts';
 import { harnessRoot } from '../../../lib/paths.ts';
+import type { Role } from '../../../lib/settings.ts';
 import { partCovers, runCoreTypeCheck } from '../../code/api.ts';
 import { enginesOf } from '../../core/lib/impl.ts';
 import { isGeneratedPath, withCoreMain } from '../../core/lib/main-checkout.ts';
@@ -104,23 +105,23 @@ function rowMerge(path: string, merge: () => RowMerge): RowMerge {
   }
 }
 
-/** Row-wise merges of `resources.csv`, the translation files and the glossary the sub-agent changed. */
-async function mergeRows(sides: Sides): Promise<Set<string>> {
+/** Row-wise merges of `resources.csv`, the translation files and the glossary the sub-agent changed, of the paths `discarded` does not hold. */
+async function mergeRows(sides: Sides, discarded: ReadonlySet<string>): Promise<Set<string>> {
   const handled = new Set<string>();
   const [rb, ro, rt] = await bytesOf(sides, RESOURCES);
-  if (!sameBytes(rt, rb)) {
+  if (!sameBytes(rt, rb) && !discarded.has(RESOURCES)) {
     handled.add(RESOURCES);
     await writeMerged(sides.repo, RESOURCES, rowMerge(RESOURCES, () => (sameBytes(ro, rb) ? readable(text(rt)) : mergeResources(text(rb), text(ro), text(rt)))));
   }
   const translations = new Set([...(await translationPaths(sides.repo, sides.ours)), ...(await translationPaths(sides.repo, sides.theirs))]);
   for (const path of translations) {
     const [b, o, t] = await bytesOf(sides, path);
-    if (sameBytes(t, b)) continue;
+    if (sameBytes(t, b) || discarded.has(path)) continue;
     handled.add(path);
     await writeMerged(sides.repo, path, rowMerge(path, () => mergeTranslation(path, text(b), text(o), text(t))));
   }
   const [gb, go, gt] = await bytesOf(sides, GLOSSARY);
-  if (!sameBytes(gt, gb)) {
+  if (!sameBytes(gt, gb) && !discarded.has(GLOSSARY)) {
     handled.add(GLOSSARY);
     await writeMerged(sides.repo, GLOSSARY, rowMerge(GLOSSARY, () => mergeGlossary(text(gb), text(go), text(gt))));
   }
@@ -146,6 +147,36 @@ async function gameRepoAt(ctx: Context, name: string, root: string): Promise<Gam
   return { name, root, mainRoot: join(ws.games, name), commonDir: await commonDir(root, { env: ctx.env }), inWorktree: false };
 }
 
+/** The folders (ending in `/`) and files each game worktree role may change besides its result file and run log (ogw.md `## agent merge`). */
+const EDIT_SCOPE: Partial<Record<Role, readonly string[]>> = {
+  'server-hardening': ['server/'],
+  'client-hardening': ['client/'],
+  translation: ['data/translations/', 'data/glossary.csv'],
+  resource: ['resource/'],
+};
+
+/** Roles whose job is not merged when it changed a path outside its edit scope; the others' changes there are discarded. */
+const REFUSED_OUTSIDE_SCOPE: readonly Role[] = ['server-hardening', 'client-hardening'];
+
+/** The paths branch `agent/<id>` changed since `baseCommit` outside the edit scope of the job's role. */
+async function outsideScope(ctx: Context, checkout: string, baseCommit: string, id: string, meta: AgentMeta): Promise<string[]> {
+  const scope = EDIT_SCOPE[meta.role];
+  if (scope === undefined) return [];
+  const own = meta.outputRel === null ? [] : [meta.outputRel, runLogPath(meta.outputRel)];
+  const inScope = (path: string): boolean => own.includes(path) || scope.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
+  // a rename out of the scope is a deletion there and an addition elsewhere
+  const changed = await git(checkout, ['diff', '--name-only', '--no-renames', '-z', baseCommit, `agent/${id}`], { env: ctx.env });
+  return changed.split('\0').filter((path) => path !== '' && !inScope(path));
+}
+
+/** Gives paths of a merge in progress the contents of `ours`, whose merge resolves; a path `ours` lacks is removed. */
+async function keepOurs(repo: string, ours: string, paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    if ((await showFile(repo, ours, path)) !== null) await git(repo, ['checkout', ours, '--', path]);
+    else await git(repo, ['rm', '--quiet', '--force', '--ignore-unmatch', '--', path]);
+  }
+}
+
 async function mergeGameWorktree(ctx: Context, id: string, meta: AgentMeta): Promise<void> {
   if (meta.place.kind !== 'game-worktree') return;
   const { checkout, branch, baseCommit } = meta.place;
@@ -153,6 +184,8 @@ async function mergeGameWorktree(ctx: Context, id: string, meta: AgentMeta): Pro
   if ((await statusLines(checkout, { env: ctx.env })).some((line) => !line.startsWith('??'))) {
     throw new MergeStop('uncommitted changes', `${checkout} has uncommitted changes`);
   }
+  const outside = await outsideScope(ctx, checkout, baseCommit, id, meta);
+  if (outside.length > 0 && REFUSED_OUTSIDE_SCOPE.includes(meta.role)) throw new MergeStop('outside scope', outside.join(', '));
   const before = await untracked(checkout);
   const sides: Sides = { repo: checkout, base: baseCommit, ours: await head(checkout, { env: ctx.env }), theirs: `agent/${id}` };
   try {
@@ -161,7 +194,8 @@ async function mergeGameWorktree(ctx: Context, id: string, meta: AgentMeta): Pro
     if (merge.code !== 0 && (await revParse(checkout, 'MERGE_HEAD', { env: ctx.env })) === null) {
       throw new MergeStop('conflict', (merge.stderr.trim() || merge.stdout.trim()) || `git merge ended with code ${String(merge.code)}`);
     }
-    const handled = await mergeRows(sides);
+    await keepOurs(checkout, sides.ours, outside);
+    const handled = await mergeRows(sides, new Set(outside));
     const left = (await unmergedPaths(checkout)).filter((path) => !handled.has(path));
     if (left.length > 0) throw new MergeStop('conflict', left.join(', '));
     const data = await runData(ctx, await gameRepoAt(ctx, meta.game as string, checkout));
