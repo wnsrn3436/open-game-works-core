@@ -62,7 +62,9 @@
     "funIterations": 3,
     "judgeVotes": 2,
     "judgePanel": [],
-    "variants": 1
+    "variants": 1,
+    "playTimeLimitMs": 2700000,
+    "judgeTimeLimitMs": 3600000
   },
   "calibration": {
     "nullPairs": 3,

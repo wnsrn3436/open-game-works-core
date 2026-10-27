@@ -130,7 +130,7 @@ export interface HarnessSettings {
   webSmokeCpuThrottleRate: number;
   webSmokeBootTimeoutMs: number;
   loopStop: { repeatedDefect: number; oscillation: number; plateau: number; successJudges: number };
-  loop: { funIterations: number; judgeVotes: number; judgePanel: AgentSettings[]; variants: number };
+  loop: { funIterations: number; judgeVotes: number; judgePanel: AgentSettings[]; variants: number; playTimeLimitMs: number; judgeTimeLimitMs: number };
   calibration: { nullPairs: number; orderRuns: number; degradeLatencyMs: number };
   reviewRounds: number;
   codeCheck: { maxComplexity: number };

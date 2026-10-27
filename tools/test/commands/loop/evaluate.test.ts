@@ -278,7 +278,7 @@ beforeEach(() => {
 describe('judgeAgent', () => {
   it('gives each panel item two judges in a row, in turn, so that with alternating sides it judges both sides', () => {
     const panel = ['a', 'b', 'c'].map((model) => ({ cli: 'claude-code' as const, model, effort: 'high' }));
-    const settings = { loop: { funIterations: 3, judgeVotes: 8, judgePanel: panel, variants: 1 }, agents: {} };
+    const settings = { loop: { funIterations: 3, judgeVotes: 8, judgePanel: panel, variants: 1, playTimeLimitMs: 2700000, judgeTimeLimitMs: 3600000 }, agents: {} };
     expect([1, 2, 3, 4, 5, 6, 7, 8].map((k) => judgeAgent(settings, k).model)).toEqual(['a', 'a', 'b', 'b', 'c', 'c', 'a', 'a']);
     expect([1, 2, 3, 4].map((k) => alternateSide('A', k))).toEqual(['A', 'B', 'A', 'B']);
   });

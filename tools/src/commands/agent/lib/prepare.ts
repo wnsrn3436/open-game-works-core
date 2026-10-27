@@ -122,6 +122,13 @@ function baseMeta(role: Role, input: string, taskInput: string, request: AgentRe
   };
 }
 
+/** The time limit of an agent job: harness settings `loop.playTimeLimitMs` and `loop.judgeTimeLimitMs` for play and judge. */
+async function agentTimeLimitMs(ctx: Context, role: Role): Promise<number> {
+  if (role !== 'play' && role !== 'judge') return LIMITS.jobMs;
+  const { loop } = await ctx.settings();
+  return role === 'play' ? loop.playTimeLimitMs : loop.judgeTimeLimitMs;
+}
+
 async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<string> {
   const caller = await agentContext(ctx.env);
   return startJob({
@@ -129,7 +136,7 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
     cwd: ctx.cwd,
     command: 'agent',
     game: meta.game,
-    timeLimitMs: LIMITS.jobMs,
+    timeLimitMs: await agentTimeLimitMs(ctx, meta.role),
     agentJob: caller?.job.id ?? null,
     meta,
     env: ctx.env,

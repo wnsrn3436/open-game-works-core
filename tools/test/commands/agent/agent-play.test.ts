@@ -43,6 +43,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(call?.prompt).toContain(`- input: ${call?.cwd as string}/input/input.json`);
     expect(log(root, 'loop/r1', 'records/loops/r1/play-1-1-runs.json')).toBe('{\n  "runs": []\n}\n');
     expect((await readJob(id, ws.env)).meta).toMatchObject({ instances: ['inst1'], k: 1, output: final });
+    expect((await readJob(id, ws.env)).timeLimitMs).toBe(2_700_000);
     const second = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
     expect(second.waited.stdout).toBe(`${join(root, 'records/loops/r1/play-1-2.md')}\n`);
   });
@@ -64,6 +65,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(fake.calls()[0]?.prompt).not.toContain('- run:');
     expect(log(root, 'main', 'records/calibration/5/judge-null-1-1-runs.json')).toBe('{\n  "runs": []\n}\n');
     expect((await readJob(id, ws.env)).meta).toMatchObject({ run: null, iteration: null, k: null });
+    expect((await readJob(id, ws.env)).timeLimitMs).toBe(3_600_000);
     const outside = startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output: join(root, 'records/loops/x.md'), evidence } });
     await expect(outside).rejects.toThrow('a calibration result file is a .md file under');
     await expect(startAgentJob(ctx, { role: 'play', game: 'g', input, calibration: { output, evidence } })).rejects.toThrow('a calibration place is given only to role judge');

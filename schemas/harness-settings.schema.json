@@ -215,7 +215,9 @@
         "funIterations",
         "judgeVotes",
         "judgePanel",
-        "variants"
+        "variants",
+        "playTimeLimitMs",
+        "judgeTimeLimitMs"
       ],
       "properties": {
         "funIterations": {
@@ -239,6 +241,16 @@
           "description": "The number of variant agents that `ogw loop variants` starts in a fun iteration. 1: the lead agent calls one content agent",
           "type": "integer",
           "minimum": 1
+        },
+        "playTimeLimitMs": {
+          "description": "The time limit of one play agent job. A job that reaches it is stopped and counts as failed",
+          "type": "integer",
+          "minimum": 60000
+        },
+        "judgeTimeLimitMs": {
+          "description": "The time limit of one judge agent job, step 4, success confirmation, variant and calibration judges alike. A job that reaches it is stopped and counts as failed",
+          "type": "integer",
+          "minimum": 60000
         }
       }
     },
