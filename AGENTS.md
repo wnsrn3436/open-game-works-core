@@ -217,7 +217,7 @@ The branches of a game repo are run as below.
 | `create contract tool` | Makes the contract tool and the data tool. The two tools are released with the same version as core |
 | `create server core` | Makes the server core and releases it |
 | `create client core: <engine>` | Makes the client core of that engine from the spec and releases it |
-| `update env` | Checks this host, and gets local models and programs and runs them. When they do not match harness settings, proposes a revision to the human |
+| `update env` | Checks this host, and gets local models and programs and runs them. When they do not match harness settings, proposes a revision to the human. Asks the human for the preference settings |
 | `setup game: <game> <request>` | Creates the game repo and game settings and saves the request. Fills the required items of game settings and the items that become required by condition, gets the reference game and gameplay video, gets the banned word list, and tells the items that use the default and the resource types that this host cannot make |
 | `create game: <game> [<request>]` | Makes a game that finished `setup game` through the loop. `<request>` is a request added to the saved request |
 | `update game: <game> <request>` | Edits a made game through the loop. Includes the human's feedback and PROD problem fixes |
@@ -302,7 +302,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 
 | skill | reader | contents |
 |---|---|---|
-| `host-env` | lead agent of `update env` | host check, installing local models and programs, measurement, harness settings revision proposal |
+| `host-env` | lead agent of `update env` | host check, installing local models and programs, measurement, harness settings revision proposal, preference settings |
 | `game-setup` | lead agent of `setup game` | making the game repo and game settings, saving the request, reference game and gameplay video, banned word list, host capability check |
 | `game-loop` | lead agent of `create game`, `update game` and `build`, lead agent of `update env` (only `performance.md`), content agent, resource sub-agent, play agent, judge agent (these four only `instance.md`) | work branch, raising the core version, sub-agent calls, runner, instance commands, running automated checks, measurement, loop iteration record, loop stop judgement, loop end record, report, PROD problem reproduction |
 | `game-design` | content agent, lead agent of `update core` | brief, design doc, play guide, core proposal, assumptions in the loop, criteria for deciding without asking the human |
