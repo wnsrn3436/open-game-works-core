@@ -8,7 +8,7 @@ import { constraintViolations, implementedConstraints, requiredTargets, testReco
 import { addTestRecord, mergedResults, SCREEN_LOCKED_SKIP } from '../../../src/commands/core/lib/test-records.ts';
 import { baseProtoBreaks } from '../../../src/commands/core/lib/base-proto-compat.ts';
 import { buildCoreSpec } from '../../../src/commands/core/spec-api.ts';
-import { clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
+import { changedSinceDone, clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
 import { checkoutLock } from '../../../src/lib/git.ts';
 import { withWriterLock } from '../../../src/lib/rwlock.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
@@ -17,7 +17,7 @@ import { writeImpl } from './impl-fixture.ts';
 
 vi.mock('../../../src/commands/core/spec-api.ts', () => ({ buildCoreSpec: vi.fn(), writeCoreSpec: vi.fn() }));
 vi.mock('../../../src/commands/code/api.ts', () => ({ runCodeCheck: vi.fn() }));
-vi.mock('../../../src/commands/review/api.ts', () => ({ lastReviewResults: vi.fn(), clearReviews: vi.fn(() => Promise.resolve([] as string[])) }));
+vi.mock('../../../src/commands/review/api.ts', () => ({ lastReviewResults: vi.fn(), changedSinceDone: vi.fn(), clearReviews: vi.fn(() => Promise.resolve([] as string[])) }));
 vi.mock('../../../src/commands/core/lib/undefined.ts', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isServerCoreTest: (rel: string) => rel.includes('/tests/'),
@@ -80,6 +80,8 @@ function remoteEnv(ws: TestWorkspace): NodeJS.ProcessEnv {
 async function setup(): Promise<{ ws: TestWorkspace; env: NodeJS.ProcessEnv; gh: ReturnType<typeof fakeGh> }> {
   const ws = makeWorkspace();
   writeImpl(ws.coreImpl);
+  // the tag of the release below the versions these tests release, which the review targets are counted from
+  sh(ws.coreImpl, 'git', ['tag', 'v1.1.0']);
   await recordAllPass(ws.coreImpl);
   const gh = fakeGh(ws, { 'v1.1.0': makeReleaseDir(join(ws.root, 'r110'), '1.1.0', { 'a.json': '1' }) });
   vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), errors: [] });
@@ -89,6 +91,7 @@ async function setup(): Promise<{ ws: TestWorkspace; env: NodeJS.ProcessEnv; gh:
 beforeEach(() => {
   vi.mocked(runCodeCheck).mockReset().mockResolvedValue([{ name: 'type check', result: 'pass', failures: [] }]);
   vi.mocked(lastReviewResults).mockReset().mockResolvedValue(new Map([['UICore', 'done']]));
+  vi.mocked(changedSinceDone).mockReset().mockResolvedValue(new Map());
   vi.mocked(clearReviews).mockClear();
   vi.mocked(baseProtoBreaks).mockReset().mockResolvedValue([]);
 });
@@ -127,7 +130,7 @@ describe('ogw core release', () => {
 
   it('lists every violated condition and changes nothing', async () => {
     const { ws, env, gh } = await setup();
-    writeFiles(ws.coreImpl, { 'settings/core-settings.json': { 'UICore.fadeMs': 200, 'LogCore.maxLines': 300 }, 'core-spec/notes.md': 'x' });
+    writeFiles(ws.coreImpl, { 'settings/core-settings.json': { 'UICore.fadeMs': 200, 'LogCore.maxLines': 300 }, 'core-spec/notes.md': 'x', 'server/core/routing/routing.ts': 'export const x = 1;\n' });
     sh(ws.coreImpl, 'rm', ['-r', 'client/godot/plugins/ogw-secure-storage/dist/linux']);
     commitAll(ws.coreImpl, 'change');
     await addTestRecord(ws.coreImpl, { commit: sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim(), target: 'godot', modules: { UICore: 'pass', LogCore: 'skipped' }, recordedAt: Date.now() });
@@ -136,7 +139,8 @@ describe('ogw core release', () => {
     modules.set('NewCore', {});
     modules.delete('routing');
     vi.mocked(buildCoreSpec).mockResolvedValue({ modules, settingTypes: new Map(), errors: ['skills/x.md:3: bad dependency line'] });
-    vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'fix'], ['data-tool', null]]));
+    vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'fix'], ['data-tool', null], ['contract-tool', 'running']]));
+    vi.mocked(changedSinceDone).mockResolvedValue(new Map([['UICore', 2]]));
     vi.mocked(runCodeCheck).mockResolvedValue([{ name: 'lint', result: 'fail', failures: ['a.gd:1 x', 'b.gd:2 y'] }, { name: 'secret', result: 'fail', failures: [] }]);
     vi.mocked(baseProtoBreaks).mockResolvedValue(['CoreError.X removed']);
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
@@ -157,6 +161,9 @@ describe('ogw core release', () => {
       'core-spec/routing.json is not a module',
       'review LogCore: last round result is fix',
       'review data-tool: last round result is none',
+      'review contract-tool: last round result is running',
+      'review UICore: changed since its done round 2; run ogw review run core UICore --reopen',
+      'review routing: changed since v1.1.0 and has no review state; run ogw review run core routing --since v1.1.0',
       'ogw code check core: lint fail\n  a.gd:1 x\n  b.gd:2 y',
       'ogw code check core: secret fail',
       'settings constraint UICore.fadeMs × 2 ≤ LogCore.maxLines: 200 × 2 > 300',
@@ -164,7 +171,7 @@ describe('ogw core release', () => {
       'base proto breaks backward compatibility with 1.1.0 but the major version is not higher:\n  CoreError.X removed',
     ]);
     expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
-    expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('');
+    expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
     expect(gh.created()).toEqual({});
     expect(clearReviews).not.toHaveBeenCalled();
 
@@ -197,6 +204,24 @@ describe('ogw core release', () => {
     expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nharness tag core-v1.2.0 at ${harnessHead}\nreview debt routing: 2\nreview debt spec UICore: 1\n`);
   });
 
+  it('refuses a review target of the changes since the release below without review state, and a missing tag of that release', async () => {
+    const { ws, env } = await setup();
+    // the module class of LogCore is its public face: UICore, which depends on it, is a review target too
+    writeFiles(ws.coreImpl, { 'client/godot/core/log_core/log_core.gd': 'class_name LogCore\nvar x = 1\n', 'tools/data-tool/src/a.ts': 'export {};\n' });
+    commitAll(ws.coreImpl, 'change');
+    await recordAllPass(ws.coreImpl);
+    const violations = async (): Promise<string[]> => (JSON.parse((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES, '--json'], { env })).stdout) as { data: { violations: string[] } }).data.violations;
+    expect(await violations()).toEqual([
+      'review LogCore: changed since v1.1.0 and has no review state; run ogw review run core LogCore --since v1.1.0',
+      'review data-tool: changed since v1.1.0 and has no review state; run ogw review run core data-tool --since v1.1.0',
+    ]);
+    vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'done'], ['data-tool', 'done']]));
+    sh(ws.coreImpl, 'git', ['tag', '--delete', 'v1.1.0']);
+    expect(await violations()).toEqual(['review targets since v1.1.0: tag v1.1.0 is not in open-game-works-core-impl/']);
+    sh(ws.coreImpl, 'git', ['tag', 'v1.1.0', 'HEAD~1']);
+    expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).code).toBe(0);
+  });
+
   it('refuses a release without a notes file, with a missing one or with an empty one, before it checks anything', async () => {
     const { ws, env, gh } = await setup();
     const empty = join(ws.root, 'empty.md');
@@ -205,7 +230,7 @@ describe('ogw core release', () => {
     expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', join(ws.root, 'none.md')], { env })).stderr).toContain('cannot read the release notes file');
     expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', empty], { env })).stderr).toContain(`the release notes file ${empty} is empty`);
     expect(gh.calls()).toEqual([]);
-    expect(sh(ws.coreImpl, 'git', ['tag']).trim()).toBe('');
+    expect(sh(ws.coreImpl, 'git', ['tag']).trim()).toBe('v1.1.0');
   });
 
   it('refuses a release while the harness has uncommitted spec changes or already has the harness tag', async () => {
@@ -229,6 +254,8 @@ describe('ogw core release', () => {
     sh(ws.coreImpl, 'git', ['checkout', '--quiet', 'main']);
     sh(ws.coreImpl, 'git', ['tag', 'v1.2.0']);
     expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).stderr).toContain('tag v1.2.0 already exists in open-game-works-core-impl/');
+    // a release that this checkout has no tag of
+    sh(ws.coreImpl, 'git', ['tag', '--delete', 'v1.1.0']);
     expect((await ogw(ws, ['core', 'release', '1.1.0', '--notes', NOTES], { env })).stderr).toContain('release v1.1.0 already exists in wnsrn3436/open-game-works-core-impl');
   });
 
@@ -253,7 +280,7 @@ describe('ogw core release', () => {
     const moved = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
     expect(run.stderr).toContain(`open-game-works-core-impl/ main moved from ${before} to ${moved} during the release`);
     expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%s']).trim()).toBe('merge');
-    expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('');
+    expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
     expect(gh.created()).toEqual({});
   });
 
@@ -283,7 +310,7 @@ describe('ogw core release', () => {
       const moved = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
       expect(run.stderr).toContain(`open-game-works-core-impl/ main moved from ${before} to ${moved} during the release`);
       expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%s']).trim()).toBe('merge');
-      expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('');
+      expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
       expect(gh.created()).toEqual({});
     } finally {
       hook.onStageTool = undefined;
@@ -316,7 +343,7 @@ describe('ogw core release', () => {
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('gh release create v1.2.0');
     expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
-    expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('');
+    expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
     expect(existsSync(join(ws.coreImpl, 'client/godot/engine.json'))).toBe(true);
     expect(readFileSync(join(ws.coreImpl, 'client/godot/engine.json'), 'utf8')).toContain('"url": ""');
     expect(clearReviews).not.toHaveBeenCalled();
@@ -391,6 +418,22 @@ describe('release condition parts', () => {
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot --web', modules: { LogCore: 'skipped', UICore: 'pass' }, skips: { LogCore: 'other' }, recordedAt: 1 });
     expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual(['core test godot --web: LogCore is skipped at c1']);
     expect(await untestedRenderPasses(ws.coreImpl, 'c1', modules)).toEqual([`core test godot: UICore: ${SCREEN_LOCKED_SKIP}`]);
+  });
+
+  it('keeps an earlier fail of a module over a render pass a locked screen left out, and lets a later pass replace both', async () => {
+    const ws = makeWorkspace();
+    writeImpl(ws.coreImpl);
+    const modules = await readCoreSpecDir(ws.coreImpl);
+    const pass = (names: string[]) => Object.fromEntries(names.map((n) => [n, 'pass' as const]));
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'server', modules: pass(['routing']), recordedAt: 1 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'tools', modules: pass(['contract-tool', 'data-tool']), recordedAt: 1 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot --web', modules: pass(['LogCore', 'UICore']), recordedAt: 1 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { LogCore: 'pass', UICore: 'fail' }, recordedAt: 2 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { UICore: 'skipped' }, skips: { UICore: SCREEN_LOCKED_SKIP }, recordedAt: 3 });
+    expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual(['core test godot: UICore is fail at c1']);
+    expect(await untestedRenderPasses(ws.coreImpl, 'c1', modules)).toEqual([]);
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { UICore: 'pass' }, recordedAt: 4 });
+    expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual([]);
   });
 
   it('checks only settings constraints between modules of a side with an implementation', async () => {

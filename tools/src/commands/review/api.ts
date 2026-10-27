@@ -6,20 +6,38 @@ import { branchExists, gitRaw } from '../../lib/git.ts';
 import { listJobs } from '../../lib/jobs.ts';
 import { privateTempDir } from '../../lib/secret-files.ts';
 import type { AgentMeta } from '../agent/lib/meta.ts';
+import { changedSinceRound } from './lib/next.ts';
 import { readState, removeReviewFile, removeToolReviewFiles, reviewRoot, listTargets, type ReviewResult } from './lib/state.ts';
 
 export type { ReviewResult } from './lib/state.ts';
 
-/** Result of the last judged round of each review target that has review state. */
-export async function lastReviewResults(ctx: Context, side: 'core' | 'tool'): Promise<Map<string, ReviewResult | null>> {
+/**
+ * Result of the last round of each review target that has review state: `running` before that round is judged, null
+ * when the state has no round.
+ */
+export async function lastReviewResults(ctx: Context, side: 'core' | 'tool'): Promise<Map<string, ReviewResult | 'running' | null>> {
   const root = await reviewRoot(ctx, side);
-  const results = new Map<string, ReviewResult | null>();
+  const results = new Map<string, ReviewResult | 'running' | null>();
   for (const target of await listTargets(root)) {
-    const state = await readState(join(root, target), side, target);
-    const judged = state.rounds.filter((round) => round.judged);
-    results.set(target, judged.at(-1)?.result ?? null);
+    const last = (await readState(join(root, target), side, target)).rounds.at(-1);
+    results.set(target, last === undefined ? null : last.judged ? last.result : 'running');
   }
   return results;
+}
+
+/**
+ * The review targets whose last round is `done` and whose paths changed since that round started, the change that
+ * `--reopen` takes (`changedSinceRound`), with that round.
+ */
+export async function changedSinceDone(ctx: Context, side: 'core' | 'tool'): Promise<Map<string, number>> {
+  const root = await reviewRoot(ctx, side);
+  const changed = new Map<string, number>();
+  for (const target of await listTargets(root)) {
+    const state = await readState(join(root, target), side, target);
+    const last = state.rounds.at(-1);
+    if (last?.judged === true && last.result === 'done' && (await changedSinceRound(ctx, state, last, '--reopen'))) changed.set(target, last.round);
+  }
+  return changed;
 }
 
 /**
