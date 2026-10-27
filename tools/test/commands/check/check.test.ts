@@ -18,6 +18,7 @@ import { git, head } from '../../../src/lib/git.ts';
 import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { workspaceFrom, loadHarnessSettings } from '../../../src/lib/settings.ts';
 import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
+import { fakeAgentJob } from '../instance/agents.ts';
 import { doneState, fakeAutomation, ok } from './helpers.ts';
 
 vi.mock('../../../src/commands/instance/automation.ts', () => ({
@@ -163,6 +164,19 @@ describe('ogw check usage', () => {
     expect((await ogw(ws, ['check', 'g', 'x', '--static'])).stderr).toContain('usage: ogw check <game>');
     expect((await ogw(ws, ['check', 'g', 'a', 'b', '--regression'])).stderr).toContain('usage: ogw check <game>');
     expect((await ogw(ws, ['check', 'g', '--static', '--db', 'sqlite'])).stderr).toContain('--db takes only postgresql: sqlite');
+    expect(runData).not.toHaveBeenCalled();
+  });
+
+  it('refuses --loop from an agent that ogw agent started', async () => {
+    setupGame(ws);
+    const remove = await fakeAgentJob(ws.env, 'agentcontent1', { role: 'content', cliPid: process.ppid });
+    try {
+      const run = await ogw(ws, ['check', 'g', '--loop']);
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain('ogw check --loop is for the lead agent, not the content agent');
+    } finally {
+      remove();
+    }
     expect(runData).not.toHaveBeenCalled();
   });
 

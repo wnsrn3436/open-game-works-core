@@ -62,9 +62,22 @@ async function lastCheck(game: GameRepo, run: RunState): Promise<{ iteration: nu
 }
 
 /**
- * The completeness check results of the merged iteration when its commit is not the commit of the last check file.
- * With the work synced after that commit, the no placeholder result is left out: `## failures` checks the merged tree.
+ * The completeness checks to show for a check file. With the work synced after the commit to merge, the no placeholder
+ * result of that commit is left out: `## failures` checks the merged tree.
  */
+function shownChecks(run: RunState, commit: string): readonly string[] {
+  const prepared = loopData(run).prepareMerge;
+  const synced = prepared?.withSyncedWork === true && prepared.commit === commit;
+  return COMPLETENESS_CHECKS.filter((name) => !(synced && name === 'no placeholder'));
+}
+
+/** True when `ogw loop prepare-merge` merged the work synced after the commit to merge. */
+function withSyncedWork(run: RunState): boolean {
+  const prepared = loopData(run).prepareMerge;
+  return prepared?.withSyncedWork === true && prepared.commit !== null;
+}
+
+/** The completeness check results of the merged iteration when its commit is not the commit of the last check file. */
 async function mergedCheckLines(game: GameRepo, run: RunState, lastCommit: string | null): Promise<string[]> {
   const prepared = loopData(run).prepareMerge;
   if (!prepared || prepared.commit === null || prepared.commit === lastCommit) return [];
@@ -72,11 +85,8 @@ async function mergedCheckLines(game: GameRepo, run: RunState, lastCommit: strin
   if (record === null) return ['merged iteration: none'];
   const lines = [`merged iteration: ${String(record.iteration)} (${record.path})`];
   const check = await readRunJson<CheckFile>(game, run, `check-${String(record.iteration)}.json`);
-  const synced = prepared.withSyncedWork === true;
-  const names = COMPLETENESS_CHECKS.filter((name) => !(synced && name === 'no placeholder'));
-  if (check) lines.push(...names.map((name) => `merged iteration ${name}: ${checkResult(check, name)}`));
+  if (check) lines.push(...shownChecks(run, prepared.commit).map((name) => `merged iteration ${name}: ${checkResult(check, name)}`));
   else lines.push('merged iteration completeness check: none');
-  if (synced) lines.push('merged tree not checked as a whole');
   return lines;
 }
 
@@ -88,11 +98,12 @@ async function resultSection(game: GameRepo, run: RunState): Promise<string> {
   const check = await lastCheck(game, run);
   if (check) {
     lines.push(`completeness check of iteration ${String(check.iteration)} (${check.file.commit})`);
-    lines.push(...COMPLETENESS_CHECKS.map((name) => `${name}: ${checkResult(check.file, name)}`));
+    lines.push(...shownChecks(run, check.file.commit).map((name) => `${name}: ${checkResult(check.file, name)}`));
   } else {
     lines.push('completeness check: none');
   }
   lines.push(...(await mergedCheckLines(game, run, check?.file.commit ?? null)));
+  if (withSyncedWork(run)) lines.push('merged tree not checked as a whole');
   return bullets(lines);
 }
 

@@ -13,6 +13,7 @@ import type { Evidence } from './lib/evidence.ts';
 import { regressionTargets, regressionTest } from './lib/regression.ts';
 import { staticCheck } from './static-api.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
+import { agentContext } from '../../lib/agentctx.ts';
 
 const USAGE = 'ogw check <game> [--loop|--regression [<path>]|--static|--placeholder] [--db postgresql]';
 const MODES = ['loop', 'regression', 'static', 'placeholder'] as const;
@@ -111,6 +112,9 @@ async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult>
   const [name, path, ...rest] = args.positionals;
   const mode = modeOf(args);
   if (name === undefined || rest.length > 0 || (path !== undefined && mode !== 'regression')) throw new OgwError(`usage: ${USAGE}`);
+  // the iteration result file is the lead agent's: an agent `ogw agent` started gets the other modes only
+  const agent = mode === 'loop' ? await agentContext(ctx.env) : null;
+  if (agent) throw new OgwError(`ogw check --loop is for the lead agent, not the ${agent.meta.role} agent: run --regression or --static`);
   const db = dbOf(args);
   const game = await ctx.game(name);
   const settings = await gameSettings(ctx, game);
