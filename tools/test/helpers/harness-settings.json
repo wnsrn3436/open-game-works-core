@@ -63,6 +63,11 @@
     "judgePanel": [],
     "variants": 1
   },
+  "calibration": {
+    "nullPairs": 3,
+    "orderRuns": 2,
+    "degradeLatencyMs": 150
+  },
   "reviewRounds": 3,
   "codeCheck": {
     "maxComplexity": 15

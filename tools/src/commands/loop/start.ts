@@ -14,6 +14,7 @@ import { gameSettings } from './lib/run.ts';
 import { ART_DIRECTION_FILE, NAME_FILE, REFERENCE_FILE, SETUP_REQUEST, artDirectionGaps, readGameNames, requireReference } from './lib/setup.ts';
 import { requireSupportedCore } from '../core/lib/harness-core.ts';
 import { gameSettingsAt } from '../build/lib/buildrun.ts';
+import { refuseWhileCalibrating } from '../judge/api.ts';
 
 const USAGE = 'ogw loop start <game> --command <create|update>';
 
@@ -103,6 +104,8 @@ export const loopStart: CommandDef = {
     await requireSupportedCore(ctx, game.name, String((await gameSettingsAt(game.root, 'main', ctx.env)).coreVersion));
     const changes = await statusLines(game.root, { env: ctx.env });
     if (changes.length > 0) throw new OgwError(`game repo checkout has changes:\n${changes.join('\n')}`, 1, { changes });
+    // judge calibration commits on main and takes instance slots: a run does not start while it runs
+    await refuseWhileCalibrating(ctx, game.name);
     const tokenMissing = missingLoginToken(ctx, await ctx.settings());
     if (tokenMissing !== null) throw new OgwError(tokenMissing);
     const origin = (await currentBranch(game.root, { env: ctx.env })) ?? (await head(game.root, { env: ctx.env }));

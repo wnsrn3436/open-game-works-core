@@ -2,7 +2,9 @@ import type { Context } from '../../lib/command.ts';
 import type { AgentSettings, Role } from '../../lib/settings.ts';
 import { mergeAgents, type MergeFailure } from './lib/merge.ts';
 import { outcomeOf } from './lib/outcome.ts';
-import { startAgent } from './lib/prepare.ts';
+import { startAgent, type CalibrationPlace } from './lib/prepare.ts';
+
+export type { CalibrationPlace } from './lib/prepare.ts';
 import { retryAgent } from './lib/retry.ts';
 
 export { agentCliCommand, agentSettings, sandboxed } from './lib/cli-command.ts';
@@ -16,6 +18,8 @@ export interface AgentJobOptions {
   modules?: string[];
   /** The agent CLI, model and effort instead of harness settings `agents.<role>`. */
   agent?: AgentSettings;
+  /** judge of `ogw judge calibrate`: no run; the result file and the evidence folder under the calibration folders. */
+  calibration?: CalibrationPlace;
 }
 
 /** Starts `ogw agent <role> ... --background` and returns the job id. */

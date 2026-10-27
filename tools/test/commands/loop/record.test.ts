@@ -12,6 +12,9 @@ beforeEach(() => {
 
 const R = 'records/loops/update-1';
 
+/** The judge calibration line of `## human` for a game without a calibration report on main. */
+const NEVER = '- judge calibration: never run (ogw judge calibrate g; labels: 0, added with ogw judge label g)';
+
 function checkFile(commitSha: string): object {
   return {
     commit: commitSha,
@@ -778,7 +781,7 @@ describe('ogw loop end-record', () => {
         `- completeness check of iteration 1 (${sha})`, '- no blocker: pass', '- performance: unknown', '- no placeholder: unknown', '- full flow: unknown', '- UI quality: unknown', '',
         '## failures', '', '- placeholder icon/z', `- open defect open-one (found on ${sha}): broken`, '- not given again /r/1.md: boom', '',
         '## human', '', '- needs human: speed (decision: d)', '- core proposal: records/core-proposals/9-x.md', '- license unknown: icon/a',
-        '- skipped core version: 1.3.0', '- banned word list missing: ko', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
+        '- skipped core version: 1.3.0', '- banned word list missing: ko', '- judge calibration: never run (ogw judge calibrate g; labels: 0, added with ogw judge label g)', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
       ].join('\n'),
     );
     expect(git(g.root, 'log', '-1', '--name-only', '--format=')).toBe(`${R}/end.md`);
@@ -839,7 +842,7 @@ describe('ogw loop end-record', () => {
       + `- performance: unknown\n- no placeholder: unknown\n- full flow: unknown\n- UI quality: unknown\n- merged iteration: 2 (${R}/iteration-2.md)\n${merged}\n`,
     );
     expect(text).toContain(`## failures\n\n- defects at the merge commit: the defect table of ${R}/iteration-2.md\n- not given again /r/2.md: boom\n- not merged jobx: merge of job jobx failed: no worktree\n\n`);
-    expect(text).toContain('## human\n\n- core proposal: records/core-proposals/2-new.md\n- banned word list missing: ja\n');
+    expect(text).toContain(`## human\n\n- core proposal: records/core-proposals/2-new.md\n- banned word list missing: ja\n${NEVER}\n`);
     // with the work synced after the merged commit, its no placeholder result does not hold for the merged tree
     await setRun(g, (run) => {
       (run.data.loop as { prepareMerge: object }).prepareMerge = { commit: c2, withSyncedWork: true, mainHead: 'm', baseCommit: 'm', created: true };
@@ -873,9 +876,37 @@ describe('ogw loop end-record', () => {
       expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
       return read(g.root, `${R}/end.md`).split('## human\n\n')[1] ?? '';
     };
-    expect(await human({ commit: chosen, mainHead: 'm', baseCommit: 'm', created: true })).toBe('- temporary resource (the next update game makes it again): icon/t\n');
-    expect(await human({ commit: null, mainHead: 'm', baseCommit: 'm', created: true })).toBe('none\n');
-    expect(await human(null)).toBe('none\n');
+    expect(await human({ commit: chosen, mainHead: 'm', baseCommit: 'm', created: true })).toBe(`- temporary resource (the next update game makes it again): icon/t\n${NEVER}\n`);
+    expect(await human({ commit: null, mainHead: 'm', baseCommit: 'm', created: true })).toBe(`${NEVER}\n`);
+    expect(await human(null)).toBe(`${NEVER}\n`);
+  });
+
+  it('writes the rates and recommendations of the last judge calibration report on main, or the label count without one', async () => {
+    const g = setupGame();
+    write(g.root, 'records/calibration/labels.json', [{ A: 'a', B: 'b', answers: { 'game feel': 'A' }, note: '', at: 1 }]);
+    commit(g.root, 'label');
+    await openLoopRun(g, { iteration: 1 });
+    // a report on the work branch only is not on main
+    write(g.root, 'records/calibration/9.md', '## rates\n\n- false win rate: 0.00 (0 of 9)\n');
+    commit(g.root, 'not on main');
+    const human = async (): Promise<string> => {
+      await setRun(g, (run) => {
+        run.data.loop = { tasks: [], handled: [], merges: [], verdict: { iteration: 1, reason: 'limit reached', evidence: [] }, prepareMerge: null };
+      });
+      expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
+      return read(g.root, `${R}/end.md`).split('## human\n\n')[1] ?? '';
+    };
+    expect(await human()).toBe('- judge calibration: never run (ogw judge calibrate g; labels: 1, added with ogw judge label g)\n');
+    const rates = '## rates\n\n- false win rate: 0.33 (1 of 3)\n- order consistency: none\n- sensitivity: no\n- human agreement: none\n- labels: 1\n';
+    git(g.root, 'checkout', '--quiet', 'main');
+    write(g.root, 'records/calibration/100.md', '## rates\n\n- false win rate: 0.00 (0 of 3)\n\n## recommendations\n\nnone\n');
+    write(g.root, 'records/calibration/200.md', `${rates}\n## recommendations\n\n- raise loop.judgeVotes to 4 (false win rate 0.33 (1 of 3))\n\n## pairs\n\nnone\n`);
+    commit(g.root, 'calibration');
+    git(g.root, 'checkout', '--quiet', 'loop/update-1');
+    expect(await human()).toBe(
+      '- judge calibration: records/calibration/200.md: false win rate: 0.33 (1 of 3); order consistency: none; sensitivity: no; human agreement: none; labels: 1\n'
+      + '- judge calibration recommendation: raise loop.judgeVotes to 4 (false win rate 0.33 (1 of 3))\n',
+    );
   });
 
   it('writes why nothing was merged', async () => {
@@ -898,7 +929,7 @@ describe('ogw loop end-record', () => {
       const text = read(g.root, `${R}/end.md`);
       expect(text).toContain(expected);
       expect(text).toContain('## reason\n\nlimit reached\n\n## result\n\n- merge commit: none\n- vs baseline: none\n');
-      expect(text).toContain('- last judge result: none\n- completeness check: none\n\n## failures\n\nnone\n\n## human\n\nnone\n');
+      expect(text).toContain(`- last judge result: none\n- completeness check: none\n\n## failures\n\nnone\n\n## human\n\n${NEVER}\n`);
     }
   });
 });

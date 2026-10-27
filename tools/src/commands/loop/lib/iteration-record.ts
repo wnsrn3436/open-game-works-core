@@ -128,6 +128,8 @@ export interface ParsedRecord {
   iteration: number;
   path: string;
   commit: string | null;
+  /** The `- baseline:` commit; null when it is `none` or missing. */
+  baseline: string | null;
   /** The candidate iteration of a confirmation iteration; null for any other iteration. */
   confirms: number | null;
   /** `completeness` when `## commit` has no `- kind:` line. */
@@ -221,6 +223,7 @@ function parseChecks(text: string): Map<string, string> {
 export function parseIterationRecord(text: string, iteration: number, path: string): ParsedRecord {
   const commitLines = section(text, 'commit') ?? [];
   const commit = bullet(commitLines, 'instance');
+  const baseline = bullet(commitLines, 'baseline');
   const checks = parseChecks(text);
   const confirms = bullet(commitLines, 'confirms');
   const play = parseTable(section(text, 'play') ?? []);
@@ -232,6 +235,7 @@ export function parseIterationRecord(text: string, iteration: number, path: stri
     iteration,
     path,
     commit: commit === null || commit === 'none' ? null : commit,
+    baseline: baseline === null || baseline === 'none' ? null : baseline,
     confirms: confirms === null || confirms === 'none' || !/^[0-9]+$/.test(confirms) ? null : Number(confirms),
     kind,
     checks,

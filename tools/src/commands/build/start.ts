@@ -21,6 +21,7 @@ import { buildStageMissingErrors } from '../settings/api.ts';
 import { requireHarnessCore } from '../core/lib/harness-core.ts';
 import { coreRelease } from '../core/api.ts';
 import { nativePluginProblems, releaseModules } from './lib/native-plugins.ts';
+import { refuseWhileCalibrating } from '../judge/api.ts';
 
 export const PLATFORMS = ['android', 'ios', 'web', 'windows', 'macos', 'linux'];
 
@@ -28,6 +29,7 @@ async function preconditions(ctx: Context, game: GameRepo): Promise<void> {
   if ((await ctx.settings()).useLocalCore) throw new OgwError('harness settings useLocalCore is true');
   const run = await openRun(game);
   if (run) throw new OgwError(`open run: ${run.name}`, 1, { run: run.name });
+  await refuseWhileCalibrating(ctx, game.name);
   const changes = await statusLines(game.root, { env: ctx.env });
   if (changes.length > 0) throw new OgwError(`the checkout has changes:\n${changes.join('\n')}`, 1, { changes });
   // build step 4 runs the judge agents, which need every gameplay video; fail before hardening starts

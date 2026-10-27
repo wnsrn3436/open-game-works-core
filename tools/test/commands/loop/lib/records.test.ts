@@ -112,6 +112,7 @@ describe('iteration record', () => {
     expect(text).toContain('#### loser better\n\nnone');
     const parsed = parseIterationRecord(text, 1, 'p1');
     expect(parsed.commit).toBe('c1');
+    expect(parsed.baseline).toBe(DATA.baseline);
     expect(parsed.checks.get('full flow')).toBe('pass');
     expect(parsed.judges).toEqual([
       { result: 'records/loops/r/judge-1-1.md', kind: 'main', status: 'done', vsBaseline: null, vsReference: 'pass' },
@@ -157,7 +158,7 @@ type Vs = 'better' | 'worse' | 'indistinguishable' | null;
 function record(iteration: number, commit: string | null, gate: boolean, vsBaseline: Vs | undefined): ParsedRecord {
   const checks = new Map<string, string>(['regression test', 'static check', 'no blocker', 'full flow'].map((n) => [n, gate ? 'pass' : 'fail']));
   const judges: ParsedRecord['judges'] = vsBaseline === undefined ? null : [{ result: 'j', kind: 'main', status: 'done', vsBaseline: null, vsReference: 'pass' }];
-  return { iteration, path: `p${String(iteration)}`, commit, confirms: null, kind: 'completeness', checks, judges, vsBaseline: vsBaseline ?? null, vsReference: 'pass', playBlockers: 0 };
+  return { iteration, path: `p${String(iteration)}`, commit, baseline: null, confirms: null, kind: 'completeness', checks, judges, vsBaseline: vsBaseline ?? null, vsReference: 'pass', playBlockers: 0 };
 }
 
 function judged(vs: Vs): Vs {
@@ -190,6 +191,7 @@ function successRecord(iteration: number, judges: Partial<ParsedJudge>[], checks
     iteration,
     path: `p${String(iteration)}`,
     commit: 'c1',
+    baseline: null,
     confirms: null,
     kind: 'completeness',
     checks: new Map(Object.entries(checks)),

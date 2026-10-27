@@ -26,7 +26,8 @@ import {
   type ServerDb,
 } from './launch.ts';
 import { removePostgres, startPostgres } from './postgres.ts';
-import { playAccessRefusal } from './qa.ts';
+import { InputLatency } from './latency.ts';
+import { isInputCommand, playAccessRefusal } from './qa.ts';
 import {
   MAIN_DEV_ACCOUNT,
   deletePlayAccess,
@@ -75,6 +76,8 @@ export class Supervisor {
   /** Restricted token of the play access file: input, capture, observation and step mode only. */
   private playToken = '';
   private stopping = false;
+  /** `--input-latency` of the client `main`; null without it. */
+  private latency: InputLatency | null = null;
   private stopped!: Promise<void>;
   private markStopped!: () => void;
 
@@ -165,6 +168,7 @@ export class Supervisor {
         videoMaxMs: this.plan.videoMaxMs ?? null,
         feedbackWindowMs: this.plan.feedbackWindowMs ?? null,
         targetFps: this.plan.targetFps ?? null,
+        inputLatencyMs: this.plan.inputLatencyMs ?? 0,
       },
       this.env,
     );
@@ -241,6 +245,14 @@ export class Supervisor {
     return channel;
   }
 
+  /** The input latency of `main` for a command it changes (input commands, `step`, `set_step_mode`); null otherwise. */
+  private latencyFor(client: string, command: string): InputLatency | null {
+    const ms = this.plan.inputLatencyMs ?? 0;
+    if (ms <= 0 || client !== 'main' || !(isInputCommand(command) || command === 'step' || command === 'set_step_mode')) return null;
+    this.latency ??= new InputLatency(ms, (c, a, t) => this.channel('main').request(c, a, t));
+    return this.latency;
+  }
+
   private async forward(body: Record<string, unknown>): Promise<unknown> {
     const channel = this.channel(clientName(body));
     const command = String(body.command);
@@ -257,7 +269,8 @@ export class Supervisor {
         framePaths.push(path);
       };
     }
-    const response = await channel.request(command, args, timeoutMs, onFrame);
+    const latency = this.latencyFor(clientName(body), command);
+    const response = latency === null ? await channel.request(command, args, timeoutMs, onFrame) : await latency.request(command, args, timeoutMs);
     return {
       ok: response.ok,
       result: response.result,
