@@ -10,7 +10,9 @@ import { BROKER_RUN } from '../../../src/lib/broker-client.ts';
 import { pidNamespace, processStartedAt } from '../../../src/lib/proc.ts';
 import { writeJob } from '../job/helpers.ts';
 import { newTempFolder } from '../../../src/commands/agent/lib/files.ts';
-import { ogw, makeWorkspace, sh } from '../../helpers/workspace.ts';
+import { ogw, makeGame, makeWorkspace, sh } from '../../helpers/workspace.ts';
+import { createContext } from '../../../src/lib/command.ts';
+import { startAgentJob } from '../../../src/commands/agent/api.ts';
 import { fakeAgentCli, gameWithRun, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 function log(root: string, rev: string, path: string): string {
@@ -43,6 +45,28 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect((await readJob(id, ws.env)).meta).toMatchObject({ instances: ['inst1'], k: 1, output: final });
     const second = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
     expect(second.waited.stdout).toBe(`${join(root, 'records/loops/r1/play-1-2.md')}\n`);
+  });
+
+  it('runs a judge of ogw judge calibrate without a run, with its result file and captures in the calibration folders', async () => {
+    const ws = makeWorkspace();
+    const root = makeGame(ws, 'g', { 'settings.json': {}, 'play-guide.md': '# guide\n' });
+    const fake = fakeAgentCli(ws, "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png'); fs.writeFileSync(output, 'capture ' + process.cwd() + '/captures/shot.png\\n');");
+    const input = join(ws.root, 'judge.json');
+    writeFileSync(input, JSON.stringify({ A: { instance: 'a', playGuide: join(root, 'play-guide.md') }, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const output = join(root, 'records/calibration/5/judge-null-1-1.md');
+    const evidence = join(root, 'builds/calibration/5/judge-null-1-1');
+    const id = await startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output, evidence } });
+    const waited = await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env });
+    expect(waited).toMatchObject({ code: 0, stdout: `${output}\n` });
+    expect(readFileSync(output, 'utf8')).toBe(`capture ${evidence}/shot.png\n`);
+    expect(readFileSync(join(evidence, 'shot.png'), 'utf8')).toBe('png');
+    expect(fake.calls()[0]?.prompt).not.toContain('- run:');
+    expect(log(root, 'main', 'records/calibration/5/judge-null-1-1-runs.json')).toBe('{\n  "runs": []\n}\n');
+    expect((await readJob(id, ws.env)).meta).toMatchObject({ run: null, iteration: null, k: null });
+    const outside = startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output: join(root, 'records/loops/x.md'), evidence } });
+    await expect(outside).rejects.toThrow('a calibration result file is a .md file under');
+    await expect(startAgentJob(ctx, { role: 'play', game: 'g', input, calibration: { output, evidence } })).rejects.toThrow('a calibration place is given only to role judge');
   });
 
   it('moves every named secret out of the old store before the play sandbox starts', async () => {

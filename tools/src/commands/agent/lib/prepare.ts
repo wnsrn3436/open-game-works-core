@@ -43,6 +43,17 @@ export interface AgentRequest {
   baseCommit?: string;
   /** The agent CLI, model and effort instead of harness settings `agents.<role>`. */
   agent?: AgentSettings;
+  /** judge of `ogw judge calibrate`: starts without a run, with this result file and evidence folder. */
+  calibration?: CalibrationPlace;
+}
+
+/**
+ * Where a judge agent of `ogw judge calibrate` puts its result file and captures (ogw.md `## agent`): absolute paths
+ * under `records/calibration/` and `builds/calibration/` of the game repo checkout.
+ */
+export interface CalibrationPlace {
+  output: string;
+  evidence: string;
 }
 
 function checkRequest(request: AgentRequest): Role {
@@ -52,6 +63,7 @@ function checkRequest(request: AgentRequest): Role {
   if (gameRole && request.game === undefined) throw new OgwError(`--game is required for role ${role}`);
   if (!gameRole && request.game !== undefined) throw new OgwError(`--game is not given to role ${role}`);
   if (role !== 'core' && (request.modules ?? []).length > 0) throw new OgwError('--module is given only to role core');
+  if (request.calibration !== undefined && role !== 'judge') throw new OgwError('a calibration place is given only to role judge');
   return role;
 }
 
@@ -161,7 +173,24 @@ async function worktreeOutput(game: GameRepo, role: Role, input: string, run: Ru
   return hardeningOutput(game, role, run);
 }
 
-async function startPlayJudge(ctx: Context, game: GameRepo, role: 'play' | 'judge', run: RunState, meta: AgentMeta): Promise<string> {
+/** The result file and evidence folder of a play or judge agent of the open run: `<role>-<iteration>-<k>`. */
+async function runPlace(ctx: Context, game: GameRepo, role: 'play' | 'judge', run: RunState, meta: AgentMeta): Promise<CalibrationPlace> {
+  const k = await nextOrder(ctx, game, role, run);
+  const name = `${role}-${String(run.iteration)}-${String(k)}`;
+  meta.k = k;
+  return { output: join(game.root, 'records', 'loops', run.name, `${name}.md`), evidence: join(game.root, 'records', 'loops', run.name, 'evidence', name) };
+}
+
+/** A calibration place inside the calibration folders of the game repo checkout; fails otherwise. */
+function checkCalibrationPlace(game: GameRepo, place: CalibrationPlace): CalibrationPlace {
+  const records = join(game.root, 'records', 'calibration');
+  const builds = join(game.root, 'builds', 'calibration');
+  if (!isInside(records, place.output) || place.output === records || !place.output.endsWith('.md')) throw new OgwError(`a calibration result file is a .md file under ${records}: ${place.output}`);
+  if (!isInside(builds, place.evidence) || place.evidence === builds) throw new OgwError(`a calibration evidence folder is under ${builds}: ${place.evidence}`);
+  return place;
+}
+
+async function startPlayJudge(ctx: Context, game: GameRepo, role: 'play' | 'judge', run: RunState | null, meta: AgentMeta, calibration?: CalibrationPlace): Promise<string> {
   const folder = await newAgentFolder(role, ctx.env);
   let id: string;
   try {
@@ -170,13 +199,11 @@ async function startPlayJudge(ctx: Context, game: GameRepo, role: 'play' | 'judg
     meta.instances = prepared.instances;
     meta.folder = folder;
     meta.place = { kind: 'temp', dir: folder, checkout: game.root };
-    const k = await nextOrder(ctx, game, role, run);
-    const name = `${role}-${String(run.iteration)}-${String(k)}`;
-    meta.k = k;
-    meta.output = join(folder, `${name}.md`);
+    const place = calibration === undefined ? await runPlace(ctx, game, role, run as RunState, meta) : checkCalibrationPlace(game, calibration);
+    meta.output = join(folder, basename(place.output));
     meta.runLog = runLogPath(meta.output);
-    meta.finalOutput = join(game.root, 'records', 'loops', run.name, `${name}.md`);
-    meta.evidence = join(game.root, 'records', 'loops', run.name, 'evidence', name);
+    meta.finalOutput = place.output;
+    meta.evidence = place.evidence;
     id = await launchJob(ctx, meta);
   } catch (error) {
     // no job runs in the folder: remove it (ogw.md `## temp folder`)
@@ -255,8 +282,10 @@ async function contentSession(ctx: Context, game: GameRepo, run: RunState, meta:
   return { id: randomUUID(), resume: false };
 }
 
-async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta): Promise<string> {
+async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, calibration?: CalibrationPlace): Promise<string> {
   const game = await ctx.game(meta.game as string);
+  // a judge of `ogw judge calibrate` has no run; every other game agent works in the open run
+  if (calibration !== undefined) return startPlayJudge(ctx, game, 'judge', null, meta, calibration);
   const run = await requireOpenRun(game);
   meta.run = run.name;
   meta.iteration = run.iteration;
@@ -327,5 +356,5 @@ export async function startAgent(ctx: Context, request: AgentRequest): Promise<s
   const taskInput = request.taskInput === undefined ? input : resolve(ctx.cwd, request.taskInput);
   const meta = baseMeta(role, input, taskInput, request);
   if (request.baseCommit !== undefined && role !== 'review') throw new OgwError('a base commit is given only to role review');
-  return GAME_ROLES.includes(role) ? startGameAgent(ctx, role, meta) : startCoreOrReview(ctx, role, meta, request.baseCommit);
+  return GAME_ROLES.includes(role) ? startGameAgent(ctx, role, meta, request.calibration) : startCoreOrReview(ctx, role, meta, request.baseCommit);
 }
