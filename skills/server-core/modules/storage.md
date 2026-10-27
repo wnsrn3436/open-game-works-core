@@ -72,7 +72,7 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 | `register_table` | table name, scope, column list (name, column type), key column list, expiry column, snapshot flag, personal data user column (optional), index list (optional) | none | none. A registration error is a server start failure | core module |
 | `export_user_rows` | DB handle, user ID | for each table given a personal data user column, the list of rows in which that column is the user ID | none | `admin-api` |
 | `register_item_converter` | converter function (DB handle, kind, item ID, saved contract version, saved bytes → converted bytes, delete, `FAILED`) | none | none. Calling it twice is a server start failure | `migration` |
-| `sweep_expired` | none | async operation. number of deleted rows | `FAILED` | `routing` |
+| `sweep_expired` | none | async operation. number of deleted rows and failed table list | none | `routing` |
 | `random_u32` | ctx or random instance | integer at least 0 and less than 2^32 | none | content handler, hook, core module |
 | `random_int` | ctx or random instance, min, max | integer at least min and at most max | an input violation throws | content handler, hook, core module |
 | `random_weighted` | ctx or random instance, list of weights | picked index | an input violation throws | content handler, hook, core module |
@@ -100,7 +100,7 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 - The scope is `user` (first column `user_id`. Deleted at withdrawal) or `game`. The snapshot flag is given only to a `user` scope table, and when it is `true`, user snapshot clone copies its rows
 - personal data user column: the name of the user ID column of that table. Given only to a table that holds personal data of that user. Can be given for scope `user` and `game`. When given, the rows of that table go into `export_user_rows`
 - The column types are `int64`, `int32`, `bool`, `string` and `bytes`. `?` after a type accepts null. The first column of a scope `user` table is `user_id`(`int64`). A `user` scope table with snapshot flag `true` has `user_id` in its key columns. The expiry column is an `int64` column
-- index list: per index, a list of column names, and the list order is the column order of the index. The schema step of server start makes them in both DBs as indexes with the same column order. The index name is `ix_` followed by the first 16 characters of the SHA-256 hex of the UTF-8 bytes of `<table name>:<column list>`, and `<column list>` is the column names joined with commas. For each query that cannot select rows with only a leading part of the key column list (the columns continuing from the first column), a module spec writes in that table definition an index that starts with the condition column or sort column of that query
+- index list: per index, a list of column names, and the list order is the column order of the index. The schema step of server start makes them in both DBs as indexes with the same column order. The index name is `ix_` followed by the first 16 characters of the SHA-256 hex of the UTF-8 bytes of `<table name>:<column list>`, and `<column list>` is the column names joined with commas. For each query that cannot select rows with only a leading part of the key column list (the columns continuing from the first column), a module spec writes in that table definition an index that starts with the condition column or sort column of that query. When a table has an expiry column and no index of its index list starts with that column, `register_table` adds the index of that one column to the index list
 - `check_hook_output` treats a safe integer `number` of 1000 or more as `GameError`
 - canonical JSON: a JSON string written with object keys in UTF-8 byte order and without whitespace. `bigint` is a JSON integer, `Uint8Array` is a standard base64 string, and an object field whose value is `undefined` is left out.
 - The output of `export_user_rows` is an array of rows per table name. A row is an object keyed by column name, `int64` is a decimal string, and bytes are standard base64. Rows are in ascending order of key column values. Writes nothing
@@ -264,7 +264,7 @@ A user change is a change of the saved state of another user by the transaction 
 
 ### expiry
 
-- expiry cleanup `sweep_expired`: a storage maintenance delete. It is neither a user transaction nor a game transaction, and takes neither the per-user lock nor the lock of `lock_game_row`. For each table given an expiry column, regardless of scope, deletes the rows with expiry column ≤ `server-time.clock_now` with one delete statement. The delete of one table is one DB transaction. Job `storage_sweep` of `routing` calls it
+- expiry cleanup `sweep_expired`: a storage maintenance delete. It is neither a user transaction nor a game transaction, and takes neither the per-user lock nor the lock of `lock_game_row`. For each table given an expiry column, regardless of scope, deletes the rows with expiry column ≤ `server-time.clock_now` in batches. One delete statement deletes up to `storage.sweepBatchSize` of those rows and is one DB transaction. The delete statements of one table repeat until a statement deletes fewer rows than `storage.sweepBatchSize` or `storage.sweepTableBudgetMs` has passed in real elapsed time since the first statement of that table, and the later runs delete the expired rows that remain. When a delete statement is `FAILED`, `sweep_expired` stops deleting that table, adds the table name and the DB error code (the SQLSTATE of PostgreSQL, the result code of SQLite, and the empty string for a failure without a DB answer) to the failed table list, and continues with the next table. Job `storage_sweep` of `routing` calls it
 - `sweep_expired` can delete an expired row that a user transaction read, during that transaction. So a module that uses a table given an expiry column keeps the rules below
   - A row with expiry column ≤ `clock_now` counts as a row that does not exist, also before it is deleted
   - A write that creates a row or increments a counter does not write back the read value but uses one upsert statement, and the value after the write is read from that statement
@@ -338,6 +338,7 @@ storage leaves no logs. It returns failures to the caller as a throw or a failur
 | change name registration error | server start failure | none | none |
 | `FAILED` of a user change application, throw of the apply function or fail function | retries. After the maximum attempts, moves to the `fail` phase or deletes the row | none | none |
 | DB connection failure | server start failure. `FAILED` while running | `INTERNAL` while running | none |
+| `FAILED` of a delete statement of `sweep_expired` | the table goes to the failed table list, and the next table is deleted | none | `error` log by `routing` |
 
 Added `CoreError`: none
 
@@ -350,6 +351,8 @@ Added `CoreError`: none
 | `storage.dbAnswerWaitMs` | integer | core | content | maximum duration to wait for a PostgreSQL connection and for the part of a statement answer beyond the lock wait. 1 or more |
 | `storage.schemaLockWaitMs` | integer | core | content | maximum duration that server start waits for the schema lock |
 | `storage.schemaAnswerWaitMs` | integer | core | content | maximum duration to wait for the part of a statement answer beyond the lock wait inside the schema lock transaction of server start. 1 or more |
+| `storage.sweepBatchSize` | integer | core | content | maximum number of rows that one delete statement of `sweep_expired` deletes |
+| `storage.sweepTableBudgetMs` | integer | core | content | real elapsed time from the first delete statement of a table after which `sweep_expired` starts no further delete statement of that table in that run. 1 or more |
 | `storage.maxShuffleCount` | integer | core | content | largest n of `random_shuffle` |
 | `storage.maxPublicReadCount` | integer | core | content | limit on the number of users in one `read_public_state` |
 | `storage.maxGameStateList` | integer | core | content | upper bound of the maximum count of `list_game_state`. 1 or more |
@@ -381,7 +384,7 @@ none
 
 - On PostgreSQL, when 50 or more requests that several users send concurrently to the test server and its two peers lock the same `game_state` row with `lock_game_row`, read it and add 1, each request ends with a response or with the `GameError` that the handler returned, the value of the row is the number of accepted requests, and the values that the accepted requests locked and read are each value from 0 to the accepted count − 1 once. Writes of requests that ended with `GameError` do not remain
 - On PostgreSQL, when 50 or more requests that several users send concurrently to the test server and a peer process lock the same `game_state` row with `lock_game_row`, read it and add 1, each request ends with a response or with the `GameError` that the handler returned, and the value of the row is the number of accepted requests
-- On PostgreSQL, a transaction that waited for a free connection is `FAILED` when that wait and the lock wait together exceed `storage.userLockWaitMs`. The same for the statements of `sweep_expired`
+- On PostgreSQL, a transaction that waited for a free connection is `FAILED` when that wait and the lock wait together exceed `storage.userLockWaitMs`. The same for the statements of `sweep_expired`, and that table is in the failed table list
 - On PostgreSQL, even when a statement inside the schema lock transaction of server start does not answer for longer than `storage.dbAnswerWaitMs`, server start succeeds when it answers within `storage.schemaAnswerWaitMs`, and the statements of later requests wait with `storage.dbAnswerWaitMs`
 - Even when `stop()` is called while an `after_commit` function registered earlier in a committed transaction is still running, the `on_commit` function of that transaction was called once at commit. The `on_commit` function of a rolled-back transaction is not called
 - Two concurrent requests of the same user are handled one after another, and the result equals the value of applying the two requests one after another
@@ -428,6 +431,9 @@ none
 - ctx `hook_change_source` inside `with_hook_change_source` is the passed value, the outer value when the inner range ends, and none when all end
 - An operation called with the ctx of an ended transaction throws, and the saved state does not change
 - A row whose expiry column has passed is deleted by the cleanup
+- With `storage.sweepBatchSize` 2, one `sweep_expired` deletes the 5 expired rows of a table and returns 5
+- On PostgreSQL, when another session holds a lock on a table given an expiry column for longer than `storage.userLockWaitMs`, `sweep_expired` deletes the expired rows of the other tables, and its failed table list has only that table name with a DB error code
+- A table registered with an expiry column and no index starting with that column has, in SQLite and PostgreSQL, an index of that one column. A table whose index list has an index starting with its expiry column gets no other index. When the `definition` of the `storage_schema` row of a table lacks that expiry column index, server start creates it
 - `sweep_expired` deletes the expired rows of `user` scope tables and `game` scope tables without the per-user lock. A row written with upsert on a key where an expired row remains has the new value, and `sweep_expired` does not delete that row afterwards
 - A table is created with the registered columns and key columns. On restart with a definition that adds one `?` column, that column of existing rows is null. On a later restart with the previous definition without that column, the server starts, the values of that column in existing rows stay unchanged, and that column of newly inserted rows is null. With a definition that removes a non-`?` column and with a definition that changes a column type, the server does not start
 - `check_hook_output` returns `pass` and 1000 for `'pass'` and 1000, and throws for 999, 1.5, `null` and `'ok'`
