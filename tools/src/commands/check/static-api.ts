@@ -41,6 +41,7 @@ import * as sharedFormula from './static/shared-formula.ts';
 import * as simulationTarget from './static/simulation-target.ts';
 import * as systemClock from './static/system-clock.ts';
 import * as testInput from './static/test-input.ts';
+import * as tweenPreset from './static/tween-preset.ts';
 import * as typeCheck from './static/type-check.ts';
 import * as virtualPadLayout from './static/virtual-pad-layout.ts';
 
@@ -52,7 +53,7 @@ export interface StaticCheckModule {
 /** The checks that `ogw check --static` runs, in report order. */
 export const STATIC_CHECKS: readonly StaticCheckModule[] = [
   coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, framePolling,
-  hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
+  hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
   literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference,
 ];
