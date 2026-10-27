@@ -51,7 +51,10 @@ export async function mergedResults(implDir: string, commit: string): Promise<Ma
   return new Map([...(await mergedRecords(implDir, commit))].map(([target, modules]) => [target, new Map([...modules].map(([m, r]) => [m, r.result]))]));
 }
 
-/** Like `mergedResults`, with the skip reason of each `skipped` result. */
+/**
+ * Like `mergedResults`, with the skip reason of each `skipped` result. A render pass a locked screen left out
+ * (`SCREEN_LOCKED_SKIP`) does not replace an earlier `fail`: that run did not run the whole module.
+ */
 export async function mergedRecords(implDir: string, commit: string): Promise<Map<string, Map<string, { result: ModuleResult; skip: string | null }>>> {
   const merged = new Map<string, Map<string, { result: ModuleResult; skip: string | null }>>();
   const records = (await readTestRecords(implDir))
@@ -59,7 +62,11 @@ export async function mergedRecords(implDir: string, commit: string): Promise<Ma
     .sort((a, b) => a.recordedAt - b.recordedAt);
   for (const record of records) {
     const target = merged.get(record.target) ?? new Map<string, { result: ModuleResult; skip: string | null }>();
-    for (const [module, result] of Object.entries(record.modules)) target.set(module, { result, skip: record.skips?.[module] ?? null });
+    for (const [module, result] of Object.entries(record.modules)) {
+      const skip = record.skips?.[module] ?? null;
+      if (result === 'skipped' && skip === SCREEN_LOCKED_SKIP && target.get(module)?.result === 'fail') continue;
+      target.set(module, { result, skip });
+    }
     merged.set(record.target, target);
   }
   return merged;

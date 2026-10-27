@@ -1,6 +1,6 @@
 import { OgwError } from '../../lib/errors.ts';
 import { git } from '../../lib/git.ts';
-import { str, type CommandDef } from '../../lib/command.ts';
+import { str, type CommandDef, type Context } from '../../lib/command.ts';
 import { coreImplOf, moduleFolder, readCoreSpecDir, type CoreSpecModule } from './lib/impl.ts';
 import { isNamedCorePath, namedCorePaths } from './lib/named-paths.ts';
 import { TOOLS } from './lib/tools.ts';
@@ -100,6 +100,13 @@ export function reviewTargets(modules: ReadonlyMap<string, CoreSpecModule>, chan
   return { modules: new Set([...own, ...dependentsOf(modules, [...surface])]), tools };
 }
 
+/** `reviewTargets` of the files of `open-game-works-core-impl/` that changed from `since` to `until`. */
+export async function reviewTargetsSince(ctx: Context, impl: string, modules: ReadonlyMap<string, CoreSpecModule>, since: string, until: string): Promise<{ modules: Set<string>; tools: Set<string> }> {
+  // without rename detection: a moved file gives its old path as well as its new one
+  const changed = (await git(impl, ['diff', '--name-only', '--no-renames', `${since}..${until}`], { env: ctx.env })).split('\n').filter((line) => line !== '');
+  return reviewTargets(modules, changed, await namedCorePaths((await ctx.workspace()).harness));
+}
+
 export const reviewTargetsCommand: CommandDef = {
   name: ['core', 'review-targets'],
   usage: 'ogw core review-targets --since <commit>',
@@ -109,9 +116,7 @@ export const reviewTargetsCommand: CommandDef = {
     if (since === undefined || args.positionals.length > 0) throw new OgwError(`usage: ${this.usage}`);
     const impl = await coreImplOf(ctx);
     const modules = new Map((await readCoreSpecDir(impl, { required: true })).map((m) => [m.name, m]));
-    // without rename detection: a moved file gives its old path as well as its new one
-    const changed = (await git(impl, ['diff', '--name-only', '--no-renames', `${since}..main`], { env: ctx.env })).split('\n').filter((line) => line !== '');
-    const found = reviewTargets(modules, changed, await namedCorePaths((await ctx.workspace()).harness));
+    const found = await reviewTargetsSince(ctx, impl, modules, since, 'main');
     const sorted = [...found.modules].sort(byteCompare);
     const server = sorted.filter((name) => modules.get(name)?.side === 'server');
     const client = sorted.filter((name) => modules.get(name)?.side === 'client');

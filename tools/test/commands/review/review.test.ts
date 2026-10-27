@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { testAtHead } from '../../../src/commands/core/lib/main-checkout.ts';
-import { clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
+import { changedSinceDone, clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
 import { checkContinue, fixBase } from '../../../src/commands/review/lib/next.ts';
 import { decide, failureFile, outsideTargetFailures, targetFolders } from '../../../src/commands/review/lib/wait.ts';
 import type { RoundState } from '../../../src/commands/review/lib/state.ts';
@@ -11,6 +11,7 @@ import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { CORE_TEST_PASSED, fakeAgentCli } from '../agent/helpers.ts';
 import { changeDefinition, finding, mergeDefinitions, next, reviewer, reviewFile, wait } from './review-fixture.ts';
+import { commitCore } from './reopen-fixture.ts';
 
 describe('code check failures outside the target', () => {
   it('takes the type check and lint lines whose file is outside every target folder, and keeps lines of no file, of a folder holding a target folder and of other checks', () => {
@@ -171,6 +172,23 @@ describe('ogw review: core', () => {
     await clearReviews(ctx, 'core');
     expect(existsSync(dir)).toBe(false);
     expect(existsSync(reviewPath)).toBe(true);
+  });
+
+  it('gives running for a round not judged yet, and a done target whose folder changed since that round started', async () => {
+    const ws = makeWorkspace();
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([]) }));
+    expect(await lastReviewResults(ctx, 'core')).toEqual(new Map([['routing', 'running']]));
+    expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 1\n');
+    expect(await lastReviewResults(ctx, 'core')).toEqual(new Map([['routing', 'done']]));
+    expect(await changedSinceDone(ctx, 'core')).toEqual(new Map());
+    writeFileSync(join(ws.coreImpl, 'outside.txt'), 'x');
+    commitCore(ws, 'outside');
+    expect(await changedSinceDone(ctx, 'core')).toEqual(new Map());
+    mkdirSync(join(ws.coreImpl, 'server', 'core', 'routing'), { recursive: true });
+    writeFileSync(join(ws.coreImpl, 'server', 'core', 'routing', 'later.ts'), 'export {};\n');
+    commitCore(ws, 'later');
+    expect(await changedSinceDone(ctx, 'core')).toEqual(new Map([['routing', 1]]));
   });
 
   it('merges the review file without waiting for core test runs on the main checkout', async () => {

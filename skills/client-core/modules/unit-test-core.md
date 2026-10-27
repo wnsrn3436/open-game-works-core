@@ -114,7 +114,6 @@ Before each test starts, the following runs in order.
 - collected logs: the level and tag of the logs the log collector received in the current test
 - Logs whose count was received with `check_logs` become checked logs. A test with an unchecked error log left fails
 - A test with an unchecked engine script runtime error left fails. The result has `checked_script_errors` (the checked count) per test, and only when the number of `SCRIPT ERROR:` lines in the engine output equals their sum does the tool not treat the run as failed because of those lines. An engine script runtime error that occurs between tests (after one test ends and before the next test setup) is a run failure
-- The error log count is asserted with `check_logs` only when the expected value is not 0
 
 ### async wait
 

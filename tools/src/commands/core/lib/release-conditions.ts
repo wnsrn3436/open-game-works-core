@@ -3,9 +3,12 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { exists, readJsonIfExists } from '../../../lib/fsx.ts';
+import { revParse } from '../../../lib/git.ts';
+import { byteCompare } from '../../../lib/order.ts';
 import { runCodeCheck } from '../../code/api.ts';
-import { lastReviewResults } from '../../review/api.ts';
+import { changedSinceDone, lastReviewResults } from '../../review/api.ts';
 import { readAllLists } from '../../review/lib/debt.ts';
+import { reviewTargetsSince } from '../dependents.ts';
 import { buildCoreSpec } from '../spec-api.ts';
 import {
   corePlugins,
@@ -22,7 +25,7 @@ import { mergedRecords, SCREEN_LOCKED_SKIP } from './test-records.ts';
 import { baseProtoBreaks } from './base-proto-compat.ts';
 import { implementedTools } from './tools.ts';
 import { engineAssetRules } from './undefined.ts';
-import { compareVersions, majorOf } from './version.ts';
+import { compareVersions, majorOf, releaseTag } from './version.ts';
 
 /**
  * Targets that have an implementation and the modules each must pass for a release: `server` when
@@ -89,10 +92,41 @@ export async function coreSpecViolations(ctx: Context, implDir: string): Promise
   return violations;
 }
 
-export async function reviewViolations(ctx: Context): Promise<string[]> {
+/** The highest of `released` below `version`, or undefined. */
+function lowerRelease(version: string, released: readonly string[]): string | undefined {
+  return released.filter((v) => compareVersions(v, version) < 0).sort(compareVersions).at(-1);
+}
+
+/**
+ * The review conditions (`core` command.md `## version and release`): each target with review state has a judged
+ * `done` last round and did not change since it started, and each review target of the changes since the tag of the
+ * highest release below `version` (`ogw core review-targets`) has review state.
+ */
+export async function reviewViolations(
+  ctx: Context,
+  implDir: string,
+  commit: string,
+  modules: readonly CoreSpecModule[],
+  version: string,
+  released: readonly string[],
+): Promise<string[]> {
   const violations: string[] = [];
-  for (const [target, result] of await lastReviewResults(ctx, 'core')) {
+  const results = await lastReviewResults(ctx, 'core');
+  for (const [target, result] of results) {
     if (result !== 'done') violations.push(`review ${target}: last round result is ${result ?? 'none'}`);
+  }
+  for (const [target, round] of await changedSinceDone(ctx, 'core')) {
+    violations.push(`review ${target}: changed since its done round ${String(round)}; run ogw review run core ${target} --reopen`);
+  }
+  const lower = lowerRelease(version, released);
+  if (lower === undefined) return violations;
+  const tag = releaseTag(lower);
+  if ((await revParse(implDir, tag, { env: ctx.env })) === null) {
+    return [...violations, `review targets since ${tag}: tag ${tag} is not in open-game-works-core-impl/`];
+  }
+  const found = await reviewTargetsSince(ctx, implDir, new Map(modules.map((m) => [m.name, m])), tag, commit);
+  for (const target of [...found.modules, ...found.tools].sort(byteCompare)) {
+    if (!results.has(target)) violations.push(`review ${target}: changed since ${tag} and has no review state; run ogw review run core ${target} --since ${tag}`);
   }
   return violations;
 }
@@ -165,7 +199,7 @@ export async function pluginBuildViolations(implDir: string): Promise<string[]> 
 }
 
 export async function baseProtoViolations(ctx: Context, implDir: string, version: string, released: readonly string[]): Promise<string[]> {
-  const lower = released.filter((v) => compareVersions(v, version) < 0).sort(compareVersions).at(-1);
+  const lower = lowerRelease(version, released);
   if (lower === undefined) return [];
   const breaks = await baseProtoBreaks(ctx, implDir, lower);
   if (breaks.length === 0 || majorOf(version) > majorOf(lower)) return [];
@@ -185,7 +219,7 @@ export async function releaseViolations(
   return [
     ...(await testRecordViolations(implDir, commit, modules)),
     ...(await coreSpecViolations(ctx, implDir)),
-    ...(await reviewViolations(ctx)),
+    ...(await reviewViolations(ctx, implDir, commit, modules, version, released)),
     ...(await reviewDebtViolations(implDir)),
     ...(await codeCheckViolations(ctx, implDir)),
     ...constraintViolations(await readCoreSettings(implDir), await implementedConstraints(implDir, modules)),
