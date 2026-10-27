@@ -415,7 +415,7 @@ async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> 
 /** Reads the judge result; null when its tables cannot be read. */
 async function readVerdict(state: State, slot: JudgeSlot, output: string): Promise<JudgeVerdict | null> {
   try {
-    return judgeVerdict(await readFile(output, 'utf8'), slot.side, state.plan.baseline !== null);
+    return judgeVerdict(await readFile(output, 'utf8'), slot.side, state.plan.baseline !== null, slot.moments.map((m) => m.name));
   } catch {
     return null;
   }

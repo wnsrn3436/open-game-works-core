@@ -4,6 +4,7 @@ import {
   judgeDefects,
   judgeSectionText,
   judgeVerdict,
+  lostMoments,
   observations,
   referenceRows,
   vsBaselineOf,
@@ -54,6 +55,17 @@ describe('vs baseline', () => {
     const even = ['| game feel | A | clear | r | e |', '| progression | B | slight | r | e |', '| x | n/a | | r | e |', '| y | indistinguishable | slight | r | e |'];
     expect(vsBaselineOf(judge(even, []), 'A')).toBe('indistinguishable');
     expect(vsBaselineOf(judge([], []), 'A')).toBe('indistinguishable');
+  });
+
+  it('is not better when the other side is better at a judge moment', () => {
+    const rows = ['| game feel | A | clear | r | e |', '| progression | A | slight | r | e |'];
+    const text = judge(rows, []).replace('reason: x\n', 'reason: x\n- `B` is better at `late_run_horde`. Reason: more enemies on screen\nIndistinguishable at second_run. Reason: same\n');
+    expect(lostMoments(text, 'A', ['late_run_horde', 'second_run'])).toEqual(['late_run_horde']);
+    expect(vsBaselineOf(text, 'A', ['late_run_horde', 'second_run'])).toBe('indistinguishable');
+    expect(judgeVerdict(text, 'A', true, ['late_run_horde'])).toEqual({ vsBaseline: 'indistinguishable', vsReference: 'unknown' });
+    // a moment that is not a judge moment of that judge, and a moment this side won, do not count
+    expect(vsBaselineOf(text, 'A', ['second_run'])).toBe('better');
+    expect(lostMoments(text, 'B', ['late_run_horde', 'core action'])).toEqual(['core action']);
   });
 
   it('throws when the table cannot be read', () => {

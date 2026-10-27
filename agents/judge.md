@@ -72,7 +72,7 @@ Write it to `output`.
 
 - `## vs baseline`: element table. The columns are `element`, `winner` (`A`, `B`, `indistinguishable`, `n/a`), `margin`, `reason`, `evidence`. `none` when there is no `B`
 - `## vs reference`: a table with the columns `instance` (`A`, `B`), `element`, `result` (`pass`, `fail`, `unknown`, `n/a`), `reason`, `evidence`. One row per game of the input per element
-- `## moments`: one line per moment. When there is `B`, "`<A or B>` is better at <moment>. Reason: <fact>", and when the two games are `indistinguishable` at that moment, "Indistinguishable at <moment>. Reason: <fact>". When there is no `B`, "<moment> of `A`: <fact>"
+- `## moments`: one line per moment. When there is `B`, "`<A or B>` is better at <moment>. Reason: <fact>", and when the two games are `indistinguishable` at that moment, "Indistinguishable at <moment>. Reason: <fact>". When there is no `B`, "<moment> of `A`: <fact>". For the moment of a save fixture instance, <moment> is the `name` of its `moment`
 - `## loser better`: what the losing side did better. `none` when there is no `B`
 - `## strengths`: what went well
 - `## defects`: a table with the columns `instance` (`A`, `B`), `where`, `what`, `why`, `severity` (`blocker`, `major`, `minor`), `evidence`. One row per defect. `none` when there is none

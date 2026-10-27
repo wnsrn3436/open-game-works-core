@@ -30,11 +30,24 @@ function referenceTable(text: string): Table | null {
   return parseTable(lines);
 }
 
+/** The moments of `judgeMoments` at which `## moments` says the side other than `instanceSide` is better. */
+export function lostMoments(text: string, instanceSide: 'A' | 'B', judgeMoments: readonly string[]): string[] {
+  const names = new Set(judgeMoments);
+  const lost = new Set<string>();
+  for (const line of section(text, 'moments') ?? []) {
+    const match = /^\s*(?:[-*]\s+)?`?(A|B)`? is better at (.+?)\.\s*Reason:/i.exec(line);
+    if (!match) continue;
+    const moment = (match[2] as string).replace(/`/g, '').trim();
+    if (match[1] !== instanceSide && names.has(moment)) lost.add(moment);
+  }
+  return [...lost];
+}
+
 /**
  * `vs baseline` from the element winners turned to the side of this commit's instance (`game-loop` `## iteration` 4).
- * Throws when the table cannot be read.
+ * A judge moment lost in `## moments` keeps it from `better`. Throws when the table cannot be read.
  */
-export function vsBaselineOf(text: string, instanceSide: 'A' | 'B'): VsBaseline {
+export function vsBaselineOf(text: string, instanceSide: 'A' | 'B', judgeMoments: readonly string[] = []): VsBaseline {
   const table = tableOf(text, 'vs baseline');
   if (!table) throw new Error('`## vs baseline` table missing');
   const winnerCol = column(table, 'winner');
@@ -42,7 +55,8 @@ export function vsBaselineOf(text: string, instanceSide: 'A' | 'B'): VsBaseline 
   if (column(table, 'element') < 0 || winnerCol < 0 || marginCol < 0) throw new Error('`## vs baseline` columns missing');
   let won = 0;
   let lost = 0;
-  let decisiveLoss = false;
+  // a decisive loss or a lost judge moment keeps it from `better`
+  let blocked = lostMoments(text, instanceSide, judgeMoments).length > 0;
   for (const row of table.rows) {
     const winner = cell(row, winnerCol);
     if (!WINNERS.has(winner)) throw new Error(`unknown winner ${winner}`);
@@ -51,10 +65,10 @@ export function vsBaselineOf(text: string, instanceSide: 'A' | 'B'): VsBaseline 
       won++;
     } else {
       lost++;
-      if (cell(row, marginCol) === 'decisive') decisiveLoss = true;
+      if (cell(row, marginCol) === 'decisive') blocked = true;
     }
   }
-  if (won > lost && !decisiveLoss) return 'better';
+  if (won > lost && !blocked) return 'better';
   if (lost > won) return 'worse';
   return 'indistinguishable';
 }
@@ -77,10 +91,13 @@ export function vsReferenceOf(text: string, instanceSide: 'A' | 'B'): VsReferenc
   return 'unknown';
 }
 
-/** Both verdicts. `withBaseline` false: `vs baseline` is not read and is null. */
-export function judgeVerdict(text: string, instanceSide: 'A' | 'B', withBaseline: boolean): JudgeVerdict {
+/**
+ * Both verdicts. `withBaseline` false: `vs baseline` is not read and is null. `judgeMoments`: the names of the save
+ * fixture moments put in that judge.
+ */
+export function judgeVerdict(text: string, instanceSide: 'A' | 'B', withBaseline: boolean, judgeMoments: readonly string[] = []): JudgeVerdict {
   return {
-    vsBaseline: withBaseline ? vsBaselineOf(text, instanceSide) : null,
+    vsBaseline: withBaseline ? vsBaselineOf(text, instanceSide, judgeMoments) : null,
     vsReference: vsReferenceOf(text, instanceSide),
   };
 }
