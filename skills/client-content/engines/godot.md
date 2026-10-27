@@ -78,6 +78,7 @@ client/
 - A node takes its look with `theme_type_variation`. A `.tscn` of a scene or prefab holds no `theme_override_*` property, no `theme` property and no `StyleBoxFlat`. Static check `theme only` blocks them
 - `sprite_animation` goes in `sprite_frames` of an `AnimatedSprite2D` of a scene or prefab and is played with that `AnimatedSprite2D`. `rig_animation_2d` goes in a scene or prefab as an instance and is played with the `AnimationPlayer` child of its root. Nodes inside the rig are not edited
 - Presentation durations and animation values go in `AnimationPlayer` of the `.tscn` and in tween presets. Code does not pass literal values to `AnimationPlayer.speed_scale`, `custom_speed` and `custom_blend` of `play()`, `SceneTree.create_timer()` or `Timer.wait_time`
+- A tween preset keeps the items of `### definition check` of TweenCore that do not depend on the target object, with the bounds of the game's merged core settings. Of the unused components, those are the components that no target uses: w of `Position`, `Rotation` and `Scale`, and y, z and w of `Opacity`. Static check `tween preset` blocks violations
 
 ## GDScript
 

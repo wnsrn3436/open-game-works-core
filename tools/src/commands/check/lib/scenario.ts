@@ -345,11 +345,15 @@ class ScenarioRun {
  * so a click is not dropped when the frames that take two inputs come late and early; 0 when the game has no such key.
  */
 export async function autoInputGapMs(ctx: Context, id: string): Promise<number> {
+  const value = (await instanceCoreSettings(ctx, id))?.['UICore.buttonClickIntervalMs'];
+  return typeof value === 'number' && value > 0 ? value * 2 : 0;
+}
+
+/** The game's merged core settings of an instance (`client/generated/core_settings.json` of its checkout), or null when that file is missing. */
+export async function instanceCoreSettings(ctx: Context, id: string): Promise<Record<string, unknown> | null> {
   const root = (await readRecord(id, ctx.env)).root;
   const text = await readFile(join(root, 'client', 'generated', 'core_settings.json'), 'utf8').catch(() => null);
-  if (text === null) return 0;
-  const value = (JSON.parse(text) as Record<string, unknown>)['UICore.buttonClickIntervalMs'];
-  return typeof value === 'number' && value > 0 ? value * 2 : 0;
+  return text === null ? null : (JSON.parse(text) as Record<string, unknown>);
 }
 
 export async function runScenario(ctx: Context, id: string, scenario: Scenario, options: ScenarioOptions): Promise<ScenarioOutcome> {
