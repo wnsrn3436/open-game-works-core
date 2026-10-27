@@ -149,12 +149,19 @@ describe('ogw secret set --harness claude-code-oauth-token', () => {
     expect(folder?.startsWith(join(env.TMPDIR as string, 'ogw-judge-'))).toBe(true);
     expect(sandboxed).toBe('yes');
     expect(args?.startsWith('-p --model claude-opus-5-5 --effort high ')).toBe(true);
+    // only a judge panel item uses Claude Code: the check runs with that item as the judge
+    const loop = testSettings().loop as Record<string, unknown>;
+    ws = makeWorkspace({ agents: { ...agents, play: codex, judge: codex }, loop: { ...loop, judgePanel: [codex, { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'low' }] } });
+    env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
+    expect((await setToken('good')).code).toBe(0);
+    const panelArgs = readFileSync(log, 'utf8').trim().split('\n').at(-1)?.split('|')[3];
+    expect(panelArgs?.startsWith('-p --model claude-sonnet-5-5 --effort low ')).toBe(true);
     ws = makeWorkspace({ agents: { ...agents, play: codex, judge: codex } });
     env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
     expect(await setToken('good')).toEqual({
       code: 1,
       stdout: '',
-      stderr: 'claude-code-oauth-token not stored: harness settings agents play and judge do not use Claude Code, so no agent uses it\n',
+      stderr: 'claude-code-oauth-token not stored: harness settings agents play and judge and loop.judgePanel do not use Claude Code, so no agent uses it\n',
     });
     expect(store()).toEqual({});
   });

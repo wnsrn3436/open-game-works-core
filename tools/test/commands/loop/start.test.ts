@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listRuns, withRunLock } from '../../../src/lib/runstate.ts';
-import { ogw, sh } from '../../helpers/workspace.ts';
+import { ogw, sh, testSettings } from '../../helpers/workspace.ts';
 import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write } from './helpers.ts';
 
 const mocks = vi.hoisted(() => ({
@@ -33,7 +33,7 @@ describe('ogw loop start', () => {
       const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'add a boss\n' });
       expect(out.code).toBe(1);
       expect(out.stderr).toBe(
-        "harness settings agents play and judge use Claude Code and harness secret claude-code-oauth-token is not in this host's secret store: make a long-lived token with `claude setup-token` and store it on one line, for example on macOS: pbpaste | tr -d '[:space:]' | tools/bin/ogw secret set --harness claude-code-oauth-token\n",
+        "harness settings agents.play and agents.judge use Claude Code and harness secret claude-code-oauth-token is not in this host's secret store: make a long-lived token with `claude setup-token` and store it on one line, for example on macOS: pbpaste | tr -d '[:space:]' | tools/bin/ogw secret set --harness claude-code-oauth-token\n",
       );
       expect(git(g.root, 'branch', '--list')).toBe('id-registry\n* main');
       expect(await listRuns(g.repo)).toEqual([]);
@@ -41,10 +41,20 @@ describe('ogw loop start', () => {
     // one Claude Code role is enough; none needs no token
     settings.agents.play = { ...settings.agents.play, cli: 'codex' };
     writeFileSync(settingsFile, JSON.stringify(settings));
-    expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'])).stderr).toContain('harness settings agents judge use Claude Code and harness secret');
+    expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'])).stderr).toContain('harness settings agents.judge use Claude Code and harness secret');
     settings.agents.judge = { ...settings.agents.judge, cli: 'codex' };
     writeFileSync(settingsFile, JSON.stringify(settings));
     expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'])).code).toBe(0);
+  });
+
+  it('does not start while only a judge panel item uses Claude Code and the agent login token is not stored', async () => {
+    const codex = { cli: 'codex', model: 'm', effort: 'high' };
+    const g = setupGame({ agents: { ...(testSettings().agents as object), play: codex, judge: codex }, loop: { ...(testSettings().loop as object), judgePanel: [codex, { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'low' }] } });
+    writeFileSync(g.ws.env.OGW_TEST_SECRET_FILE as string, '{}');
+    const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'add a boss\n' });
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('harness settings loop.judgePanel use Claude Code and harness secret claude-code-oauth-token is not in');
+    expect(await listRuns(g.repo)).toEqual([]);
   });
 
   it('starts an update run: work branch, request.md, run state', async () => {
