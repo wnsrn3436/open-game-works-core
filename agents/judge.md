@@ -48,11 +48,11 @@ The input file is the JSON `{"A": <game>, "B": <game>, "fixtures": [<fixture>, .
 
 ### checklists
 
-Judge `tension and release` and `no friction` by LLM opinion through the questions below. Answer each question `yes` or `no` on each side, with its evidence (capture or `device ms`).
+Judge `tension and release` and `no friction` by LLM opinion through the questions below. Answer each question `yes` or `no` on each side, with its evidence (capture or `device ms`), and `unknown` when your play on that side gave no evidence for it (e.g. no hurt for question 3).
 
 - `tension and release`
-  1. Before the first success (e.g. a room clear, a level clear), did a challenge that could fail reach the player (e.g. an attack, a hazard, a timer)?
-  2. Was each danger that hurt the player shown before it hit (e.g. a glow, a wind-up, a sound)?
+  1. Before the first success (e.g. a room clear, a level clear), was there a challenge that could fail (e.g. an enemy that attacks, a hazard, a timer)?
+  2. Was each danger shown before it could hit (e.g. a glow, a wind-up, a sound)?
   3. When the player was hurt, did the screen show what was lost and what is left?
   4. Within 1000 ms of the first success, did a presentation of it show (e.g. a banner, a light change, a sound)?
   5. Did the first success give something that stays (e.g. an opened way, an item, a reward)?
@@ -80,7 +80,7 @@ For each screen of the moments of `presentation` (the lobby, the play screen wit
 - When `telemetry` is not `null`, take the winner and margin of each element whose winner in that file is `A` or `B` from that file. Judge an element whose winner in that file is `indistinguishable` by LLM opinion of what its `looks at` names that the metrics do not count (e.g. for `game feel`, the kind and size of the feedback of the same action on both sides), with the margin `slight`, and `indistinguishable` when you see no such difference. Do not compare the telemetry values of your own play: your inputs differ between `A` and `B` and change the values
 - When `telemetry` is `null`, for an element for which `ogw telemetry compare` gave a winner and margin, use those values. Read them from the comparison of the intervals in which the `reference moment` of that element was played in each game. When the two instances were played one after the other, do not use the comparison without intervals
 - For an element for which `ogw telemetry compare` reported no telemetry values, choose the winner by LLM opinion, and the margin is `slight`
-- An element of `### checklists` that is judged by LLM opinion is won by the side with more `yes` answers, and is `indistinguishable` when both sides have the same number. Write the answers of both sides in the evidence
+- An element of `### checklists` that is judged by LLM opinion counts only the questions answered `yes` or `no` on both sides. It is won by the side with more `yes` answers among them, and is `indistinguishable` when both sides have the same number. Write the answers of both sides in the evidence
 - `vs reference`: written only when `reference` is not `null`. For each game of the input (`A`, `B`) and each element, `pass` when the result of playing the `reference moment` of that element in that game is at or above the level of that moment's interval in the gameplay video, otherwise `fail`, and `unknown` when it could not be checked. An element that is `n/a` in that game, and an element whose `reference moment` has a `startMs` of `null` in `moments` of `reference`, are `n/a`. The reference game is seen as video, so this comparison is not blind
 - When there is `B`, what the losing side did better must be written
 - Write at least two and at most four things that went well
