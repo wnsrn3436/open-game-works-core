@@ -377,7 +377,14 @@ describe('compareRepeatedTelemetry', () => {
     expect(noFriction?.metrics.find((m) => m.metric === 'goal_input_count')).toMatchObject({ a: 16.5, b: 15, d: 0, runs: { a: [20, 13], b: [14, 16] } });
   });
 
-  it('counts the difference of the means when the runs do not overlap', () => {
+  it('counts no difference when the gap between the runs is not larger than the spread of a side', () => {
+    // same commit in a real calibration: feedback 1 1 1 against 2 2 3
+    const noFriction = compareRepeatedTelemetry([goals([1]), goals([1]), goals([1])], [goals([2]), goals([2]), goals([3])], false)[4];
+    expect(noFriction?.winner).toBe('indistinguishable');
+    expect(noFriction?.metrics.find((m) => m.metric === 'goal_input_count')?.d).toBe(0);
+  });
+
+  it('counts the difference of the means when the runs are apart', () => {
     const noFriction = compareRepeatedTelemetry([goals([10]), goals([11])], [goals([20]), goals([22])], false)[4];
     expect(noFriction?.winner).toBe('A');
     expect(formatComparison([noFriction as never])).toContain('(runs A 10 11, B 20 22)');

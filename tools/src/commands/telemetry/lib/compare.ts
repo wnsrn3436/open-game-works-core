@@ -81,15 +81,20 @@ function mean(values: readonly (number | null)[]): number | null {
   return (values as number[]).reduce((x, y) => x + y, 0) / values.length;
 }
 
-/** The value ranges of the two sides overlap: the runs of one side do not all lie on one side of the runs of the other. */
-function overlap(a: readonly number[], b: readonly number[]): boolean {
-  return Math.max(...a) >= Math.min(...b) && Math.max(...b) >= Math.min(...a);
+/**
+ * The runs of the two sides are apart: the gap between the closest runs of `A` and of `B` is larger than the spread
+ * (largest minus smallest run) of either side. Runs that only just miss each other are not apart.
+ */
+function apart(a: readonly number[], b: readonly number[]): boolean {
+  const gap = Math.max(Math.min(...a) - Math.max(...b), Math.min(...b) - Math.max(...a));
+  const spread = Math.max(Math.max(...a) - Math.min(...a), Math.max(...b) - Math.min(...b));
+  return gap > spread;
 }
 
 /**
  * The comparison of several runs of `A` and of `B` (`game-loop` `## iteration` 4 shared telemetry): a metric value is
- * the mean of its runs, and `d` is 0 when the values of the runs of `A` and of `B` overlap, because then the
- * difference is not larger than the difference between runs of one commit.
+ * the mean of its runs, and `d` is 0 unless the runs of `A` and of `B` are apart, because otherwise the difference is
+ * not larger than the difference between runs of one commit.
  */
 export function compareRepeatedTelemetry(
   a: readonly Telemetry[],
@@ -105,7 +110,7 @@ export function compareRepeatedTelemetry(
       const va = mean(ra);
       const vb = mean(rb);
       let d: number | null = null;
-      if (va !== null && vb !== null) d = overlap(ra as number[], rb as number[]) ? 0 : metricDistance(metric, va, vb);
+      if (va !== null && vb !== null) d = apart(ra as number[], rb as number[]) ? metricDistance(metric, va, vb) : 0;
       return { metric, a: va, b: vb, d, runs: { a: ra, b: rb } };
     });
     if (failureOnly && noFailure) return { element, metrics: rows, winner: 'n/a', margin: '' };
