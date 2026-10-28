@@ -12,9 +12,10 @@ import { addedCoreProposals } from '../build/lib/report-sections.ts';
 import { LIST_PATH, temporaryKeys, unknownLicenseKeys } from '../resource/lib/list.ts';
 import type { DefectsFile } from './lib/defects.ts';
 import { checkResult, COMPLETENESS_CHECKS, mainJudge, type CheckFile, type EvaluateFile } from './lib/files.ts';
-import { iterationRecords, mainOf, type ParsedRecord } from './lib/iteration-record.ts';
+import { iterationRecords, type ParsedRecord } from './lib/iteration-record.ts';
 import { document } from './lib/markdown.ts';
 import { abs, coreUpgrade, loopData, openTarget, readRunJson, runRel } from './lib/run.ts';
+import { calibrationHumanLines } from '../judge/api.ts';
 
 const USAGE = 'ogw loop end-record <game> [--stopped-by-human] [--human <file>]';
 
@@ -47,7 +48,7 @@ async function mergeLines(game: GameRepo, run: RunState): Promise<string[]> {
   const prepared = loopData(run).prepareMerge;
   const commit = prepared?.commit ?? null;
   const record = await mergedRecord(game, run);
-  const lines = [`merge commit: ${commit ?? 'none'}`, `vs baseline: ${(record ? mainOf(record)?.vsBaseline : null) ?? 'none'}`];
+  const lines = [`merge commit: ${commit ?? 'none'}`, `vs baseline: ${record?.vsBaseline ?? 'none'}`];
   if (!prepared) lines.push('not merged: ogw loop prepare-merge has not run');
   else if (prepared.failed !== undefined) lines.push(`not merged: ogw loop prepare-merge failed: ${oneLine(prepared.failed)}`);
   else if (prepared.mainHead !== prepared.baseCommit) lines.push(`not merged: main HEAD ${prepared.mainHead} is not the work branch base ${prepared.baseCommit}`);
@@ -144,7 +145,7 @@ function bannedWordLines(check: CheckFile | null): string[] {
     .map((w) => `banned word list missing: ${/banned-words\/([^/:]+)\.txt/.exec(w.where)?.[1] ?? w.where}`);
 }
 
-async function humanSection(game: GameRepo, run: RunState, humanFile: string | null): Promise<string> {
+async function humanSection(ctx: Context, game: GameRepo, run: RunState, humanFile: string | null): Promise<string> {
   const lines: string[] = [];
   const assumptions = abs(game, runRel(run, 'assumptions.md'));
   if (exists(assumptions)) lines.push(...needsHumanLines(await readFile(assumptions, 'utf8')));
@@ -153,6 +154,7 @@ async function humanSection(game: GameRepo, run: RunState, humanFile: string | n
   lines.push(...(await temporaryResources(game, run)));
   lines.push(...(coreUpgrade(run)?.skipped ?? []).map((v) => `skipped core version: ${v}`));
   lines.push(...bannedWordLines((await lastCheck(game, run))?.file ?? null));
+  lines.push(...(await calibrationHumanLines(game, ctx.env)));
   // One bullet per line, so a line neither joins the item above it nor becomes a heading.
   if (humanFile !== null) lines.push(...(await readFile(humanFile, 'utf8')).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== ''));
   return bullets(lines);
@@ -184,7 +186,7 @@ export const loopEndRecord: CommandDef = {
       ['reason', reason],
       ['result', await resultSection(game, run)],
       ['failures', await failuresSection(ctx, game, run)],
-      ['human', await humanSection(game, run, humanFile)],
+      ['human', await humanSection(ctx, game, run, humanFile)],
     ]);
     const rel = runRel(run, 'end.md');
     await writeFileAtomic(abs(game, rel), text);

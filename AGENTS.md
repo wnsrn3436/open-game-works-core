@@ -57,7 +57,8 @@ A harness for making server and client games of commercial quality, in which AI 
 - core proposal: a proposal in which the content agent states what core lacks. A human orders it applied with the `update core` command
 - runner: the harness tool that starts and stops instances. It handles the server process, clients, DB and ports
 - lead agent: the agent that receives a command and is responsible for it to the end. It calls sub-agents
-- harness settings: `settings.json` of the harness repo `open-game-works-core/`. Values that apply to the whole harness and values that differ per host
+- harness settings: `settings.json` of the harness repo `open-game-works-core/` with local harness settings merged over it. Values that apply to the whole harness and values that differ per host
+- local harness settings: `settings.local.json` of the harness repo. It is not committed, and holds the harness settings values of one user and one host
 - core settings: the core defaults in `open-game-works-core-impl/`
 - game settings: `games/<game>/settings.json`. Values per game. They can override core settings values, and a value not overridden uses the core settings default
 - external service: a service that we do not start and that an outside company operates. e.g. store payment, ads, push notification, social login, analytics, CDN
@@ -142,9 +143,10 @@ games/<game>/
 1. The content agent edits `design.md`, client content code, server content code, data and contract together
 2. Regression tests, static checks, completeness checks and row simulation run. Regression tests are all the tests that the content agent wrote together with the features it made
 3. The play agent reads `play-guide.md`, plays the instance with real input, then gives feedback. Feedback is written per observation, not as a total score
-4. The judge agent plays in a new context and writes the judge result comparing with the baseline game and the gameplay video of the reference game. Each iteration, the harness tool writes the judge result and the defect list into the loop iteration record, and decides success from the judge result and the completeness check
+4. Judge agents play in new contexts and write judge results comparing with the baseline game and the gameplay video of the reference game. Several judge agents judge an iteration with the sides `A` and `B` swapped between them, and the harness tool counts their votes per element. Each iteration, the harness tool writes the judge results, the votes and the defect list into the loop iteration record, and decides success from the votes and the completeness check
 5. When the loop stops, the lead agent reports to the human with the loop end record. A human makes builds with the `build` command. The human's feedback becomes the input of the next loop through `update game`. The loop does not wait for the human midway
 
+- An iteration is a fun iteration or a completeness iteration. A fun iteration tries one change aimed at fun and runs only the checks that block play, so that it is short; a completeness iteration fixes defects and runs every check. Success is judged only in a completeness iteration
 - `brief.md` is written or edited only in iteration 1 of the loop. To change it, a human requests it with `update game`. An edit keeps to the brief
 - The content agent edits `play-guide.md` together with the game
 - When it starts work, the content agent reads `design.md` before the code
@@ -215,7 +217,7 @@ The branches of a game repo are run as below.
 | `create contract tool` | Makes the contract tool and the data tool. The two tools are released with the same version as core |
 | `create server core` | Makes the server core and releases it |
 | `create client core: <engine>` | Makes the client core of that engine from the spec and releases it |
-| `update env` | Checks this host, and gets local models and programs and runs them. When they do not match harness settings, proposes a revision to the human |
+| `update env` | Checks this host, and gets local models and programs and runs them. When they do not match harness settings, proposes a revision to the human. Asks the human for the preference settings |
 | `setup game: <game> <request>` | Creates the game repo and game settings and saves the request. Fills the required items of game settings and the items that become required by condition, gets the reference game and gameplay video, gets the banned word list, and tells the items that use the default and the resource types that this host cannot make |
 | `create game: <game> [<request>]` | Makes a game that finished `setup game` through the loop. `<request>` is a request added to the saved request |
 | `update game: <game> <request>` | Edits a made game through the loop. Includes the human's feedback and PROD problem fixes |
@@ -250,10 +252,12 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 | core settings | core default |
 | game settings | `schemas/game-settings.schema.json` defines the items. e.g. engine, core version, core module list, app ID, source language, build platforms, signing, base resolution, terms documents, server address and deploy host per environment, adapter, secret names, core settings overrides |
 
-- Agents do not open settings files or JSON schemas directly, and read and write them only through `ogw settings`. Before writing, `ogw settings set` checks the schema, the conditions and the owner permission of the calling role, and does not write when a check does not pass. `ogw settings set` takes several `<path> <JSON value>` pairs and checks once the result of writing all of them. Values that keep the conditions only when changed together are written at once
+- Agents do not open settings files or JSON schemas directly, and read and write them only through `ogw settings`. Before writing, `ogw settings set` checks the schema, the conditions, the owner permission of the calling role and, for a role other than the lead agent, that no changed path is equal to or below a path of game settings `humanDecided` (the values a human decided), and does not write when a check does not pass. `ogw settings set` takes several `<path> <JSON value>` pairs and checks once the result of writing all of them. Values that keep the conditions only when changed together are written at once
 - Settings are filled one value at a time, so a missing required value does not block a write of `ogw settings set`. `ogw settings list --missing` and `ogw game check` catch missing required values
 - Harness settings values that differ per host are kept in `hosts` as one item per host id. `ogw settings` reads and writes a path without `hosts.<host id>.` (e.g. `maxConcurrentInstances`) as the path in the item of this host. Such a harness settings value that documents refer to, and that the harness tool reads and writes, is the value in the item of this host
 - The schema `x-owner` of a path follows the value of the deepest node, among the schema nodes that reach that path, that declares `x-owner`
+- The merge of local harness settings over `settings.json` merges object values key by key and replaces arrays and other values whole. The schema and condition checks of `ogw settings set` run on the merged value. Without `settings.local.json`, `settings.json` alone is harness settings
+- A harness settings path is local-scope when a schema node that reaches it declares `x-scope` `local` (e.g. `humanLanguage`, `agents`, `hosts`, `loopStop`, `loop`). `ogw settings set` writes a local-scope path, and a path that local harness settings already hold, to `settings.local.json`, and every other path to `settings.json`. A removed value is removed from both files. The committed values of local-scope paths in `settings.json` are generic defaults for every user
 - The default of a value that exists only in game settings is in the JSON schema of game settings
 - Secrets go in no settings. Settings hold only the names of secrets, and the values are read from the secret store of the host that runs
 
@@ -267,7 +271,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - Sub-agents do not ask the human. Outside the loop, a sub-agent writes what it does not know in the result file that `agents/<role>.md` defines, and the lead agent asks the human about it
 - Outside the loop, no file, rule or behavior outside the scope of the command is made. When one is needed, the lead agent first asks the human, and a sub-agent writes it as a proposal in its result file
 - Content that can go in the harness is kept in the harness, not in memory
-- `ogw agent`, `ogw agent retry`, `ogw check`, `ogw simulate`, `ogw instance start`, `ogw instance measure`, `ogw loop evaluate`, `ogw loop sync`, `ogw build run`, `ogw deploy`, `ogw core test`, `ogw review run`, `ogw code check`, `ogw core fetch`, `ogw game reference`, `ogw core upgrade`, `ogw core try`, `ogw core release`, `ogw core pin-engine`, `ogw env install-engines`, `ogw generation install`, `ogw generation measure`, `ogw generation run`, `ogw video` run with `--background`. The tool starts the work and returns a job id at once. A job is one run of a command started with `--background`. A job of `ogw agent` or `ogw agent retry` is waited for with `ogw agent wait <id>`, and any other job with `ogw job wait <id>`. When a wait or `ogw review wait` ends with exit code 75, the job is still running, so the same command is called again. The shell call that calls a wait gets a time limit longer than harness settings `jobWaitTimeoutMs`
+- `ogw agent`, `ogw agent retry`, `ogw check`, `ogw simulate`, `ogw instance start`, `ogw instance measure`, `ogw loop evaluate`, `ogw loop variants`, `ogw loop sync`, `ogw build run`, `ogw deploy`, `ogw core test`, `ogw review run`, `ogw code check`, `ogw core fetch`, `ogw game reference`, `ogw core upgrade`, `ogw core try`, `ogw core release`, `ogw core pin-engine`, `ogw env install-engines`, `ogw generation install`, `ogw generation measure`, `ogw generation run`, `ogw video`, `ogw judge calibrate` run with `--background`. The tool starts the work and returns a job id at once. A job is one run of a command started with `--background`. A job of `ogw agent` or `ogw agent retry` is waited for with `ogw agent wait <id>`, and any other job with `ogw job wait <id>`. When a wait or `ogw review wait` ends with exit code 75, the job is still running, so the same command is called again. The shell call that calls a wait gets a time limit longer than harness settings `jobWaitTimeoutMs`
 - The harness is used from both Codex and Claude Code. `CLAUDE.md` imports this document (`@AGENTS.md`), and `.claude/skills` and `.agents/skills` are links to `skills/`
 
 ## harness writing rules
@@ -298,9 +302,9 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 
 | skill | reader | contents |
 |---|---|---|
-| `host-env` | lead agent of `update env` | host check, installing local models and programs, measurement, harness settings revision proposal |
+| `host-env` | lead agent of `update env` | host check, installing local models and programs, measurement, harness settings revision proposal, preference settings |
 | `game-setup` | lead agent of `setup game` | making the game repo and game settings, saving the request, reference game and gameplay video, banned word list, host capability check |
-| `game-loop` | lead agent of `create game`, `update game` and `build`, lead agent of `update env` (only `performance.md`), content agent, resource sub-agent, play agent, judge agent (these four only `instance.md`) | work branch, raising the core version, sub-agent calls, runner, instance commands, running automated checks, measurement, loop iteration record, loop stop judgement, loop end record, report, PROD problem reproduction |
+| `game-loop` | lead agent of `create game`, `update game` and `build`, lead agent of `update env` (only `performance.md`), content agent, resource sub-agent, play agent, judge agent (these four only `instance.md`) | work branch, raising the core version, sub-agent calls, runner, instance commands, running automated checks, measurement, loop iteration record, loop stop judgement, loop end record, report, PROD problem reproduction, play video, judge calibration |
 | `game-design` | content agent, lead agent of `update core` | brief, design doc, play guide, core proposal, assumptions in the loop, criteria for deciding without asking the human |
 | `contract` | content agent, hardening agent, core agent, review agent, lead agent of `create contract tool` | proto writing rules, error code, backward compatibility, code that the contract tool generates |
 | `data` | content agent, translation sub-agent, core agent, review agent, hardening agent | CSV format, type, ID, system table, translation, glossary, code generated from data, data check |

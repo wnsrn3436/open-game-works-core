@@ -1,7 +1,7 @@
 import type { HarnessSettings } from '../../../lib/settings.ts';
 import type { DefectsFile } from './defects.ts';
 import { successPrecondition } from './files.ts';
-import { mainOf, type ParsedRecord } from './iteration-record.ts';
+import { mainJudges, type ParsedRecord } from './iteration-record.ts';
 import type { VerdictRecord } from './run.ts';
 
 export interface VerdictInput {
@@ -18,8 +18,9 @@ export interface VerdictInput {
 }
 
 /**
- * Evidence that the record is a candidate iteration (`game-loop` `## stop`): not a confirmation iteration, its step 4
- * judge and checks meet `successPrecondition`, and its success judges all passed. null when it is not one.
+ * Evidence that the record is a candidate iteration (`game-loop` `## stop`): not a confirmation iteration, its kind, its
+ * step 4 judges together and its checks meet `successPrecondition`, and its success judges all passed. null when it is
+ * not one.
  */
 export function candidateEvidence(record: ParsedRecord, loopStop: HarnessSettings['loopStop']): string[] | null {
   if (record.confirms !== null) return null;
@@ -33,11 +34,11 @@ export function confirmEvidence(record: ParsedRecord, loopStop: HarnessSettings[
 }
 
 function judgedEvidence(record: ParsedRecord, loopStop: HarnessSettings['loopStop']): string[] | null {
-  const main = mainOf(record);
-  if (!main || !successPrecondition(main, (name) => record.checks.get(name) ?? 'unknown')) return null;
+  const main = mainJudges(record);
+  if (main.length === 0 || !successPrecondition(record, (name) => record.checks.get(name) ?? 'unknown')) return null;
   const confirm = (record.judges ?? []).filter((j) => j.kind === 'success');
   if (confirm.length < loopStop.successJudges || !confirm.every((j) => j.vsReference === 'pass')) return null;
-  return [main.result, ...confirm.map((j) => j.result)];
+  return [...main.map((j) => j.result), ...confirm.map((j) => j.result)];
 }
 
 /** Evidence of this iteration as a candidate or a passed confirmation iteration; null otherwise. */
@@ -66,11 +67,11 @@ function countReason(input: VerdictInput, field: 'repeatedDefect' | 'oscillation
 
 /** Iterations that are not confirmation iterations and have a `vs baseline`, the last ones not `better`. */
 function plateau(input: VerdictInput): string[] | null {
-  const counted = input.records.filter((r) => r.iteration <= input.iteration && r.confirms === null && (mainOf(r)?.vsBaseline ?? null) !== null);
+  const counted = input.records.filter((r) => r.iteration <= input.iteration && r.confirms === null && r.vsBaseline !== null);
   const run: number[] = [];
   for (let i = counted.length - 1; i >= 0; i--) {
     const record = counted[i] as ParsedRecord;
-    if (mainOf(record)?.vsBaseline === 'better') break;
+    if (record.vsBaseline === 'better') break;
     run.unshift(record.iteration);
   }
   return run.length >= input.loopStop.plateau ? run.map(String) : null;

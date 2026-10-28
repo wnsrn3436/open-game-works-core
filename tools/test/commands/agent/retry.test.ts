@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { listJobs, readJob } from '../../../src/lib/jobs.ts';
+import { listJobs, readJob, updateJob } from '../../../src/lib/jobs.ts';
 import { ogw, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
@@ -109,7 +109,7 @@ describe('ogw agent retry', () => {
     await ogw(ws, ['agent', 'wait', started[0]?.id as string, '--timeout', '60000']);
   });
 
-  it('does not retry a JSON input, a done job or a running job', async () => {
+  it('does not retry a JSON input, a done job, a variant agent or a running job', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'in.md': 'x', 'guide.md': 'g' });
     const ok = fakeAgentCli(ws, WRITE_OUTPUT);
@@ -121,6 +121,12 @@ describe('ogw agent retry', () => {
       const play = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], failing.env, root);
       expect((await ogw(ws, ['agent', 'retry', play.id])).stderr).toContain('has a JSON input (play)');
     }
+    // a variant agent of `ogw loop variants` is not retried: the lead agent calls the content agent instead
+    const failingContent = await runAgent(ws, ['content', '--game', 'g', '--input', 'in.md'], fakeAgentCli(ws, 'process.exitCode = 1;').env, root);
+    await updateJob(failingContent.id, (job) => {
+      job.meta.variant = 2;
+    }, ws.env);
+    expect((await ogw(ws, ['agent', 'retry', failingContent.id])).stderr).toContain(`job ${failingContent.id} is a variant agent of ogw loop variants; it is not retried`);
     const slow = fakeAgentCli(ws, 'await new Promise((r) => setTimeout(r, 3000));');
     const running = (await ogw(ws, ['agent', 'content', '--game', 'g', '--input', 'in.md', '--background'], { env: slow.env, cwd: root })).stdout.trim();
     expect((await ogw(ws, ['agent', 'retry', running])).stderr).toContain(`job ${running} is running`);

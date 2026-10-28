@@ -14,12 +14,13 @@ import {
   type FindingsFile,
   type ReportRow,
 } from './defects.ts';
-import { checkNames, checkResult, type CheckFile, type EvaluateFile, type MeasureFile } from './files.ts';
+import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
-import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay } from './iteration-record.ts';
+import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
-import { abs, confirmOf, iterationResults, readGameText, runRel, type IterationResults } from './run.ts';
+import { abs, confirmOf, iterationKind, iterationResults, readGameText, readRunJson, runRel, type IterationResults } from './run.ts';
+import type { VariantsFile } from './variants.ts';
 
 /** `ogw loop record`: defect list merge, status change, and the loop iteration record. */
 
@@ -75,14 +76,24 @@ function checkConfirmed(results: Confirmations, defect: Defect): boolean {
 /**
  * True when this record's confirmation of the defect gave a result (`### defect status`). A confirmation iteration
  * (`confirming`) takes only blocker play findings, so for another play defect it gives a result only when this record
- * has a finding of its id (`found`), and like any play confirmation only with a done play.
+ * has a finding of its id (`found`), and like any play confirmation only with a done play. A judge defect is confirmed
+ * only by a completeness iteration: a fun judge sees three elements, no reference and no moments.
  */
 export function confirmedBy(results: Confirmations, hardening: boolean, defect: Defect, confirming = false, found = false): boolean {
   if (hardening || defect.source === 'hardening') return hardening && defect.source === 'hardening';
   if (confirming && defect.source === 'play' && defect.severity !== 'blocker' && !found) return false;
   if (defect.source === 'check') return checkConfirmed(results, defect);
-  const entries: { status: string }[] = (defect.source === 'play' ? results.evaluate?.plays : results.evaluate?.judges) ?? [];
-  return entries.some((e) => e.status === 'done');
+  return defect.source === 'play' ? playConfirmed(results) : judgeConfirmed(results);
+}
+
+function playConfirmed(results: Confirmations): boolean {
+  return results.evaluate?.plays.some((p) => p.status === 'done') ?? false;
+}
+
+/** A judge defect: a done judge of a completeness iteration. */
+function judgeConfirmed(results: Confirmations): boolean {
+  const evaluate = results.evaluate;
+  return evaluate !== null && evaluate.kind !== 'fun' && evaluate.judges.some((j) => j.status === 'done');
 }
 
 async function judgesOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordJudge[]> {
@@ -91,6 +102,7 @@ async function judgesOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordJ
     const body = await readGameText(game, judge.result);
     out.push({
       ...judge,
+      agent: (judge as Partial<JudgeEntry>).agent ?? null,
       moments: body === null ? 'none' : judgeSectionText(body, 'moments'),
       loserBetter: body === null ? 'none' : judgeSectionText(body, 'loser better'),
     });
@@ -124,17 +136,37 @@ async function newTemporary(game: GameRepo, run: RunState, commit: string | null
   return (await temporaryAt(game, commit)).filter((key) => !before.has(key));
 }
 
+/** The iteration kind: that of the evaluate file, else the one `ogw loop next` kept. */
+function kindOf(run: RunState, evaluate: EvaluateFile | null): IterationKind {
+  return evaluate?.kind ?? iterationKind(run, run.iteration);
+}
+
+/** `## votes`: the step 4 judges together; null without a baseline game or an evaluate file. */
+function votesOf(evaluate: EvaluateFile | null): RecordVotes | null {
+  if (evaluate === null || evaluate.baseline === null) return null;
+  return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [] };
+}
+
+/** `## variants`: the variants of `variants-<n>.json`; null without that file. */
+async function variantsOf(game: GameRepo, run: RunState): Promise<RecordVariant[] | null> {
+  return (await readRunJson<VariantsFile>(game, run, `variants-${String(run.iteration)}.json`))?.variants ?? null;
+}
+
 async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[]): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
   const performanceFailed = check !== null && checkResult(check, 'performance') === 'fail';
   const rel = runRel(run, `iteration-${n}.md`);
+  const variants = await variantsOf(game, run);
   await writeFileAtomic(abs(game, rel), renderIterationRecord({
     commit: check?.commit ?? null,
     baseline: evaluate?.baseline ?? null,
     confirms: confirmOf(run, run.iteration),
+    kind: kindOf(run, evaluate),
+    variants,
     checks: check ? checkNames(check).map((name) => ({ name, result: checkResult(check, name), path: checkRel })) : [],
     judges: evaluate ? await judgesOf(game, evaluate) : null,
+    votes: votesOf(evaluate),
     plays: evaluate ? await playsOf(game, evaluate) : null,
     defects,
     measurements: measure?.targets ?? null,

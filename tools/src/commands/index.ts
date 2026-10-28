@@ -34,6 +34,7 @@ import { commands as admin } from './admin/index.ts';
 import { commands as clone } from './clone/index.ts';
 import { commands as docs } from './docs/index.ts';
 import { commands as video } from './video/index.ts';
+import { commands as judge } from './judge/index.ts';
 
 /** Every ogw command. Each folder owns the commands whose first word is its name. */
 export const commands: readonly CommandDef[] = [
@@ -72,4 +73,5 @@ export const commands: readonly CommandDef[] = [
   ...clone,
   ...docs,
   ...video,
+  ...judge,
 ];

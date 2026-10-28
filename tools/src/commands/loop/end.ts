@@ -1,13 +1,10 @@
-import { join } from 'node:path';
 import { expectPositionals, positional, type CommandDef, type Context } from '../../lib/command.ts';
-import { exists } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { branchExists, gitRaw } from '../../lib/git.ts';
 import { killJob } from '../../lib/jobs.ts';
-import type { RunResult } from '../../lib/proc.ts';
 import { changeOpenRunLocked, withRunLock, type RunState } from '../../lib/runstate.ts';
 import { releasePendingProposals } from '../core/api.ts';
 import { stopInstance, unfailedInstances } from '../instance/api.ts';
+import { removeAgentWorktrees } from './lib/agent-worktrees.ts';
 import { isAgentJob, runJobs } from './lib/jobs.ts';
 import { openTarget } from './lib/run.ts';
 
@@ -16,41 +13,6 @@ const USAGE = 'ogw loop end <game>';
 /** Instances of the game started while the run is open and not `failed`, starting ones included. */
 export async function runInstances(ctx: Context, game: GameRepo, run: RunState): Promise<string[]> {
   return (await unfailedInstances(ctx, game.name)).filter((i) => i.startedAt >= run.startedAt).map((i) => i.id);
-}
-
-interface Removal {
-  removed: string[];
-  /** What is still there, with why it could not be removed. */
-  notRemoved: { what: string; error: string }[];
-}
-
-function gitError(result: RunResult): string {
-  return (result.stderr || result.stdout).trim() || `exit ${String(result.code)}`;
-}
-
-/**
- * Removes the agent worktrees and branches that are left. `-f -f` also removes a worktree that an interrupted
- * `git worktree add` left locked. Only what is gone afterwards counts as removed.
- */
-async function removeAgentWorktrees(ctx: Context, game: GameRepo, ids: readonly string[]): Promise<Removal> {
-  const worktrees = (await ctx.workspace()).worktrees;
-  const out: Removal = { removed: [], notRemoved: [] };
-  for (const id of ids) {
-    const path = join(worktrees, game.name, `agent-${id}`);
-    if (exists(path)) {
-      const result = await gitRaw(game.mainRoot, ['worktree', 'remove', '-f', '-f', path], { env: ctx.env });
-      await gitRaw(game.mainRoot, ['worktree', 'prune'], { env: ctx.env });
-      if (exists(path)) out.notRemoved.push({ what: path, error: gitError(result) });
-      else out.removed.push(path);
-    }
-    const branch = `agent/${id}`;
-    if (await branchExists(game.mainRoot, branch, { env: ctx.env })) {
-      const result = await gitRaw(game.mainRoot, ['branch', '-D', branch], { env: ctx.env });
-      if (await branchExists(game.mainRoot, branch, { env: ctx.env })) out.notRemoved.push({ what: branch, error: gitError(result) });
-      else out.removed.push(branch);
-    }
-  }
-  return out;
 }
 
 export const loopEnd: CommandDef = {

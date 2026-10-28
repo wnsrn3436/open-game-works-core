@@ -518,6 +518,18 @@ export const SANDBOX_DROPPED_ENV: readonly string[] = [
 ];
 
 /** play, judge: the agent CLI command that keeps no session file of its own (Claude Code `--no-session-persistence`). */
+/** A Claude Code session of an agent: a new one with this id, or the earlier one of this id continued. */
+export interface AgentSession {
+  id: string;
+  resume: boolean;
+}
+
+/** Claude Code with `--session-id <id>` for a new session, or `--resume <id>` to continue that session. */
+export function withSession(cli: AgentCli, command: CliCommand, session: AgentSession | null): CliCommand {
+  if (cli !== 'claude-code' || session === null) return command;
+  return { cmd: command.cmd, args: [...command.args, session.resume ? '--resume' : '--session-id', session.id] };
+}
+
 export function withoutSessionFiles(cli: AgentCli, command: CliCommand): CliCommand {
   return cli === 'claude-code' ? { cmd: command.cmd, args: [...command.args, '--no-session-persistence'] } : command;
 }

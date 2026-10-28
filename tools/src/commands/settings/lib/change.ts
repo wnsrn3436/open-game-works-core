@@ -1,11 +1,13 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
-import { hostDefaults, type Role } from '../../../lib/settings.ts';
+import { hostDefaults, localHarnessSettingsPath, type HarnessSettingsFiles, type Role } from '../../../lib/settings.ts';
 import { callerRole } from '../api.ts';
 import { implConstraints } from './core-files.ts';
 import { constraintIssues, gameIssues } from './game-check.ts';
 import { changedPaths, display, isPlainObject, type JsonObject } from './json-path.ts';
+import { routeHarnessWrite } from './scope.ts';
 import { locatePath, withValue, type Target, type TargetKind } from './target.ts';
 import { schemaIssues, type Issue } from './validate.ts';
 
@@ -24,20 +26,38 @@ export function mayChange(role: Role | 'lead', kind: TargetKind, owner: string |
   return role === 'core' && kind === 'core';
 }
 
-/** One line per changed path the caller may not change. */
+/** The game settings `humanDecided` path that `path` equals or is below, or null. */
+export function lockingPath(humanDecided: unknown, path: string): string | null {
+  if (!Array.isArray(humanDecided)) return null;
+  const lock = humanDecided.find((locked): locked is string => typeof locked === 'string' && (path === locked || path.startsWith(`${locked}.`)));
+  return lock ?? null;
+}
+
+/**
+ * One line per changed path the caller may not change: by its `x-owner`, and for a role other than `lead`, a game
+ * settings path equal to or below a path of game settings `humanDecided`.
+ */
 export async function permissionIssues(ctx: Context, target: Target, next: JsonObject, allowTool: boolean): Promise<string[]> {
   const role = await callerRole(ctx);
   const lines: string[] = [];
   const denied: string[] = [];
   // the owner of a `core.` key of game settings comes from the core release of the `coreVersion` being written
   const result = withValue(ctx, target, next);
+  // `humanDecided` itself is not a content item, so a role other than `lead` reads the locks it cannot change
+  const humanDecided = target.kind === 'game' && role !== 'lead' ? target.value.humanDecided : undefined;
   for (const path of changedPaths(target.value, next)) {
     const text = display(path);
     if (denied.some((parent) => text.startsWith(`${parent}.`))) continue;
     const { owner } = await locatePath(result, path);
-    if (mayChange(role, target.kind, owner, allowTool)) continue;
+    if (!mayChange(role, target.kind, owner, allowTool)) {
+      denied.push(text);
+      lines.push(`role ${role} cannot change ${text}${owner === undefined ? '' : ` (x-owner ${owner})`}`);
+      continue;
+    }
+    const lock = lockingPath(humanDecided, text);
+    if (lock === null) continue;
     denied.push(text);
-    lines.push(`role ${role} cannot change ${text}${owner === undefined ? '' : ` (x-owner ${owner})`}`);
+    lines.push(`role ${role} cannot change ${text}: a human decided ${lock} (humanDecided)`);
   }
   return lines;
 }
@@ -97,9 +117,21 @@ export async function settingsIssues(ctx: Context, target: Target, value: JsonOb
 }
 
 /**
+ * Writes the two harness settings files that hold `value` (`routeHarnessWrite`): only a file whose value changes, and
+ * `settings.local.json` first, so a stop between the writes leaves a moved host entry in both files, where the local
+ * one is used.
+ */
+async function writeHarnessFiles(ctx: Context, target: Target, files: HarnessSettingsFiles, value: JsonObject): Promise<void> {
+  const next = routeHarnessWrite(target.schema, files, await target.hostEntryId(value.hosts), value);
+  if (next.local !== null && !isDeepStrictEqual(next.local, files.local)) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), next.local);
+  if (!isDeepStrictEqual(next.shared, files.shared)) await writeJsonAtomic(target.file, next.shared);
+}
+
+/**
  * Writes `next` to the target file when the caller may change every changed path and the result
  * passes. The tool keeps the `name` of this host's harness settings `hosts` entry. A missing required value blocks only when it is the path being unset, because settings are
- * filled one value at a time (`game-setup` 4).
+ * filled one value at a time (`game-setup` 4). Harness settings `next` is the merged value, and is written to its two
+ * files (`writeHarnessFiles`).
  */
 export async function writeChecked(ctx: Context, target: Target, next: JsonObject, options: WriteOptions = {}): Promise<void> {
   const denied = await permissionIssues(ctx, target, next, options.allowTool === true);
@@ -108,5 +140,6 @@ export async function writeChecked(ctx: Context, target: Target, next: JsonObjec
   const issues = await settingsIssues(ctx, target, value);
   const blocking = issues.filter((i) => i.missing === undefined || i.missing === options.unsetPath).map((i) => i.message);
   if (blocking.length > 0) throw new OgwError(blocking.join('\n'), 1, { errors: blocking });
-  await writeJsonAtomic(target.file, value);
+  if (target.files === null) await writeJsonAtomic(target.file, value);
+  else await writeHarnessFiles(ctx, target, target.files, value);
 }

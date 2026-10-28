@@ -22,7 +22,7 @@ async function checkLoginToken(ctx: Context, value: string): Promise<void> {
     );
   }
   const run = await tokenCheckRun(ctx, await ctx.settings(), value);
-  if (run === null) throw new OgwError(`${name} not stored: harness settings agents play and judge do not use Claude Code, so no agent uses it`);
+  if (run === null) throw new OgwError(`${name} not stored: harness settings agents play and judge and loop.judgePanel do not use Claude Code, so no agent uses it`);
   if (run.ok) return;
   if (run.authFailed) throw new OgwError(`${name} not stored: Claude Code in the ${run.role} agent sandbox failed to authenticate with it: ${run.output}\n${STORE_LOGIN_TOKEN}`);
   throw new OgwError(`${name} not stored: the Claude Code run with it in the ${run.role} agent sandbox failed: ${run.output}`);

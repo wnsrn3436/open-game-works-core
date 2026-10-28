@@ -41,6 +41,21 @@ const PROPOSALS = {
 };
 
 describe('ogw loop end', () => {
+  it('removes the worktrees and branches of the variant agents of the run', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { startedAt: 5, iteration: 2 });
+    const variants = [await addJob(g.ws, { status: 'done', meta: { role: 'content', run: 'update-1', iteration: 2, variant: 1 } }), await addJob(g.ws, { status: 'failed', meta: { role: 'content', run: 'update-1', iteration: 2, variant: 2 } })];
+    const worktrees = variants.map((job) => join(g.ws.worktrees, 'g', `agent-${job.id}`));
+    variants.forEach((job, i) => git(g.root, 'worktree', 'add', '-q', '-b', `agent/${job.id}`, worktrees[i] as string));
+    const out = await ogw(g.ws, ['loop', 'end', 'g']);
+    expect(out.code).toBe(0);
+    for (const [i, job] of variants.entries()) {
+      expect(out.stdout).toContain(`removed ${worktrees[i] as string}\nremoved agent/${job.id}\n`);
+      expect(existsSync(worktrees[i] as string)).toBe(false);
+    }
+    expect(git(g.root, 'branch', '--list', 'agent/*')).toBe('');
+  });
+
   it('stops the run jobs, then its instances, removes agent worktrees, closes the run, and marks pending proposals', async () => {
     const g = setupGame({}, PROPOSALS);
     await openLoopRun(g, { startedAt: 5 });

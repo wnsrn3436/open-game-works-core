@@ -29,6 +29,14 @@ export interface MergeFailure {
   detail: string;
 }
 
+export interface MergeOptions {
+  /**
+   * Paths relative to the game repo checkout that go into the merge commit of a game worktree job with the merged
+   * files (`ogw loop variants` commits its records with the merge of the chosen variant).
+   */
+  alsoCommit?: readonly string[];
+}
+
 export interface MergeResult {
   merged: string[];
   failed: MergeFailure[];
@@ -133,8 +141,9 @@ async function unmergedPaths(repo: string): Promise<string[]> {
   return out.split('\0').filter((path) => path !== '');
 }
 
-async function commitMerge(repo: string, before: ReadonlySet<string>, message: string): Promise<void> {
+async function commitMerge(repo: string, before: ReadonlySet<string>, message: string, alsoCommit: readonly string[] = []): Promise<void> {
   await git(repo, ['add', '--update']);
+  if (alsoCommit.length > 0) await git(repo, ['add', '--', ...alsoCommit]);
   const added = [...(await untracked(repo))].filter((path) => !before.has(path));
   if (added.length > 0) await git(repo, ['add', '--', ...added]);
   const merging = (await revParse(repo, 'MERGE_HEAD')) !== null;
@@ -177,7 +186,7 @@ async function keepOurs(repo: string, ours: string, paths: readonly string[]): P
   }
 }
 
-async function mergeGameWorktree(ctx: Context, id: string, meta: AgentMeta): Promise<void> {
+async function mergeGameWorktree(ctx: Context, id: string, meta: AgentMeta, options: MergeOptions): Promise<void> {
   if (meta.place.kind !== 'game-worktree') return;
   const { checkout, branch, baseCommit } = meta.place;
   if ((await currentBranch(checkout, { env: ctx.env })) !== branch) throw new MergeStop('not on branch', `${checkout} is not on ${branch}`);
@@ -203,7 +212,7 @@ async function mergeGameWorktree(ctx: Context, id: string, meta: AgentMeta): Pro
       const errors = data.lines.filter((line) => line.level === 'ERROR').map((line) => line.text);
       throw new MergeStop('data', (errors.length > 0 ? errors : [data.stderr.trim()]).join('\n'));
     }
-    await commitMerge(checkout, before, `ogw agent merge ${id}`);
+    await commitMerge(checkout, before, `ogw agent merge ${id}`, options.alsoCommit);
   } catch (error) {
     await abortMerge(checkout, before);
     throw error;
@@ -435,12 +444,12 @@ function checkMergeable(meta: AgentMeta, status: string): void {
   if (meta.worktree === null || meta.branch === null) throw new MergeStop('no worktree', 'the job has no worktree to merge');
 }
 
-async function mergeOne(ctx: Context, id: string): Promise<void> {
+async function mergeOne(ctx: Context, id: string, options: MergeOptions): Promise<void> {
   const { job, meta } = await readAgentJob(id, ctx.env);
   checkMergeable(meta, job.status);
   const repo = meta.place.kind === 'game-worktree' ? meta.place.checkout : meta.place.kind === 'core-worktree' ? meta.place.coreImpl : null;
   if (repo === null) throw new MergeStop('no worktree', 'the job has no worktree to merge');
-  if (meta.place.kind === 'game-worktree') await mergeGameWorktree(ctx, id, meta);
+  if (meta.place.kind === 'game-worktree') await mergeGameWorktree(ctx, id, meta, options);
   else if (meta.place.kind === 'core-worktree') {
     // one change of the main checkout at a time, and none under the module tests of a core test run (ogw.md `## agent merge`)
     // a review job adds only its review file under records/, which no module test reads
@@ -510,7 +519,7 @@ export async function orderIds(ctx: Context, ids: readonly string[]): Promise<{ 
 }
 
 /** `ogw agent merge <id>...`. */
-export async function mergeAgents(ctx: Context, ids: readonly string[]): Promise<MergeResult> {
+export async function mergeAgents(ctx: Context, ids: readonly string[], options: MergeOptions = {}): Promise<MergeResult> {
   const order = await orderIds(ctx, ids);
   const result: MergeResult = {
     merged: [],
@@ -518,7 +527,7 @@ export async function mergeAgents(ctx: Context, ids: readonly string[]): Promise
   };
   for (const id of order.ids) {
     try {
-      await mergeOne(ctx, id);
+      await mergeOne(ctx, id, options);
       result.merged.push(id);
     } catch (error) {
       if (error instanceof MergeStop) result.failed.push({ id, reason: error.reason, detail: error.detail });

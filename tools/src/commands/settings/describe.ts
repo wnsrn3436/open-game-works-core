@@ -2,7 +2,7 @@ import { expectPositionals, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { display } from './lib/json-path.ts';
 import { infoOf } from './lib/schema-nav.ts';
-import { locatePath, openTarget, parsePath } from './lib/target.ts';
+import { locatePath, openTarget, parsePath, scopeOf } from './lib/target.ts';
 
 function allowedText(allowed: Record<string, unknown>): string {
   return Object.entries(allowed)
@@ -31,6 +31,8 @@ export const describe: CommandDef = {
     if (Object.keys(info.allowed).length > 0) lines.push(`allowed: ${allowedText(info.allowed)}`);
     if (info.default !== undefined) lines.push(`default: ${JSON.stringify(info.default)}`);
     if (owner !== undefined) lines.push(`x-owner: ${owner}`);
+    const scope = scopeOf(target, segments);
+    if (scope !== undefined) lines.push(`x-scope: ${scope}`);
     return {
       text: lines.join('\n'),
       data: {
@@ -40,6 +42,7 @@ export const describe: CommandDef = {
         allowed: info.allowed,
         default: info.default ?? null,
         xOwner: owner ?? null,
+        xScope: scope ?? null,
       },
     };
   },

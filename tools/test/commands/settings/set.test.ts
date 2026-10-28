@@ -223,6 +223,49 @@ describe('caller role', () => {
     expect(readFileSync(join(ws.root, 'out-runs.json'), 'utf8')).toContain('ogw settings set harness jobWaitTimeoutMs 1');
   });
 
+  it('refuses a role other than lead a change at or below a humanDecided path', async () => {
+    const locked = ['dailyResetOffsetMs', 'coreModules', 'core.InputBlockCore.maxDurationMs', 'consent'];
+    writeGame({ ...validGameSettings(), dailyResetOffsetMs: 0, core: { 'InputBlockCore.maxDurationMs': 30000 }, humanDecided: locked });
+    const before = readFileSync(gameFile, 'utf8');
+    asRole('content');
+    expect(await set('game', 'mygame', 'dailyResetOffsetMs', '3600000')).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: 'role content cannot change dailyResetOffsetMs: a human decided dailyResetOffsetMs (humanDecided)\n',
+    });
+    expect((await unset('game', 'mygame', 'dailyResetOffsetMs')).stderr).toBe('role content cannot change dailyResetOffsetMs: a human decided dailyResetOffsetMs (humanDecided)\n');
+    // a listed coreModules keeps the content agent from adding or removing a module
+    expect((await set('game', 'mygame', 'coreModules.client', '["UICore","NetworkCore"]')).stderr).toBe('role content cannot change coreModules.client.1: a human decided coreModules (humanDecided)\n');
+    expect((await set('game', 'mygame', 'coreModules.server', '[]')).stderr).toBe('role content cannot change coreModules.server.0: a human decided coreModules (humanDecided)\n');
+    expect((await set('game', 'mygame', 'core.InputBlockCore.maxDurationMs', '40000')).stderr).toBe(
+      'role content cannot change core.InputBlockCore.maxDurationMs: a human decided core.InputBlockCore.maxDurationMs (humanDecided)\n',
+    );
+    expect((await set('game', 'mygame', 'core', '{}')).stderr).toBe(
+      'role content cannot change core.InputBlockCore.maxDurationMs: a human decided core.InputBlockCore.maxDurationMs (humanDecided)\n',
+    );
+    expect((await set('game', 'mygame', 'humanDecided', '[]')).stderr).toContain('role content cannot change humanDecided.0 (x-owner human)');
+    expect(readFileSync(gameFile, 'utf8')).toBe(before);
+    // a path that no humanDecided path holds stays the content agent's
+    expect((await set('game', 'mygame', 'titleScene', '"scene_title2"')).code).toBe(0);
+  });
+
+  it('lets the lead change a humanDecided path and humanDecided', async () => {
+    writeGame({ ...validGameSettings(), dailyResetOffsetMs: 0, humanDecided: ['dailyResetOffsetMs', 'coreModules'] });
+    expect((await set('game', 'mygame', 'dailyResetOffsetMs', '3600000', 'coreModules.client', '["UICore","NetworkCore"]')).code).toBe(0);
+    expect(readGame()).toMatchObject({ dailyResetOffsetMs: 3600000, coreModules: { client: ['UICore', 'NetworkCore'] } });
+    // every humanDecided path has a value written, also when it equals the default
+    expect((await set('game', 'mygame', 'humanDecided', '["dailyResetOffsetMs","gamepadSupported"]')).stderr).toBe(
+      'humanDecided: gamepadSupported has no value written in game settings\n',
+    );
+    expect((await set('game', 'mygame', 'gamepadSupported', 'false', 'humanDecided', '["dailyResetOffsetMs","gamepadSupported","core.InputBlockCore.maxDurationMs"]')).stderr).toBe(
+      'humanDecided: core.InputBlockCore.maxDurationMs has no value written in game settings\n',
+    );
+    const both = await set('game', 'mygame', 'core.InputBlockCore.maxDurationMs', '30000', 'gamepadSupported', 'false', 'humanDecided', '["dailyResetOffsetMs","gamepadSupported","core.InputBlockCore.maxDurationMs"]');
+    expect(both.code).toBe(0);
+    expect(readGame()).toMatchObject({ gamepadSupported: false, humanDecided: ['dailyResetOffsetMs', 'gamepadSupported', 'core.InputBlockCore.maxDurationMs'] });
+    expect((await unset('game', 'mygame', 'gamepadSupported')).stderr).toBe('humanDecided: gamepadSupported has no value written in game settings\n');
+  });
+
   it('lets the core agent change only core settings', async () => {
     writeCoreImpl(ws);
     asRole('core');
@@ -275,7 +318,9 @@ describe('writeHarnessSettings', () => {
     harness.hosts = { [TEST_HOST_ID]: { name: 'old', measured: { 'flux2-klein': [{ result: 'failed' }] } } };
     await expect(writeHarnessSettings(ctx, harness)).rejects.toThrow(`role lead cannot change hosts.${TEST_HOST_ID}.measured (x-owner tool)`);
     await writeHarnessSettings(ctx, harness, { allowTool: true });
-    expect(readHarnessSettingsFile(path).hosts).toEqual({ [TEST_HOST_ID]: { name: hostname(), measured: { 'flux2-klein': [{ result: 'failed' }] } } });
+    // a host entry is a local-scope path: it goes to settings.local.json
+    expect(readHarnessSettingsFile(path).hosts).toBeUndefined();
+    expect(readHarnessSettingsFile(join(ws.harness, 'settings.local.json')).hosts).toEqual({ [TEST_HOST_ID]: { name: hostname(), measured: { 'flux2-klein': [{ result: 'failed' }] } } });
     harness.jobWaitTimeoutMs = -1;
     await expect(writeHarnessSettings(ctx, harness, { allowTool: true })).rejects.toThrow('jobWaitTimeoutMs: must be >= 1');
   });

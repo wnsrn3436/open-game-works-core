@@ -5,8 +5,8 @@ import { exists, readText } from '../../../lib/fsx.ts';
 import { harnessRoot } from '../../../lib/paths.ts';
 import { hasSigning, signingRequired } from '../../build/lib/signing-method.ts';
 import { loadSchema, schemaPath, withDefaults, type GameSettings } from '../../../lib/settings.ts';
-import { coreFiles, type CoreFiles, type SettingsConstraint } from './core-files.ts';
-import { isPlainObject, mergeSettings, type JsonObject } from './json-path.ts';
+import { coreFiles, matchCoreKey, type CoreFiles, type SettingsConstraint } from './core-files.ts';
+import { getAt, isPlainObject, mergeSettings, type JsonObject } from './json-path.ts';
 import { isBuildStage } from './schema-nav.ts';
 import { schemaIssues, type Issue } from './validate.ts';
 
@@ -179,12 +179,36 @@ function environmentIssues(settings: GameSettings): Issue[] {
 }
 
 /**
+ * The value written at a game settings path, or undefined. In `core.<core settings key>`, the key is the longest key
+ * of game settings `core` that the rest equals or starts with followed by `.`.
+ */
+export function gameSettingsValue(settings: unknown, path: string): unknown {
+  if (!path.startsWith('core.')) return getAt(settings, path.split('.'));
+  const core = isPlainObject(settings) ? settings.core : undefined;
+  if (!isPlainObject(core)) return undefined;
+  const text = path.slice('core.'.length);
+  const key = matchCoreKey(Object.keys(core), text);
+  if (key === null) return undefined;
+  return getAt(core[key], text === key ? [] : text.slice(key.length + 1).split('.'));
+}
+
+/** Each path of `humanDecided` has a value written in game settings, so the value the human decided is kept. */
+function humanDecidedIssues(raw: GameSettings): Issue[] {
+  const paths = raw.humanDecided;
+  if (!Array.isArray(paths)) return [];
+  return paths
+    .filter((path): path is string => typeof path === 'string' && gameSettingsValue(raw, path) === undefined)
+    .map((path) => ({ message: `humanDecided: ${path} has no value written in game settings` }));
+}
+
+/**
  * Checks of `ogw game check` that need no core release. `settings` has the schema defaults filled
  * in; `raw` is the settings as written.
  */
 export async function localGameIssues(harness: string, gameSchema: object, raw: GameSettings, settings: GameSettings): Promise<Issue[]> {
   return [
     ...schemaIssues(gameSchema, raw),
+    ...humanDecidedIssues(raw),
     ...languageIssues(settings),
     ...(await signingIssues(harness, settings)),
     ...uiScreenIssues(settings),

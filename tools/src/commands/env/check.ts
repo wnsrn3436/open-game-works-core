@@ -7,7 +7,7 @@ import { hostPlatform } from './lib/host.ts';
 import { agentCliChecks, buildToolChecks, cliStates, deviceChecks, hostInfo, programChecks, providerCliChecks, tokenCheckRun } from './lib/hostcheck.ts';
 import { ghStatus } from './lib/probe.ts';
 import { harnessSecretService } from '../../lib/secrets.ts';
-import { bearerValueProblem, loginTokenRoles, storedLoginToken } from '../secret/lib/login-token.ts';
+import { bearerValueProblem, loginTokenAgent, storedLoginToken } from '../secret/lib/login-token.ts';
 import { AGENT_LOGIN_TOKEN_SECRET } from '../secret/lib/names.ts';
 import { agentCliLabel, loginTokenError, loginTokenState, writeEnvResult, type EnvCheckResult, type PinSecretCheck } from './lib/results.ts';
 import { postgresPresent, TOOL_NAMES } from './lib/tools.ts';
@@ -68,7 +68,7 @@ export function pinSecretChecks(ctx: Context, settings: HarnessSettings): PinSec
  * check run with it when both hold.
  */
 export async function agentLoginTokenCheck(ctx: Context, settings: HarnessSettings): Promise<NonNullable<EnvCheckResult['agentLoginToken']>> {
-  const needed = loginTokenRoles(settings).length > 0;
+  const needed = loginTokenAgent(settings) !== null;
   const token = storedLoginToken(ctx);
   // the checks of `ogw secret set` in its order: no run for a value that cannot be a Bearer value
   const valueProblem = needed && token !== null ? bearerValueProblem(token) : null;

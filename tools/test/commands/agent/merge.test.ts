@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
+import { createContext } from '../../../src/lib/command.ts';
+import { mergeAgentJobs } from '../../../src/commands/agent/api.ts';
 import { fakeAgentCli, gameWithRun, runAgent } from './helpers.ts';
 
 const data = vi.hoisted(() => ({ exitCode: 0, calls: [] as string[], write: null as ((root: string) => void) | null }));
@@ -108,6 +110,23 @@ describe('ogw agent merge: game worktrees', () => {
     const files = sh(root, 'git', ['diff', '--name-only', 'HEAD^1', 'HEAD']).split('\n').filter((line) => line !== '');
     expect(files).toEqual(expect.arrayContaining(['data/generated/ids.txt', 'data/generated/built.bin', 'resource/resources.csv', 'resource/2d/hero.png']));
     expect(sh(root, 'git', ['log', '-1', '--format=%s']).trim()).toBe(`ogw agent merge ${id}`);
+    expect(sh(root, 'git', ['status', '--porcelain'])).toBe('?? untracked-note.md\n');
+  });
+
+  it('commits the files of alsoCommit with the merge, and keeps them untracked when the merge fails', async () => {
+    const ws = makeWorkspace();
+    const root = await gameForMerge(ws);
+    const id = await resourceJob(ws, root);
+    writeFileSync(join(root, 'records/loops/r1/variants-1.json'), '{}\n');
+    writeFileSync(join(root, 'untracked-note.md'), 'keep me');
+    const ctx = createContext({ cwd: root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    data.exitCode = 1;
+    expect((await mergeAgentJobs(ctx, [id], { alsoCommit: ['records/loops/r1/variants-1.json'] })).merged).toEqual([]);
+    expect(sh(root, 'git', ['status', '--porcelain'])).toBe('?? records/loops/r1/variants-1.json\n?? untracked-note.md\n');
+    data.exitCode = 0;
+    expect(await mergeAgentJobs(ctx, [id], { alsoCommit: ['records/loops/r1/variants-1.json'] })).toEqual({ merged: [id], failed: [] });
+    expect(sh(root, 'git', ['log', '-1', '--format=%s']).trim()).toBe(`ogw agent merge ${id}`);
+    expect(sh(root, 'git', ['diff', '--name-only', 'HEAD^1', 'HEAD'])).toContain('records/loops/r1/variants-1.json');
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('?? untracked-note.md\n');
   });
 

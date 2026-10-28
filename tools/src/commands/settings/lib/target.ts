@@ -3,10 +3,21 @@ import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { resolveCoreImpl, type GameRepo } from '../../../lib/game.ts';
 import { currentHost, type HostIdentity } from '../../../lib/host.ts';
-import { gameSettingsPath, harnessSettingsPath, HOST_KEYS, hostEntryId, loadSchema, schemaPath, withGameSettingsLock } from '../../../lib/settings.ts';
+import {
+  gameSettingsPath,
+  harnessSettingsPath,
+  HOST_KEYS,
+  hostEntryId,
+  loadSchema,
+  mergedHarnessSettings,
+  readHarnessSettingsFiles,
+  schemaPath,
+  withGameSettingsLock,
+  type HarnessSettingsFiles,
+} from '../../../lib/settings.ts';
 import { coreFiles, coreKeys, matchCoreKey, readObject, type CoreFiles } from './core-files.ts';
 import { isPlainObject, type ContainerKind, type JsonObject, type Segments } from './json-path.ts';
-import { infoOf, locate, type Located, type SchemaNode } from './schema-nav.ts';
+import { infoOf, isLocalScope, locate, type Located, type SchemaNode } from './schema-nav.ts';
 
 export type TargetKind = 'harness' | 'game' | 'core';
 
@@ -16,7 +27,10 @@ export interface Target {
   /** `harness settings`, `game settings`, or `core settings`. */
   label: string;
   file: string;
+  /** The settings value; for the `harness` target, `settings.local.json` merged over `settings.json`. */
   value: JsonObject;
+  /** For the `harness` target: the two files whose merge is `value` (`file` is `settings.json`); null for the others. */
+  files: HarnessSettingsFiles | null;
   /** Schema of the file. */
   schema: JsonObject;
   game: GameRepo | null;
@@ -48,12 +62,13 @@ const noRelease = (): Promise<CoreFiles> => Promise.reject(new OgwError('only ga
 const noHost = (): Promise<never> => Promise.reject(new OgwError('only harness settings have host values'));
 
 export async function harnessTarget(ctx: Context): Promise<Target> {
-  const file = harnessSettingsPath(ctx.env);
+  const files = await readHarnessSettingsFiles(ctx.env);
   return {
     kind: 'harness',
     label: 'harness settings',
-    file,
-    value: await readObject(file),
+    file: harnessSettingsPath(ctx.env),
+    value: mergedHarnessSettings(files),
+    files,
     schema: (await loadSchema(schemaPath('harness-settings', ctx.env))) as JsonObject,
     game: null,
     coreImpl: null,
@@ -72,6 +87,7 @@ export async function gameTarget(ctx: Context, name: string): Promise<Target> {
     label: 'game settings',
     file,
     value,
+    files: null,
     schema: (await loadSchema(schemaPath('game-settings', ctx.env))) as JsonObject,
     game,
     coreImpl: null,
@@ -89,6 +105,7 @@ export async function coreTarget(ctx: Context): Promise<Target> {
     label: 'core settings',
     file,
     value: await readObject(file),
+    files: null,
     schema: await readObject(join(coreImpl, 'settings', 'core-settings.schema.json')),
     game: null,
     coreImpl,
@@ -149,6 +166,15 @@ function restOf(text: string, key: string, path: string): string[] {
 /** True when the path of harness settings starts with a host key (`HOST_KEYS`): its value is in this host's `hosts` entry. */
 export function isHostPath(target: Target, segments: Segments): boolean {
   return target.kind === 'harness' && (HOST_KEYS as readonly string[]).includes(segments[0] ?? '');
+}
+
+/**
+ * `local` when the path of harness settings is a local-scope path (`isLocalScope`), which `ogw settings set` writes to
+ * `settings.local.json`; undefined otherwise. A host key path not under `hosts` is a path in this host's entry.
+ */
+export function scopeOf(target: Target, segments: Segments): 'local' | undefined {
+  if (target.kind !== 'harness') return undefined;
+  return isLocalScope(target.schema, isHostPath(target, segments) ? ['hosts', '', ...segments] : segments) ? 'local' : undefined;
 }
 
 export interface PathOptions {

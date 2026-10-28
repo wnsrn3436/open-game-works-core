@@ -45,6 +45,7 @@ It has the headings below in this order. Under a heading not decided yet, write 
 | `## audio direction` | Mood of BGM and sound effects, BGM per scene, list of events that make sound |
 | `## terms` | The core nouns the game uses and the words it does not use. Terms to put in the glossary |
 | `## core usage` | Registered hooks. The core modules used are kept in game settings `coreModules` |
+| `## code map` | A table with columns `feature`, `files`, `entry point`: per feature of content code, the client and server files and data tables that hold it and the function or scene where it starts |
 
 - `## feel targets` and `## tuning targets` are tables with the columns `metric`, `min`, `max`, `data`. `metric` is one metric name below, `min` and `max` are integers, and `data` is the data table and column that change that value, or an empty cell when there is none. e.g. `reward_interval_ms` | 30000 | 60000 | `stage.reward_every`
 - A goal that cannot be measured by a metric is not written as a target. When editing, bring the value of `ogw measure` into the range

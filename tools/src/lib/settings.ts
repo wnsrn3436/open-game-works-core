@@ -2,9 +2,10 @@ import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.
 import addFormatsModule from 'ajv-formats';
 import { join, resolve } from 'node:path';
 import { OgwError } from './errors.ts';
-import { readJson } from './fsx.ts';
+import { readJson, readJsonIfExists } from './fsx.ts';
 import { checkoutLock } from './git.ts';
 import { currentHost } from './host.ts';
+import { isPlainObject, mergeSettings, type JsonObject } from './json.ts';
 import { withLock } from './lock.ts';
 import { harnessRoot, workspaceRoot } from './paths.ts';
 
@@ -129,6 +130,8 @@ export interface HarnessSettings {
   webSmokeCpuThrottleRate: number;
   webSmokeBootTimeoutMs: number;
   loopStop: { repeatedDefect: number; oscillation: number; plateau: number; successJudges: number };
+  loop: { funIterations: number; judgeVotes: number; judgePanel: AgentSettings[]; variants: number; playTimeLimitMs: number; judgeTimeLimitMs: number };
+  calibration: { nullPairs: number; orderRuns: number; degradeLatencyMs: number };
   reviewRounds: number;
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };
@@ -171,6 +174,34 @@ export interface Workspace {
 
 export function harnessSettingsPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(harnessRoot(env), 'settings.json');
+}
+
+/** Local harness settings: `settings.local.json` of the harness repo, not committed, merged over `settings.json`. */
+export function localHarnessSettingsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(harnessRoot(env), 'settings.local.json');
+}
+
+/** The two files of harness settings: `settings.json` and `settings.local.json` (null when there is none). */
+export interface HarnessSettingsFiles {
+  shared: JsonObject;
+  local: JsonObject | null;
+}
+
+function asObject(path: string, value: unknown): JsonObject {
+  if (!isPlainObject(value)) throw new OgwError(`not a JSON object: ${path}`);
+  return value;
+}
+
+export async function readHarnessSettingsFiles(env: NodeJS.ProcessEnv = process.env): Promise<HarnessSettingsFiles> {
+  const sharedPath = harnessSettingsPath(env);
+  const localPath = localHarnessSettingsPath(env);
+  const local = await readJsonIfExists(localPath);
+  return { shared: asObject(sharedPath, await readJson(sharedPath)), local: local === null ? null : asObject(localPath, local) };
+}
+
+/** Harness settings as one value: `settings.local.json` over `settings.json` (objects merge key by key, arrays and other values are replaced). */
+export function mergedHarnessSettings(files: HarnessSettingsFiles): JsonObject {
+  return files.local === null ? files.shared : mergeSettings(files.shared, files.local);
 }
 
 export function schemaPath(name: 'harness-settings' | 'game-settings', env: NodeJS.ProcessEnv = process.env): string {
@@ -235,9 +266,12 @@ export async function hostEntryId(hosts: unknown, env: NodeJS.ProcessEnv = proce
   return (await currentHost(env)).id;
 }
 
-/** Harness settings with this host's values. The host id is read only when `hosts` has an entry (`hostEntryId`). */
+/**
+ * Harness settings with this host's values: local harness settings merged over `settings.json`. The host id is read
+ * only when `hosts` has an entry (`hostEntryId`).
+ */
 export async function loadHarnessSettings(env: NodeJS.ProcessEnv = process.env): Promise<HarnessSettings> {
-  const file = await readJson<HarnessSettingsFile>(harnessSettingsPath(env));
+  const file = mergedHarnessSettings(await readHarnessSettingsFiles(env)) as unknown as HarnessSettingsFile;
   const id = await hostEntryId(file.hosts, env);
   const host = id === null ? undefined : file.hosts?.[id];
   return withHostValues(file, host, hostDefaults(await readJson(schemaPath('harness-settings', env))));
@@ -278,6 +312,7 @@ function newAjv(useDefaults: boolean): Ajv2020 {
   addFormats(ajv);
   ajv.addKeyword({ keyword: 'x-owner', schemaType: 'string' });
   ajv.addKeyword({ keyword: 'x-stage', schemaType: 'string' });
+  ajv.addKeyword({ keyword: 'x-scope', schemaType: 'string' });
   return ajv;
 }
 

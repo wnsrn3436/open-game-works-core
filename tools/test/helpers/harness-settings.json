@@ -57,6 +57,19 @@
     "plateau": 3,
     "successJudges": 2
   },
+  "loop": {
+    "funIterations": 3,
+    "judgeVotes": 2,
+    "judgePanel": [],
+    "variants": 1,
+    "playTimeLimitMs": 2700000,
+    "judgeTimeLimitMs": 3600000
+  },
+  "calibration": {
+    "nullPairs": 3,
+    "orderRuns": 2,
+    "degradeLatencyMs": 150
+  },
   "reviewRounds": 3,
   "codeCheck": {
     "maxComplexity": 15

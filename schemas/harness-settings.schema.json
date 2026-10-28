@@ -18,6 +18,8 @@
     "webSmokeCpuThrottleRate",
     "webSmokeBootTimeoutMs",
     "loopStop",
+    "loop",
+    "calibration",
     "reviewRounds",
     "codeCheck",
     "rigCheck",
@@ -25,6 +27,7 @@
   ],
   "properties": {
     "humanLanguage": {
+      "x-scope": "local",
       "description": "The language of reports and questions to the human, the `--human` file of `ogw loop end-record` and the `--reason` file of `ogw build report`. BCP 47 language tag",
       "type": "string",
       "minLength": 2
@@ -33,6 +36,7 @@
       "type": "string"
     },
     "agents": {
+      "x-scope": "local",
       "description": "Agent CLI, model and effort per role. The lead agent is not here, because it is a session that a human started",
       "type": "object",
       "additionalProperties": false,
@@ -78,6 +82,7 @@
       }
     },
     "hosts": {
+      "x-scope": "local",
       "description": "Values that differ per host. The key is the host id, and `## host` of [ogw](../tools/ogw.md) defines the host id",
       "type": "object",
       "propertyNames": {
@@ -131,12 +136,16 @@
     },
     "minCoreVersion": {
       "description": "The lowest core version of a game that this harness supports; null supports every version up to the core version of the harness (AGENTS.md `## repo`)",
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
       "x-owner": "human",
       "default": null
     },
     "useLocalCore": {
+      "x-scope": "local",
       "description": "When true, the harness tool uses the core in paths.coreImpl instead of the release of the game's core version. AGENTS.md `## repo` defines the behavior",
       "type": "boolean",
       "default": false
@@ -165,6 +174,7 @@
     },
     "loopStop": {
       "description": "Values of the loop stop judgement. `## stop` of the `game-loop` skill defines their meaning",
+      "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -191,6 +201,81 @@
         },
         "successJudges": {
           "description": "The number of success confirmation judges",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "loop": {
+      "description": "Values of the loop iteration kinds and the step 4 judges. `## iteration` of the `game-loop` skill defines their meaning",
+      "x-scope": "local",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "funIterations",
+        "judgeVotes",
+        "judgePanel",
+        "variants",
+        "playTimeLimitMs",
+        "judgeTimeLimitMs"
+      ],
+      "properties": {
+        "funIterations": {
+          "description": "The number of fun iterations in a row after which the next iteration is a completeness iteration",
+          "type": "integer",
+          "minimum": 1
+        },
+        "judgeVotes": {
+          "description": "The number of step 4 judges of an iteration with a baseline game",
+          "type": "integer",
+          "minimum": 2
+        },
+        "judgePanel": {
+          "description": "Agent CLI, model and effort of the step 4 judges in turn, each item for two judges in a row so that it judges both side assignments. Every item judges only when `judgeVotes` is at least twice the number of items. Empty: every judge uses `agents.judge`",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agent"
+          }
+        },
+        "variants": {
+          "description": "The number of variant agents that `ogw loop variants` starts in a fun iteration. 1: the lead agent calls one content agent",
+          "type": "integer",
+          "minimum": 1
+        },
+        "playTimeLimitMs": {
+          "description": "The time limit of one play agent job. A job that reaches it is stopped and counts as failed",
+          "type": "integer",
+          "minimum": 60000
+        },
+        "judgeTimeLimitMs": {
+          "description": "The time limit of one judge agent job, step 4, success confirmation, variant and calibration judges alike. A job that reaches it is stopped and counts as failed",
+          "type": "integer",
+          "minimum": 60000
+        }
+      }
+    },
+    "calibration": {
+      "description": "Values of judge calibration. `## judge calibration` of the `game-loop` skill defines their meaning",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nullPairs",
+        "orderRuns",
+        "degradeLatencyMs"
+      ],
+      "properties": {
+        "nullPairs": {
+          "description": "The number of null pairs",
+          "type": "integer",
+          "minimum": 1
+        },
+        "orderRuns": {
+          "description": "The number of judges of the order pair per side assignment",
+          "type": "integer",
+          "minimum": 1
+        },
+        "degradeLatencyMs": {
+          "description": "The input latency (ms) of the baseline instances of the degraded pair",
           "type": "integer",
           "minimum": 1
         }

@@ -7,9 +7,15 @@ import { isGameCoreKey, locatePath, openTarget, parsePath, type Target } from '.
 
 export interface ResolvedValue {
   value: unknown;
-  /** `harness settings`, `game settings`, `game settings over core settings`, `core settings`, or `schema default`. */
+  /**
+   * `harness settings`, `local harness settings`, `local harness settings over harness settings`, `game settings`,
+   * `game settings over core settings`, `core settings`, or `schema default`.
+   */
   source: string;
-  /** True when the value is written in the target file at the path itself (not a core settings key of game settings). */
+  /**
+   * True when the value is written in the target file at the path itself (not a core settings key of game settings,
+   * not a value of `settings.local.json`).
+   */
   written: boolean;
 }
 
@@ -51,6 +57,16 @@ async function elementsExist(target: Target, used: unknown, segments: Segments):
   return true;
 }
 
+/** Where a value written at the path comes from: harness settings take it from `settings.local.json` when that file has one. */
+function writtenSource(target: Target, segments: Segments): Pick<ResolvedValue, 'source' | 'written'> {
+  const local = target.files?.local ?? null;
+  const fromLocal = local === null ? undefined : getAt(local, segments);
+  if (fromLocal === undefined) return { source: target.label, written: true };
+  const fromShared = getAt(target.files?.shared, segments);
+  const over = isPlainObject(fromLocal) && isPlainObject(fromShared);
+  return { source: over ? 'local harness settings over harness settings' : 'local harness settings', written: false };
+}
+
 interface Used {
   resolved: ResolvedValue | null;
   /** The whole used value (game settings with the used core settings key, or the file filled with schema defaults). */
@@ -66,7 +82,7 @@ async function usedValue(target: Target, segments: Segments): Promise<Used> {
     const source = coreKeySource(written, release, segments);
     return { resolved: value === undefined ? null : { value, source, written: false }, used };
   }
-  if (written !== undefined) return { resolved: { value: written, source: target.label, written: true }, used: target.value };
+  if (written !== undefined) return { resolved: { value: written, ...writtenSource(target, segments) }, used: target.value };
   const used = withDefaults(target.schema, target.value);
   const filled = getAt(used, segments);
   return { resolved: filled === undefined ? null : { value: filled, source: 'schema default', written: false }, used };

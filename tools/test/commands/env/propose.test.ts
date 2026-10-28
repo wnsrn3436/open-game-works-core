@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setNet, type RemoteRef } from '../../../src/commands/env/lib/net.ts';
 import { parseRequirement } from '../../../src/commands/env/lib/pep440.ts';
@@ -114,11 +114,17 @@ function entry(platform: string, name: string): Record<string, unknown> {
 /** The entry of another host in `hosts`: no proposal of this host changes it. */
 const OTHER_HOST = { ['f'.repeat(32)]: { name: 'other', maxConcurrentInstances: 6, playInstances: 2, measured: { 'flux2-klein': [{ resolution: 2048, result: 'ok' }] } } };
 
-/** This host's entry of the harness settings file. */
+/**
+ * This host's entry after a write of it: the write moved it from `settings.json` (`path`) to `settings.local.json`, and
+ * the entry of another host stays in `settings.json`.
+ */
 function thisHost(path: string): { name: string; maxConcurrentInstances?: number; playInstances?: number; measured?: Record<string, unknown> } {
-  const file = JSON.parse(readFileSync(path, 'utf8')) as { hosts: Record<string, ReturnType<typeof thisHost>> };
-  expect(file.hosts['f'.repeat(32)]).toEqual(OTHER_HOST['f'.repeat(32)]);
-  const entry = file.hosts[TEST_HOST_ID];
+  type Hosts = { hosts: Record<string, ReturnType<typeof thisHost>> };
+  const file = JSON.parse(readFileSync(path, 'utf8')) as Hosts;
+  expect(file.hosts).toEqual(OTHER_HOST);
+  const local = JSON.parse(readFileSync(join(dirname(path), 'settings.local.json'), 'utf8')) as Hosts;
+  expect(Object.keys(local.hosts)).toEqual([TEST_HOST_ID]);
+  const entry = local.hosts[TEST_HOST_ID];
   if (entry === undefined) throw new Error('no entry of this host');
   return entry;
 }

@@ -58,6 +58,19 @@
     "plateau": 3,
     "successJudges": 2
   },
+  "loop": {
+    "funIterations": 3,
+    "judgeVotes": 2,
+    "judgePanel": [],
+    "variants": 1,
+    "playTimeLimitMs": 2700000,
+    "judgeTimeLimitMs": 3600000
+  },
+  "calibration": {
+    "nullPairs": 3,
+    "orderRuns": 2,
+    "degradeLatencyMs": 150
+  },
   "reviewRounds": 4,
   "codeCheck": {
     "maxComplexity": 15
@@ -497,116 +510,5 @@
     }
   },
   "webSmokeBootTimeoutMs": 120000,
-  "hosts": {
-    "6db648e8609fb9d0219f28f16f8c8e9b": {
-      "measured": {
-        "flux2-klein": [
-          {
-            "resolution": 512,
-            "jobMs": 19382,
-            "result": "ok"
-          },
-          {
-            "resolution": 1024,
-            "jobMs": 23058,
-            "result": "ok"
-          },
-          {
-            "resolution": 2048,
-            "jobMs": 59004,
-            "result": "ok"
-          }
-        ],
-        "ace-step": [
-          {
-            "durationMs": 30000,
-            "jobMs": 65977,
-            "result": "ok"
-          },
-          {
-            "durationMs": 60000,
-            "jobMs": 73953,
-            "result": "ok"
-          },
-          {
-            "durationMs": 120000,
-            "jobMs": 78028,
-            "result": "ok"
-          },
-          {
-            "durationMs": 240000,
-            "jobMs": 93946,
-            "result": "ok"
-          }
-        ],
-        "moss-sfx": [
-          {
-            "durationMs": 1000,
-            "jobMs": 139673,
-            "result": "ok"
-          },
-          {
-            "durationMs": 3000,
-            "jobMs": 131664,
-            "result": "ok"
-          },
-          {
-            "durationMs": 10000,
-            "jobMs": 171571,
-            "result": "ok"
-          }
-        ],
-        "qwen3-tts": [
-          {
-            "jobMs": 16637,
-            "result": "ok"
-          }
-        ],
-        "trellis2": [
-          {
-            "resolution": 512,
-            "jobMs": 319361,
-            "result": "ok"
-          },
-          {
-            "resolution": 1024,
-            "jobMs": 203996,
-            "result": "ok"
-          }
-        ],
-        "rig-2d": [
-          {
-            "jobMs": 47,
-            "result": "ok"
-          }
-        ],
-        "blender": [
-          {
-            "jobMs": 4607,
-            "result": "ok"
-          }
-        ],
-        "procedural": [
-          {
-            "result": "ok"
-          }
-        ],
-        "font-catalog": [
-          {
-            "result": "ok"
-          }
-        ],
-        "sprite-gen-codex": [
-          {
-            "jobMs": 61098,
-            "result": "ok"
-          }
-        ]
-      },
-      "name": "Jungu-MacBookPro.local",
-      "reviewRunConcurrency": 8,
-      "maxConcurrentInstances": 8,
-      "imageMethod": "sprite-gen-codex"
-    }
-  }
+  "hosts": {}
 }

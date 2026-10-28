@@ -1,5 +1,7 @@
-import { rm } from 'node:fs/promises';
-import { basename, join, relative, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { readdir, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { agentContext, markAgentRunning, runLogPath } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
@@ -11,7 +13,7 @@ import { listJobs, startJob } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { isInside, withoutExtension } from '../../../lib/paths.ts';
 import { changeOpenRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
-import { ROLES, type Role } from '../../../lib/settings.ts';
+import { ROLES, type AgentSettings, type HarnessSettings, type Role } from '../../../lib/settings.ts';
 import { hardeningRecordName, parseHardeningRecordName } from '../../build/lib/names.ts';
 import { moduleSpecs } from '../../review/lib/definitions.ts';
 import { parseReviewInput, targetSlug } from '../../review/lib/input.ts';
@@ -21,6 +23,8 @@ import { newAgentFolder } from './files.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { AGENT_LOG_FOLDER, GAME_ROLES, type AgentMeta } from './meta.ts';
 import { preparePlayInput } from './play-input.ts';
+import { agentCli, agentSettings, type AgentSession } from './cli-command.ts';
+import { iterationKind } from '../../loop/lib/run.ts';
 
 export interface AgentRequest {
   role: string;
@@ -37,6 +41,23 @@ export interface AgentRequest {
    * it, main of `open-game-works-core-impl/` (core) or HEAD of the harness repo (tool).
    */
   baseCommit?: string;
+  /** The agent CLI, model and effort instead of harness settings `agents.<role>`. */
+  agent?: AgentSettings;
+  /** judge of `ogw judge calibrate`: starts without a run, with this result file and evidence folder. */
+  calibration?: CalibrationPlace;
+  /** judge of `ogw loop variants`: in the open run, with this result file and evidence folder under `records/loops/<run>/`. */
+  runPlace?: CalibrationPlace;
+  /** content: the k of a variant agent of `ogw loop variants`, which works in its own worktree. */
+  variant?: number;
+}
+
+/**
+ * Where a judge agent of `ogw judge calibrate` puts its result file and captures (ogw.md `## agent`): absolute paths
+ * under `records/calibration/` and `builds/calibration/` of the game repo checkout.
+ */
+export interface CalibrationPlace {
+  output: string;
+  evidence: string;
 }
 
 function checkRequest(request: AgentRequest): Role {
@@ -46,7 +67,15 @@ function checkRequest(request: AgentRequest): Role {
   if (gameRole && request.game === undefined) throw new OgwError(`--game is required for role ${role}`);
   if (!gameRole && request.game !== undefined) throw new OgwError(`--game is not given to role ${role}`);
   if (role !== 'core' && (request.modules ?? []).length > 0) throw new OgwError('--module is given only to role core');
+  checkPlaces(role, request);
   return role;
+}
+
+/** A calibration place and a run place go only to a judge, and a variant only to a content agent. */
+function checkPlaces(role: Role, request: AgentRequest): void {
+  if (request.calibration !== undefined && role !== 'judge') throw new OgwError('a calibration place is given only to role judge');
+  if (request.runPlace !== undefined && (role !== 'judge' || request.calibration !== undefined)) throw new OgwError('a run place is given only to role judge, without a calibration place');
+  if (request.variant !== undefined && (role !== 'content' || !Number.isInteger(request.variant) || request.variant < 1)) throw new OgwError('a variant is a positive integer given only to role content');
 }
 
 /**
@@ -88,7 +117,16 @@ function baseMeta(role: Role, input: string, taskInput: string, request: AgentRe
     merged: false,
     retryRoot: request.retryRoot ?? '',
     retryNumber: request.retryNumber ?? 0,
+    agent: request.agent ?? null,
+    variant: request.variant ?? null,
   };
+}
+
+/** The time limit of an agent job: harness settings `loop.playTimeLimitMs` and `loop.judgeTimeLimitMs` for play and judge. */
+async function agentTimeLimitMs(ctx: Context, role: Role): Promise<number> {
+  if (role !== 'play' && role !== 'judge') return LIMITS.jobMs;
+  const { loop } = await ctx.settings();
+  return role === 'play' ? loop.playTimeLimitMs : loop.judgeTimeLimitMs;
 }
 
 async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<string> {
@@ -98,7 +136,7 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
     cwd: ctx.cwd,
     command: 'agent',
     game: meta.game,
-    timeLimitMs: LIMITS.jobMs,
+    timeLimitMs: await agentTimeLimitMs(ctx, meta.role),
     agentJob: caller?.job.id ?? null,
     meta,
     env: ctx.env,
@@ -154,7 +192,40 @@ async function worktreeOutput(game: GameRepo, role: Role, input: string, run: Ru
   return hardeningOutput(game, role, run);
 }
 
-async function startPlayJudge(ctx: Context, game: GameRepo, role: 'play' | 'judge', run: RunState, meta: AgentMeta): Promise<string> {
+/** The result file and evidence folder of a play or judge agent of the open run: `<role>-<iteration>-<k>`. */
+async function runPlace(ctx: Context, game: GameRepo, role: 'play' | 'judge', run: RunState, meta: AgentMeta): Promise<CalibrationPlace> {
+  const k = await nextOrder(ctx, game, role, run);
+  const name = `${role}-${String(run.iteration)}-${String(k)}`;
+  meta.k = k;
+  return { output: join(game.root, 'records', 'loops', run.name, `${name}.md`), evidence: join(game.root, 'records', 'loops', run.name, 'evidence', name) };
+}
+
+/** A run place of a judge of `ogw loop variants`: a `.md` result file in `records/loops/<run>/` and an evidence folder in its `evidence/`. */
+function checkRunPlace(game: GameRepo, run: RunState, place: CalibrationPlace): CalibrationPlace {
+  const folder = join(game.root, 'records', 'loops', run.name);
+  const evidence = join(folder, 'evidence');
+  if (dirname(place.output) !== folder || !place.output.endsWith('.md')) throw new OgwError(`a run result file is a .md file in ${folder}: ${place.output}`);
+  if (dirname(place.evidence) !== evidence) throw new OgwError(`a run evidence folder is in ${evidence}: ${place.evidence}`);
+  return place;
+}
+
+/** A calibration place inside the calibration folders of the game repo checkout; fails otherwise. */
+function checkCalibrationPlace(game: GameRepo, place: CalibrationPlace): CalibrationPlace {
+  const records = join(game.root, 'records', 'calibration');
+  const builds = join(game.root, 'builds', 'calibration');
+  if (!isInside(records, place.output) || place.output === records || !place.output.endsWith('.md')) throw new OgwError(`a calibration result file is a .md file under ${records}: ${place.output}`);
+  if (!isInside(builds, place.evidence) || place.evidence === builds) throw new OgwError(`a calibration evidence folder is under ${builds}: ${place.evidence}`);
+  return place;
+}
+
+async function startPlayJudge(
+  ctx: Context,
+  game: GameRepo,
+  role: 'play' | 'judge',
+  run: RunState | null,
+  meta: AgentMeta,
+  given: { calibration?: CalibrationPlace; runPlace?: CalibrationPlace } = {},
+): Promise<string> {
   const folder = await newAgentFolder(role, ctx.env);
   let id: string;
   try {
@@ -163,13 +234,16 @@ async function startPlayJudge(ctx: Context, game: GameRepo, role: 'play' | 'judg
     meta.instances = prepared.instances;
     meta.folder = folder;
     meta.place = { kind: 'temp', dir: folder, checkout: game.root };
-    const k = await nextOrder(ctx, game, role, run);
-    const name = `${role}-${String(run.iteration)}-${String(k)}`;
-    meta.k = k;
-    meta.output = join(folder, `${name}.md`);
+    const place =
+      given.calibration !== undefined
+        ? checkCalibrationPlace(game, given.calibration)
+        : given.runPlace !== undefined
+          ? checkRunPlace(game, run as RunState, given.runPlace)
+          : await runPlace(ctx, game, role, run as RunState, meta);
+    meta.output = join(folder, basename(place.output));
     meta.runLog = runLogPath(meta.output);
-    meta.finalOutput = join(game.root, 'records', 'loops', run.name, `${name}.md`);
-    meta.evidence = join(game.root, 'records', 'loops', run.name, 'evidence', name);
+    meta.finalOutput = place.output;
+    meta.evidence = place.evidence;
     id = await launchJob(ctx, meta);
   } catch (error) {
     // no job runs in the folder: remove it (ogw.md `## temp folder`)
@@ -212,17 +286,72 @@ export async function nextOrder(ctx: Context, game: GameRepo, role: 'play' | 'ju
   });
 }
 
-async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta): Promise<string> {
+/** The default config folder of Claude Code: `CLAUDE_CONFIG_DIR` when set, else `~/.claude`. */
+function claudeConfigDir(env: NodeJS.ProcessEnv): string {
+  const set = env.CLAUDE_CONFIG_DIR;
+  return set !== undefined && set !== '' ? set : join(env.HOME ?? homedir(), '.claude');
+}
+
+/** Whether Claude Code keeps the session file of `id`: `projects/<project folder>/<id>.jsonl` of its config folder. */
+export async function claudeSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
+  const projects = join(claudeConfigDir(env), 'projects');
+  const folders = await readdir(projects).catch(() => [] as string[]);
+  return folders.some((folder) => exists(join(projects, folder, `${id}.jsonl`)));
+}
+
+/** The session of the content agent of iteration `n - 1` of the run that is not a variant agent: its last job's, when it kept one. */
+async function previousContentSession(ctx: Context, game: GameRepo, run: RunState): Promise<string | null> {
+  const previous = (await listJobs(ctx.env))
+    .filter(
+      (job) =>
+        job.command === 'agent' &&
+        job.meta.role === 'content' &&
+        job.meta.game === game.name &&
+        job.meta.run === run.name &&
+        job.meta.iteration === run.iteration - 1 &&
+        (job.meta.variant ?? null) === null,
+    )
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .at(-1);
+  const session = previous?.meta.session as AgentSession | null | undefined;
+  return session === undefined || session === null ? null : session.id;
+}
+
+/**
+ * The Claude Code session of a content agent (`game-loop` `## sub-agent`): in a fun iteration whose previous iteration
+ * is a fun iteration of the run, the session of the previous content agent continued, when its file is kept; else a
+ * new session. null when the content agent CLI is not Claude Code.
+ */
+async function contentSession(ctx: Context, game: GameRepo, run: RunState, meta: AgentMeta, settings: HarnessSettings): Promise<AgentSession | null> {
+  if (agentCli(meta.agent ?? agentSettings(settings, 'content')) !== 'claude-code') return null;
+  const continues = meta.retryNumber === 0 && (meta.variant ?? null) === null && run.iteration > 1 && iterationKind(run, run.iteration) === 'fun' && iterationKind(run, run.iteration - 1) === 'fun';
+  const previous = continues ? await previousContentSession(ctx, game, run) : null;
+  if (previous !== null && (await claudeSessionKept(ctx.env, previous))) return { id: previous, resume: true };
+  return { id: randomUUID(), resume: false };
+}
+
+async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request: AgentRequest): Promise<string> {
   const game = await ctx.game(meta.game as string);
+  // a judge of `ogw judge calibrate` has no run; every other game agent works in the open run
+  if (request.calibration !== undefined) return startPlayJudge(ctx, game, 'judge', null, meta, { calibration: request.calibration });
   const run = await requireOpenRun(game);
   meta.run = run.name;
   meta.iteration = run.iteration;
-  if (role === 'play' || role === 'judge') return startPlayJudge(ctx, game, role, run, meta);
+  if (role === 'play' || role === 'judge') return startPlayJudge(ctx, game, role, run, meta, request.runPlace === undefined ? {} : { runPlace: request.runPlace });
+  if (role === 'content' && request.variant !== undefined) {
+    // a variant agent works in its own worktree of the work branch HEAD, as a resource agent does
+    const { branch, baseCommit } = await branchOf(game);
+    meta.place = { kind: 'game-worktree', checkout: game.root, worktrees: (await ctx.workspace()).worktrees, branch, baseCommit };
+    meta.outputRel = join('records', 'loops', run.name, `content-${String(run.iteration)}-v${String(request.variant)}.md`);
+    meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
+    return launchJob(ctx, meta);
+  }
   if (role === 'content') {
     meta.place = { kind: 'checkout', dir: game.root };
     meta.folder = game.root;
     meta.output = join(game.root, 'records', 'loops', run.name, `content-${String(run.iteration)}.md`);
     meta.runLog = runLogPath(meta.output);
+    meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
     return launchJob(ctx, meta);
   }
   const { branch, baseCommit } = await branchOf(game);
@@ -283,5 +412,5 @@ export async function startAgent(ctx: Context, request: AgentRequest): Promise<s
   const taskInput = request.taskInput === undefined ? input : resolve(ctx.cwd, request.taskInput);
   const meta = baseMeta(role, input, taskInput, request);
   if (request.baseCommit !== undefined && role !== 'review') throw new OgwError('a base commit is given only to role review');
-  return GAME_ROLES.includes(role) ? startGameAgent(ctx, role, meta) : startCoreOrReview(ctx, role, meta, request.baseCommit);
+  return GAME_ROLES.includes(role) ? startGameAgent(ctx, role, meta, request) : startCoreOrReview(ctx, role, meta, request.baseCommit);
 }

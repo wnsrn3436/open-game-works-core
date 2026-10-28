@@ -78,18 +78,31 @@ export function ownerOf(nodes: readonly SchemaNode[]): string | undefined {
   return undefined;
 }
 
+/** Whether a node on the path (after `$ref` and `allOf`) declares `keyword` with `value`. */
+function declaredOnPath(schema: JsonObject, segments: readonly string[], keyword: string, value: string): boolean {
+  let nodes: SchemaNode[] = [{ node: schema, root: schema }];
+  for (const segment of segments) {
+    nodes = child(nodes, segment);
+    if (nodes.some((start) => expand(start).some(({ node }) => node[keyword] === value))) return true;
+    if (nodes.length === 0) return false;
+  }
+  return false;
+}
+
 /**
  * Whether a game settings path is a build stage value: a node on the path (after `$ref` and `allOf`) declares
  * `x-stage` `build`. `ogw game check` without `--build` does not need it (`game-setup` skill).
  */
 export function isBuildStage(schema: JsonObject, segments: readonly string[]): boolean {
-  let nodes: SchemaNode[] = [{ node: schema, root: schema }];
-  for (const segment of segments) {
-    nodes = child(nodes, segment);
-    if (nodes.some((start) => expand(start).some(({ node }) => node['x-stage'] === 'build'))) return true;
-    if (nodes.length === 0) return false;
-  }
-  return false;
+  return declaredOnPath(schema, segments, 'x-stage', 'build');
+}
+
+/**
+ * Whether a harness settings path is a local-scope path: a node on the path (after `$ref` and `allOf`) declares
+ * `x-scope` `local`. `ogw settings set` writes it to local harness settings (AGENTS.md `## settings`).
+ */
+export function isLocalScope(schema: JsonObject, segments: readonly string[]): boolean {
+  return declaredOnPath(schema, segments, 'x-scope', 'local');
 }
 
 export interface Located {

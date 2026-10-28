@@ -10,11 +10,11 @@ import { isPlainObject, type JsonObject } from '../../../lib/json.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { killTree, run, spawnTracked } from '../../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
-import type { AgentSettings, HarnessSettings, Role } from '../../../lib/settings.ts';
+import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentCli } from '../../agent/lib/cli-command.ts';
 import { newAgentFolder } from '../../agent/lib/files.ts';
 import { cliToRun, SANDBOXED_ROLES, type CliToRun } from '../../agent/lib/launch.ts';
-import { loginTokenRoles } from '../../secret/lib/login-token.ts';
+import { loginTokenAgent } from '../../secret/lib/login-token.ts';
 import { probeBuildTool } from '../api.ts';
 import type { EngineSource } from './engines.ts';
 import { whichIn, type HostPlatform } from './host.ts';
@@ -148,14 +148,14 @@ function jsonLines(stdout: string): JsonObject[] {
 }
 
 /**
- * The token check run (`tools/ogw.md` `## secret set`): the `ogw env check` prompt run of the first play or judge
- * role whose agent CLI is Claude Code, with `CLAUDE_CODE_OAUTH_TOKEN` set to `token` and stream-json output. Null when
- * neither role uses Claude Code.
+ * The token check run (`tools/ogw.md` `## secret set`): the `ogw env check` prompt run of the agent of
+ * `loginTokenAgent`, with `CLAUDE_CODE_OAUTH_TOKEN` set to `token` and stream-json output. Null when no play or judge
+ * agent uses Claude Code.
  */
 export async function tokenCheckRun(ctx: Context, settings: HarnessSettings, token: string): Promise<TokenCheck | null> {
-  const role = loginTokenRoles(settings)[0];
-  if (role === undefined) return null;
-  const agent = settings.agents[role as Role] as AgentSettings;
+  const user = loginTokenAgent(settings);
+  if (user === null) return null;
+  const { role, agent } = user;
   const result = await promptRun(ctx, agent, role, { args: [...TOKEN_CHECK_ARGS], env: { CLAUDE_CODE_OAUTH_TOKEN: token } });
   const messages = jsonLines(result.stdout);
   // Agent SDK `SDKAssistantMessage` `error`

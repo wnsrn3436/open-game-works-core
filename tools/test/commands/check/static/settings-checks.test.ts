@@ -13,8 +13,9 @@ import { lines, memContext, sorted, testContext, writeFiles } from './helpers.ts
 
 const state = vi.hoisted(() => ({ errors: [] as string[], releaseDir: '' }));
 
-vi.mock('../../../../src/commands/settings/api.ts', () => ({
+vi.mock('../../../../src/commands/settings/api.ts', async () => ({
   gameCheckErrors: () => Promise.resolve(state.errors),
+  gameSettingsValue: (await vi.importActual<typeof import('../../../../src/commands/settings/lib/game-check.ts')>('../../../../src/commands/settings/lib/game-check.ts')).gameSettingsValue,
 }));
 
 vi.mock('../../../../src/commands/core/api.ts', () => ({
@@ -126,6 +127,27 @@ describe('game settings owner', () => {
       `settings.json:${String(line('appId'))} | game settings owner: \`appId\` is not a content item and differs from the run reference commit ${reference}`,
       `settings.json:${String(line('QACore.softlockBlockMs'))} | game settings owner: core settings key \`QACore.softlockBlockMs\` is owned by human and differs from the run reference commit ${reference}`,
       `settings.json:${String(line('key'))} | game settings owner: core settings key \`Nested.key\` is owned by human and differs from the run reference commit ${reference}`,
+    ]));
+  });
+
+  it('compares the values at the reference commit humanDecided paths with the run reference commit', async () => {
+    const { sc, root, game } = ownerGame();
+    const base = { engine: 'godot', firstScene: 'scene/a', titleScene: 'scene/t', core: { 'NetworkCore.retryCount': 1 }, humanDecided: ['firstScene', 'core.NetworkCore.retryCount'] };
+    writeFiles(root, { 'settings.json': base });
+    const reference = commitAll(root);
+    await changeRuns(game, (runs) => {
+      runs.push(newRunState({ name: 'r1', kind: 'loop', branch: 'loop/r1', baseCommit: reference, referenceCommit: reference }));
+    });
+    const content = { ...base, titleScene: 'scene/u' };
+    writeFiles(root, { 'settings.json': content });
+    expect(await owner.run(await sc())).toEqual([]);
+    const changed = { ...base, firstScene: 'scene/b', core: { 'NetworkCore.retryCount': 2 } };
+    writeFiles(root, { 'settings.json': changed });
+    const text = JSON.stringify(changed, null, 2).split('\n');
+    const line = (key: string): number => text.findIndex((l) => l.includes(`"${key}"`)) + 1;
+    expect(lines(await owner.run(await sc()))).toEqual(sorted([
+      `settings.json:${String(line('firstScene'))} | game settings owner: \`firstScene\` is in humanDecided and differs from the run reference commit ${reference}`,
+      `settings.json:${String(line('NetworkCore.retryCount'))} | game settings owner: \`core.NetworkCore.retryCount\` is in humanDecided and differs from the run reference commit ${reference}`,
     ]));
   });
 

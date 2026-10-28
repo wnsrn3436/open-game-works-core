@@ -1,8 +1,10 @@
 import type { Context } from '../../lib/command.ts';
-import type { Role } from '../../lib/settings.ts';
-import { mergeAgents, type MergeFailure } from './lib/merge.ts';
+import type { AgentSettings, Role } from '../../lib/settings.ts';
+import { mergeAgents, type MergeFailure, type MergeOptions } from './lib/merge.ts';
 import { outcomeOf } from './lib/outcome.ts';
-import { startAgent } from './lib/prepare.ts';
+import { startAgent, type CalibrationPlace } from './lib/prepare.ts';
+
+export type { CalibrationPlace } from './lib/prepare.ts';
 import { retryAgent } from './lib/retry.ts';
 
 export { agentCliCommand, agentSettings, sandboxed } from './lib/cli-command.ts';
@@ -14,6 +16,14 @@ export interface AgentJobOptions {
   game?: string;
   input: string;
   modules?: string[];
+  /** The agent CLI, model and effort instead of harness settings `agents.<role>`. */
+  agent?: AgentSettings;
+  /** judge of `ogw judge calibrate`: no run; the result file and the evidence folder under the calibration folders. */
+  calibration?: CalibrationPlace;
+  /** judge of `ogw loop variants`: in the open run, the result file and the evidence folder under `records/loops/<run>/`. */
+  runPlace?: CalibrationPlace;
+  /** content: the k of a variant agent of `ogw loop variants`, which works in its own worktree. */
+  variant?: number;
 }
 
 /** Starts `ogw agent <role> ... --background` and returns the job id. */
@@ -37,9 +47,12 @@ export interface MergeOutcome {
   failed: MergeFailure[];
 }
 
-/** `ogw agent merge <id>...`. A failure `reason` is `conflict`, `data`, or why the job cannot be merged. */
-export function mergeAgentJobs(ctx: Context, ids: string[]): Promise<MergeOutcome> {
-  return mergeAgents(ctx, ids);
+/**
+ * `ogw agent merge <id>...`. A failure `reason` is `conflict`, `data`, or why the job cannot be merged. `alsoCommit`
+ * adds files of the game repo checkout to the merge commit of a game worktree job.
+ */
+export function mergeAgentJobs(ctx: Context, ids: string[], options: MergeOptions = {}): Promise<MergeOutcome> {
+  return mergeAgents(ctx, ids, options);
 }
 
 /** `ogw agent retry <id> --background`; returns the new job id. */

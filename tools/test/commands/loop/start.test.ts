@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listRuns, withRunLock } from '../../../src/lib/runstate.ts';
-import { ogw, sh } from '../../helpers/workspace.ts';
-import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setupGame, write } from './helpers.ts';
+import { ogw, sh, testSettings } from '../../helpers/workspace.ts';
+import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write } from './helpers.ts';
 
 const mocks = vi.hoisted(() => ({
   gameCheckErrors: vi.fn(),
@@ -33,7 +33,7 @@ describe('ogw loop start', () => {
       const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'add a boss\n' });
       expect(out.code).toBe(1);
       expect(out.stderr).toBe(
-        "harness settings agents play and judge use Claude Code and harness secret claude-code-oauth-token is not in this host's secret store: make a long-lived token with `claude setup-token` and store it on one line, for example on macOS: pbpaste | tr -d '[:space:]' | tools/bin/ogw secret set --harness claude-code-oauth-token\n",
+        "harness settings agents.play and agents.judge use Claude Code and harness secret claude-code-oauth-token is not in this host's secret store: make a long-lived token with `claude setup-token` and store it on one line, for example on macOS: pbpaste | tr -d '[:space:]' | tools/bin/ogw secret set --harness claude-code-oauth-token\n",
       );
       expect(git(g.root, 'branch', '--list')).toBe('id-registry\n* main');
       expect(await listRuns(g.repo)).toEqual([]);
@@ -41,10 +41,20 @@ describe('ogw loop start', () => {
     // one Claude Code role is enough; none needs no token
     settings.agents.play = { ...settings.agents.play, cli: 'codex' };
     writeFileSync(settingsFile, JSON.stringify(settings));
-    expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'])).stderr).toContain('harness settings agents judge use Claude Code and harness secret');
+    expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'])).stderr).toContain('harness settings agents.judge use Claude Code and harness secret');
     settings.agents.judge = { ...settings.agents.judge, cli: 'codex' };
     writeFileSync(settingsFile, JSON.stringify(settings));
     expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'])).code).toBe(0);
+  });
+
+  it('does not start while only a judge panel item uses Claude Code and the agent login token is not stored', async () => {
+    const codex = { cli: 'codex', model: 'm', effort: 'high' };
+    const g = setupGame({ agents: { ...(testSettings().agents as object), play: codex, judge: codex }, loop: { ...(testSettings().loop as object), judgePanel: [codex, { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'low' }] } });
+    writeFileSync(g.ws.env.OGW_TEST_SECRET_FILE as string, '{}');
+    const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'add a boss\n' });
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('harness settings loop.judgePanel use Claude Code and harness secret claude-code-oauth-token is not in');
+    expect(await listRuns(g.repo)).toEqual([]);
   });
 
   it('starts an update run: work branch, request.md, run state', async () => {
@@ -319,11 +329,11 @@ describe('ogw loop next', () => {
     write(g.root, 'x.txt', 'x');
     const head = commit(g.root);
     const out = await ogw(g.ws, ['loop', 'next', 'g']);
-    expect(out).toMatchObject({ code: 0, stdout: 'iteration 1\n' });
+    expect(out).toMatchObject({ code: 0, stdout: 'iteration 1\nkind: completeness\n' });
     expect(await currentRun(g)).toMatchObject({ iteration: 1, referenceCommit: head });
     write(g.root, 'y.txt', 'y');
     commit(g.root);
-    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 2\n');
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 2\nkind: completeness\n');
     expect(await currentRun(g)).toMatchObject({ iteration: 2, referenceCommit: head });
   });
 
@@ -343,6 +353,51 @@ describe('ogw loop next', () => {
     expect(newer.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 0.9.0: use the harness at tag core-v1.0.0');
   });
 
+  it('decides the iteration kind from the records of the run', async () => {
+    const g = setupGame({ loop: { funIterations: 2, judgeVotes: 2, judgePanel: [], variants: 1 } }, {
+      'settings.json': { coreVersion: '1.0.0', buildPlatforms: ['android'], loopIterationLimit: 20 },
+    });
+    await openLoopRun(g);
+    const R = 'records/loops/update-1';
+    const gate = (result: string): string =>
+      `| check | result | file |\n|---|---|---|\n${['regression test', 'static check', 'no blocker', 'full flow'].map((n) => `| ${n} | ${result} | f |`).join('\n')}\n`;
+    const recordOf = (n: number, kind: string, result: string): void => {
+      write(g.root, `${R}/iteration-${String(n)}.md`, `## commit\n\n- instance: c\n- baseline: none\n- confirms: none\n- kind: ${kind}\n\n## checks\n\n${gate(result)}`);
+    };
+    const next = async (): Promise<string> => {
+      const out = await ogw(g.ws, ['loop', 'next', 'g', '--json']);
+      expect(out.stderr).toBe('');
+      return (JSON.parse(out.stdout) as { kind: string }).kind;
+    };
+    // iteration 1 is a completeness iteration; after its gate fails, so is the next one
+    expect(await next()).toBe('completeness');
+    recordOf(1, 'completeness', 'fail');
+    expect(await next()).toBe('completeness');
+    // after a passed gate: fun iterations, funIterations in a row, then a completeness iteration
+    recordOf(2, 'completeness', 'pass');
+    expect(await next()).toBe('fun');
+    recordOf(3, 'fun', 'fail');
+    // a fun iteration whose gate failed is followed by a fun iteration while the count allows it
+    expect(await next()).toBe('fun');
+    recordOf(4, 'fun', 'pass');
+    expect(await next()).toBe('completeness');
+    recordOf(5, 'completeness', 'pass');
+    expect(await next()).toBe('fun');
+    expect((await currentRun(g)).data.loop).toMatchObject({
+      kinds: [1, 2, 3, 4, 5, 6].map((iteration) => ({ iteration, kind: [3, 4, 6].includes(iteration) ? 'fun' : 'completeness' })),
+    });
+    expect((await ogw(g.ws, ['loop', 'status', 'g'])).stdout).toContain('iteration: 6\niteration kind: fun\n');
+    // without its record, the kind of an iteration is the one ogw loop next kept
+    recordOf(6, 'fun', 'pass');
+    rmSync(join(g.root, `${R}/iteration-6.md`));
+    expect(await next()).toBe('fun');
+    // a confirmation iteration is a completeness iteration
+    await setRun(g, (run) => {
+      (run.data.loop as { verdict: unknown }).verdict = { iteration: 7, reason: 'confirm', evidence: [] };
+    });
+    expect(await next()).toBe('completeness');
+  });
+
   it('stops at loopIterationLimit for a loop run only', async () => {
     const g = setupGame();
     await openLoopRun(g, { iteration: 3 });
@@ -352,7 +407,7 @@ describe('ogw loop next', () => {
     expect((await currentRun(g)).iteration).toBe(3);
     const b = setupGame();
     await openBuildRun(b, { iteration: 7, referenceCommit: 'ref' });
-    expect((await ogw(b.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 8\n');
+    expect((await ogw(b.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 8\nkind: completeness\n');
     expect(await currentRun(b)).toMatchObject({ iteration: 8, referenceCommit: 'ref' });
   });
 
@@ -370,14 +425,14 @@ describe('ogw loop next', () => {
     await openLoopRun(g);
     const head = git(g.root, 'rev-parse', 'HEAD');
     const outs = await Promise.all([ogw(g.ws, ['loop', 'next', 'g']), ogw(g.ws, ['loop', 'next', 'g'])]);
-    expect(outs.map((o) => o.stdout).sort()).toEqual(['iteration 1\n', 'iteration 2\n']);
+    expect(outs.map((o) => o.stdout).sort()).toEqual(['iteration 1\nkind: completeness\n', 'iteration 2\nkind: completeness\n']);
     expect(await currentRun(g)).toMatchObject({ iteration: 2, referenceCommit: head });
   });
 
   it('uses the schema default limit and refuses with useLocalCore', async () => {
     const g = setupGame({}, { 'settings.json': { coreVersion: '1.0.0', buildPlatforms: ['android'] } });
     await openLoopRun(g, { iteration: 19 });
-    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 20\n');
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 20\nkind: completeness\n');
     expect((await ogw(g.ws, ['loop', 'next', 'g'])).code).toBe(1);
     const local = setupGame({ useLocalCore: true });
     await openLoopRun(local);
@@ -431,6 +486,7 @@ describe('ogw loop status', () => {
         'run: update-1',
         'kind: loop',
         'iteration: 2',
+        'iteration kind: completeness',
         `base commit: ${(await currentRun(g)).baseCommit}`,
         'last iteration record: records/loops/update-1/iteration-10.md',
         `job ${content.id} content done not merged`,

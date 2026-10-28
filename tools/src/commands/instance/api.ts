@@ -73,6 +73,8 @@ export interface InstanceOptions {
   coreVersion?: string;
   /** Start without the `maxConcurrentInstances` check and wait (`ogw instance measure`). */
   ignoreConcurrencyLimit?: boolean;
+  /** `--input-latency`: the supervisor delays each input command to the client `main` by this many ms. */
+  inputLatencyMs?: number;
 }
 
 export interface InstanceInfo {
@@ -343,6 +345,7 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
         ...(options.externalClient === true ? { external: true } : {}),
         ...(options.played === true ? { played: true } : {}),
         ...(options.movie === undefined ? {} : { movie: { ...options.movie, resolution: baseResolution(gameSettings) } }),
+        ...(options.inputLatencyMs === undefined || options.inputLatencyMs <= 0 ? {} : { inputLatencyMs: options.inputLatencyMs }),
       };
     }, ctx.env);
     checkAborted(signal);

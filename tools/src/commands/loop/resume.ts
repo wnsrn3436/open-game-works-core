@@ -7,6 +7,7 @@ import { requireOpenRun, type RunState } from '../../lib/runstate.ts';
 import { isBuildRunMerge } from '../build/lib/buildrun.ts';
 import { buildTagName, parseEnv } from '../build/lib/names.ts';
 import { listInstances, stopInstance } from '../instance/api.ts';
+import { removeVariantLeftovers } from './lib/agent-worktrees.ts';
 import { roleOf, runJobs } from './lib/jobs.ts';
 import { mergeBranchMerged } from './lib/merge-branch.ts';
 import { openTarget, runFileExists, runRel } from './lib/run.ts';
@@ -75,6 +76,9 @@ export const loopResume: CommandDef = {
       await stopInstance(ctx, instance.id);
       lines.push(`stopped instance ${instance.id}`);
     }
+    // an interrupted `ogw loop variants` leaves the worktrees of its variant agents; it runs again from step 1
+    const leftovers = await removeVariantLeftovers(ctx, game, run, await runJobs(ctx, game, run));
+    lines.push(...leftovers.removed.map((what) => `removed ${what}`), ...leftovers.notRemoved.map((l) => `not removed ${l.what}: ${l.error}`));
     lines.push(syncText(await sync(ctx, game, false)));
     const current = await requireOpenRun(game);
     const at = current.kind === 'build' ? `build ${await buildStep(ctx, game, current)}` : loopStep(game, current);

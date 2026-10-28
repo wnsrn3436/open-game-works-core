@@ -7,6 +7,8 @@ import { buildStageMissing, gameIssues, type CheckStage, type EnvName } from './
 import type { JsonObject } from './lib/json-path.ts';
 import { harnessTarget } from './lib/target.ts';
 
+export { gameSettingsValue } from './lib/game-check.ts';
+
 /**
  * Errors of `ogw game check` for these game settings (or the checkout's file); empty when it passes. `stage` `build`
  * also needs the build stage values (`ogw game check --build`, `ogw build start`).

@@ -7,7 +7,7 @@ import {
   lostMoments,
   observations,
   referenceRows,
-  vsBaselineOf,
+  votesOf,
   vsReferenceOf,
 } from '../../../../src/commands/loop/lib/results.ts';
 
@@ -42,37 +42,35 @@ function judge(baselineRows: string[], referenceRows: string[]): string {
   ].join('\n');
 }
 
-describe('vs baseline', () => {
-  it('counts element winners from the side of this instance', () => {
-    const rows = ['| game feel | A | clear | r | e |', '| progression | A | slight | r | e |', '| no friction | B | slight | r | e |'];
-    expect(vsBaselineOf(judge(rows, []), 'A')).toBe('better');
-    expect(vsBaselineOf(judge(rows, []), 'B')).toBe('worse');
+const ELEMENTS = ['game feel', 'progression', 'no friction'];
+
+describe('votes', () => {
+  it('restates each element winner relative to this instance; indistinguishable, n/a and a missing row are no vote', () => {
+    const rows = ['| `game feel` | A | clear | r | e |', '| progression | B | decisive | r | e |', '| no friction | indistinguishable | slight | r | e |', '| presentation | A | slight | r | e |'];
+    expect(votesOf(judge(rows, []), 'A', ELEMENTS)).toEqual({ 'game feel': 'this', progression: 'baseline', 'no friction': null });
+    expect(votesOf(judge(rows, []), 'B', ELEMENTS)).toEqual({ 'game feel': 'baseline', progression: 'this', 'no friction': null });
+    expect(votesOf(judge(['| game feel | n/a | | r | e |'], []), 'A', ELEMENTS)).toEqual({ 'game feel': null, progression: null, 'no friction': null });
   });
 
-  it('is not better with a decisive loss, and ignores n/a and indistinguishable', () => {
-    const rows = ['| game feel | A | clear | r | e |', '| progression | A | slight | r | e |', '| no friction | B | decisive | r | e |'];
-    expect(vsBaselineOf(judge(rows, []), 'A')).toBe('indistinguishable');
-    const even = ['| game feel | A | clear | r | e |', '| progression | B | slight | r | e |', '| x | n/a | | r | e |', '| y | indistinguishable | slight | r | e |'];
-    expect(vsBaselineOf(judge(even, []), 'A')).toBe('indistinguishable');
-    expect(vsBaselineOf(judge([], []), 'A')).toBe('indistinguishable');
-  });
-
-  it('is not better when the other side is better at a judge moment', () => {
-    const rows = ['| game feel | A | clear | r | e |', '| progression | A | slight | r | e |'];
+  it('reads the judge moments the other side is better at', () => {
+    const rows = ['| game feel | A | clear | r | e |'];
     const text = judge(rows, []).replace('reason: x\n', 'reason: x\n- `B` is better at `late_run_horde`. Reason: more enemies on screen\nIndistinguishable at second_run. Reason: same\n');
     expect(lostMoments(text, 'A', ['late_run_horde', 'second_run'])).toEqual(['late_run_horde']);
-    expect(vsBaselineOf(text, 'A', ['late_run_horde', 'second_run'])).toBe('indistinguishable');
-    expect(judgeVerdict(text, 'A', true, ['late_run_horde'])).toEqual({ vsBaseline: 'indistinguishable', vsReference: 'unknown' });
+    expect(judgeVerdict(text, 'A', { withBaseline: true, withReference: true, elements: ELEMENTS, judgeMoments: ['late_run_horde'] })).toEqual({
+      votes: { 'game feel': 'this', progression: null, 'no friction': null },
+      lostMoments: ['late_run_horde'],
+      vsReference: 'unknown',
+    });
     // a moment that is not a judge moment of that judge, and a moment this side won, do not count
-    expect(vsBaselineOf(text, 'A', ['second_run'])).toBe('better');
+    expect(lostMoments(text, 'A', ['second_run'])).toEqual([]);
     expect(lostMoments(text, 'B', ['late_run_horde', 'core action'])).toEqual(['core action']);
   });
 
   it('throws when the table cannot be read', () => {
-    expect(() => vsBaselineOf('## vs baseline\n\nnone\n', 'A')).toThrow('table missing');
-    expect(() => vsBaselineOf('nothing', 'A')).toThrow('table missing');
-    expect(() => vsBaselineOf('## vs baseline\n\n| element | margin |\n|---|---|\n', 'A')).toThrow('columns missing');
-    expect(() => vsBaselineOf(judge(['| game feel | C | clear | r | e |'], []), 'A')).toThrow('unknown winner C');
+    expect(() => votesOf('## vs baseline\n\nnone\n', 'A', ELEMENTS)).toThrow('table missing');
+    expect(() => votesOf('nothing', 'A', ELEMENTS)).toThrow('table missing');
+    expect(() => votesOf('## vs baseline\n\n| element | margin |\n|---|---|\n', 'A', ELEMENTS)).toThrow('columns missing');
+    expect(() => votesOf(judge(['| game feel | C | clear | r | e |'], []), 'A', ELEMENTS)).toThrow('unknown winner C');
   });
 });
 
@@ -101,10 +99,14 @@ describe('vs reference', () => {
     expect(() => vsReferenceOf(judge([], ['| A | game feel | maybe | r | e |']), 'A')).toThrow('unknown result maybe');
   });
 
-  it('judgeVerdict skips vs baseline without a baseline', () => {
+  it('judgeVerdict skips the votes without a baseline and vs reference in a fun iteration', () => {
     const text = judge(['| game feel | A | clear | r | e |'], ['| A | game feel | pass | r | e |']);
-    expect(judgeVerdict(text, 'A', false)).toEqual({ vsBaseline: null, vsReference: 'pass' });
-    expect(judgeVerdict(text, 'A', true)).toEqual({ vsBaseline: 'better', vsReference: 'pass' });
+    const elements = ['game feel'];
+    expect(judgeVerdict(text, 'A', { withBaseline: false, withReference: true, elements })).toEqual({ votes: null, lostMoments: [], vsReference: 'pass' });
+    expect(judgeVerdict(text, 'A', { withBaseline: true, withReference: true, elements })).toEqual({ votes: { 'game feel': 'this' }, lostMoments: [], vsReference: 'pass' });
+    // `## vs reference` is `none` in a fun iteration and is not read
+    const fun = text.replace(/## vs reference[\s\S]*?## moments/, '## vs reference\n\nnone\n\n## moments');
+    expect(judgeVerdict(fun, 'B', { withBaseline: true, withReference: false, elements })).toEqual({ votes: { 'game feel': 'baseline' }, lostMoments: [], vsReference: null });
   });
 });
 
