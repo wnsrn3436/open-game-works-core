@@ -880,6 +880,30 @@ describe('ogw loop evaluate', () => {
     expect(out.stdout).toContain('votes game feel: this 4 baseline 0 this');
   });
 
+  it('gives the judges of a fun iteration the save fixture instances of the moment that the hypothesis names', async () => {
+    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1 } });
+    write(g.root, `${R}/content-1.md`, '## hypothesis\n\n- element: tension and release\n- kind: tuning\n- change: x\n- expected: y\n- moment: `boss`\n');
+    commit(g.root);
+    await setRun(g, (run) => {
+      run.data.loop = { kinds: [{ iteration: 1, kind: 'fun' }] };
+    });
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return '## coverage\n\nunknown: none\n';
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+      return judgeText(side, side, 'pass').replace(/## vs reference[\s\S]*$/, '## vs reference\n\nnone\n');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const judges = fake.agents.filter((a) => a.role === 'judge');
+    expect(judges).toHaveLength(2);
+    for (const judge of judges) expect((judge.input.fixtures as { moment: { name: string } }[]).map((f) => f.moment.name)).toEqual(['boss']);
+    // two save fixture instances per judge, none for a play
+    expect(fake.instances.filter((i) => i.fixture !== undefined)).toHaveLength(4);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.plays.map((p) => p.moment)).toEqual([null]);
+  });
+
   it('shares the telemetry of three bot runs per commit with every judge, named by its sides', async () => {
     const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
     const goal = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };

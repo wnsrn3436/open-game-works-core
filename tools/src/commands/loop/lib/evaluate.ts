@@ -73,7 +73,7 @@ export interface EvaluatePlan {
   baseline: string | null;
   moments: Moment[];
   reference: Reference;
-  /** The iteration kind: a fun iteration has no save fixture instance, no `vs reference` and no success judge. */
+  /** The iteration kind: a fun iteration has no play of a moment, no `vs reference` and no success judge. */
   kind: IterationKind;
   platforms: string[];
   settings: Pick<
@@ -294,7 +294,8 @@ export function planGroups(plan: EvaluatePlan): Group[] {
   }
   groups.push({ size: plays.length, slots: plays, gate: 'none' });
   const firstPlatform = plan.platforms[0] as string;
-  for (const moment of plan.moments) {
+  // no play agent plays a moment in a fun iteration
+  for (const moment of plan.kind === 'fun' ? [] : plan.moments) {
     groups.push({ size: 1, slots: [playSlot({ commit: plan.commit, fixture: fixturePath(plan, moment) }, firstPlatform, moment, false)], gate: 'none' });
   }
   if (plan.run.kind === 'loop' && plan.kind === 'completeness') {

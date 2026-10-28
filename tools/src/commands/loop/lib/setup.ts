@@ -62,6 +62,20 @@ export async function readJudgeMoments(game: GameRepo, requestRel: string): Prom
   return judgeMoments(await readFile(path, 'utf8'));
 }
 
+/**
+ * The judge moments of a fun iteration: the `## judge moments` moment that the `- moment:` line of `## hypothesis` of
+ * the content agent report names (`agents/content.md` `## report`); none when the report or the line is missing or names
+ * no moment of `request.md`.
+ */
+export async function hypothesisMoments(game: GameRepo, requestRel: string, reportRel: string): Promise<Moment[]> {
+  const path = join(game.root, reportRel);
+  if (!exists(path)) return [];
+  const lines = section(await readFile(path, 'utf8'), 'hypothesis') ?? [];
+  const name = lines.map((line) => /^- moment: `?([^`]+?)`?\s*$/.exec(line.trim())?.[1]).find((n) => n !== undefined);
+  if (name === undefined) return [];
+  return (await readJudgeMoments(game, requestRel)).filter((m) => m.name === name);
+}
+
 export interface ReferenceMoment {
   name: string;
   /** Absolute path of the video the moment is in; null when no video has it. */

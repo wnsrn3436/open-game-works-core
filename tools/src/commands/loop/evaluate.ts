@@ -5,7 +5,7 @@ import { runBaseline } from './lib/baseline.ts';
 import { evaluate } from './lib/evaluate.ts';
 import { gateOf, type CheckFile } from './lib/files.ts';
 import { gameSettings, iterationKind, memorableMomentAsked, openTarget, readRunJson, runRel } from './lib/run.ts';
-import { readJudgeMoments, requireReference } from './lib/setup.ts';
+import { hypothesisMoments, readJudgeMoments, requireReference } from './lib/setup.ts';
 
 const USAGE = 'ogw loop evaluate <game> [--db postgresql]';
 
@@ -39,8 +39,13 @@ export const loopEvaluate: CommandDef = {
       check,
       commit: check.commit,
       baseline: await runBaseline(game, run),
-      // a fun iteration starts no save fixture instance: the judge moments are judged in completeness iterations
-      moments: run.kind === 'loop' && kind === 'completeness' ? await readJudgeMoments(game, runRel(run, 'request.md')) : [],
+      // a fun iteration gets only the moment where its hypothesis shows; every judge moment is judged in completeness iterations
+      moments:
+        run.kind !== 'loop'
+          ? []
+          : kind === 'completeness'
+            ? await readJudgeMoments(game, runRel(run, 'request.md'))
+            : await hypothesisMoments(game, runRel(run, 'request.md'), runRel(run, `content-${n}.md`)),
       reference,
       kind,
       platforms,
