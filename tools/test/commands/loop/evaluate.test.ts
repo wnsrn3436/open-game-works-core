@@ -178,8 +178,8 @@ vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOrigi
     const commit = fake.instances.find((i) => i.id === instance.id)?.commit ?? '';
     bots.runs.push({ id: instance.id, commit, pollMs });
     if (bots.fail.has(commit)) return Promise.resolve(null);
-    // this commit answers input 30 ms late, the baseline 90 ms
-    const latency = bots.runs.length === 1 ? 30 : 90;
+    // this commit (the first started) answers input 30 ms late, the baseline 90 ms, in every run
+    const latency = commit === fake.instances[0]?.commit ? 30 : 90;
     const telemetry = { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: latency, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
     return Promise.resolve({ telemetry, guide: null });
   }),
@@ -874,7 +874,7 @@ describe('ogw loop evaluate', () => {
     expect(out.stdout).toContain('votes game feel: this 4 baseline 0 this');
   });
 
-  it('shares the telemetry of one bot run per commit with every judge, named by its sides', async () => {
+  it('shares the telemetry of two bot runs per commit with every judge, named by its sides', async () => {
     const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
     const goal = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
     write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal });
@@ -887,12 +887,17 @@ describe('ogw loop evaluate', () => {
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
-    // two headless instances first, this commit and the baseline game, stopped before the judges start
-    expect(fake.instances.slice(0, 2).map((i) => [i.commit, i.client, i.played])).toEqual([[head, 'headless', undefined], [base, 'headless', undefined]]);
-    expect(bots.runs.map((r) => r.commit)).toEqual([head, base]);
+    // four headless instances first, two of this commit and two of the baseline game, stopped before the judges start
+    expect(fake.instances.slice(0, 4).map((i) => [i.commit, i.client, i.played])).toEqual([
+      [head, 'headless', undefined],
+      [base, 'headless', undefined],
+      [head, 'headless', undefined],
+      [base, 'headless', undefined],
+    ]);
+    expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, base, base].sort());
     // the bot runs poll at their own interval, not that of the agent jobs
-    expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7]);
-    expect(fake.stopped.slice(0, 2).sort()).toEqual(['i1', 'i2']);
+    expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7, 7, 7]);
+    expect(fake.stopped.slice(0, 4).sort()).toEqual(['i1', 'i2', 'i3', 'i4']);
     const first = join(g.root, `${R}/evidence/telemetry-1-1.md`);
     const second = join(g.root, `${R}/evidence/telemetry-1-2.md`);
     expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 30, B 90');

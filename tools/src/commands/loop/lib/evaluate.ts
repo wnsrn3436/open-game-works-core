@@ -642,6 +642,9 @@ function abortOnSignal(state: State): () => void {
   return off;
 }
 
+/** Bot runs of the scenario per commit for the shared telemetry: the spread between them is the noise a difference must exceed. */
+const SHARED_TELEMETRY_RUNS = 2;
+
 /** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
 async function botRunOf(state: State, commit: string, scenario: Scenario, inputLatencyMs = 0): Promise<BotRun | null> {
   let instance: InstanceInfo | null = null;
@@ -665,10 +668,15 @@ async function botRunOf(state: State, commit: string, scenario: Scenario, inputL
  */
 async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scenario): Promise<void> {
   if (pair.baseline === null) return;
-  const [mine, held] = await Promise.all([botRunOf(state, pair.commit, scenario), botRunOf(state, pair.baseline, scenario, pair.baselineLatencyMs)]);
+  const baseline = pair.baseline;
+  const runs = await Promise.all(
+    Array.from({ length: SHARED_TELEMETRY_RUNS }, () => [botRunOf(state, pair.commit, scenario), botRunOf(state, baseline, scenario, pair.baselineLatencyMs)]).flat(),
+  );
   checkStopped(state);
-  if (mine === null || held === null) return;
-  const theirs = withInputLatency(held, pair.baselineLatencyMs);
+  if (runs.some((r) => r === null)) return;
+  const done = runs as BotRun[];
+  const mine = done.filter((_, i) => i % 2 === 0);
+  const theirs = done.filter((_, i) => i % 2 === 1).map((r) => withInputLatency(r, pair.baselineLatencyMs));
   const judges = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.pair === pair);
   for (const slot of judges.filter((j) => j.kind === 'main')) {
     const path = state.plan.site.telemetry(pair, slot.k);
