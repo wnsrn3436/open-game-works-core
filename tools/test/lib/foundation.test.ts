@@ -1,12 +1,15 @@
+import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseTokens, type CommandDef } from '../../src/lib/command.ts';
 import { OgwError } from '../../src/lib/errors.ts';
 import { commitPaths, gitLine, head, statusLines } from '../../src/lib/git.ts';
-import { readJob, startJob, waitJob } from '../../src/lib/jobs.ts';
-import { which } from '../../src/lib/proc.ts';
+import { writeJsonAtomic } from '../../src/lib/fsx.ts';
+import { hostBootId, jobPaths, readJob, startJob, updateJob, waitJob, type JobRecord } from '../../src/lib/jobs.ts';
+import { processStartedAt, which } from '../../src/lib/proc.ts';
 import { validateAgainst, validateStructured, withDefaults } from '../../src/lib/settings.ts';
+import { cleanup, waitDead } from '../helpers/procs.ts';
 import { ogw, commitAll, makeGame, makeWorkspace, sh } from '../helpers/workspace.ts';
 
 describe('parseTokens', () => {
@@ -101,6 +104,45 @@ describe('jobs', () => {
     const quick = await ogw(ws, ['job', 'wait', id, '--timeout', '0']);
     expect([75, 1]).toContain(quick.code);
     await waitJob(id, 30_000, ws.env);
+  });
+});
+
+describe('job time limit', () => {
+  it.runIf(process.platform !== 'win32')('ends the agent CLI process group of a job that reaches its time limit, though it ignores SIGTERM', async () => {
+    const ws = makeWorkspace();
+    // a running job for the command to wait on: its supervisor is this test process
+    const waited: JobRecord = {
+      id: `w${String(Date.now())}`,
+      argv: [],
+      cwd: ws.root,
+      command: 'check',
+      game: null,
+      startedAt: Date.now(),
+      endedAt: null,
+      status: 'running',
+      exitCode: null,
+      supervisorPid: process.pid,
+      supervisorStartedAt: processStartedAt(process.pid) ?? undefined,
+      bootId: hostBootId(),
+      pid: null,
+      timeLimitMs: 60_000,
+      agentJob: null,
+      summary: null,
+      meta: {},
+    };
+    await writeJsonAtomic((await jobPaths(waited.id, ws.env)).record, waited);
+    const cli = spawn('sh', ['-c', 'trap "" TERM; sleep 60'], { detached: true, stdio: 'ignore' });
+    try {
+      const id = await startJob({ argv: ['job', 'wait', waited.id, '--timeout', '30000'], cwd: ws.root, command: 'job wait', game: null, timeLimitMs: 1500, agentJob: null, env: ws.env });
+      await updateJob(id, (j) => {
+        j.meta = { cliPid: cli.pid, cliPidStartedAt: processStartedAt(cli.pid as number) };
+      }, ws.env);
+      const result = await waitJob(id, 30_000, ws.env);
+      expect(result.job.status).toBe('failed');
+      expect(await waitDead(cli.pid as number)).toBe(true);
+    } finally {
+      cleanup([cli.pid]);
+    }
   });
 });
 

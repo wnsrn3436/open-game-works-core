@@ -362,13 +362,15 @@ export async function superviseJob(id: string, env: NodeJS.ProcessEnv = process.
   clearTimeout(timer);
   // children the command left behind belong to the job and end with it
   killTree(child, 'SIGKILL');
-  await updateJob(id, (j) => {
+  const ended = await updateJob(id, (j) => {
     // a job `killJob` already recorded as failed stays as it was
     if (j.status !== 'running') return;
     j.endedAt = Date.now();
     j.exitCode = code;
     j.status = code === 0 ? 'done' : 'failed';
   }, env);
+  // the agent CLI runs in its own process group, which the SIGKILL of the command group does not reach
+  killProcesses(ended);
   for (const hook of onJobEnd) await hook(id, env).catch(() => undefined);
 }
 
