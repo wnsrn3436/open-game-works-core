@@ -643,7 +643,7 @@ function abortOnSignal(state: State): () => void {
 }
 
 /** Bot runs of the scenario per commit for the shared telemetry: the spread between them is the noise a difference must exceed. */
-const SHARED_TELEMETRY_RUNS = 2;
+const SHARED_TELEMETRY_RUNS = 3;
 
 /** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
 async function botRunOf(state: State, commit: string, scenario: Scenario, inputLatencyMs = 0): Promise<BotRun | null> {

@@ -874,7 +874,7 @@ describe('ogw loop evaluate', () => {
     expect(out.stdout).toContain('votes game feel: this 4 baseline 0 this');
   });
 
-  it('shares the telemetry of two bot runs per commit with every judge, named by its sides', async () => {
+  it('shares the telemetry of three bot runs per commit with every judge, named by its sides', async () => {
     const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
     const goal = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
     write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal });
@@ -887,17 +887,19 @@ describe('ogw loop evaluate', () => {
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
-    // four headless instances first, two of this commit and two of the baseline game, stopped before the judges start
-    expect(fake.instances.slice(0, 4).map((i) => [i.commit, i.client, i.played])).toEqual([
+    // six headless instances first, three of this commit and three of the baseline game, stopped before the judges start
+    expect(fake.instances.slice(0, 6).map((i) => [i.commit, i.client, i.played])).toEqual([
+      [head, 'headless', undefined],
+      [base, 'headless', undefined],
       [head, 'headless', undefined],
       [base, 'headless', undefined],
       [head, 'headless', undefined],
       [base, 'headless', undefined],
     ]);
-    expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, base, base].sort());
+    expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, head, base, base, base].sort());
     // the bot runs poll at their own interval, not that of the agent jobs
-    expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7, 7, 7]);
-    expect(fake.stopped.slice(0, 4).sort()).toEqual(['i1', 'i2', 'i3', 'i4']);
+    expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7, 7, 7, 7, 7]);
+    expect(fake.stopped.slice(0, 6).sort()).toEqual(['i1', 'i2', 'i3', 'i4', 'i5', 'i6']);
     const first = join(g.root, `${R}/evidence/telemetry-1-1.md`);
     const second = join(g.root, `${R}/evidence/telemetry-1-2.md`);
     expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 30, B 90');

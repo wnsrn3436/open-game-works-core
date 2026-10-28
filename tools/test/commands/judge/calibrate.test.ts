@@ -168,10 +168,11 @@ describe('ogw judge calibrate', () => {
     expect(latent.map((i) => [i.commit, i.latency, i.client])).toEqual([
       [main, 150, 'headless'],
       [main, 150, 'headless'],
+      [main, 150, 'headless'],
       [main, 150, 'window'],
       [main, 150, 'window'],
     ]);
-    expect(fake.bots.filter((b) => b.latency > 0)).toHaveLength(2);
+    expect(fake.bots.filter((b) => b.latency > 0)).toHaveLength(3);
     const committed = sh(g.root, 'git', ['show', '--name-only', '--format=%s', 'main']).trim().split('\n');
     expect(committed[0]).toBe('judge calibration 5000');
     expect(committed).toContain('records/calibration/5000.md');
