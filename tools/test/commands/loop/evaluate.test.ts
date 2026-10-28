@@ -170,7 +170,7 @@ vi.mock('../../../src/commands/measure/api.ts', () => ({
 }));
 
 /** The bot runs of the shared telemetry: by instance id, the telemetry, or null for a run that did not reach every step. */
-const bots = vi.hoisted(() => ({ runs: [] as { id: string; commit: string; pollMs: number }[], fail: new Set<string>() }));
+const bots = vi.hoisted(() => ({ runs: [] as { id: string; commit: string; pollMs: number }[], fail: new Set<string>(), failRuns: new Map<string, number>() }));
 
 vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
@@ -178,6 +178,11 @@ vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOrigi
     const commit = fake.instances.find((i) => i.id === instance.id)?.commit ?? '';
     bots.runs.push({ id: instance.id, commit, pollMs });
     if (bots.fail.has(commit)) return Promise.resolve(null);
+    const failing = bots.failRuns.get(commit) ?? 0;
+    if (failing > 0) {
+      bots.failRuns.set(commit, failing - 1);
+      return Promise.resolve(null);
+    }
     // this commit (the first started) answers input 30 ms late, the baseline 90 ms, in every run
     const latency = commit === fake.instances[0]?.commit ? 30 : 90;
     const telemetry = { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: latency, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
@@ -267,6 +272,7 @@ beforeEach(() => {
   measure.dead = [];
   bots.runs = [];
   bots.fail = new Set();
+  bots.failRuns = new Map();
   evaluateDeps.pollMs = 0;
   evaluateDeps.botPollMs = 7;
   evaluateDeps.random = () => 0.1;
@@ -915,7 +921,21 @@ describe('ogw loop evaluate', () => {
     // evidence is not committed
     expect(git(g.root, 'ls-files', `${R}/evidence`)).toBe('');
 
-    // a bot run that does not reach every step: no telemetry for any judge
+    // a bot run that does not reach every step is replaced by a new run
+    fake.instances = [];
+    fake.agents = [];
+    counters.judge = 0;
+    counters.play = 0;
+    bots.runs = [];
+    bots.failRuns = new Map([[base, 2]]);
+    rmSync(join(g.root, `${R}/evidence`), { recursive: true, force: true });
+    const retried = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(retried.code).toBe(0);
+    expect(retried.stderr).toContain(`shared telemetry: a bot run of ${base} did not reach every step`);
+    expect(bots.runs.filter((r) => r.commit === base)).toHaveLength(5);
+    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([first, second, first, first]);
+
+    // runs that do not reach every step, also when run again: no telemetry for any judge
     fake.instances = [];
     fake.agents = [];
     counters.judge = 0;
