@@ -66,10 +66,13 @@ describe('metrics', () => {
     const s = [{ telemetry: a, state: { content: { gold: 10, name: 'x' } } }, { telemetry: b, state: { content: { gold: 30 } } }];
     expect(metricValue('input_latency_ms', s)).toBe(50);
     expect(metricValue('no_response_permille', s)).toBe(250);
-    expect(metricValue('feedback_per_input', s)).toBe(0);
+    expect(metricValue('feedback_per_input', s)).toBe(0.75);
     expect(metricValue('feedback_per_input', [{ telemetry: telemetry({ inputs: [input(1, 1, { Sound: 1, Tween: 2 }), input(2, 1, { Sound: 1 }), input(3, 1)] }), state: {} }])).toBe(1);
     // the kinds of feedback, not how many events: more sounds per input is not more feel; at most the 5 kinds
     expect(metricValue('feedback_per_input', [{ telemetry: telemetry({ inputs: [input(1, 1, { Sound: 3 }), input(2, 1, { Sound: 7, Tween: 0 })] }), state: {} }])).toBe(1);
+    // the mean: moves with one feedback kind and shots with four do not flip it between 1 and 4 as their share passes half
+    const shot = { Sound: 1, CameraShake: 1, ScreenEffect: 1, Tween: 1 };
+    expect(metricValue('feedback_per_input', [{ telemetry: telemetry({ inputs: [input(1, 1, { Tween: 1 }), input(2, 1, { Tween: 1 }), input(3, 1, shot)] }), state: {} }])).toBe(2);
     const all = { Sound: 1, CameraShake: 1, ScreenEffect: 1, Tween: 1, Effect: 1, Other: 1 };
     expect(metricValue('feedback_per_input', [{ telemetry: telemetry({ inputs: [input(1, 1, all)] }), state: {} }])).toBe(5);
     expect(metricValue('first_reward_ms', s)).toBe(100);

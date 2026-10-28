@@ -58,6 +58,12 @@ export function median(values: readonly number[]): number | null {
   return sorted[Math.floor((sorted.length - 1) / 2)] as number;
 }
 
+/** The mean, to two decimals; null without values. */
+function mean(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  return Math.round((values.reduce((a, b) => a + b, 0) * 100) / values.length) / 100;
+}
+
 /** The feedback kinds of `qa-core` `### telemetry`, which cap the kinds counted per input. */
 const FEEDBACK_KINDS = 5;
 
@@ -183,7 +189,7 @@ const CALCS: Record<string, Calc> = {
   input_latency_ms: (s) =>
     median(s.flatMap((x) => x.telemetry.inputs.map((i) => i.latency_ms)).filter((v): v is number => v !== null)),
   no_response_permille: noResponsePermille,
-  feedback_per_input: (s) => median(s.flatMap((x) => x.telemetry.inputs.map((i) => feedbackKinds(i.feedback)))),
+  feedback_per_input: (s) => mean(s.flatMap((x) => x.telemetry.inputs.map((i) => feedbackKinds(i.feedback)))),
   first_reward_ms: (s, free) => median(s.map((x) => firstReward(x.telemetry, free)).filter((v): v is number => v !== null)),
   reward_interval_ms: (s) => median(s.flatMap((x) => rewardIntervals(x.telemetry))),
   goal_interval_ms: (s, free) => median(s.flatMap((x) => goalIntervals(x.telemetry, free))),

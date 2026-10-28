@@ -56,7 +56,7 @@ It has the headings below in this order. Under a heading not decided yet, write 
 |---|---|
 | `input_latency_ms` | The median of the input `latency_ms` values that are not `null` |
 | `no_response_permille` | The number of inputs whose `latency_ms` is `null` × 1000 ÷ the number of inputs. The remainder is dropped |
-| `feedback_per_input` | The median of the per-input numbers of feedback kinds whose count in `feedback` is greater than 0 (at most 5) |
+| `feedback_per_input` | The mean, to two decimals, of the per-input numbers of feedback kinds whose count in `feedback` is greater than 0 (at most 5) |
 | `first_reward_ms` | Per instance, the `play_at` of the first `rewards` (ms elapsed since the telemetry start) minus the free scene time from the telemetry start to the `at` of that reward, and 0 when that is below 0. The median of those values |
 | `reward_interval_ms` | Per instance, the `play_at` difference of each two consecutive `rewards`. The median of all those values |
 | `goal_interval_ms` | The median of `duration_ms` of `goal_intervals` minus the free scene time from its `start_at` to its `end_at`, and 0 when that is below 0 |
