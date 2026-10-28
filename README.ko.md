@@ -117,7 +117,7 @@ create game: block-drop
 1. **콘텐츠 에이전트**가 `design.md`, 클라이언트·서버 콘텐츠 코드, 데이터, contract를 함께 고치고 `play-guide.md`를 게임에 맞춰 유지한다. `create game`의 첫 반복에서는 먼저 `setup game`이 저장한 요청으로 `brief.md`를 쓴다. 리소스가 필요하면 플레이스홀더 리소스를 넣고 최종 리소스를 요청한 뒤, 기다리지 않고 진행한다.
 2. **자동 검사**를 실행한다(아래 표). 회귀 테스트, 정적 검사, no blocker, full flow 중 하나라도 실패하면 플레이와 판정을 건너뛰고 바로 결함 목록으로 간다.
 3. **플레이 에이전트**가 `play-guide.md`를 읽고, 같은 커밋의 인스턴스 여러 개를 자동화 채널을 통한 실제 입력으로 플레이한 뒤, 총점이 아니라 관찰마다 피드백을 쓴다.
-4. **판정 에이전트**는 새 컨텍스트에서 시작해 두 인스턴스 `A`, `B`를 플레이한다. 어느 쪽이 이번 커밋이고 어느 쪽이 기준 게임(baseline game)인지는 알려 주지 않는다. 재미 요소(game feel, tension and release, progression, one more run, no friction, presentation)마다 승자를 고르고, 각 요소를 정해진 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 레퍼런스 게임 게임플레이 영상과 비교한다. 플레이 에이전트와 판정 에이전트는 `brief.md`와 `design.md`를 보지 못한다. 3단계와 4단계는 함께 실행되며(`ogw loop evaluate`), 판정 에이전트는 플레이 피드백을 받지 않는다.
+4. **판정 에이전트**는 새 컨텍스트에서 시작해 두 인스턴스 `A`, `B`를 플레이한다. 어느 쪽이 이번 커밋이고 어느 쪽이 기준 게임(baseline game)인지는 알려 주지 않는다. 재미 요소(game feel, tension and release, progression, one more run, no friction, presentation)마다 승자를 고르고, 각 요소를 정해진 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 레퍼런스 게임 게임플레이 영상과 비교한다. 화면이 상용 게임답게 보이는지(`lobby`, `hud`, `reward popup`, `result`)는 프레젠테이션 게임 영상과 비교한다. 콘텐츠 에이전트가 만든 세이브 픽스처로 판정 순간(judge moment)마다 바로 그 장면을 플레이하기도 한다. `create game`에서는 `brief.md`의 `memorable_moment`가 그중 하나이고, 판정 순간 하나에서라도 기준 게임이 낫다면 이번 커밋을 더 낫다고 판정하지 않는다. 플레이 에이전트와 판정 에이전트는 `brief.md`와 `design.md`를 보지 못한다. 3단계와 4단계는 함께 실행되며(`ogw loop evaluate`), 판정 에이전트는 플레이 피드백을 받지 않는다.
 5. **`ogw`**가 검사 실패, 플레이 피드백, 판정 결과를 결함 목록으로 정리하고, 루프 반복 기록을 쓰고, 다음 기준 게임을 정하고, 루프를 멈출지 판정한다.
 
 루프는 다음 이유 중 하나로 멈춘다. success(성공), repeated defect(같은 결함 반복), oscillation(수정과 재발의 반복), plateau(개선 정체), limit reached(게임 설정 `loopIterationLimit` 도달), stopped by human(사람이 중지). 성공하려면 후보 반복(candidate iteration)이 있어야 한다. 후보 반복은 판정 결과가 레퍼런스 게임 수준에 이르고 기준 게임보다 나쁘지 않으며, no placeholder를 뺀 완성도 요소가 모두 통과하고, 추가로 부르는 성공 확인 판정 에이전트들도 레퍼런스 게임 수준이라고 판정한 반복이다. 리소스 작업과 번역 작업은 루프를 기다리게 하지 않는다. 그래서 후보 반복 시점에 끝나지 않은 작업이 있었다면, 그 작업을 병합한 상태에서 콘텐츠 수정 없이 확인 반복(confirmation iteration)을 한 번 더 돌려 성공을 다시 판정한다.
@@ -151,7 +151,7 @@ no blocker부터 UI quality까지 다섯 행이 완성도 검사(completeness ch
 4. 하드닝된 코드를 main에 커밋하고 `dev-<version>`, `stg-<version>`, `prod-<version>` 태그를 붙인다.
 5. DEV와 STG 빌드는 그 환경의 서버도 배포한다. PROD는 사람이 배포한다.
 
-android, ios, macos, windows의 STG와 PROD 빌드는 서명된 산출물을 만든다(web과 linux는 서명하지 않는다). 서명 값이 없는 android, macos, windows의 DEV 빌드는 무료 서명을 쓴다. PROD 빌드는 하드닝을 다시 하지 않고 STG에서 확인한 커밋을 그대로 빌드한다. 하위 호환성(contract, 데이터, 저장 스키마)은 마지막 PROD 빌드를 기준으로 검사한다. `--bundle-for <app version>`은 번들 패치, 즉 설치된 앱에 앱 업데이트 없이 보내는 리소스와 데이터를 만든다.
+android, ios, macos, windows의 STG와 PROD 빌드는 서명된 산출물을 만든다(web과 linux는 서명하지 않는다). macOS는 Developer ID 인증서로 서명하고 STG와 PROD에서는 공증까지 거쳐, Mac App Store가 아니라 Steam, itch.io, 웹 다운로드 같은 경로로 직접 배포한다. Android는 `arm64-v8a`만 빌드한다. STG나 PROD 빌드를 시작하기 전에 `ogw`는 대상 플랫폼에 필요한 네이티브 플러그인(예: 로그인 토큰을 보관하는 `ogw-secure-storage`)이 코어 릴리스에 모두 있는지 확인하고, 하나라도 없으면 멈춘다. 서명 값이 없는 android, macos, windows의 DEV 빌드는 무료 서명을 쓴다. PROD 빌드는 하드닝을 다시 하지 않고 STG에서 확인한 커밋을 그대로 빌드한다. 하위 호환성(contract, 데이터, 저장 스키마)은 마지막 PROD 빌드를 기준으로 검사한다. `--bundle-for <app version>`은 번들 패치, 즉 설치된 앱에 앱 업데이트 없이 보내는 리소스와 데이터를 만든다.
 
 ### 환경
 
@@ -328,7 +328,7 @@ build: <game> STG                   STG 빌드, STG 서버 배포
 build: <game> PROD                  STG에서 확인한 커밋의 PROD 빌드, PROD 배포는 사람이 함
 ```
 
-- `setup game`에서는 레퍼런스 게임(요청에 없으면 에이전트가 후보 세 개를 제안한다)과 게임플레이 영상 하나 이상을 파일이나 YouTube URL로 주고, 각 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 시작과 끝을 알려 준다. 금칙어 목록은 게임이 `nickname`, `guild`, `chat` 중 하나를 쓸 때만 묻는다. 마지막에 `ogw secret generate`로 게임의 시크릿을 만들고, 환경별로 사람이 준비할 것(`ogw game check <game> --human-prep`)을 보여 준다.
+- `setup game`에서는 레퍼런스 게임(요청에 없으면 에이전트가 후보 세 개를 제안한다)과 게임플레이 영상 하나 이상을 파일이나 YouTube URL로 주고, 각 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 시작과 끝을 알려 준다. 게임에 `lobby`, `hud`, `reward popup`, `result` 화면 중 어느 것이 있을지도 답하고, 화면 수준의 기준으로 삼을 프레젠테이션 게임을 줄 수 있다. 주지 않으면 레퍼런스 게임을 기준으로 쓴다. 금칙어 목록은 게임이 `nickname`, `guild`, `chat` 중 하나를 쓸 때만 묻는다. 마지막에 `ogw secret generate`로 게임의 시크릿을 만들고, 환경별로 사람이 준비할 것(`ogw game check <game> --human-prep`)을 보여 준다.
 - 루프가 끝나면 루프 종료 기록 `records/loops/<run>/end.md`를 읽는다. `## human` 절에 사람이 할 일이 있다. `needs human` 표시가 붙은 가정, 새 코어 제안, 라이선스가 `unknown`인 리소스, 건너뛴 코어 버전이 여기에 나온다.
 - 빌드는 리포트를 `records/loops/<run>/end.md`에, 산출물을 게임 저장소의 `builds/<env>-<version>/`에 쓴다. PROD 빌드 리포트에는 이 빌드의 파일을 채운 PROD 배포 순서, 롤백 순서, 점검 순서가 들어 있다.
 - 요청하면 리드 에이전트가 `ogw video`로 게임 플레이 영상을 녹화해 게임 저장소의 `builds/videos/`에 쓴다.
