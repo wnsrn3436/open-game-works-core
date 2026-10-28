@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { summaryLines, telemetrySummary } from '../../../src/commands/telemetry/api.ts';
-import { compareTelemetry, distance, failureIsNone, formatComparison, freeScenes } from '../../../src/commands/telemetry/lib/compare.ts';
+import { compareRepeatedTelemetry, compareTelemetry, distance, failureIsNone, formatComparison, freeScenes } from '../../../src/commands/telemetry/lib/compare.ts';
 import { isMetric, median, metricValue, toTelemetry, windowTelemetry, type Telemetry } from '../../../src/commands/telemetry/lib/metrics.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { ogw } from '../../helpers/workspace.ts';
@@ -365,5 +365,21 @@ describe('ogw telemetry', () => {
     expect(await fail(['--to-b', '5'])).toContain('--from-b and --to-b go together');
     expect(await fail(['--from-a', '0', '--to-a', '5'])).toContain('the windows of A and B go together');
     expect(await fail(['--from-a', 'x', '--to-a', '1', '--from-b', '0', '--to-b', '1'])).toContain('invalid --from-a: x');
+  });
+});
+
+describe('compareRepeatedTelemetry', () => {
+  const goals = (counts: number[]) => ({ started_at: 0, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: counts.map((input_count, i) => ({ start_ms: i * 1000, end_ms: i * 1000 + 500, input_count })), scene_loads: [], dropped: 0 }) as never;
+
+  it('counts no difference when the runs of the two sides overlap', () => {
+    const noFriction = compareRepeatedTelemetry([goals([20]), goals([13])], [goals([14]), goals([16])], false)[4];
+    expect(noFriction?.winner).toBe('indistinguishable');
+    expect(noFriction?.metrics.find((m) => m.metric === 'goal_input_count')).toMatchObject({ a: 16.5, b: 15, d: 0, runs: { a: [20, 13], b: [14, 16] } });
+  });
+
+  it('counts the difference of the means when the runs do not overlap', () => {
+    const noFriction = compareRepeatedTelemetry([goals([10]), goals([11])], [goals([20]), goals([22])], false)[4];
+    expect(noFriction?.winner).toBe('A');
+    expect(formatComparison([noFriction as never])).toContain('(runs A 10 11, B 20 22)');
   });
 });

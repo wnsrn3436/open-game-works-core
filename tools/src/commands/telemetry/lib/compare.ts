@@ -18,6 +18,8 @@ export interface MetricComparison {
   b: number | null;
   /** null unless both values exist. */
   d: number | null;
+  /** `compareRepeatedTelemetry`: the value of each run of `A` and of `B`. */
+  runs?: { a: (number | null)[]; b: (number | null)[] };
 }
 
 export interface ElementComparison {
@@ -74,6 +76,43 @@ export function compareTelemetry(a: Telemetry, b: Telemetry, noFailure: boolean,
   });
 }
 
+function mean(values: readonly (number | null)[]): number | null {
+  if (values.some((v) => v === null) || values.length === 0) return null;
+  return (values as number[]).reduce((x, y) => x + y, 0) / values.length;
+}
+
+/** The value ranges of the two sides overlap: the runs of one side do not all lie on one side of the runs of the other. */
+function overlap(a: readonly number[], b: readonly number[]): boolean {
+  return Math.max(...a) >= Math.min(...b) && Math.max(...b) >= Math.min(...a);
+}
+
+/**
+ * The comparison of several runs of `A` and of `B` (`game-loop` `## iteration` 4 shared telemetry): a metric value is
+ * the mean of its runs, and `d` is 0 when the values of the runs of `A` and of `B` overlap, because then the
+ * difference is not larger than the difference between runs of one commit.
+ */
+export function compareRepeatedTelemetry(
+  a: readonly Telemetry[],
+  b: readonly Telemetry[],
+  noFailure: boolean,
+  freeA: FreeScenes = null,
+  freeB: FreeScenes = null,
+): ElementComparison[] {
+  return ELEMENTS.map(({ element, metrics, failureOnly }) => {
+    const rows = metrics.map((metric) => {
+      const ra = a.map((t) => metricValue(metric, [{ telemetry: t, state: {} }], freeA));
+      const rb = b.map((t) => metricValue(metric, [{ telemetry: t, state: {} }], freeB));
+      const va = mean(ra);
+      const vb = mean(rb);
+      let d: number | null = null;
+      if (va !== null && vb !== null) d = overlap(ra as number[], rb as number[]) ? 0 : metricDistance(metric, va, vb);
+      return { metric, a: va, b: vb, d, runs: { a: ra, b: rb } };
+    });
+    if (failureOnly && noFailure) return { element, metrics: rows, winner: 'n/a', margin: '' };
+    return { element, metrics: rows, ...judge(rows) };
+  });
+}
+
 /** The content under `## failure` of a play guide is `none`. */
 export function failureIsNone(playGuide: string): boolean {
   const lines = sectionLines(playGuide, 'failure');
@@ -106,7 +145,10 @@ export function formatComparison(elements: readonly ElementComparison[]): string
   for (const e of elements) {
     const verdict = e.margin === '' ? `winner ${e.winner}` : `winner ${e.winner}, margin ${e.margin}`;
     lines.push(`${e.element}: ${verdict}`);
-    for (const m of e.metrics) lines.push(`  ${m.metric}: A ${num(m.a)}, B ${num(m.b)}, d ${num(m.d)}`);
+    for (const m of e.metrics) {
+      const runs = m.runs === undefined ? '' : ` (runs A ${m.runs.a.map(num).join(' ')}, B ${m.runs.b.map(num).join(' ')})`;
+      lines.push(`  ${m.metric}: A ${num(m.a)}, B ${num(m.b)}, d ${num(m.d)}${runs}`);
+    }
   }
   return lines.join('\n');
 }

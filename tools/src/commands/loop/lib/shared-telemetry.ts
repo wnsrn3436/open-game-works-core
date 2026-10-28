@@ -6,7 +6,7 @@ import { showFile } from '../../../lib/git.ts';
 import { SCENARIO } from '../../check/lib/bot-playtest.ts';
 import { parseScenario, runScenario, type Scenario } from '../../check/lib/scenario.ts';
 import { readTelemetry } from '../../telemetry/api.ts';
-import { compareTelemetry, failureIsNone, formatComparison, freeScenes } from '../../telemetry/lib/compare.ts';
+import { compareRepeatedTelemetry, failureIsNone, formatComparison, freeScenes } from '../../telemetry/lib/compare.ts';
 import type { Telemetry } from '../../telemetry/lib/metrics.ts';
 
 /**
@@ -55,8 +55,11 @@ export function withInputLatency(run: BotRun, latencyMs: number): BotRun {
   return { ...run, telemetry: { ...run.telemetry, inputs } };
 }
 
-export function comparisonText(a: BotRun, b: BotRun): string {
-  const noFailure = [a.guide, b.guide].some((guide) => guide !== null && failureIsNone(guide));
+/** The `ogw telemetry compare` output of the runs of `A` and of `B`, each side run the same number of times. */
+export function comparisonText(a: readonly BotRun[], b: readonly BotRun[]): string {
+  const guides = [...a, ...b].map((r) => r.guide);
+  const noFailure = guides.some((guide) => guide !== null && failureIsNone(guide));
   const free = (guide: string | null) => (guide === null ? null : freeScenes(guide));
-  return `${formatComparison(compareTelemetry(a.telemetry, b.telemetry, noFailure, free(a.guide), free(b.guide)))}\n`;
+  const first = (runs: readonly BotRun[]) => (runs[0] as BotRun).guide;
+  return `${formatComparison(compareRepeatedTelemetry(a.map((r) => r.telemetry), b.map((r) => r.telemetry), noFailure, free(first(a)), free(first(b))))}\n`;
 }
