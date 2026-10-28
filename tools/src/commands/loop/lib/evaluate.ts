@@ -288,13 +288,13 @@ export function planGroups(plan: EvaluatePlan): Group[] {
     groups.push(judgeGroup(plan, pair, 'main', k, alternateSide(first, k), judgeAgent(plan.settings, k)));
   }
   const plays: Slot[] = [];
-  for (let k = 0; k < plan.settings.playInstances; k++) {
+  // no play agent plays in a fun iteration: its findings would wait for a completeness iteration, and the bot playtest gates blockers
+  for (let k = 0; k < (plan.kind === 'fun' ? 0 : plan.settings.playInstances); k++) {
     const platform = plan.platforms[k % plan.platforms.length] as string;
     plays.push(playSlot({ commit: plan.commit, platform }, platform, null, true));
   }
-  groups.push({ size: plays.length, slots: plays, gate: 'none' });
+  if (plays.length > 0) groups.push({ size: plays.length, slots: plays, gate: 'none' });
   const firstPlatform = plan.platforms[0] as string;
-  // no play agent plays a moment in a fun iteration
   for (const moment of plan.kind === 'fun' ? [] : plan.moments) {
     groups.push({ size: 1, slots: [playSlot({ commit: plan.commit, fixture: fixturePath(plan, moment) }, firstPlatform, moment, false)], gate: 'none' });
   }

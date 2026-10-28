@@ -835,7 +835,7 @@ describe('ogw loop evaluate', () => {
     expect(file.kind).toBe('completeness');
     expect(file.baseline).toBe(git(g.root, 'rev-parse', 'main'));
   });
-  it('judges a fun iteration with the judge panel, the fun elements, no reference, no save fixture instance and no success judge', async () => {
+  it('judges a fun iteration with the judge panel, the fun elements, no reference, no save fixture instance, no play and no success judge', async () => {
     const panel = [
       { cli: 'codex', model: 'gpt-x', effort: 'high' },
       { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'medium' },
@@ -875,7 +875,7 @@ describe('ogw loop evaluate', () => {
     for (const judge of judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], telemetry: null, reference: null });
     // no save fixture instance and no play of a moment
     expect(fake.instances.filter((i) => i.fixture !== undefined)).toEqual([]);
-    expect(file.plays.map((p) => p.moment)).toEqual([null]);
+    expect(file.plays).toEqual([]);
     expect(out.stdout).toContain('judge main done codex gpt-x high side A vs reference none');
     expect(out.stdout).toContain('votes game feel: this 4 baseline 0 this');
   });
@@ -901,7 +901,7 @@ describe('ogw loop evaluate', () => {
     // two save fixture instances per judge, none for a play
     expect(fake.instances.filter((i) => i.fixture !== undefined)).toHaveLength(4);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.plays.map((p) => p.moment)).toEqual([null]);
+    expect(file.plays).toEqual([]);
   });
 
   it('shares the telemetry of three bot runs per commit with every judge, named by its sides', async () => {
