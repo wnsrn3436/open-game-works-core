@@ -55,7 +55,7 @@
   "loopStop": {
     "repeatedDefect": 3,
     "oscillation": 2,
-    "plateau": 3,
+    "plateau": 6,
     "successJudges": 2
   },
   "loop": {
