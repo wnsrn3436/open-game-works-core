@@ -52,6 +52,8 @@ export interface StandardJob {
   outputs?: string[];
   /** The program calls, run one after another. */
   call: (input: CallInput) => Promise<Call | Call[]>;
+  /** One call that makes every item with the model loaded once (`generation run --batch`); absent: `call` per item. */
+  batch?: (inputs: readonly CallInput[]) => Promise<Call>;
 }
 
 /** The fixed seed of every standard test job. */
@@ -89,12 +91,16 @@ export const DRIVERS: Record<string, string> = {
     'import os',
     'import shutil',
     'import sys',
+    'import traceback',
     'import torch',
     'from acestep.handler import AceStepHandler',
     'from acestep.inference import GenerationConfig, GenerationParams, generate_music',
     'from acestep.llm_inference import LLMHandler',
     '',
-    'checkpoints, prompt_file, duration_ms, out, seed = sys.argv[1:6]',
+    '# one item per song: {"prompt", "duration_ms", "out", "seed"}; the models load once for all of them',
+    'checkpoints, jobs_file = sys.argv[1:3]',
+    'with open(jobs_file, encoding="utf-8") as f:',
+    '    jobs = json.load(f)',
     'project = os.path.join(os.environ["HOME"], "ace-step-project")',
     'os.makedirs(project, exist_ok=True)',
     'link = os.path.join(project, "checkpoints")',
@@ -107,32 +113,44 @@ export const DRIVERS: Record<string, string> = {
     'status, ready = lm.initialize(checkpoint_dir=checkpoints, lm_model_path="acestep-5Hz-lm-1.7B", backend="mlx" if device == "mps" else "pt", device=device)',
     'if not ready:',
     '    sys.exit(status)',
-    'with open(prompt_file, encoding="utf-8") as f:',
-    '    caption = f.read().strip()',
-    's = int(seed)',
-    'params = GenerationParams(caption=caption, instrumental=True, duration=int(duration_ms) / 1000, seed=s, thinking=True, use_cot_metas=True, use_cot_caption=False, use_cot_language=False)',
-    'config = GenerationConfig(batch_size=1, audio_format="wav", use_random_seed=s < 0, seeds=None if s < 0 else [s])',
-    'result = generate_music(dit, lm, params, config, save_dir=os.path.join(out, "work"))',
-    'if not result.success or not result.audios:',
-    '    sys.exit(str(result.error))',
-    'audio = result.audios[0]',
-    '# the tempo the LM planned the song with',
-    'used = result.extra_outputs.get("lm_metadata") or {}',
-    'shutil.move(audio["path"], os.path.join(out, "music.wav"))',
-    'shutil.rmtree(os.path.join(out, "work"), ignore_errors=True)',
-    'bpm = used.get("bpm")',
-    'if not isinstance(bpm, (int, float)) or bpm <= 0:',
-    '    sys.exit("the LM chose no bpm")',
-    'beats = used.get("timesignature")',
-    'beats = int(beats) if str(beats).isdigit() and int(beats) > 0 else 4',
-    'with open(os.path.join(out, "music.json"), "w", encoding="utf-8") as f:',
-    '    json.dump({"bpm": bpm, "beatsPerBar": beats}, f)',
+    'failed = 0',
+    'for job in jobs:',
+    '    out = job["out"]',
+    '    try:',
+    '        with open(job["prompt"], encoding="utf-8") as f:',
+    '            caption = f.read().strip()',
+    '        s = int(job["seed"])',
+    '        params = GenerationParams(caption=caption, instrumental=True, duration=int(job["duration_ms"]) / 1000, seed=s, thinking=True, use_cot_metas=True, use_cot_caption=False, use_cot_language=False)',
+    '        config = GenerationConfig(batch_size=1, audio_format="wav", use_random_seed=s < 0, seeds=None if s < 0 else [s])',
+    '        result = generate_music(dit, lm, params, config, save_dir=os.path.join(out, "work"))',
+    '        if not result.success or not result.audios:',
+    '            raise RuntimeError(str(result.error))',
+    '        audio = result.audios[0]',
+    '        # the tempo the LM planned the song with',
+    '        used = result.extra_outputs.get("lm_metadata") or {}',
+    '        bpm = used.get("bpm")',
+    '        if not isinstance(bpm, (int, float)) or bpm <= 0:',
+    '            raise RuntimeError("the LM chose no bpm")',
+    '        beats = used.get("timesignature")',
+    '        beats = int(beats) if str(beats).isdigit() and int(beats) > 0 else 4',
+    '        shutil.move(audio["path"], os.path.join(out, "music.wav"))',
+    '        with open(os.path.join(out, "music.json"), "w", encoding="utf-8") as f:',
+    '            json.dump({"bpm": bpm, "beatsPerBar": beats}, f)',
+    '    except Exception:',
+    '        failed += 1',
+    '        print(f"{out}: failed", file=sys.stderr)',
+    '        traceback.print_exc()',
+    '    finally:',
+    '        shutil.rmtree(os.path.join(out, "work"), ignore_errors=True)',
+    'sys.exit(1 if failed else 0)',
     '',
   ].join('\n'),
   'moss-sfx': [
+    'import json',
     'import os',
     'import random',
     'import sys',
+    'import traceback',
     'import torch',
     '',
     'if not torch.cuda.is_available():',
@@ -141,44 +159,69 @@ export const DRIVERS: Record<string, string> = {
     'import soundfile',
     'from moss_soundeffect_v2 import MossSoundEffectPipeline',
     '',
-    'model, prompt_file, duration_ms, target, seed = sys.argv[1:6]',
+    '# one item per sound: {"prompt", "duration_ms", "target", "seed"}; the model loads once for all of them',
+    'model, jobs_file = sys.argv[1:3]',
+    'with open(jobs_file, encoding="utf-8") as f:',
+    '    jobs = json.load(f)',
     DEVICE,
-    's = int(seed) if int(seed) >= 0 else random.SystemRandom().randrange(2**31)',
     'pipe = MossSoundEffectPipeline.from_pretrained(model, torch_dtype=torch.float32 if device == "cpu" else torch.bfloat16, device=device)',
-    'with open(prompt_file, encoding="utf-8") as f:',
-    '    prompt = f.read().strip()',
-    'told = max(0.1, round(int(duration_ms) / 1000, 1))',
     'full = int(pipe.max_inference_seconds)',
     'rate = int(pipe.sample_rate)',
-    '# The model is told the length; the cut is 1 s later, so that the end of the sound is not cut. The pipeline makes',
-    '# the full length whatever its seconds and cuts at whole 0.1 s, so it gives the full length and the driver cuts',
-    'samples = min((2 * (int(duration_ms) + 1000) * rate + 1000) // 2000, rate * full)',
-    'audio = pipe(prompt=f"{prompt} duration: {told:.1f}s", seconds=full, num_inference_steps=100, cfg_scale=4.0, seed=s, append_duration_suffix=False)',
-    'wav = audio.detach().cpu().to(torch.float32)',
-    'if wav.ndim == 3:',
-    '    wav = wav[0]',
-    'elif wav.ndim == 1:',
-    '    wav = wav.unsqueeze(0)',
-    'wav = wav[:, :samples]',
-    'soundfile.write(target, wav.T.numpy(), rate)',
+    'failed = 0',
+    'for job in jobs:',
+    '    try:',
+    '        seed = int(job["seed"])',
+    '        s = seed if seed >= 0 else random.SystemRandom().randrange(2**31)',
+    '        duration_ms = int(job["duration_ms"])',
+    '        with open(job["prompt"], encoding="utf-8") as f:',
+    '            prompt = f.read().strip()',
+    '        told = max(0.1, round(duration_ms / 1000, 1))',
+    '        # The model is told the length; the cut is 1 s later, so that the end of the sound is not cut. The pipeline makes',
+    '        # the full length whatever its seconds and cuts at whole 0.1 s, so it gives the full length and the driver cuts',
+    '        samples = min((2 * (duration_ms + 1000) * rate + 1000) // 2000, rate * full)',
+    '        audio = pipe(prompt=f"{prompt} duration: {told:.1f}s", seconds=full, num_inference_steps=100, cfg_scale=4.0, seed=s, append_duration_suffix=False)',
+    '        wav = audio.detach().cpu().to(torch.float32)',
+    '        if wav.ndim == 3:',
+    '            wav = wav[0]',
+    '        elif wav.ndim == 1:',
+    '            wav = wav.unsqueeze(0)',
+    '        wav = wav[:, :samples]',
+    '        soundfile.write(job["target"], wav.T.numpy(), rate)',
+    '    except Exception:',
+    '        failed += 1',
+    '        print(f"{job[\'target\']}: failed", file=sys.stderr)',
+    '        traceback.print_exc()',
+    'sys.exit(1 if failed else 0)',
     '',
   ].join('\n'),
   'qwen3-tts': [
     'import json',
     'import sys',
+    'import traceback',
     'import soundfile',
     'import torch',
     'from qwen_tts import Qwen3TTSModel',
     '',
-    'model, prompt_file, target, seed = sys.argv[1:5]',
-    'with open(prompt_file, encoding="utf-8") as f:',
-    '    prompt = json.load(f)',
+    '# one item per voice line: {"prompt", "target", "seed"}; the model loads once for all of them',
+    'model, jobs_file = sys.argv[1:3]',
+    'with open(jobs_file, encoding="utf-8") as f:',
+    '    jobs = json.load(f)',
     DEVICE,
-    'if int(seed) >= 0:',
-    '    torch.manual_seed(int(seed))',
     'tts = Qwen3TTSModel.from_pretrained(model, device_map=device, dtype=torch.float32 if device == "cpu" else torch.bfloat16)',
-    'wavs, rate = tts.generate_custom_voice(text=prompt["text"], language=prompt.get("language", "Auto"), speaker=prompt["speaker"], instruct=prompt.get("instruct", ""))',
-    'soundfile.write(target, wavs[0], rate)',
+    'failed = 0',
+    'for job in jobs:',
+    '    try:',
+    '        with open(job["prompt"], encoding="utf-8") as f:',
+    '            prompt = json.load(f)',
+    '        if int(job["seed"]) >= 0:',
+    '            torch.manual_seed(int(job["seed"]))',
+    '        wavs, rate = tts.generate_custom_voice(text=prompt["text"], language=prompt.get("language", "Auto"), speaker=prompt["speaker"], instruct=prompt.get("instruct", ""))',
+    '        soundfile.write(job["target"], wavs[0], rate)',
+    '    except Exception:',
+    '        failed += 1',
+    '        print(f"{job[\'target\']}: failed", file=sys.stderr)',
+    '        traceback.print_exc()',
+    'sys.exit(1 if failed else 0)',
     '',
   ].join('\n'),
 };
@@ -304,21 +347,37 @@ async function flux2Call(input: CallInput): Promise<Call[]> {
   return [generate, background];
 }
 
-async function aceStepCall(input: CallInput): Promise<Call> {
-  const args = [await driver(input, 'ace-step'), hfDir(input), input.promptFile, String(loopLengthMs(input)), input.out, seedArg(input)];
-  gitDir(input);
-  return { cmd: pythonOf(input), args, env: await modelEnv(input) };
+/** Writes the item list of a driver call next to the prompt of the first item, which the call reads. */
+async function jobsFile(inputs: readonly CallInput[], items: readonly Record<string, unknown>[]): Promise<string> {
+  const file = `${first(inputs).promptFile}.jobs.json`;
+  await writeFile(file, `${JSON.stringify(items)}\n`);
+  return file;
 }
 
-async function mossSfxCall(input: CallInput): Promise<Call> {
-  const args = [await driver(input, 'moss-sfx'), hfDir(input), input.promptFile, String(outputLengthMs(input)), join(input.out, 'sound.wav'), seedArg(input)];
-  gitDir(input);
-  return { cmd: pythonOf(input), args, env: await modelEnv(input) };
+function first(inputs: readonly CallInput[]): CallInput {
+  const input = inputs[0];
+  if (input === undefined) throw new OgwError('a driver call has no item');
+  return input;
 }
 
-async function qwen3TtsCall(input: CallInput): Promise<Call> {
-  const args = [await driver(input, 'qwen3-tts'), hfDir(input), input.promptFile, join(input.out, 'voice.wav'), seedArg(input)];
-  return { cmd: pythonOf(input), args, env: await modelEnv(input) };
+async function aceStepBatch(inputs: readonly CallInput[]): Promise<Call> {
+  const input = first(inputs);
+  gitDir(input);
+  const items = inputs.map((i) => ({ prompt: i.promptFile, duration_ms: loopLengthMs(i), out: i.out, seed: Number(seedArg(i)) }));
+  return { cmd: pythonOf(input), args: [await driver(input, 'ace-step'), hfDir(input), await jobsFile(inputs, items)], env: await modelEnv(input) };
+}
+
+async function mossSfxBatch(inputs: readonly CallInput[]): Promise<Call> {
+  const input = first(inputs);
+  gitDir(input);
+  const items = inputs.map((i) => ({ prompt: i.promptFile, duration_ms: outputLengthMs(i), target: join(i.out, 'sound.wav'), seed: Number(seedArg(i)) }));
+  return { cmd: pythonOf(input), args: [await driver(input, 'moss-sfx'), hfDir(input), await jobsFile(inputs, items)], env: await modelEnv(input) };
+}
+
+async function qwen3TtsBatch(inputs: readonly CallInput[]): Promise<Call> {
+  const input = first(inputs);
+  const items = inputs.map((i) => ({ prompt: i.promptFile, target: join(i.out, 'voice.wav'), seed: Number(seedArg(i)) }));
+  return { cmd: pythonOf(input), args: [await driver(input, 'qwen3-tts'), hfDir(input), await jobsFile(inputs, items)], env: await modelEnv(input) };
 }
 
 /** Faces of the `trellis2` mesh: the triangle count `production.md` gives a rigged model. */
@@ -359,16 +418,18 @@ export const STANDARD_JOBS: Record<string, StandardJob> = {
     prompt: 'Upbeat chiptune battle music, 140 BPM, loopable.',
     image: false,
     outputs: ['music.wav', 'music.json'],
-    call: aceStepCall,
+    call: (input) => aceStepBatch([input]),
+    batch: aceStepBatch,
   },
   'moss-sfx': {
     stages: [{ durationMs: 1000 }, { durationMs: 3000 }, { durationMs: 10000 }],
     prompt: 'A short coin pickup sound.',
     image: false,
     outputs: ['sound.wav'],
-    call: mossSfxCall,
+    call: (input) => mossSfxBatch([input]),
+    batch: mossSfxBatch,
   },
-  'qwen3-tts': { stages: [{}], prompt: QWEN3_TTS_PROMPT, image: false, outputs: ['voice.wav'], call: qwen3TtsCall },
+  'qwen3-tts': { stages: [{}], prompt: QWEN3_TTS_PROMPT, image: false, outputs: ['voice.wav'], call: (input) => qwen3TtsBatch([input]), batch: qwen3TtsBatch },
   trellis2: { stages: [{ resolution: 512 }, { resolution: 1024 }], prompt: '', image: true, outputs: ['model.glb'], call: trellis2Call },
   blender: { stages: [{}], prompt: '', image: false, outputs: ['model.glb'], call: blenderCall },
 };
@@ -417,7 +478,18 @@ export function standardImage(size: number): Buffer {
   return Buffer.concat([signature, chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
 }
 
-async function outputsPresent(out: string, outputs: readonly string[] | undefined): Promise<boolean> {
+/** The out folders of a call: a batch call writes into the out folder of each item. */
+function outsOf(out: string | readonly string[]): string[] {
+  return typeof out === 'string' ? [out] : [...out];
+}
+
+/** Whether every out folder holds the outputs. */
+async function allPresent(outs: readonly string[], outputs: readonly string[] | undefined): Promise<boolean> {
+  for (const out of outs) if (!(await outputsPresent(out, outputs))) return false;
+  return true;
+}
+
+export async function outputsPresent(out: string, outputs: readonly string[] | undefined): Promise<boolean> {
   if (outputs === undefined || outputs.length === 0) return !(await isEmptyDir(out));
   return outputs.every((name) => exists(join(out, name)));
 }
@@ -430,10 +502,11 @@ export async function runCall(
   ctx: Context,
   method: GenerationMethod,
   calls: Call | Call[],
-  out: string,
+  out: string | readonly string[],
   timeoutMs: number,
   outputs?: readonly string[],
 ): Promise<MeasuredRun> {
+  const outs = outsOf(out);
   const dir = await methodDir(ctx, method.name);
   const started = Date.now();
   const blocked: string[] = [];
@@ -442,7 +515,7 @@ export async function runCall(
   let error: string | null = null;
   for (const call of Array.isArray(calls) ? calls : [calls]) {
     const left = timeoutMs - (Date.now() - started);
-    const run = left > 0 ? await runSandboxed(ctx, call.cmd, call.args, [dir, out], left, call.env) : null;
+    const run = left > 0 ? await runSandboxed(ctx, call.cmd, call.args, [dir, ...outs], left, call.env) : null;
     if (run !== null) {
       blocked.push(...run.blocked);
       if (run.maxMemoryBytes !== null) maxMemoryBytes = Math.max(maxMemoryBytes ?? 0, run.maxMemoryBytes);
@@ -454,8 +527,8 @@ export async function runCall(
       break;
     }
   }
-  if (result === 'ok' && !(await outputsPresent(out, outputs))) result = 'failed';
-  return { jobMs: Date.now() - started, result, maxMemoryBytes, output: out, blocked, ...(error === null ? {} : { error }) };
+  if (result === 'ok' && !(await allPresent(outs, outputs))) result = 'failed';
+  return { jobMs: Date.now() - started, result, maxMemoryBytes, output: outs[0] as string, blocked, ...(error === null ? {} : { error }) };
 }
 
 /** Runs one stage of the standard test job of a method under the lock of the method folder. */

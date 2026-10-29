@@ -28,6 +28,7 @@ How the resource sub-agent makes final resources, and their post-processing. Res
   - A resource made with the temporary method becomes `temporary` in `## finalize`. `--pending` of the next run requests it again
 - A sprite-gen method for an image type is run only through `cli` as `gen --provider <provider of that method> --prompt-file <file> --out <work folder>/image.png`, with `--transparent` when `alpha` of `spec` is `true` and `--ref <file>` per image to edit from (at most 5). Put in `image.png` with `--file`
 - A `local-model` method is called only with `ogw generation run <method> --game <game> --key <resource key> --prompt <file> [--image <file>...] --out <dir>`. The tool runs it with the stage of that method from `ogw generation methods`. `--out` is a folder outside the game repo. The `flux2-klein` of `rig-2d` and `trellis2` is also called this way with that resource key
+- When several keys of one request use the same `local-model` method, make them in one call with `ogw generation run <method> --game <game> --batch <file>`, a JSON array of `{"key", "prompt", "images", "out"}` (`images` optional), one item per key with its own `--out` folder. `moss-sfx`, `ace-step` and `qwen3-tts` then load the model once for all of them. The output shows `ok` or `failed` per key
 - `ogw generation run` runs only one `local-model` task at a time on one host. When a previous task exists, it waits until that task ends, then starts
 - The content of the `--prompt` file of `ogw generation run`, `--image`, and the files produced in `--out` are as below per method
 

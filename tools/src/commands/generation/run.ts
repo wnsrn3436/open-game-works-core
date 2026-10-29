@@ -11,7 +11,8 @@ import type { GenerationMethod } from '../../lib/settings.ts';
 import { dataDir } from '../env/lib/host.ts';
 import { methodDir, methodMarker, withMethodLock } from './lib/install.ts';
 import { gameImageMethod, IMAGE_METHOD, keySpec, methodChoices, type Stage } from './lib/select.ts';
-import { runCall, standardJob, type StageValues } from './lib/standard.ts';
+import { outputsPresent, runCall, standardJob, type CallInput, type StageValues } from './lib/standard.ts';
+import type { MeasuredRun } from '../env/lib/results.ts';
 
 function required(args: CommandArgs, name: string, usage: string): string {
   const value = str(args, name);
@@ -72,45 +73,108 @@ function stageValues(stage: Stage | null): StageValues | null {
   };
 }
 
+/** One resource key to make: given by `--key`, `--prompt`, `--image` and `--out`, or by an item of `--batch`. */
+interface Item {
+  key: string;
+  prompt: string;
+  images: string[];
+  out: string;
+}
+
+const USAGE = 'ogw generation run <method> --game <game> (--key <resource key> --prompt <file> [--image <file>...] --out <dir> | --batch <file>)';
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+/** The items of the call: the one the flags give, or each item of the `--batch` file (`[{"key", "prompt", "images"?, "out"}, ...]`). */
+async function itemsOf(ctx: Context, args: CommandArgs): Promise<Item[]> {
+  const batch = str(args, 'batch');
+  if (batch === undefined) {
+    const out = resolve(ctx.cwd, required(args, 'out', USAGE));
+    return [{ key: required(args, 'key', USAGE), prompt: resolve(ctx.cwd, required(args, 'prompt', USAGE)), images: list(args, 'image').map((p) => resolve(ctx.cwd, p)), out }];
+  }
+  if (['key', 'prompt', 'out'].some((name) => str(args, name) !== undefined) || list(args, 'image').length > 0) throw new OgwError(`--batch goes without --key, --prompt, --image and --out\nusage: ${USAGE}`);
+  const file = resolve(ctx.cwd, batch);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readText(file));
+  } catch (error) {
+    throw new OgwError(`--batch ${batch}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Array.isArray(raw) || raw.length === 0) throw new OgwError(`--batch ${batch} is not a non-empty JSON array of {"key", "prompt", "images", "out"}`);
+  const items = raw.map((entry: unknown, i): Item => {
+    const e = entry as Record<string, unknown> | null;
+    const images = e?.images ?? [];
+    if (typeof e?.key !== 'string' || typeof e.prompt !== 'string' || typeof e.out !== 'string' || !isStringList(images)) {
+      throw new OgwError(`--batch ${batch} item ${String(i + 1)} is not {"key", "prompt", "images", "out"}`);
+    }
+    return { key: e.key, prompt: resolve(ctx.cwd, e.prompt), images: images.map((p) => resolve(ctx.cwd, p)), out: resolve(ctx.cwd, e.out) };
+  });
+  if (new Set(items.map((i) => i.out)).size !== items.length) throw new OgwError(`--batch ${batch} gives one out folder to two items`);
+  return items;
+}
+
+interface ItemResult {
+  key: string;
+  out: string;
+  result: 'ok' | 'failed' | 'timeout';
+}
+
 export const runCommand: CommandDef = {
   name: ['generation', 'run'],
-  usage: 'ogw generation run <method> --game <game> --key <resource key> --prompt <file> [--image <file>...] --out <dir>',
-  options: { game: { type: 'string' }, key: { type: 'string' }, prompt: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' } },
+  usage: USAGE,
+  options: { game: { type: 'string' }, key: { type: 'string' }, prompt: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, batch: { type: 'string' } },
   background: { game: (args) => str(args, 'game') ?? null, timeLimitMs: () => LIMITS.jobMs },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, this.usage);
     const name = positional(args, 0, 'method');
     const gameName = required(args, 'game', this.usage);
-    const key = required(args, 'key', this.usage);
-    const promptPath = resolve(ctx.cwd, required(args, 'prompt', this.usage));
-    const out = resolve(ctx.cwd, required(args, 'out', this.usage));
-    await checkOut(ctx, gameName, out);
-    const images = list(args, 'image').map((p) => resolve(ctx.cwd, p));
-    for (const file of [promptPath, ...images]) if (!exists(file)) throw new OgwError(`file not found: ${file}`);
+    const items = await itemsOf(ctx, args);
+    for (const item of items) {
+      await checkOut(ctx, gameName, item.out);
+      for (const file of [item.prompt, ...item.images]) if (!exists(file)) throw new OgwError(`file not found: ${file}`);
+    }
     const method = (await ctx.settings()).resourceGeneration.find((m) => m.name === name);
     if (method?.kind !== 'local-model') throw new OgwError(`${name} is not a local-model method of harness settings resourceGeneration`);
-    const chosen = await stageFor(ctx, method, gameName, key);
-    const stage = stageValues(chosen.stage);
-    const spec = chosen.spec;
+    const chosen = await Promise.all(items.map((item) => stageFor(ctx, method, gameName, item.key)));
     const job = standardJob(name);
     const notInstalled = `method ${name} is not installed as pinned on this host: the update env command installs it`;
     if (!(await methodMarker(ctx, method))) throw new OgwError(notInstalled);
     const dir = await methodDir(ctx, name);
-    await mkdir(out, { recursive: true });
-    const result = await withLock(
+    for (const item of items) await mkdir(item.out, { recursive: true });
+    const batched = items.length > 1 && job.batch !== undefined;
+    const outcome = await withLock(
       join(await dataDir(ctx), 'generation', 'run.lock'),
       // The method lock keeps `generation install` from emptying the folder while the call uses it.
       () =>
         withMethodLock(ctx, name, async () => {
           const marker = await methodMarker(ctx, method);
           if (!marker) throw new OgwError(notInstalled);
-          // the prompt copy is a temp file of ogw (`tools/ogw.md` `## temp folder`); the call's TMPDIR is emptied after it
+          // the prompt copies are temp files of ogw (`tools/ogw.md` `## temp folder`); the call's TMPDIR is emptied after it
           const work = await newPrivateTempFolder('ogw-generation-run-', ctx.env);
           try {
-            const promptFile = join(work, 'prompt.txt');
-            await writeFile(promptFile, await readText(promptPath));
-            const calls = await job.call({ ctx, method, marker, dir, promptFile, images, out, stage, ...spec, seed: null });
-            return await runCall(ctx, method, calls, out, LIMITS.programMs, job.outputs);
+            const inputs: CallInput[] = [];
+            for (const [i, item] of items.entries()) {
+              const promptFile = join(work, `prompt-${String(i + 1)}.txt`);
+              await writeFile(promptFile, await readText(item.prompt));
+              const { stage, spec } = chosen[i] as Awaited<ReturnType<typeof stageFor>>;
+              inputs.push({ ctx, method, marker, dir, promptFile, images: item.images, out: item.out, stage: stageValues(stage), ...spec, seed: null });
+            }
+            if (!batched) {
+              const runs: MeasuredRun[] = [];
+              for (const input of inputs) runs.push(await runCall(ctx, method, await job.call(input), input.out, LIMITS.programMs, job.outputs));
+              return { runs, results: runs.map((r, i): ItemResult => ({ key: (items[i] as Item).key, out: (items[i] as Item).out, result: r.result })) };
+            }
+            // what an output folder already holds is not taken for what this call made
+            for (const item of items) for (const output of job.outputs ?? []) await rm(join(item.out, output), { force: true });
+            const run = await runCall(ctx, method, await (job.batch as NonNullable<typeof job.batch>)(inputs), items.map((i) => i.out), LIMITS.programMs * items.length, job.outputs);
+            const results: ItemResult[] = [];
+            for (const item of items) {
+              const made = run.result !== 'timeout' && (await outputsPresent(item.out, job.outputs));
+              results.push({ key: item.key, out: item.out, result: run.result === 'timeout' ? 'timeout' : made ? 'ok' : 'failed' });
+            }
+            return { runs: [run], results };
           } finally {
             await rm(work, { recursive: true, force: true });
             await rm(join(dir, 'tmp'), { recursive: true, force: true });
@@ -118,9 +182,17 @@ export const runCommand: CommandDef = {
         }),
       LIMITS.jobMs,
     );
-    const blocked = result.blocked.length > 0 ? `\nblocked: ${result.blocked.join(' | ')}` : '';
-    const error = result.error === undefined ? '' : `\nstderr:\n${result.error}`;
-    const text = `${name}: ${result.result} in ${String(result.jobMs)}ms, output ${out}${blocked}${error}`;
-    return { exitCode: result.result === 'ok' ? 0 : 1, text, data: { ...result, stage } };
+    const failed = outcome.results.some((r) => r.result !== 'ok');
+    const notes = (run: MeasuredRun): string =>
+      `${run.blocked.length > 0 ? `\nblocked: ${run.blocked.join(' | ')}` : ''}${run.error === undefined ? '' : `\nstderr:\n${run.error}`}`;
+    if (items.length === 1 && !batched) {
+      const result = outcome.runs[0] as MeasuredRun;
+      const stage = stageValues((chosen[0] as Awaited<ReturnType<typeof stageFor>>).stage);
+      return { exitCode: failed ? 1 : 0, text: `${name}: ${result.result} in ${String(result.jobMs)}ms, output ${(items[0] as Item).out}${notes(result)}`, data: { ...result, stage } };
+    }
+    const jobMs = outcome.runs.reduce((sum, r) => sum + (r.jobMs ?? 0), 0);
+    const ok = outcome.results.filter((r) => r.result === 'ok').length;
+    const lines = [`${name}: ${String(ok)} of ${String(items.length)} ok in ${String(jobMs)}ms`, ...outcome.results.map((r) => `${r.key}: ${r.result}, output ${r.out}`)];
+    return { exitCode: failed ? 1 : 0, text: `${lines.join('\n')}${outcome.runs.map(notes).join('')}`, data: { items: outcome.results, jobMs, batched } };
   },
 };

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readList } from '../../../src/commands/resource/lib/list.ts';
 import { rigFixtureProblem } from '../../../src/commands/generation/lib/rig-fixture.ts';
 import { blockedLines, callError, gpuDevices, hiddenSockets, maxMemory, seatbeltProfile, wrapped } from '../../../src/commands/generation/lib/sandbox.ts';
-import { runCall, STANDARD_JOBS, standardImage, type StandardJob } from '../../../src/commands/generation/lib/standard.ts';
+import { runCall, STANDARD_JOBS, standardImage, type CallInput, type StandardJob } from '../../../src/commands/generation/lib/standard.ts';
 import { PROVIDER_PROMPT } from '../../../src/commands/generation/measure.ts';
 import { createContext, type Context } from '../../../src/lib/command.ts';
 import { withMethodLock } from '../../../src/commands/generation/lib/install.ts';
@@ -266,6 +266,68 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
       { size: null, lengthMs: 10, loop: false, seed: null },
       { size: null, lengthMs: 20, loop: true, seed: null },
     ]);
+  });
+
+  it('makes the items of --batch in one call that loads the model once, reports each item, and runs a method without a batch call item by item', async () => {
+    const batches: string[][] = [];
+    const singles: string[] = [];
+    const copy = (input: CallInput): string => `cp "${input.promptFile}" "${input.out}/sound.wav"`;
+    setJob('audio', {
+      stages: [],
+      prompt: '',
+      image: false,
+      outputs: ['sound.wav'],
+      call: (input) => Promise.resolve({ cmd: '/bin/sh', args: ['-c', copy(input)] }),
+      // every item but the second, and a failing exit as a driver gives when an item failed
+      batch: (inputs) => {
+        batches.push(inputs.map((i) => i.out));
+        return Promise.resolve({ cmd: '/bin/sh', args: ['-c', `${inputs.filter((_, n) => n !== 1).map(copy).join('; ')}; exit 1`] });
+      },
+    });
+    setJob('flux2-klein', {
+      stages: [],
+      prompt: '',
+      image: false,
+      call: (input) => {
+        singles.push(input.out);
+        return Promise.resolve({ cmd: '/bin/sh', args: ['-c', 'touch "$1/x"', 'sh', input.out] });
+      },
+    });
+    const { ws, env } = workspace(methods);
+    makeGame(ws, 'g', { 'resource/resources.csv': resources });
+    for (const name of ['flux2-klein', 'audio']) expect((await ogw(ws, ['generation', 'install', name], { env })).code).toBe(0);
+    const file = (name: string, text: string): string => {
+      writeFileSync(join(ws.root, name), text);
+      return join(ws.root, name);
+    };
+    const o = (n: number): string => join(ws.root, `b${String(n)}`);
+    // what an out folder already holds is not taken for what the call made
+    mkdirSync(o(2), { recursive: true });
+    writeFileSync(join(o(2), 'sound.wav'), 'old');
+    const items = [
+      { key: 'sfx/a', prompt: file('a.txt', 'A'), out: o(1) },
+      { key: 'sfx/b', prompt: file('b.txt', 'B'), out: o(2) },
+      { key: 'sfx/a', prompt: file('c.txt', 'C'), out: o(3) },
+    ];
+    const run = await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--batch', file('batch.json', JSON.stringify(items))], { env });
+    expect(run.code).toBe(1);
+    expect(run.stdout).toMatch(new RegExp(`^audio: 2 of 3 ok in \\d+ms\nsfx/a: ok, output ${o(1)}\nsfx/b: failed, output ${o(2)}\nsfx/a: ok, output ${o(3)}\n`));
+    expect(batches).toEqual([[o(1), o(2), o(3)]]);
+    expect([readFileSync(join(o(1), 'sound.wav'), 'utf8'), existsSync(join(o(2), 'sound.wav')), readFileSync(join(o(3), 'sound.wav'), 'utf8')]).toEqual(['A', false, 'C']);
+    const images = [
+      { key: 'image/hero', prompt: file('d.txt', 'D'), out: o(4) },
+      { key: 'image/hero', prompt: file('e.txt', 'E'), out: o(5) },
+    ];
+    const each = await ogw(ws, ['generation', 'run', 'flux2-klein', '--game', 'g', '--batch', file('images.json', JSON.stringify(images)), '--json'], { env });
+    expect(each.code).toBe(0);
+    expect(singles).toEqual([o(4), o(5)]);
+    expect(JSON.parse(each.stdout)).toMatchObject({ items: [{ key: 'image/hero', out: o(4), result: 'ok' }, { key: 'image/hero', out: o(5), result: 'ok' }], batched: false });
+    const refused = async (argv: string[]): Promise<string> => (await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', ...argv], { env })).stderr;
+    expect(await refused(['--batch', file('x.json', '[]')])).toContain('is not a non-empty JSON array');
+    expect(await refused(['--batch', file('y.json', '{')])).toContain('--batch');
+    expect(await refused(['--batch', file('z.json', JSON.stringify([{ key: 'sfx/a', prompt: items[0]?.prompt, out: o(6) }, { key: 'sfx/a', prompt: items[0]?.prompt, out: o(6) }]))])).toContain('gives one out folder to two items');
+    expect(await refused(['--batch', file('w.json', JSON.stringify([{ key: 'sfx/a' }]))])).toContain('item 1 is not {"key", "prompt", "images", "out"}');
+    expect(await refused(['--batch', join(ws.root, 'batch.json'), '--key', 'sfx/a'])).toContain('--batch goes without --key, --prompt, --image and --out');
   });
 
   it('removes the prompt copy, a temp folder of ogw, and empties the call TMPDIR after the call', async () => {

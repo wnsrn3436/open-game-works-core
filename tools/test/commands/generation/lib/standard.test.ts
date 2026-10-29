@@ -171,16 +171,19 @@ describe('standard test jobs', () => {
 
   it('calls the ace-step, moss-sfx and qwen3-tts drivers', async () => {
     const looped = await calls('ace-step', { stage: { durationMs: 120000 }, lengthMs: 60000, loop: true });
-    expect(looped.list[0]?.args[3]).toBe('68000');
+    expect(JSON.parse(readFileSync(looped.list[0]?.args[2] ?? '', 'utf8'))).toEqual([{ prompt: looped.input.promptFile, duration_ms: 68000, out: looped.input.out, seed: -1 }]);
     const ace = await calls('ace-step', { stage: { durationMs: 30000 }, seed: 42 });
     expect(ace.list).toHaveLength(1);
-    expect(ace.list[0]).toMatchObject({ cmd: join(ace.input.dir, 'venv', 'bin', 'python'), args: [join(ace.input.dir, 'drivers', 'ogw_ace-step.py'), join(ace.input.dir, 'hf', '1'), ace.input.promptFile, '30000', ace.input.out, '42'] });
+    expect(ace.list[0]).toMatchObject({ cmd: join(ace.input.dir, 'venv', 'bin', 'python'), args: [join(ace.input.dir, 'drivers', 'ogw_ace-step.py'), join(ace.input.dir, 'hf', '1'), `${ace.input.promptFile}.jobs.json`] });
+    expect(JSON.parse(readFileSync(`${ace.input.promptFile}.jobs.json`, 'utf8'))).toEqual([{ prompt: ace.input.promptFile, duration_ms: 30000, out: ace.input.out, seed: 42 }]);
     expect(ace.list[0]?.env?.PYTHONPATH).toBe(join(ace.input.dir, 'git', '0'));
     expect(readFileSync(join(ace.input.dir, 'drivers', 'ogw_ace-step.py'), 'utf8')).toBe(DRIVERS['ace-step']);
     const moss = await calls('moss-sfx', { stage: { durationMs: 3000 }, lengthMs: 800 });
-    expect(moss.list[0]?.args).toEqual([join(moss.input.dir, 'drivers', 'ogw_moss-sfx.py'), join(moss.input.dir, 'hf', '1'), moss.input.promptFile, '800', join(moss.input.out, 'sound.wav'), '-1']);
+    expect(moss.list[0]?.args).toEqual([join(moss.input.dir, 'drivers', 'ogw_moss-sfx.py'), join(moss.input.dir, 'hf', '1'), `${moss.input.promptFile}.jobs.json`]);
+    expect(JSON.parse(readFileSync(`${moss.input.promptFile}.jobs.json`, 'utf8'))).toEqual([{ prompt: moss.input.promptFile, duration_ms: 800, target: join(moss.input.out, 'sound.wav'), seed: -1 }]);
     const qwen = await calls('qwen3-tts');
-    expect(qwen.list[0]?.args).toEqual([join(qwen.input.dir, 'drivers', 'ogw_qwen3-tts.py'), join(qwen.input.dir, 'hf', '1'), qwen.input.promptFile, join(qwen.input.out, 'voice.wav'), '-1']);
+    expect(qwen.list[0]?.args).toEqual([join(qwen.input.dir, 'drivers', 'ogw_qwen3-tts.py'), join(qwen.input.dir, 'hf', '1'), `${qwen.input.promptFile}.jobs.json`]);
+    expect(JSON.parse(readFileSync(`${qwen.input.promptFile}.jobs.json`, 'utf8'))).toEqual([{ prompt: qwen.input.promptFile, target: join(qwen.input.out, 'voice.wav'), seed: -1 }]);
     await expect(calls('ace-step', { stage: { durationMs: 1 }, marker: marker('/m', { git: [] }) })).rejects.toThrow('method ace-step has no git pin');
     await expect(calls('moss-sfx', { stage: { durationMs: 1 }, marker: marker('/m', { git: [] }) })).rejects.toThrow('method moss-sfx has no git pin');
     await expect(calls('qwen3-tts', { marker: marker('/m', { hf: [] }) })).rejects.toThrow('method qwen3-tts has no hf pin');
@@ -270,6 +273,7 @@ const STUBS: Record<string, string> = {
     '    @classmethod',
     '    def from_pretrained(cls, model, torch_dtype, device):',
     '        record("from_pretrained", {"model": model, "dtype": torch_dtype, "device": device, "dynamo": os.environ.get("TORCHDYNAMO_DISABLE")})',
+    '        open(os.environ["STUB_RECORD"] + ".loads", "a").write("load\\n")',
     '        return cls()',
     '    def __call__(self, **kwargs):',
     '        record("call", kwargs)',
@@ -315,8 +319,11 @@ interface DriverRun {
   dir: string;
 }
 
-/** Runs a driver with `python3` and the stub modules on `PYTHONPATH`; `args` get `<dir>` replaced by the run folder. */
-function runDriver(name: string, args: string[], env: Record<string, string> = {}): DriverRun {
+/**
+ * Runs a driver with `python3` and the stub modules on `PYTHONPATH`; `args` and the strings of the items of `jobs`
+ * (written to `<dir>/jobs.json`) get `<dir>` replaced by the run folder.
+ */
+function runDriver(name: string, args: string[], env: Record<string, string> = {}, jobs: Record<string, unknown>[] = []): DriverRun {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-driver-')));
   const stubs = join(dir, 'stubs');
   for (const [file, text] of Object.entries(STUBS)) {
@@ -327,6 +334,8 @@ function runDriver(name: string, args: string[], env: Record<string, string> = {
   mkdirSync(join(dir, 'home'));
   mkdirSync(join(dir, 'out'));
   writeFileSync(join(dir, 'prompt.txt'), 'A coin pickup.\n');
+  const items = jobs.map((job) => Object.fromEntries(Object.entries(job).map(([k, v]) => [k, typeof v === 'string' ? v.replaceAll('<dir>', dir) : v])));
+  writeFileSync(join(dir, 'jobs.json'), JSON.stringify(items));
   const script = join(dir, 'drivers', driverFile(name));
   writeFileSync(script, DRIVERS[name] as string);
   const record = join(dir, 'record.json');
@@ -339,7 +348,7 @@ function runDriver(name: string, args: string[], env: Record<string, string> = {
 
 describe.runIf(python !== null)('drivers against stub libraries', () => {
   const ace = (seed: string, metadata: unknown, env: Record<string, string> = {}): DriverRun =>
-    runDriver('ace-step', ['<dir>/checkpoints', '<dir>/prompt.txt', '68000', '<dir>/out', seed], { STUB_LM_METADATA: JSON.stringify(metadata), ...env });
+    runDriver('ace-step', ['<dir>/checkpoints', '<dir>/jobs.json'], { STUB_LM_METADATA: JSON.stringify(metadata), ...env }, [{ prompt: '<dir>/prompt.txt', duration_ms: 68000, out: '<dir>/out', seed: Number(seed) }]);
 
   it('ace-step makes the song with the LM, moves the WAV to music.wav and writes the tempo the LM chose', () => {
     const run = ace('42', { bpm: 120 }, { STUB_DEVICE: 'mps' });
@@ -379,7 +388,7 @@ describe.runIf(python !== null)('drivers against stub libraries', () => {
   });
 
   const moss = (durationMs: number, seed: string, env: Record<string, string> = {}): DriverRun =>
-    runDriver('moss-sfx', ['<dir>/model', '<dir>/prompt.txt', String(durationMs), '<dir>/out/sound.wav', seed], env);
+    runDriver('moss-sfx', ['<dir>/model', '<dir>/jobs.json'], env, [{ prompt: '<dir>/prompt.txt', duration_ms: durationMs, target: '<dir>/out/sound.wav', seed: Number(seed) }]);
 
   it('moss-sfx tells the model the length and cuts the sound at the output length + 1000 ms', () => {
     const run = moss(1234, '42');
@@ -395,6 +404,18 @@ describe.runIf(python !== null)('drivers against stub libraries', () => {
     expect(moss(800, '42').record).toMatchObject({ call: { prompt: 'A coin pickup. duration: 0.8s' }, write: { shape: [86400, 1] } });
     // at most the pipeline maximum
     expect(moss(29500, '42').record).toMatchObject({ call: { prompt: 'A coin pickup. duration: 29.5s' }, write: { shape: [1440000, 1] } });
+  });
+
+  it('moss-sfx loads the model once for every item, and makes the other items when one fails', () => {
+    const run = runDriver('moss-sfx', ['<dir>/model', '<dir>/jobs.json'], {}, [
+      { prompt: '<dir>/missing.txt', duration_ms: 500, target: '<dir>/out/a.wav', seed: 1 },
+      { prompt: '<dir>/prompt.txt', duration_ms: 500, target: '<dir>/out/b.wav', seed: 2 },
+    ]);
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain(`${join(run.dir, 'out', 'a.wav')}: failed`);
+    expect(readdirSync(join(run.dir, 'out'))).toEqual(['b.wav']);
+    expect(readFileSync(join(run.dir, 'record.json.loads'), 'utf8')).toBe('load\n');
+    expect(run.record).toMatchObject({ call: { seed: 2 } });
   });
 
   it('moss-sfx tells at least 0.1 s, uses a random seed for -1, and keeps torch.compile on CUDA', () => {
