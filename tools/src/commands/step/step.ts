@@ -1,5 +1,6 @@
 import { expectPositionals, flag, nonNegativeInt, positional, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
+import { checkPlayBudget } from '../agent/lib/play-budget.ts';
 import { captureScreen } from '../capture/capture.ts';
 import { automationRequest, botControl, type ClientRef } from '../instance/automation.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
@@ -219,6 +220,7 @@ export const step: CommandDef = {
     if (!/^[0-9]+$/.test(ms) || Number(ms) < 1) throw new OgwError(`invalid ms: ${ms}`);
     const count = nonNegativeInt(args, 'count') ?? 1;
     if (count < 1) throw new OgwError(`invalid --count: ${String(count)}`);
+    await checkPlayBudget(ctx);
     const outcome = await runSteps(ctx, { id, ms, count, capture: flag(args, 'capture'), state: flag(args, 'state') });
     return { exitCode: outcome.failed ? 1 : 0, text: outcomeLines(count, outcome).join('\n'), data: outcome };
   },

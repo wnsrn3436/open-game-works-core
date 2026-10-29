@@ -71,7 +71,7 @@ describe('ogw generation methods', () => {
   });
 
   it('gives skill and cli of a pinned external-service', async () => {
-    expect(await methodsOf('sprite_animation/fx')).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill: null, cli: null }, { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: false }, temporary: true }]);
+    expect(await methodsOf('sprite_animation/fx')).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill: null, cli: null, notInstalled: true }, { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: false }, temporary: true }]);
     const ws = makeWorkspace({ resourceGeneration: methods() });
     makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
     const sprite = methods().find((m) => (m as { name: string }).name === 'sprite') as { pins: unknown[] };
@@ -94,7 +94,7 @@ describe('ogw generation methods', () => {
     expect((await ogw(ws, ['generation', 'methods', 'g', 'image/big'])).stdout).toBe('flux2-klein local-model resolution 1024px fallback\n');
     expect((await ogw(ws, ['generation', 'methods', 'g', 'sfx/coin'])).stdout).toBe('audio local-model duration 3000ms\n');
     expect((await ogw(ws, ['generation', 'methods', 'g', 'sprite_animation/fx'])).stdout).toBe(
-      'sprite external-service no stage\n  skill not installed\n  cli not installed\nflux2-klein local-model resolution 512px temporary\n',
+      'sprite external-service no stage\n  skill not installed\n  cli not installed\n  not installed\nflux2-klein local-model resolution 512px temporary\n',
     );
     expect((await ogw(ws, ['generation', 'methods', 'g', 'bgm/none'])).stdout).toBe('audio local-model duration 1000ms\n');
   });

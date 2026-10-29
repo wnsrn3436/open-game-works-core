@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { blockingMethods, installMethodJob } from '../../../src/commands/generation/api.ts';
+import { blockingMethods, generationMethods, installMethodJob } from '../../../src/commands/generation/api.ts';
 import { createContext, type Context } from '../../../src/lib/command.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
@@ -91,6 +91,20 @@ describe('blockingMethods', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name: 'audio', pins: '[]', git: [], hf: [], files: null, python: null, cli: null, skill: null }));
     expect(await blockingMethods(ctx, game, 'sfx/hit')).toEqual(['audio']);
+  });
+});
+
+describe('generationMethods install state', () => {
+  it('marks a method, or the flux2-klein that trellis2 calls, not installed until its install marker is there', async () => {
+    const { ws, ctx, game } = await open();
+    const names = async (key: string): Promise<string[]> => (await generationMethods(ctx, game, key)).map((c) => `${c.name}${c.temporary === true ? ' temporary' : ''}${c.notInstalled === true ? ' not installed' : ''}`);
+    expect(await names('image/hero')).toEqual(['sprite not installed', 'flux2-klein temporary not installed']);
+    expect(await names('bgm/song')).toEqual(['audio not installed', 'tone']);
+    install(ws, 'trellis2');
+    expect(await names('model/rock')).toEqual(['trellis2 not installed']);
+    install(ws, 'flux2-klein');
+    expect(await names('image/hero')).toEqual(['sprite not installed', 'flux2-klein temporary']);
+    expect(await names('model/rock')).toEqual(['trellis2']);
   });
 });
 

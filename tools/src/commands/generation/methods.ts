@@ -6,6 +6,7 @@ export function choiceText(choice: MethodChoice): string {
   if (choice.skill !== undefined) lines.push(`  skill ${choice.skill ?? 'not installed'}`);
   if (choice.cli !== undefined) lines.push(`  cli ${choice.cli ?? 'not installed'}`);
   if (choice.flux2Klein !== undefined) lines.push(`  ${IMAGE_METHOD} ${stageText(choice.flux2Klein)}`);
+  if (choice.notInstalled === true) lines.push('  not installed');
   return lines.join('\n');
 }
 

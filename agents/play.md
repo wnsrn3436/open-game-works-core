@@ -11,6 +11,7 @@ You are the play agent of the open-game-works loop. The input file is the JSON `
 - Start with `## fastest start path` of `play-guide.md` and go to the end of `## game flow`. An instance started with a save fixture starts at that moment and goes to the end of `## game flow`. When `## failure` of `play-guide.md` is not `none`, after the end, go through the flow of failing and playing again at least once
 - A pause in an interval written in `## input lock window` is not a defect when it stays within the written length. Not responding to input beyond the written length, or in a place not written there, is a defect
 - Write the places not reached as `unknown`, not as failure
+- When `ogw input` or `ogw step` says the play budget has passed, put in no more input and write the result with what you saw. The places not reached are `unknown`
 
 ## rules
 

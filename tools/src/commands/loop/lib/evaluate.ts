@@ -11,6 +11,7 @@ import { killJob, readJob } from '../../../lib/jobs.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
+import { clearPlayBudget } from '../../agent/lib/play-budget.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
 import { clearReleases, takeReleases } from '../../instance/lib/releases.ts';
 import { clearUnstarted, noteUnstarted } from '../../instance/lib/unstarted.ts';
@@ -717,6 +718,7 @@ async function poll(state: State, slot: Slot): Promise<boolean> {
     return released;
   }
   await clearReleases(state.ctx.env, slot.job as string);
+  if (slot.role === 'play') await clearPlayBudget(state.ctx.env, slot.job as string);
   state.active.splice(state.active.indexOf(slot), 1);
   if (outcome.status === 'done' && outcome.output !== null && exists(outcome.output)) {
     if (slot.role === 'play') {

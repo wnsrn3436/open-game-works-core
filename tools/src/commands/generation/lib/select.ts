@@ -55,6 +55,8 @@ export interface MethodChoice {
   flux2Klein?: Stage | null;
   /** The temporary method of the key (`production.md` `## method`): its resource becomes `temporary`. */
   temporary?: true;
+  /** The method lacks the install that `generation install` gives it on this host (`installedOnHost`). */
+  notInstalled?: true;
 }
 
 export const IMAGE_METHOD = 'flux2-klein';
@@ -126,7 +128,7 @@ export function takesTemporary(type: string, imageMethod: string, image: Generat
 
 /** Whether a method has what `generation install` gives it on this host: the install marker of a method with pins. */
 export async function installedOnHost(ctx: Context, method: GenerationMethod): Promise<boolean> {
-  return !hasPins(method) || (await methodMarker(ctx, method)) !== null;
+  return !hasPins(method) || method.pins === undefined || (await methodMarker(ctx, method)) !== null;
 }
 
 /**
@@ -157,6 +159,7 @@ async function choiceOf(ctx: Context, method: GenerationMethod, spec: Spec, imag
     choice.cli = marker?.cli ?? null;
   }
   if (image) choice.flux2Klein = chooseStage(image.measured, spec);
+  if (!(await installedOnHost(ctx, method)) || (image !== undefined && !(await installedOnHost(ctx, image)))) choice.notInstalled = true;
   return choice;
 }
 

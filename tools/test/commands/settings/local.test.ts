@@ -44,7 +44,7 @@ describe('local harness settings', () => {
     expect(settings.humanLanguage).toBe('ko');
     expect(settings.agents.content).toEqual({ cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'medium' });
     expect(settings.agents.judge).toEqual(OPUS);
-    expect(settings.loop).toEqual({ funIterations: 3, judgeVotes: 2, judgePanel: [judge], variants: 1, playTimeLimitMs: 2_700_000, judgeTimeLimitMs: 3_600_000 });
+    expect(settings.loop).toEqual({ funIterations: 3, judgeVotes: 2, judgePanel: [judge], variants: 1, playTimeLimitMs: 2_700_000, playBudgetMs: 900_000, judgeTimeLimitMs: 3_600_000 });
     expect(settings.jobWaitTimeoutMs).toBe(read(sharedPath).jobWaitTimeoutMs);
   });
 
@@ -74,7 +74,7 @@ describe('local harness settings', () => {
     expect(read(localPath)).toEqual({ humanLanguage: 'ko', agents: { play: { model: 'claude-haiku-5-5' } }, loop: { judgePanel: [judge], funIterations: 4 }, useLocalCore: true });
 
     const settings = await loadHarnessSettings(ws.env);
-    expect(settings.loop).toEqual({ funIterations: 4, judgeVotes: 2, judgePanel: [judge], variants: 1, playTimeLimitMs: 2_700_000, judgeTimeLimitMs: 3_600_000 });
+    expect(settings.loop).toEqual({ funIterations: 4, judgeVotes: 2, judgePanel: [judge], variants: 1, playTimeLimitMs: 2_700_000, playBudgetMs: 900_000, judgeTimeLimitMs: 3_600_000 });
     expect(settings.agents.play).toEqual({ cli: 'claude-code', model: 'claude-haiku-5-5', effort: 'medium' });
   });
 

@@ -217,6 +217,7 @@
         "judgePanel",
         "variants",
         "playTimeLimitMs",
+        "playBudgetMs",
         "judgeTimeLimitMs"
       ],
       "properties": {
@@ -244,6 +245,11 @@
         },
         "playTimeLimitMs": {
           "description": "The time limit of one play agent job. A job that reaches it is stopped and counts as failed",
+          "type": "integer",
+          "minimum": 60000
+        },
+        "playBudgetMs": {
+          "description": "How long a play agent puts in inputs: `ogw input` and `ogw step` of a play agent fail once this has passed since its first input or step, and the agent then writes its result",
           "type": "integer",
           "minimum": 60000
         },
