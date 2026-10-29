@@ -7,6 +7,7 @@ import { readCoreSpecDir } from '../../../src/commands/core/lib/impl.ts';
 import { constraintViolations, implementedConstraints, requiredTargets, testRecordViolations, untestedRenderPasses } from '../../../src/commands/core/lib/release-conditions.ts';
 import { addTestRecord, mergedResults, SCREEN_LOCKED_SKIP } from '../../../src/commands/core/lib/test-records.ts';
 import { baseProtoBreaks } from '../../../src/commands/core/lib/base-proto-compat.ts';
+import { benchmarkDataViolations } from '../../../src/commands/core/lib/benchmark-data.ts';
 import { buildCoreSpec } from '../../../src/commands/core/spec-api.ts';
 import { changedSinceDone, clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
 import { checkoutLock } from '../../../src/lib/git.ts';
@@ -47,6 +48,7 @@ vi.mock('../../../src/commands/core/lib/github.ts', async (importOriginal) => {
   };
 });
 vi.mock('../../../src/commands/core/lib/base-proto-compat.ts', () => ({ baseProtoBreaks: vi.fn(() => Promise.resolve([])) }));
+vi.mock('../../../src/commands/core/lib/benchmark-data.ts', () => ({ benchmarkDataViolations: vi.fn(() => Promise.resolve([])) }));
 
 const NOTES_TEXT = '## Summary\n\nA release.\n';
 /** The release notes file the releases of these tests get. */
@@ -94,6 +96,7 @@ beforeEach(() => {
   vi.mocked(changedSinceDone).mockReset().mockResolvedValue(new Map());
   vi.mocked(clearReviews).mockClear();
   vi.mocked(baseProtoBreaks).mockReset().mockResolvedValue([]);
+  vi.mocked(benchmarkDataViolations).mockReset().mockResolvedValue([]);
 });
 
 describe('ogw core release', () => {
@@ -382,6 +385,15 @@ describe('ogw core release', () => {
     expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).code).toBe(0);
     expect(baseProtoBreaks).toHaveBeenCalledTimes(1);
     expect(baseProtoBreaks).toHaveBeenCalledWith(expect.anything(), ws.coreImpl, '1.1.0');
+  });
+
+  it('refuses a release whose benchmark game data does not pass the data tool binary build', async () => {
+    const { ws, env } = await setup();
+    vi.mocked(benchmarkDataViolations).mockResolvedValue(['benchmark godot: the data tool binary build failed (1)\n  the data is not matched']);
+    const run = await ogw(ws, ['core', 'release', '0.1.0', '--notes', NOTES], { env });
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain('benchmark godot: the data tool binary build failed (1)');
+    expect(benchmarkDataViolations).toHaveBeenCalledWith(expect.anything(), ws.coreImpl);
   });
 
   it('skips the base proto comparison when no release is below the version', async () => {

@@ -22,6 +22,7 @@ import {
   type SettingsConstraint,
 } from './impl.ts';
 import { mergedRecords, SCREEN_LOCKED_SKIP } from './test-records.ts';
+import { benchmarkDataViolations } from './benchmark-data.ts';
 import { baseProtoBreaks } from './base-proto-compat.ts';
 import { implementedTools } from './tools.ts';
 import { engineAssetRules } from './undefined.ts';
@@ -224,6 +225,7 @@ export async function releaseViolations(
     ...(await codeCheckViolations(ctx, implDir)),
     ...constraintViolations(await readCoreSettings(implDir), await implementedConstraints(implDir, modules)),
     ...(await pluginBuildViolations(implDir)),
+    ...(await benchmarkDataViolations(ctx, implDir)),
     ...(await baseProtoViolations(ctx, implDir, version, released)),
   ];
 }
