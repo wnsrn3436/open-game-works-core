@@ -2,7 +2,7 @@
 
 [한국어](README.ko.md)
 
-AI agents make server-client games of commercial quality on top of a prebuilt core.
+AI agents make commercial-quality server-client games on top of a prebuilt core.
 
 https://github.com/user-attachments/assets/fb74b4ca-cc63-430d-af79-5b5118ec9c8a
 
@@ -22,13 +22,13 @@ https://github.com/user-attachments/assets/9cf4f284-32c5-4f82-9c3f-13d17cbc12ec
   </tr>
 </table>
 
-The features that many games would write again the same way (infra, live ops, store policy, meta systems) are prebuilt as **core**, and agents write only the gameplay, as **content code**. A human gives one command, such as `create game: <game>`. The agent that receives it becomes the **lead agent**: it calls sub-agents per role and runs the loop of editing, playing and judging until it stops, then reports.
+Features that many games would end up rebuilding the same way (infra, live ops, store policy, meta systems) are prebuilt as **core**, and agents write only the gameplay, as **content code**. A human gives one command, such as `create game: <game>`, and the agent that receives it becomes the **lead agent**. The lead agent calls a sub-agent for each role, runs the edit, play and judge loop until the loop stops, and then reports.
 
-This repository is the harness: the rules the agents follow, the skills and core module specs they read, the settings, and the CLI `ogw` that does the work that needs no judgement. You use it from a Claude Code or Codex session opened in this folder.
+This repository is the harness. It holds the rules the agents follow, the skills and core module specs they read, the settings, and the CLI `ogw`, which handles the work that needs no judgement. You use it from a Claude Code or Codex session opened in this folder.
 
 ## Status
 
-open-game-works is under active development. So far it has been tested only on macOS, with Claude Code running Claude Opus 5.5 at high effort; the play and translation sub-agents run Claude Sonnet 5.5 at medium effort, as set in `settings.json` `agents`. Codex CLI is supported by the harness settings but has not been tested. The `build` command has not been run yet, so no game has been built or deployed with it. Commands, settings and file formats can still change.
+open-game-works is under active development. So far it has been tested only on macOS, with Claude Code running Claude Opus 5.5 at high effort. The play agent and the translation sub-agent run Claude Sonnet 5.5 at medium effort, as set in `settings.json` `agents`. Codex CLI is supported by the harness settings but has not been tested. The `build` command has not been run yet, so no game has been built or deployed with it. Commands, settings and file formats can still change.
 
 ## Quick start
 
@@ -42,7 +42,7 @@ open-game-works is under active development. So far it has been tested only on m
 - uv
 - Claude Code, logged in
 
-`update env` checks the rest of the host and fetches the engine and the pinned tools itself.
+`update env` checks the rest of the host requirements and downloads the engine and the pinned tools itself.
 
 ### Install
 
@@ -72,7 +72,7 @@ create game: block-drop
 ```
 
 - `update env` checks this host, installs the engine, the pinned tools and the generation methods into `<workspace>/.ogw/`, measures them and proposes harness settings for this host. It runs once per host.
-- `setup game` creates the game repository in `games/<game>/` and asks you what it cannot decide, including the reference game and its gameplay video (a file or a YouTube URL).
+- `setup game` creates the game repository in `games/<game>/` and asks you about anything it cannot decide on its own. This is also where it takes the reference game and its gameplay video (a file or a YouTube URL).
 - `create game` runs the loop until it stops, merges the result into main and reports. It does not wait for you midway.
 
 Notes:
@@ -83,61 +83,61 @@ Notes:
 
 ## How it works
 
-The design follows a few rules from `AGENTS.md`:
+The design follows a few principles from `AGENTS.md`:
 
-- The goal is the fun and completeness of a commercial game. A judge agent judges fun by playing; automated checks judge completeness.
-- What an automated check can verify is verified by one, when the code is written. Evidence ranks automated check, then telemetry, then LLM opinion. What could not be checked is recorded as unknown, not as failure.
+- The goal is the fun and completeness of a commercial game. A judge agent judges fun by playing the game, and automated checks judge completeness.
+- Anything an automated check can verify is checked automatically when the code is written. For evidence, automated checks rank above telemetry, and telemetry above LLM opinion. Anything that could not be checked is recorded as unknown, not as a failure.
 - `ogw` does the work that needs no judgement: reading and writing settings, records, JSON and CSV, counting, calculation, comparison, starting instances, scheduling jobs and state transitions. Agents do only the work that needs judgement.
-- Work items that do not wait for each other's results run together.
+- Work that does not wait on another item's result runs at the same time.
 
 ### The loop
 
 `create game` and `update game` develop a game in a loop. Each iteration:
 
 ```
-human -- one command --> lead agent (your Claude Code or Codex session)
-                              |
-  +---------------------------+---------- one iteration ---------------------------+
-  | 1. content agent      edits design.md, client and server content code, data,   |
-  |                       contract and play-guide.md; adds placeholder resources   |
-  | 2. automated checks   regression test, static check, completeness check,       |
-  |                       row simulation -> gate: pass or fail                     |
-  | 3. play agents        play instances of this commit with real input            |
-  | 4. judge agent        new context; blind A/B against the baseline game, and    |
-  |                       comparison with the reference game's gameplay video      |
-  | 5. ogw                defect list, loop iteration record, stop judgement       |
-  +--------------------------------------------------------------------------------+
-     in parallel: resource and translation sub-agents; `ogw loop sync` merges their work
-                              |
+human -- one command --> lead agent (the Claude Code or Codex session a human opened)
+                         |
+  +-- one iteration ---------------------------------------------------
+  | 1. content agent: edits design.md, client and server content code, data,
+  |    contract and play-guide.md; adds placeholder resources
+  | 2. automated checks: regression test, static check, completeness check, row simulation
+  |    -> gate: pass or fail
+  | 3. play agents: play instances of this commit with real input
+  | 4. judge agent: new context; blind A/B against the baseline game,
+  |    comparison with the reference game's gameplay video
+  | 5. ogw: defect list, loop iteration record, stop judgement
+  +-------------------------------------------------------------------
+     in parallel: resource and translation sub-agents; `ogw loop sync` merges their results
+                         |
   stop: success, repeated defect, oscillation, plateau, limit reached
-                              |
+                         |
   loop end record -> merge into main -> report to the human
 ```
 
-1. The **content agent** edits `design.md`, client and server content code, data and contract together, and keeps `play-guide.md` in step with the game. In the first iteration of `create game` it first writes `brief.md` from the request saved by `setup game`. When it needs a resource, it adds a placeholder resource, requests the final one and goes on without waiting.
-2. **Automated checks** run (see below). If regression test, static check, no blocker or full flow fails, the iteration skips play and judge and goes straight to the defect list.
-3. **Play agents** read `play-guide.md`, play several instances of the same commit with real input through the automation channel, and write feedback per observation, not as a total score.
-4. The **judge agent** starts in a new context and plays two instances, `A` and `B`, without being told which is this commit and which is the baseline game. It picks a winner per fun element (game feel, tension and release, progression, one more run, no friction, presentation) and compares each element with the reference game's gameplay video at fixed moments (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). Play and judge agents never see `brief.md` or `design.md`. Steps 3 and 4 run together (`ogw loop evaluate`), and the judge agent does not get the play feedback.
+1. The **content agent** edits `design.md`, client and server content code, data and contract together, and keeps `play-guide.md` in step with the game. In the first iteration of `create game`, it starts by writing `brief.md` from the request that `setup game` saved. When it needs a resource, it adds a placeholder resource, requests the final one and carries on without waiting.
+2. **Automated checks** run (see the table below). If any of regression test, static check, no blocker or full flow fails, the iteration skips play and judging and goes straight to the defect list.
+3. **Play agents** read `play-guide.md` and play several instances of the same commit with real input through the automation channel. They write feedback for each observation instead of giving a total score.
+4. The **judge agent** starts in a new context and plays two instances, `A` and `B`, without being told which is this commit and which is the baseline game. It picks a winner for each fun element (game feel, tension and release, progression, one more run, no friction, presentation) and compares each element with the reference game's gameplay video at fixed moments (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). Whether the screens (`lobby`, `hud`, `reward popup`, `result`) look like a commercial game is judged against a presentation game's video. The judge agent also plays each judge moment directly from a save fixture the content agent made. In `create game`, the `memorable_moment` from `brief.md` is one of these moments, and if the baseline game is better at even one judge moment, this commit is not judged better. Play and judge agents never see `brief.md` or `design.md`. Steps 3 and 4 run together (`ogw loop evaluate`), and the judge agent does not get the play feedback.
 5. **`ogw`** turns check failures, play feedback and judge results into the defect list, writes the loop iteration record, chooses the next baseline game and decides whether the loop stops.
 
-The loop stops with one of these reasons: success, repeated defect, oscillation, plateau, limit reached (game settings `loopIterationLimit`), or stopped by human. Success needs a candidate iteration: the judge result reaches the reference game and is not worse than the baseline game, every completeness element except no placeholder passes, and extra success confirmation judges also put it at the level of the reference game. Resource and translation work never make the loop wait, so if some of it was unfinished at the candidate iteration, a confirmation iteration without content edits runs on the state with that work merged, and success is judged again.
+The loop stops for one of these reasons: success, repeated defect (the same defect repeats), oscillation (a cycle of fixes and recurrences), plateau (improvement has stalled), limit reached (game settings `loopIterationLimit`), or stopped by human. Success needs a candidate iteration. For an iteration to be a candidate, its judge result must reach the level of the reference game without being worse than the baseline game, and every completeness element except no placeholder must pass. The extra judge agents called to confirm success must also put it at the level of the reference game. Resource and translation work never makes the loop wait. So if some of that work was still unfinished at the candidate iteration, the loop merges it, runs one more confirmation iteration with no content edits, and judges success again.
 
 When the loop stops, the lead agent waits for the resource and translation work in progress, writes the loop end record `records/loops/<run>/end.md`, merges the chosen commit into main and reports. If placeholder resources, missing translations or stale translations remain, it reports failure.
 
-Branches of a game repo: main is always the latest code that passed the loop. Each `create game` and `update game` works on its own branch `loop/<run>`. Only one of `create game`, `update game` and `build` runs for a game at a time. The ID registry lives on the separate branch `id-registry`.
+Branches of a game repo: main is always the latest code that passed the loop. Each `create game` or `update game` command works on its own `loop/<run>` branch. Only one of `create game`, `update game` and `build` runs for a game at a time. The ID registry lives on a separate `id-registry` branch.
 
 ### Automated checks
 
 | check | what it verifies | how |
 |---|---|---|
-| regression test | the tests the content agent wrote together with each feature, client and server | test run |
+| regression test | all the client and server tests that the content agent wrote together with the features | test run |
 | static check | rules a tool can judge exactly in code and data, e.g. the data check, `lint`, `type check`, `forbidden GDScript API` | static analysis |
 | no blocker | no crash, softlock or error screen blocks progress | bot playtest |
 | performance | target FPS holds and loading ends within the limit | runtime profiling |
 | no placeholder | no placeholder resource, missing translation or stale translation remains | project check |
 | full flow | first launch, tutorial, main loop, save and reconnect continue without a break (for a realtime game also peer and matchmaker disconnects and app restart; room match and exchanges with other users when the game uses them) | bot playtest |
 | UI quality | in every supported resolution, safe area and language, UI is not clipped and does not overlap, the on-screen keyboard does not cover the focused text input, and every button can be pressed with a gamepad when gamepad is supported | captures per resolution, language and on-screen keyboard; gamepad focus check |
-| row simulation | for level-like tables, a bot plays each row to the end per seed without a screen and measures whether it can be solved and its difficulty metrics | headless simulation |
+| row simulation | for level-like tables, a bot plays each row to the end for each seed without a screen, measuring whether the row can be solved and its difficulty metrics | headless simulation |
 
 The five rows from no blocker to UI quality are the completeness check.
 
@@ -145,13 +145,13 @@ The five rows from no blocker to UI quality are the completeness check.
 
 `build: <game> <DEV, STG, PROD>` makes a build to hand to people.
 
-1. The server and client hardening agents fix content code based on the contract. Their targets are the problems that come from the content agent also writing the server, e.g. missing server input validation, authoritative logic in the client, handling that differs from the contract. A problem that needs edits outside their own folder (`server/` or `client/`) goes into the hardening record; the content agent fixes it and hardening runs again.
-2. Loop steps 2 to 4 run once on the hardened code with PostgreSQL. If regression test, static check, no blocker or full flow fails, or the judge result is worse than the baseline game, the work goes back to the loop.
+1. The server and client hardening agents fix content code based on the contract. Their targets are problems that arise because the content agent writes the server too, e.g. missing server input validation, authoritative logic in the client, handling that differs from the contract. A problem that needs edits outside their own folder (`server/` or `client/`) goes into the hardening record. The content agent fixes it, and hardening runs again.
+2. Loop steps 2 to 4 run once on the hardened code with PostgreSQL. If any of regression test, static check, no blocker or full flow fails, or the judge result is worse than the baseline game, the work goes back to the loop.
 3. Build-time checks run, then the chosen platforms (`android`, `ios`, `web`, `windows`, `macos`, `linux`) are built on this host. iOS and macOS are built only on a Mac. Artifacts go to `builds/<env>-<version>/<platform>/` of the game repo and are not committed.
 4. The hardened code is committed to main and tagged `dev-<version>`, `stg-<version>` or `prod-<version>`.
 5. DEV and STG builds also deploy the server of that environment. A human deploys PROD.
 
-STG and PROD builds of android, ios, macos and windows produce signed artifacts (web and linux are not signed). A DEV build of android, macos or windows without signing values uses free signing. A PROD build does not harden again: it builds a commit checked on STG as it is. Backward compatibility (contract, data, save schema) is checked against the last PROD build. `--bundle-for <app version>` makes a bundle patch: resources and data sent to an installed app without an app update.
+STG and PROD builds of android, ios, macos and windows produce signed artifacts (web and linux are not signed). macOS is signed with a Developer ID certificate, notarized in STG and PROD, and distributed directly (e.g. Steam, itch.io, web download), not through the Mac App Store. Android builds `arm64-v8a` only. Before an STG or PROD build starts, `ogw` checks that the core release has every native plugin the target platforms need (e.g. `ogw-secure-storage`, which keeps the login token), and stops if one is missing. A DEV build of android, macos or windows without signing values uses free signing. A PROD build skips hardening and builds the commit checked on STG as is. Backward compatibility (contract, data, save schema) is checked against the last PROD build. `--bundle-for <app version>` makes a bundle patch: resources and data sent to an installed app without an app update.
 
 ### Environments
 
@@ -159,7 +159,7 @@ STG and PROD builds of android, ios, macos and windows produce signed artifacts 
 |---|---|---|---|---|---|---|
 | LOCAL | the loop | one per instance | SQLite | fake adapters | included | the runner (`ogw instance start`) |
 | DEV | DEV builds handed to people | one shared | PostgreSQL | the adapters chosen in game settings `environments.DEV.adapters` | included | `build` (`ogw deploy`) |
-| STG | checking with the same code as PROD, checking PROD problem fixes | one shared | PostgreSQL | sandbox adapters (real adapters where there is no sandbox, and for `push-apns`) | excluded | `build` (`ogw deploy`) |
+| STG | checking with the same code as PROD, checking PROD problem fixes | one shared | PostgreSQL | sandbox adapters (real adapters for keys that have no sandbox and for `push-apns`) | excluded | `build` (`ogw deploy`) |
 | PROD | service | shared | PostgreSQL | real adapters | excluded | a human, following the PROD build report |
 
 A PROD problem is reproduced on an instance started from the latest main, with PROD users cloned by snapshot (`ogw clone`). PROD is not affected.
@@ -235,15 +235,15 @@ A resource whose source cannot be checked is not used, and the screens, resource
  games/<game>/client/core/, server/core/      copies of that release, next to the content code
 ```
 
-- A game records only its core version, game settings `coreVersion`. At a dev run and at build, `ogw` looks for that version in `open-game-works-core-releases/` and otherwise fetches the GitHub Release from `coreReleaseRepository` in `settings.json`. Fetched files are checked by hash.
-- One core version covers client core, server core, contract tool, data tool and core settings, in the form `<major>.<minor>.<patch>`. Published release assets do not change; a fix is a new version.
+- A game records only its core version, in the game settings field `coreVersion`. During a dev run or a build, `ogw` looks for that version in `open-game-works-core-releases/`, and if it is not there, downloads the GitHub Release from `coreReleaseRepository` in `settings.json`. Downloaded files are checked by hash.
+- One core version, in the form `<major>.<minor>.<patch>`, covers client core, server core, contract tool, data tool and core settings together. Published release assets never change, so a fix ships as a new version.
 - `update game` raises a game's `coreVersion` to the highest release it can (`ogw core upgrade`). When the game has a PROD build, versions that would break backward compatibility with it are skipped.
-- The content agent never edits core. When core falls short, it works around it in content code and writes a core proposal in the game's `records/core-proposals/`. A human chooses which proposals to apply with `update core`, which edits the specs, implementation and tests, reviews them and releases a new version.
+- The content agent never edits core. When core falls short, it works around it in content code and writes a core proposal in the game's `records/core-proposals/`. A human picks the proposals to apply and gives the `update core` command, which edits the specs, implementation and tests, reviews the changes and releases a new version.
 - `useLocalCore: true` in `settings.json` makes `ogw` use `open-game-works-core-impl/` instead of a release. It is only for developing core; loops and builds do not start while it is on.
 
 ### Roles
 
-The lead agent is the session a human started. Sub-agents are started only with `ogw agent`, with the agent CLI, model and effort set per role in `settings.json` `agents`.
+The lead agent is the session a human started. Sub-agents are started only through `ogw agent`, using the agent CLI, model and effort set for each role in `settings.json` `agents`.
 
 <details>
 <summary>The nine sub-agent roles</summary>
@@ -254,7 +254,7 @@ The lead agent is the session a human started. Sub-agents are started only with 
 | resource sub-agent | Makes final resources as the content agent directs |
 | translation sub-agent | Makes missing translations and stale translations |
 | play agent | Plays an instance with real input and gives feedback |
-| judge agent | Plays in a new context and writes the judge result comparing with the baseline game and the gameplay video of the reference game |
+| judge agent | Plays in a new context and writes a judge result that compares the game with the baseline game and the reference game's gameplay video |
 | server hardening agent | At build, hardens server content code based on the contract |
 | client hardening agent | At build, hardens client content code based on the contract |
 | core agent | Makes and edits core |
@@ -297,7 +297,7 @@ Settings are JSON files, each with a JSON schema. Agents read and write them onl
 | core settings | `open-game-works-core-impl/settings/core-settings.json` | core defaults |
 | game settings | `games/<game>/settings.json` (schema `schemas/game-settings.schema.json`) | engine, `coreVersion`, `coreModules`, app ID, source and supported languages, build platforms, signing, servers and deploy hosts per environment, adapters, secret names, core settings overrides |
 
-Secrets never go into settings. Settings hold only secret names; the values are in the secret store of the host that uses them.
+Secrets never go into any settings file. Settings hold only secret names, and the values stay in the secret store of the host that uses them.
 
 ## Commands
 
@@ -305,16 +305,16 @@ Give these commands in a Claude Code or Codex session opened in `open-game-works
 
 | command | what it does |
 |---|---|
-| `update env` | Checks this host, gets the local models and programs and runs them, and proposes a harness settings revision when they do not match |
-| `setup game: <game> <request>` | Creates the game repo and game settings and saves the request. Asks for the settings it cannot decide, the art direction, the display name per language, the reference game and its gameplay videos, and the banned word lists, and tells the resource types this host cannot make |
+| `update env` | Checks this host, downloads the local models and programs and test-runs them, and proposes a harness settings revision if they do not match |
+| `setup game: <game> <request>` | Creates the game repo and game settings and saves the request. Asks for the settings it cannot decide, the art direction, the display name per language, the reference game and its gameplay videos, and the banned word lists, and tells you which resource types this host cannot make |
 | `create game: <game> [<request>]` | Makes a game that finished `setup game` through the loop. `<request>` is added to the saved request |
-| `update game: <game> <request>` | Edits a made game through the loop. Includes your feedback and PROD problem fixes |
-| `build: <game> <DEV, STG, PROD> [<platform>...] [--version <version>] [--bundle-for <app version>]` | Hardens and builds. Without platforms, builds all build platforms of game settings. `--version` sets the version of a DEV or STG build, and in a PROD build picks the STG build of that version. `--bundle-for` makes a bundle patch for that app version |
+| `update game: <game> <request>` | Edits an existing game through the loop. This covers your feedback and fixes for PROD problems |
+| `build: <game> <DEV, STG, PROD> [<platform>...] [--version <version>] [--bundle-for <app version>]` | Hardens and builds. With no platforms given, builds every build platform in the game settings. `--version` sets the version of a DEV or STG build, and in a PROD build picks the STG build of that version. `--bundle-for` makes a bundle patch for that app version |
 | `update core: <proposal>` | Applies a core proposal file, or your request, and releases a new core version |
 | `update harness tool: <request>` | Changes `ogw` to apply the request |
 | `create client core: <engine>` | Adds a client core for a new engine from the specs and releases it. Godot already exists; use this only to add another engine |
 
-`update env` runs once per host, and again when you want models and programs checked again. `setup game` and `create game` run once per game; later changes go through `update game` and `update core`.
+`update env` runs once per host, and again whenever you want the models and programs rechecked. `setup game` and `create game` run once per game; later changes go through `update game` and `update core`.
 
 ### A typical flow
 
@@ -328,16 +328,16 @@ build: <game> STG                   STG build, STG server deployed
 build: <game> PROD                  PROD build of the commit checked on STG; you deploy PROD
 ```
 
-- In `setup game`, you give the reference game (the agent suggests three candidates when your request names none) and one or more gameplay videos as files or YouTube URLs, with the start and end of each moment (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). Banned word lists are asked for only when the game uses `nickname`, `guild` or `chat`. At the end it generates the game's secrets with `ogw secret generate` and shows, per environment, what you have to prepare (`ogw game check <game> --human-prep`).
-- After a loop, read the loop end record `records/loops/<run>/end.md`. Its `## human` section lists what needs you: assumptions marked `needs human`, new core proposals, resources whose license is `unknown`, skipped core versions.
+- In `setup game`, you give the reference game (the agent suggests three candidates when your request names none) and one or more gameplay videos as files or YouTube URLs, with the start and end of each moment (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). You also say which of the screens `lobby`, `hud`, `reward popup` and `result` the game will have, and you can name a presentation game whose screens set the bar. Without one, the reference game is used. Banned word lists are asked for only when the game uses `nickname`, `guild` or `chat`. At the end it generates the game's secrets with `ogw secret generate` and shows, per environment, what you have to prepare (`ogw game check <game> --human-prep`).
+- After a loop, read the loop end record `records/loops/<run>/end.md`. Its `## human` section lists what needs your attention: assumptions marked `needs human`, new core proposals, resources whose license is `unknown`, skipped core versions.
 - A build writes its report to `records/loops/<run>/end.md` and its artifacts to `builds/<env>-<version>/` of the game repo. The PROD build report carries the PROD deploy order, rollback order and maintenance order with this build's files filled in.
-- On request, the lead agent records a play video of a game with `ogw video`; it is written to `builds/videos/` of the game repo.
-- When a run was interrupted, the lead agent shows its state and continues it when you say so (`ogw loop resume`), or closes it.
+- On request, the lead agent records a gameplay video with `ogw video` and writes it to `builds/videos/` of the game repo.
+- If a run was interrupted, the lead agent shows its state and then either continues it when you say so (`ogw loop resume`) or closes it.
 
 ### What you do
 
 - Give commands and read the report after the loop ends. The loop does not wait for you midway.
-- Answer when an agent, outside the loop, asks about what it does not know. It gives a recommendation and its evidence with the question.
+- Outside the loop, answer an agent's questions about what it does not know. Each question comes with a recommendation and its evidence.
 - Give the reference game, the gameplay videos and the banned word lists in `setup game`.
 - Put secrets into the secret store of the host with `ogw secret set`; settings hold only their names. View stored values in a terminal with `ogw secret show`.
 - Prepare the deploy hosts and external service accounts that `ogw game check <game> --human-prep` lists.
@@ -366,13 +366,13 @@ macOS on arm64 is the primary host. `update env` (`ogw env check`) checks these 
 | `jsign` | signing Windows builds |
 | `codex` CLI logged in with ChatGPT, or `grok` CLI logged in (optional) | the `sprite-gen-codex` and `sprite-gen-grok` methods. A `codex` login with an API key, or `XAI_API_KEY` without a `grok` login, bills each call to that key |
 
-You do not install the engine (Godot), the pinned programs of `settings.json` `tools` (`blender`, `ffmpeg`, `chromium`, `gdtoolkit`, the `postgresql` image) or the placeholder font (`placeholderFont`) by hand: `update env` fetches them. `tools.chromium` pins a download only for macOS on arm64; on another host, `update env` first proposes a settings revision that adds one for that host's OS. The build toolchain versions come from `engine.json` of the core release, and `update env` tells you which ones to install and at which version.
+You do not install the engine (Godot), the pinned programs of `settings.json` `tools` (`blender`, `ffmpeg`, `chromium`, `gdtoolkit`, the `postgresql` image) or the placeholder font (`placeholderFont`) by hand: `update env` fetches them. `tools.chromium` pins a download only for macOS on arm64; on another host, `update env` first proposes a settings revision that adds one for that host's OS. The build toolchain versions come from `engine.json` of the core release, and `update env` tells you what to install and which version.
 
-Sub-agents run in a mode that does not ask for approval. The play and judge agents run inside the sandbox above, which blocks, among other things, the secret store, the Docker socket and writes to the harness and core repositories; the other roles run without a sandbox.
+Sub-agents run in a mode that does not ask for approval. The play and judge agents run inside the sandbox above, which blocks the secret store, the Docker socket, writes to the harness and core repositories, and more. The other roles run without a sandbox.
 
 ### Windows
 
-The harness repository uses symbolic links (`.claude/skills` and `.agents/skills` point to `skills/`), and each game uses `client/resource` -> `../resource`. On Windows, enable Developer Mode and run `git config --global core.symlinks true` before cloning, or the links check out as plain text files. `CLAUDE.md` is a regular file that imports `AGENTS.md`, so it needs no link. The sandboxes run only on macOS and Linux: on Windows the play and judge agents cannot be started, and local-model and Blender generation calls fail. For the same reason, `ogw secret set --harness claude-code-oauth-token` cannot store that secret on Windows: its check runs inside that sandbox.
+The harness repository uses symbolic links (`.claude/skills` and `.agents/skills` point to `skills/`), and each game uses `client/resource` -> `../resource`. On Windows, enable Developer Mode and run `git config --global core.symlinks true` before cloning, or the links check out as plain text files. `CLAUDE.md` is a regular file that imports `AGENTS.md`, so it needs no link. The sandboxes run only on macOS and Linux: on Windows the play and judge agents cannot be started, and local-model and Blender generation calls fail. For the same reason, `ogw secret set --harness claude-code-oauth-token` cannot store that secret on Windows, because the check it runs before storing happens inside that sandbox.
 
 ### Workspace layout
 
@@ -401,7 +401,7 @@ git clone https://github.com/wnsrn3436/open-game-works-game-iso-survivors.git ga
 git clone https://github.com/wnsrn3436/open-game-works-game-block-stack.git games/open-game-works-game-block-stack
 ```
 
-The folder name of a game under `games/` is the `<game>` name you use in commands. A fresh clone has the ID registry branch only as `origin/id-registry`. `ogw` and the data tool read the local branch, so create it with `git -C games/<game> branch id-registry origin/id-registry`. The reference gameplay videos are not in git (every file in `records/setup/reference/` except `reference.md` is ignored), and `update game` and `build` do not start without them, so before you run them, put the video files that `records/setup/reference/reference.md` names into `records/setup/reference/`.
+The folder name of a game under `games/` is the `<game>` name you use in commands. A fresh clone has the ID registry branch only as `origin/id-registry`. `ogw` and the data tool read the local branch, so create it with `git -C games/<game> branch id-registry origin/id-registry`. The reference gameplay videos are not in git (every file in `records/setup/reference/` except `reference.md` is ignored). `update game` and `build` do not start without them, so before you run either command, put the video files named in `records/setup/reference/reference.md` into `records/setup/reference/`.
 
 ### Secrets
 
@@ -410,7 +410,7 @@ The folder name of a game under `games/` is the `<game>` name you use in command
 | secret | needed when |
 |---|---|
 | `claude-code-oauth-token` | the play or judge agent uses Claude Code (as `agents.play` and `agents.judge` are set in this repository's `settings.json`). Without it, `ogw loop start` and `ogw build start` do not start |
-| `huggingface` (optional) | only for a gated model pin. The `trellis2` method needs the gated DINOv3 weights: accept the license on that model's Hugging Face page, then store the access token of that account. Without it, `update env` leaves `trellis2` uninstalled and tells you |
+| `huggingface` (optional) | only when a gated model is pinned. The `trellis2` method needs the gated DINOv3 weights: accept the license on that model's Hugging Face page, then store the access token of that account. Without it, `update env` leaves `trellis2` uninstalled and tells you |
 
 ```sh
 # make a long-lived token, copy it, then store it as one line (macOS)
@@ -445,11 +445,11 @@ Local models are optional. `update env` installs every method listed in `setting
 
 Without a method for a resource type, agents keep developing with placeholder resources of that type. The loop and DEV builds still run (a DEV build only warns about placeholders), but the loop end report counts the remaining placeholders as a failure, and STG and PROD builds are blocked.
 
-Among the generation methods, only `sprite-gen-codex` and `sprite-gen-grok` call an external service, and they make sprite animations (`sprite_animation`). `sprite-gen-codex` runs the `codex` CLI. `sprite-gen-grok` does not run the `grok` CLI: it calls the xAI API itself with the login that the `grok` CLI saved in `~/.grok/auth.json`, and without that file with `XAI_API_KEY`. With a ChatGPT or Grok login, the calls use the usage of that subscription. A `codex` login with an API key, or `XAI_API_KEY`, bills each call to that key. `update env` shows which case applies before it asks you to allow the calls. Images, music, sound effects and voice currently come only from local models (`flux2-klein`, `ace-step`, `moss-sfx`, `qwen3-tts`), and 3D models from `trellis2` (a local model) or `blender`.
+Among the generation methods, only `sprite-gen-codex` and `sprite-gen-grok` call an external service, and they make sprite animations (`sprite_animation`). `sprite-gen-codex` runs the `codex` CLI. `sprite-gen-grok` does not run the `grok` CLI: it calls the xAI API itself with the login that the `grok` CLI saved in `~/.grok/auth.json`, and without that file with `XAI_API_KEY`. With a ChatGPT or Grok login, the calls draw on that subscription's usage. A `codex` login with an API key, or `XAI_API_KEY`, bills each call to that key. `update env` shows which case applies before it asks you to allow the calls. Images, music, sound effects and voice currently come only from local models (`flux2-klein`, `ace-step`, `moss-sfx`, `qwen3-tts`), and 3D models from `trellis2` (a local model) or `blender`.
 
 ## Repository contents
 
-The rules that agents actually follow are [AGENTS.md](AGENTS.md), `agents/`, `skills/` and [tools/ogw.md](tools/ogw.md). This README is an introduction for people; agents do not read it. Where the two differ, those files are right.
+The rules that agents actually follow are [AGENTS.md](AGENTS.md), `agents/`, `skills/` and [tools/ogw.md](tools/ogw.md). This README is an introduction for people; agents do not read it. Where the two differ, those files take precedence.
 
 | path | contents |
 |---|---|
@@ -477,8 +477,8 @@ How to contribute:
 
 - Questions and ideas go to [Discussions](https://github.com/wnsrn3436/open-game-works-core/discussions), and bugs to [Issues](https://github.com/wnsrn3436/open-game-works-core/issues).
 - For a larger change, open a discussion or an issue first, so the approach is agreed before you write code.
-- A core change starts in the module spec in this repository, and the implementation in [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) follows the spec. Through the harness, this is the `update core` command.
-- A change to the harness tool `ogw` passes `npm test` in `tools/` and `tools/bin/ogw docs check`. Harness files follow the writing rules in `AGENTS.md`.
+- A core change starts in the module spec in this repository, and the implementation in [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl) follows the spec. In the harness, the `update core` command does this.
+- A change to the harness tool `ogw` must pass `npm test` in `tools/` and `tools/bin/ogw docs check`. Harness files follow the writing rules in `AGENTS.md`.
 - Harness files, code identifiers and commit messages are written in English.
 
 By contributing, you agree that your contribution is licensed under the Apache License 2.0, the license of this repository.
