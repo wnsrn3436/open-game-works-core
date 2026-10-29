@@ -24,15 +24,15 @@ https://github.com/user-attachments/assets/9cf4f284-32c5-4f82-9c3f-13d17cbc12ec
 
 open-game-works는 AI 에이전트가 서버-클라이언트 게임을 만드는 하네스다. 재미와 완성도 모두 상용 게임 수준에 이르는 것을 목표로 한다.
 
-- 여러 게임이 똑같이 다시 만들게 될 기능(인프라, 라이브 운영, 스토어 정책, 메타 시스템)은 **코어**로 미리 만들어 둔다. 에이전트는 게임플레이만 **콘텐츠 코드**로 작성한다.
-- 사람은 `create game: <game>` 같은 명령 하나를 내린다. 명령을 받은 에이전트가 역할별 하위 에이전트를 부르며 수정, 검사, 판정의 루프를 멈출 때까지 돌리고 끝나면 보고한다.
-- 재미는 이전 버전과 블라인드로 비교하며 직접 플레이하는 판정 에이전트들이 판정한다. 완성도는 자동 검사(봇 플레이테스트, 프로파일링, UI 캡처)가 판정한다.
+- 여러 게임이 똑같이 다시 만들게 될 기능(인프라, 라이브 운영, 스토어 정책, 메타 시스템)은 **코어**로 미리 갖춰 둔다. 에이전트는 게임플레이만 **콘텐츠 코드**로 작성한다.
+- 사람이 `create game: <game>` 같은 명령 하나를 내리면 에이전트가 역할별 하위 에이전트를 부르며 수정, 검사, 판정의 루프를 멈출 때까지 돌리고 끝나면 보고한다.
+- 재미는 판정 에이전트들이 이전 버전과 블라인드로 비교하며 직접 플레이해 가리고 완성도는 자동 검사(봇 플레이테스트, 프로파일링, UI 캡처)로 판정한다.
 
-이 저장소는 하네스다. 에이전트가 따르는 규칙, 에이전트가 읽는 스킬과 코어 모듈 명세, 설정, CLI `ogw`가 들어 있다. 이 폴더에서 연 Claude Code 또는 Codex 세션에서 쓴다.
+이 저장소는 하네스다. 에이전트가 따르는 규칙, 에이전트가 읽는 스킬과 코어 모듈 명세, 설정, CLI `ogw`가 들어 있고 이 폴더에서 연 Claude Code 또는 Codex 세션에서 쓴다.
 
 ## 현재 상태
 
-한창 개발 중이다. macOS에서 Claude Code(Claude Opus 5.5, high effort)로만 테스트했다. Codex CLI는 설정에서 지원하지만 테스트하지 않았다. `build` 명령은 아직 실행한 적이 없어서 빌드하거나 배포한 게임은 없다. 명령, 설정, 파일 형식은 앞으로 바뀔 수 있다.
+한창 개발 중이고 macOS에서 Claude Code(Claude Opus 5.5, high effort)로만 테스트했다. Codex CLI는 설정에서 지원하지만 테스트하지 않았다. `build` 명령은 아직 실행한 적이 없어서 빌드하거나 배포한 게임은 없다. 명령, 설정, 파일 형식은 앞으로 바뀔 수 있다.
 
 ## 빠른 시작
 
@@ -87,7 +87,7 @@ create game: block-drop
 - **근거의 순서.** 자동 검사가 텔레메트리보다, 텔레메트리가 LLM 의견보다 우선한다. 확인하지 못한 것은 실패가 아니라 unknown으로 기록한다.
 - **리소스와 번역은 루프를 막지 않는다.** 리소스·번역 하위 에이전트가 병행해서 일하는 동안 에이전트는 플레이스홀더 리소스로 개발을 이어 간다.
 
-전체 규칙은 [AGENTS.md](AGENTS.md), [agents/](agents), [skills/](skills)에 있다. 이 README는 사람을 위한 소개이며, 내용이 다르면 그 파일들이 우선한다.
+전체 규칙은 [AGENTS.md](AGENTS.md), [agents/](agents), [skills/](skills)에 있다. 이 README는 사람을 위한 소개이며 내용이 다르면 그 파일들이 우선한다.
 
 ## 명령
 
@@ -97,7 +97,7 @@ create game: block-drop
 | `setup game: <game> <request>` | 게임 저장소와 설정을 만들고 레퍼런스 게임과 영상을 받는다 |
 | `create game: <game> [<request>]` | 루프로 게임을 만든다 |
 | `update game: <game> <request>` | 만든 게임을 루프로 고친다. 사람의 피드백이나 PROD 문제 수정 |
-| `build: <game> <DEV, STG, PROD> [<platform>...]` | 코드를 하드닝하고 다시 검사한 뒤 빌드한다. DEV와 STG는 서버도 배포하고, PROD 배포는 사람이 한다 |
+| `build: <game> <DEV, STG, PROD> [<platform>...]` | 코드를 하드닝하고 다시 검사한 뒤 빌드한다. DEV와 STG는 서버도 배포하고 PROD 배포는 사람이 한다 |
 | `update core: <proposal>` | 코어 제안이나 사람의 요청을 적용하고 새 코어 버전을 릴리스한다 |
 | `create client core: <engine>` | 다른 엔진의 클라이언트 코어를 추가한다(Godot은 이미 있다) |
 | `update harness tool: <request>` | `ogw`를 고친다 |
@@ -152,10 +152,10 @@ Windows: 클론하기 전에 개발자 모드를 켜고 `git config --global cor
 - **리소스 생성.** 리소스 스킬([skills/resource/](skills/resource))과 생성 방법이 게임의 최종 그림, 애니메이션, 사운드를 만든다. 품질 향상, 한 게임 안의 일관된 스타일, 아직 만들 방법이 없는 리소스 종류의 새 방법은 모든 게임에 도움이 된다.
 - 다른 엔진의 클라이언트 코어. 지금은 Godot뿐이고 Three.js, Phaser, Unity, Unreal이 목표다.
 - 외부 서비스의 실제 어댑터(스토어 결제, 광고, 푸시, 소셜 로그인). 아직 실제 서비스로 시험해 보지 않았다.
-- Windows, Android, iOS에서의 `build` 명령.
+- Windows, Android, iOS용 `build` 명령.
 - open-game-works로 만든 게임, 그리고 코어가 부족했던 곳의 코어 제안.
 
-질문과 아이디어는 [Discussions](https://github.com/wnsrn3436/open-game-works-core/discussions)에, 버그는 [Issues](https://github.com/wnsrn3436/open-game-works-core/issues)에 올린다. 큰 변경은 먼저 둘 중 하나를 연다. 코어 변경은 이 저장소의 모듈 명세에서 시작하고 [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl)의 구현이 그 명세를 따른다. `ogw` 변경은 `tools/`의 `npm test`와 `tools/bin/ogw docs check`를 통과해야 한다. 하네스 파일, 코드 식별자, 커밋 메시지는 영어로 쓴다. 기여물은 Apache License 2.0으로 라이선스된다.
+질문과 아이디어는 [Discussions](https://github.com/wnsrn3436/open-game-works-core/discussions)에, 버그는 [Issues](https://github.com/wnsrn3436/open-game-works-core/issues)에 올리고 큰 변경은 먼저 둘 중 하나를 연다. 코어 변경은 이 저장소의 모듈 명세에서 시작하고 [open-game-works-core-impl](https://github.com/wnsrn3436/open-game-works-core-impl)의 구현이 그 명세를 따른다. `ogw` 변경은 `tools/`의 `npm test`와 `tools/bin/ogw docs check`를 통과해야 한다. 하네스 파일, 코드 식별자, 커밋 메시지는 영어로 쓴다. 기여물은 Apache License 2.0으로 라이선스된다.
 
 ## 라이선스
 

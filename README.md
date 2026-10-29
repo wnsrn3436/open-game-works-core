@@ -2,7 +2,7 @@
 
 [한국어](README.ko.md)
 
-AI agents make server-client games on top of a prebuilt core, aiming at commercial quality.
+AI agents make server-client games on top of a prebuilt core, aiming for commercial quality.
 
 https://github.com/user-attachments/assets/fb74b4ca-cc63-430d-af79-5b5118ec9c8a
 
@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/9cf4f284-32c5-4f82-9c3f-13d17cbc12ec
   </tr>
 </table>
 
-open-game-works is a harness in which AI agents make server-client games. Its goal is games of commercial quality, in fun and in completeness.
+open-game-works is a harness in which AI agents make server-client games. The goal is games that reach commercial quality in both fun and completeness.
 
 - Features that many games would rebuild the same way (infra, live ops, store policy, meta systems) are prebuilt as **core**. Agents write only the gameplay, as **content code**.
 - You give one command, such as `create game: <game>`. The agent that receives it calls a sub-agent for each role and runs an edit, check and judge loop until it stops, then reports to you.
@@ -61,11 +61,11 @@ setup game: block-drop a falling-block puzzle game for mobile, in English and Ko
 create game: block-drop
 ```
 
-1. `update env` checks this host, installs the engine, tools and resource generation methods, and asks for your preferences. Once per host.
-2. `setup game` creates `games/block-drop/` and asks what it cannot decide, including the reference game and its gameplay video (a file or a YouTube URL).
+1. `update env` checks this host, installs the engine, tools and resource generation methods, and asks for your preferences. Run it once per host.
+2. `setup game` creates `games/block-drop/` and asks what it cannot decide on its own. It also takes the reference game and its gameplay video (a file or a YouTube URL) here.
 3. `create game` runs the loop until it stops, merges the result into main and reports. It does not wait for you midway.
 
-To try a finished game instead, clone one of the example games above into `games/` and follow its README.
+To try a finished game first, clone one of the example games above into `games/` and follow its README.
 
 ## How it works
 
@@ -82,10 +82,10 @@ you -- one command --> lead agent (your Claude Code or Codex session)
   -> loop end record, merge into main, report to you
 ```
 
-- **Two kinds of iteration.** A fun iteration tries one change aimed at fun, runs only the checks that block play, and is judged on game feel, tension and release and no friction from a short play, so it ends in minutes. A completeness iteration fixes defects and runs every step. Success is judged only in completeness iterations.
-- **Votes, not one opinion.** Several judges each pick a winner per fun element. An element is decided only when at least two thirds of the judges agree, from both side assignments. Bot telemetry from three runs per commit decides the elements it can measure.
+- **Two kinds of iteration.** A fun iteration tries one change aimed at fun and runs only the checks that block play. It is judged only on game feel, tension and release and no friction from a short play, so it ends in minutes. A completeness iteration fixes defects and runs every step. Success is judged only in completeness iterations.
+- **Votes, not one opinion.** Several judges each pick a winner per fun element. An element is decided only when at least two thirds of the judges pick the same side in both A/B assignments. Bot telemetry from three runs per commit decides the elements it can measure.
 - **Evidence order.** Automated checks rank above telemetry, and telemetry above LLM opinion. What could not be checked is recorded as unknown, not as a failure.
-- **Resources and translations never block the loop.** Agents use placeholder resources while resource and translation sub-agents work in parallel.
+- **Resources and translations never block the loop.** Agents keep developing with placeholder resources while resource and translation sub-agents work in parallel.
 
 The full rules are in [AGENTS.md](AGENTS.md), [agents/](agents) and [skills/](skills). This README is an introduction for people; where they differ, those files win.
 
@@ -96,13 +96,13 @@ The full rules are in [AGENTS.md](AGENTS.md), [agents/](agents) and [skills/](sk
 | `update env` | Checks this host, installs and measures tools and models, asks for your preferences |
 | `setup game: <game> <request>` | Creates the game repository and settings, takes the reference game and its video |
 | `create game: <game> [<request>]` | Makes the game through the loop |
-| `update game: <game> <request>` | Changes a made game through the loop: your feedback or a PROD fix |
+| `update game: <game> <request>` | Changes an existing game through the loop: your feedback or a PROD fix |
 | `build: <game> <DEV, STG, PROD> [<platform>...]` | Hardens the code, checks it again and builds. DEV and STG also deploy the server; you deploy PROD |
 | `update core: <proposal>` | Applies a core proposal or your request and releases a new core version |
-| `create client core: <engine>` | Adds a client core for another engine (Godot exists) |
+| `create client core: <engine>` | Adds a client core for another engine (Godot already exists) |
 | `update harness tool: <request>` | Changes `ogw` |
 
-What you do: give commands, read the loop end record (`records/loops/<run>/end.md`, its `## human` section lists what needs you), answer questions outside the loop, put secrets into the host's secret store with `ogw secret set`, and deploy PROD.
+What you do: give commands, read the loop end record (`records/loops/<run>/end.md`, its `## human` section has what you need to look at), answer questions outside the loop, put secrets into the host's secret store with `ogw secret set`, and deploy PROD.
 
 ## More
 
@@ -143,13 +143,13 @@ Windows: enable Developer Mode and run `git config --global core.symlinks true` 
 
 ### Resource generation and local models
 
-`update env` installs the methods in `settings.json` `resourceGeneration`. Images, music, sound effects and voice come from local models (`flux2-klein`, `ace-step`, `moss-sfx`, `qwen3-tts`), 3D models from `trellis2` or `blender`, and sprite animations from `sprite-gen-codex` or `sprite-gen-grok`, which use your ChatGPT or Grok subscription (or bill an API key). To skip a local model, remove its method before `update env`. Without a method for a resource type, the loop runs with placeholders of that type, but STG and PROD builds are blocked.
+`update env` installs the methods in `settings.json` `resourceGeneration`. Images, music, sound effects and voice come from local models (`flux2-klein`, `ace-step`, `moss-sfx`, `qwen3-tts`), 3D models from `trellis2` or `blender`, and sprite animations from `sprite-gen-codex` or `sprite-gen-grok`, which count against your ChatGPT or Grok subscription usage (with an API key, each call is billed). To skip a local model, remove its method before `update env`. Without a method for a resource type, the loop runs with placeholders of that type, but STG and PROD builds are blocked.
 
 ## Contributing
 
 Contributions are welcome. Help is wanted most on:
 
-- **Resource generation.** The resource skill ([skills/resource/](skills/resource)) and its generation methods make the final art, animation and sound of a game. Better quality, a consistent style across a game and new methods for resource types no method makes yet would help every game.
+- **Resource generation.** The resource skill ([skills/resource/](skills/resource)) and its generation methods make the final art, animation and sound of a game. Every game benefits from better quality, a consistent style within a game and new methods for resource types that have no method yet.
 - Client cores for other engines. Godot is the only one so far; Three.js, Phaser, Unity and Unreal are targets.
 - Real adapters for external services (store payments, ads, push, social login), which have not been tried against the live services yet.
 - The `build` command on Windows, Android and iOS.
