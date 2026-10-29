@@ -36,7 +36,8 @@ function holder(input: Json, path: readonly string[]): Json | null {
   return current;
 }
 
-function instanceIds(role: 'play' | 'judge', input: Json): string[] {
+/** The instances of a play or judge input: `instance` of play; `A`, `B` and the fixture pairs of judge. */
+export function instanceIds(role: 'play' | 'judge', input: Json): string[] {
   const ids: unknown[] = [];
   if (role === 'play') ids.push(input.instance);
   else {

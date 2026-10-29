@@ -13,7 +13,7 @@ The `ogw` commands that start and handle instances, and how the play agent and t
 - A bot client means a headless client that the runner starts on an instance (including the instance of a bot playtest) in addition to the one client. A realtime game gets an opponent bot client, and a game whose used modules (`## module` of the `core` skill) include one of `friend`, `guild`, `chat` gets a social bot client
 - If the game has `server/dev/populate.ts`, the runner creates the state of other users with `## populate` of [`server-content`](../server-content/SKILL.md) before it starts the client
 - The network latency and packet loss of a realtime game are emulated with core settings
-- The play agent and the judge agent do not start or stop instances. They receive the instances that `ogw loop evaluate` started as input
+- The play agent and the judge agent do not start instances, and stop only the instances of their input with `ogw instance release`. They receive the instances that `ogw loop evaluate` started as input
 
 ## commands
 
@@ -28,6 +28,7 @@ The commands below handle the client that is not a bot client through the `QACor
 | `ogw telemetry <instance>` | Shows telemetry |
 | `ogw step-mode <instance> <on\|off>` | Turns step mode on or off |
 | `ogw step <instance> <ms> [--count <n>] [--capture] [--state]` | In step mode, advances time by ms, n times (default 1) in one call, and outputs per step the ms advanced in this call, the `device ms` after that step (the value `device ms` of `ogw telemetry <instance> --summary` has at that time: the device time since the telemetry started, which also grows between steps), and each telemetry mark added during that step with its kind and `play ms` (the `play_at` of that mark in `QACore` telemetry; `unknown` when the mark has none). With `--capture`, it captures one screen after each step in the same format as `ogw capture` and outputs its path. With `--state`, it outputs after each step the `content` of the `QACore` `get_state` of the client `main` as JSON. After a step, it does not run the remaining steps when the `scene_key`, `popups` or `panels` of the `QACore` `get_state` changed, or when a telemetry mark `Fail`, `Reward`, `Goal` or `Restart` was added, and outputs the reason and the step. When a step fails, it reads `get_state` and telemetry once more: when one of those changes happened during that step (e.g. a popup opened and paused game time, which fails the step at the command time limit), it outputs that step as ended early with the failure, the reason and, with `--capture`, its capture, does not run the remaining steps and ends with exit code 0; otherwise it outputs the failure, does not run the remaining steps and ends with exit code 1 |
+| `ogw instance release <instance>` | Stops an instance of the input of the play agent or the judge agent that runs it, so that the next agent waiting for instance slots starts sooner. It refuses an instance that is not in that input |
 | `ogw command <instance> <name> [<argument>...]` | Sends one `QACore` built-in command or content command, and prints `ok` and `result`. Used to create a state with a cheat (e.g. `set_user_state`) or to go straight to a screen (e.g. `go_to_scene`, `<feature>.open_<screen>`). See `ogw command <instance> list_commands` for the names, descriptions and arguments of content commands. It does not accept commands marked as step, `capture_screen` or `capture_video`. The play agent and the judge agent cannot use it |
 
 ## play
@@ -35,6 +36,7 @@ The commands below handle the client that is not a bot client through the `QACor
 The play agent and the judge agent play an instance as below.
 
 - Inputs go in only through `ogw input`
+- When the agent puts in no more input on an instance, it releases that instance with `ogw instance release <instance>`, before it writes its result file
 - For inputs pressed at the same time, the agent holds one down with a `_down` command, puts in the other input, and releases it with an `_up` command. e.g. attacking while moving, joystick and button
 - For each scene, the agent plays in the mode that `## play mode` of that instance's `play-guide.md` (in the input file) sets
   - `free`: puts in inputs as it goes

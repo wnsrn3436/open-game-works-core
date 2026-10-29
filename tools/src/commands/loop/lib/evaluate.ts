@@ -11,6 +11,7 @@ import type { RunState } from '../../../lib/runstate.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
+import { recordPath } from '../../instance/lib/records.ts';
 import { collectMeasure, measureCollected } from '../../measure/api.ts';
 import { telemetrySummary } from '../../telemetry/api.ts';
 import {
@@ -364,7 +365,11 @@ async function startJob(state: State, slot: Slot, input: string): Promise<void> 
 async function stop(state: State, instance: InstanceInfo | null): Promise<void> {
   if (!instance || !state.instances.has(instance.id)) return;
   state.instances.delete(instance.id);
-  await stopInstance(state.ctx, instance.id);
+  // the agent of the instance may have released it already, or releases it meanwhile (`ogw instance release`)
+  const record = await recordPath(instance.id, state.ctx.env);
+  await stopInstance(state.ctx, instance.id).catch((error: unknown) => {
+    if (exists(record)) throw error;
+  });
 }
 
 function guide(instance: InstanceInfo | null): { instance: string; playGuide: string } | null {

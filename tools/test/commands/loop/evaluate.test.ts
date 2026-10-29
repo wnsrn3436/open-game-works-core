@@ -51,6 +51,8 @@ interface Fake {
   agentStarting: (id: string) => void;
   /** Wait for a slot with the start's abort signal, before the instance id is reserved. */
   reserving: (signal: AbortSignal | undefined) => Promise<void>;
+  /** Instances their agent released (`ogw instance release`): their records are gone, so a stop fails. */
+  released: Set<string>;
 }
 
 const fake = vi.hoisted(
@@ -69,6 +71,7 @@ const fake = vi.hoisted(
     booting: () => Promise.resolve(),
     agentStarting: () => undefined,
     reserving: () => Promise.resolve(),
+    released: new Set<string>(),
   }),
 );
 
@@ -95,10 +98,11 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     if (fake.stopped.slice(stops).includes(id)) throw new OgwError(`instance not found: ${id}`, 1, { reason: 'start' });
     return { ...info, game: 'g', serverUrl: '', adminSecret: '' };
   }),
-  stopInstance: vi.fn((_ctx: unknown, id: string) => {
+  stopInstance: vi.fn(async (_ctx: unknown, id: string) => {
+    const { OgwError } = await import('../../../src/lib/errors.ts');
+    if (fake.released.has(id)) throw new OgwError(`instance not found: ${id}`);
     fake.running.delete(id);
     fake.stopped.push(id);
-    return Promise.resolve();
   }),
   listInstances: vi.fn(() => {
     if (fake.othersListed !== null && --fake.othersListed <= 0) fake.others = 0;
@@ -264,6 +268,7 @@ beforeEach(() => {
   fake.booting = () => Promise.resolve();
   fake.agentStarting = () => undefined;
   fake.reserving = () => Promise.resolve();
+  fake.released = new Set();
   fake.failStart = (opts) => (typeof opts.fixture === 'string' && opts.fixture.endsWith('broken.json') ? 'fixture' : null);
   counters.play = 0;
   counters.judge = 0;
@@ -486,6 +491,35 @@ describe('ogw loop evaluate', () => {
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.judges[0]?.omittedMoments).toEqual(['broken']);
     expect((fake.agents[0]?.input as { fixtures: unknown[] }).fixtures).toHaveLength(1);
+  });
+
+  it('starts the next judge as soon as a running judge released its instances, and skips their stop', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0, maxConcurrentInstances: 4 });
+    // each judge group holds 4 instances: the second waits until the first judge gives its instances back
+    let secondStartedWhileFirstRan = false;
+    fake.respond = (agent, k) => {
+      if (agent.role === 'play') return null;
+      if (k === 2) return judgeText('A', 'A', 'fail');
+      const ids = [...fake.running].filter((id) => !fake.released.has(id));
+      if (fake.agents.filter((a) => a.role === 'judge').length < 2) {
+        // `ogw instance release` of every instance of its input: the record is gone, the slot free
+        for (const id of ids) {
+          fake.released.add(id);
+          fake.running.delete(id);
+        }
+        return undefined;
+      }
+      secondStartedWhileFirstRan = true;
+      return judgeText('A', 'A', 'fail');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect(secondStartedWhileFirstRan).toBe(true);
+    expect(fake.released.size).toBeGreaterThan(0);
+    expect(fake.stopped.filter((id) => fake.released.has(id))).toEqual([]);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.map((j) => j.status)).toEqual(['done', 'done']);
   });
 
   it('records memorable_moment omitted when the step 4 judge did not get it', async () => {

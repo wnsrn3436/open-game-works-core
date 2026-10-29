@@ -1,6 +1,7 @@
 import type { CommandDef } from '../../lib/command.ts';
 import { measureCommand } from './measure.ts';
+import { release } from './release.ts';
 import { start } from './start.ts';
 import { stop } from './stop.ts';
 
-export const commands: CommandDef[] = [start, stop, measureCommand];
+export const commands: CommandDef[] = [start, stop, release, measureCommand];
