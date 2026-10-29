@@ -215,8 +215,9 @@ Bot playtests and the play agent's instance control use the automation channel o
 
 - `auto`: repeats calling the command and putting in the returned input command until `until` is `true`. When `result` is `null`, it puts in nothing and calls again. The tool leaves at least 2 times `UICore.buttonClickIntervalMs` of the game's merged core settings between two inputs. When that key is absent, it leaves no gap
 - `save`: reads `content` of `get_state`, calls `restart`, and reads `content` again after `boot_stage` becomes `Done`. When the two values differ, the step fails
+- A `restart`, and the `restart` of a `save` step, starts the telemetry again from empty: a `telemetry.` condition after it counts only what happened after it. e.g. after a `save` step, one more `Goal` mark is `goal_intervals` `count_gte` 1
 - condition: `{"path": "<path>", "op": "<op>", "value": <JSON value>}` or `{"all": [<condition>, ...]}`. `path` starts with `state.` (`QAState` of `get_state`) or `telemetry.` (`get_telemetry`) and joins field names with `.`. `op` is `eq`, `ne`, `gte`, `lte` or `count_gte` (array length is `value` or more). A path that does not exist is `false`
-- `goal` holds `{"path": "telemetry.goal_intervals", "op": "count_gte", "value": <n>}` (n is 1 or more). Even for a game with many levels or stages, the end of the scenario is this `goal`
+- `goal` holds `{"path": "telemetry.goal_intervals", "op": "count_gte", "value": <n>}` (n is 1 or more). The bot plays at real speed, and `ogw check` and the shared telemetry of the judges wait for the whole scenario, so each step plays no more than the condition it holds needs. Even for a game with many levels or stages, the end of the scenario is this `goal`
 - The scenario holds all of the below. Static check `bot scenario` blocks a missing one
   - Steps from the first run of a new user through the tutorial to the `Goal` mark of the main loop
   - A `save` step
