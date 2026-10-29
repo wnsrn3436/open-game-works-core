@@ -190,10 +190,10 @@ describe('standard test jobs', () => {
     const t = await calls('trellis2', { images: ['/in.png'], stage: { resolution: 512 }, seed: 42 });
     expect(t.list[0]).toMatchObject({
       cmd: join(t.input.dir, 'venv', 'bin', 'python'),
-      args: [join(t.input.dir, 'git', '0', 'generate.py'), '--image', '/in.png', '--output', join(t.input.out, 'model.glb'), '--resolution', '512', '--no-rembg', '--seed', '42'],
+      args: [join(t.input.dir, 'git', '0', 'generate.py'), '--image', '/in.png', '--output', join(t.input.out, 'model.glb'), '--resolution', '512', '--no-rembg', '--target-faces', '20000', '--seed', '42'],
     });
     const run = await calls('trellis2', { images: ['/in.png'] });
-    expect(run.list[0]?.args.slice(5)).toEqual(['--resolution', '1024', '--no-rembg']);
+    expect(run.list[0]?.args.slice(5)).toEqual(['--resolution', '1024', '--no-rembg', '--target-faces', '20000']);
     await expect(calls('trellis2')).rejects.toThrow('trellis2 takes exactly one --image');
     await expect(calls('trellis2', { images: ['/a', '/b'] })).rejects.toThrow('trellis2 takes exactly one --image');
   });

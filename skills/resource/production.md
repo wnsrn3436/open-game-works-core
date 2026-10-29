@@ -55,7 +55,7 @@ When a target with the body form of a living thing was made by option 3, write i
 The order for `trellis2` follows. All files are kept in a work folder outside the game repo.
 
 1. Make one source illustration with `flux2-klein`. One target, transparent background, 3/4 view, rest pose
-2. Make the mesh with `ogw generation run trellis2 --image <image-alpha.png of the source illustration>`
+2. Make the mesh with `ogw generation run trellis2 --image <image-alpha.png of the source illustration>`. The mesh has 20000 faces
 3. When the `rig` or `animation_3d` resource key of the same target is made in the same request, load the mesh in `blender`, voxel remesh it (the voxel size is the longest side of the bounding box ÷ 256), then decimate it to 20000 triangles or fewer, unwrap new UVs and bake the base color of the original mesh. Attach a skeleton to that mesh and give it automatic weights
 4. Put it in with `## finalize`
 

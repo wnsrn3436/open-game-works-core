@@ -321,12 +321,16 @@ async function qwen3TtsCall(input: CallInput): Promise<Call> {
   return { cmd: pythonOf(input), args, env: await modelEnv(input) };
 }
 
+/** Faces of the `trellis2` mesh: the triangle count `production.md` gives a rigged model. */
+export const TRELLIS_FACES = 20000;
+
 async function trellis2Call(input: CallInput): Promise<Call> {
   const image = input.images[0];
   if (image === undefined || input.images.length > 1) throw new OgwError('trellis2 takes exactly one --image');
   const resolution = String(input.stage?.resolution ?? DEFAULT_RESOLUTION);
   const seed = input.seed === null ? [] : ['--seed', String(input.seed)];
-  const args = [join(gitDir(input), 'generate.py'), '--image', image, '--output', join(input.out, 'model.glb'), '--resolution', resolution, '--no-rembg', ...seed];
+  // a game model of TRELLIS_FACES faces: the default 200000 spends most of the call unwrapping the UVs of a mesh no game draws
+  const args = [join(gitDir(input), 'generate.py'), '--image', image, '--output', join(input.out, 'model.glb'), '--resolution', resolution, '--no-rembg', '--target-faces', String(TRELLIS_FACES), ...seed];
   return { cmd: pythonOf(input), args, env: await modelEnv(input) };
 }
 
