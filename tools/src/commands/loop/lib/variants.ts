@@ -152,7 +152,7 @@ async function judgeVariants(
     const pair: JudgePair = { name: `v${String(entry.k)}`, commit: entry.commit as string, baseline, baselineLatencyMs: 0 };
     pairs.set(pair, entry);
     const first = drawSide();
-    for (let j = 1; j <= settings.loop.judgeVotes; j++) groups.push(judgeGroup(plan, pair, 'main', j, alternateSide(first, j), judgeAgent(settings, j)));
+    for (let j = 1; j <= settings.loop.judgeVotes; j++) groups.push(judgeGroup(plan, pair, 'main', j, alternateSide(first, j), judgeAgent(settings, j), settings.loop.judgeVotes));
   }
   if (groups.length === 0) return null;
   const { slots, failure } = await runJudgingKeepingEnded(ctx, plan, groups);

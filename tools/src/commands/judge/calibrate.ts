@@ -76,7 +76,7 @@ function groupsOf(plan: JudgingPlan, pairs: readonly CalibrationPair[]): { group
   for (const p of pairs.filter((x) => x.missing === null)) {
     const judgePair: JudgePair = { name: p.name, commit: p.commit, baseline: p.baseline, baselineLatencyMs: p.baselineLatencyMs };
     judgePairs.set(judgePair, p);
-    for (let k = 1; k <= p.judges; k++) groups.push(judgeGroup(plan, judgePair, 'main', k, alternateSide(p.first, k), judgeAgent(plan.settings, k)));
+    for (let k = 1; k <= p.judges; k++) groups.push(judgeGroup(plan, judgePair, 'main', k, alternateSide(p.first, k), judgeAgent(plan.settings, k), p.judges));
   }
   return { groups, judgePairs };
 }

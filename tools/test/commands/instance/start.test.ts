@@ -246,6 +246,17 @@ describe('ogw instance start', () => {
     expect(await listRecords(runner.ws.env)).toEqual([]);
   });
 
+  it('starts under the id a caller made beforehand, and refuses an invalid id or one of an existing instance', async () => {
+    runner = setupRunner();
+    const ctx = ctxOf(runner);
+    const info = await startInstance(ctx, { game: 'g', id: 'mvpicked01' });
+    expect(info.id).toBe('mvpicked01');
+    expect((await readRecord('mvpicked01', runner.ws.env)).id).toBe('mvpicked01');
+    await expect(startInstance(ctx, { game: 'g', id: 'mvpicked01' })).rejects.toThrow('instance mvpicked01 exists');
+    await expect(startInstance(ctx, { game: 'g', id: '../x' })).rejects.toThrow('invalid instance id: ../x');
+    expect((await listRecords(runner.ws.env)).map((r) => r.id)).toEqual(['mvpicked01']);
+  });
+
   it('fails on an unknown commit and leaves no record', async () => {
     runner = setupRunner();
     const run = await ogw(runner.ws, ['instance', 'start', 'g', '--commit', 'deadbeef']);

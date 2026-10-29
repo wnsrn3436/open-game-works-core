@@ -168,7 +168,7 @@ describe('broker', () => {
         expect(refused).toMatchObject({ code: 1, stdout: '', stdinRead: 0 });
         expect(refused.stderr).toBe(
           `ogw broker: ${words} is not a command of the play and judge agents; they run only ogw input, ogw capture, ogw log, ` +
-            'ogw telemetry, ogw telemetry compare, ogw step-mode, ogw step, ogw frames, ogw instance release, ogw job status, ogw job wait\n',
+            'ogw telemetry, ogw telemetry compare, ogw step-mode, ogw step, ogw frames, ogw instance release, ogw instance wait, ogw job status, ogw job wait\n',
         );
       }
     } finally {

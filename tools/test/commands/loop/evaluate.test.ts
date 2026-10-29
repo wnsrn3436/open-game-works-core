@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { requestRelease } from '../../../src/commands/instance/lib/releases.ts';
 import { jobsDir } from '../../../src/lib/jobs.ts';
-import { alternateSide, evaluateDeps, judgeAgent } from '../../../src/commands/loop/lib/evaluate.ts';
+import { alternateSide, evaluateDeps, judgeAgent, judgeBudget } from '../../../src/commands/loop/lib/evaluate.ts';
 import type { EvaluateFile } from '../../../src/commands/loop/lib/files.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { commit, git, openBuildRun, openLoopRun, read, readJsonFile, REFERENCE_MD, setRun, setupGame, write, type TestGame } from './helpers.ts';
@@ -82,7 +82,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     if (hooks.signal?.aborted === true) throw new OgwError('instance start was stopped', 1, { reason: 'start' });
     const reason = fake.failStart(opts);
     if (reason !== null) throw new OgwError(`cannot start ${String(opts.fixture ?? opts.commit)}`, 1, { reason });
-    const id = `i${String(fake.instances.length + 1)}`;
+    const id = (opts.id as string | undefined) ?? `i${String(fake.instances.length + 1)}`;
     const root = join(fake.root, '..', 'instances', id);
     const fixture = opts.fixture as string | undefined;
     const fixtureText = fixture === undefined ? undefined : existsSync(fixture) ? readFileSync(fixture, 'utf8') : null;
@@ -522,6 +522,112 @@ describe('ogw loop evaluate', () => {
     expect(existsSync(releases) ? readdirSync(releases) : []).toEqual([]);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.judges.map((j) => j.status)).toEqual(['done', 'done']);
+  });
+
+  /** A loop whose three judge moments have save fixtures, for judges that start with part of their instances. */
+  async function threeMoments(settings: Record<string, unknown>): Promise<TestGame> {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0, ...settings });
+    write(g.root, `${R}/request.md`, '## judge moments\n\n- `m1`: one\n- `m2`: two\n- `m3`: three\n');
+    for (const m of ['m1', 'm2', 'm3']) write(g.root, `client/dev/bot/fixtures/${m}.json`, '{"steps": []}\n');
+    const head = commit(g.root);
+    write(g.root, `${R}/check-1.json`, { commit: head, checks: PASS_ALL.map((name) => ({ name, platform: null, result: 'pass', failures: [], warnings: [] })), gate: 'pass' });
+    commit(g.root);
+    return g;
+  }
+
+  /** `ogw instance release` as the broker sandbox leaves it, written before the poll returns. */
+  function release(jobs: string, agent: FakeAgent, id: string): void {
+    mkdirSync(join(jobs, 'instance-releases', agent.id), { recursive: true });
+    writeFileSync(join(jobs, 'instance-releases', agent.id, id), '');
+  }
+
+  function judgeIds(agent: FakeAgent): { first: string[]; fixtures: string[] } {
+    const input = agent.input as { A: { instance: string }; B: { instance: string }; fixtures: { A: string | null; B: string | null }[] };
+    return { first: [input.A.instance, input.B.instance], fixtures: input.fixtures.flatMap((f) => [f.A, f.B]).filter((i): i is string => i !== null) };
+  }
+
+  it('starts each step 4 judge with its share of the instance slots, so the judges run at once, and starts the rest as it gives instances back', async () => {
+    const g = await threeMoments({ maxConcurrentInstances: 8 });
+    const jobs = await jobsDir(g.ws.env);
+    const judgesWhenFirstEnded: number[] = [];
+    const released = new Set<string>();
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const { first, fixtures } = judgeIds(agent);
+      const started = new Set(fake.instances.map((i) => i.id));
+      // the judge plays the save fixture pairs in order and gives each back
+      const next = fixtures.filter((id) => started.has(id) && !released.has(id));
+      if (next.length === 0 && fixtures.every((id) => released.has(id))) {
+        judgesWhenFirstEnded.push(fake.agents.filter((a) => a.role === 'judge').length);
+        for (const id of first) release(jobs, agent, id);
+        return judgeText('A', 'A', 'fail');
+      }
+      for (const id of next) {
+        released.add(id);
+        release(jobs, agent, id);
+      }
+      return undefined;
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const judges = fake.agents.filter((a) => a.role === 'judge');
+    // both step 4 judges ran before either ended
+    expect(judgesWhenFirstEnded[0]).toBeGreaterThanOrEqual(2);
+    for (const judge of judges.slice(0, 2)) {
+      const { first, fixtures } = judgeIds(judge);
+      expect(fixtures).toHaveLength(6);
+      // every instance its input names was started, under that id
+      for (const id of [...first, ...fixtures]) expect(fake.instances.some((i) => i.id === id)).toBe(true);
+    }
+    // never more than maxConcurrentInstances at once
+    expect(Math.max(...fake.runningAtStart)).toBeLessThan(8);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.filter((j) => j.kind === 'main').map((j) => j.status)).toEqual(['done', 'done']);
+  });
+
+  it('notes for ogw instance wait a later instance of a judge whose save fixture step failed, and clears the notes when the judge ends', async () => {
+    const g = await threeMoments({ maxConcurrentInstances: 8 });
+    // the m3 save fixture fails only for an instance started after its judge
+    fake.failStart = (opts) => (String(opts.fixture ?? '').endsWith('m3.json') && opts.id !== undefined ? 'fixture' : null);
+    const jobs = await jobsDir(g.ws.env);
+    const notes = join(jobs, 'instance-unstarted');
+    const seen = new Map<string, string>();
+    const released = new Set<string>();
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const input = agent.input as { fixtures: { moment: { name: string }; A: string | null; B: string | null }[] };
+      const m3 = input.fixtures.find((f) => f.moment.name === 'm3');
+      const m3Ids = [m3?.A, m3?.B].filter((i): i is string => typeof i === 'string');
+      for (const id of m3Ids) {
+        const note = join(notes, agent.id, id);
+        if (existsSync(note)) seen.set(id, readFileSync(note, 'utf8'));
+      }
+      if (m3Ids.every((id) => seen.has(id))) return judgeText('A', 'A', 'fail');
+      const started = new Set(fake.instances.map((i) => i.id));
+      for (const id of judgeIds(agent).fixtures.filter((i) => started.has(i) && !released.has(i))) {
+        released.add(id);
+        release(jobs, agent, id);
+      }
+      return undefined;
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect(seen.size).toBe(4);
+    expect([...new Set(seen.values())]).toEqual(['its save fixture step failed']);
+    expect(existsSync(notes) ? readdirSync(notes) : []).toEqual([]);
+  });
+
+  it('gives a judge its share of maxConcurrentInstances, at least the first-screen instances and one save fixture pair', () => {
+    expect(judgeBudget(8, 2, 3, 2)).toBe(4);
+    expect(judgeBudget(16, 2, 3, 2)).toBe(8);
+    expect(judgeBudget(12, 2, 3, 2)).toBe(6);
+    expect(judgeBudget(4, 2, 3, 2)).toBe(4);
+    expect(judgeBudget(6, 2, 0, 2)).toBe(2);
+    expect(judgeBudget(8, 1, 3, 1)).toBe(4);
+    expect(judgeBudget(null, 2, 3, 2)).toBe(8);
+    expect(judgeBudget(8, 2, 3, 0)).toBe(8);
   });
 
   it('records memorable_moment omitted when the step 4 judge did not get it', async () => {

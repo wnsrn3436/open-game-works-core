@@ -25,6 +25,7 @@ export const BROKER_COMMANDS: readonly (readonly string[])[] = [
   ['step'],
   ['frames'],
   ['instance', 'release'],
+  ['instance', 'wait'],
   ['job', 'status'],
   ['job', 'wait'],
 ];
