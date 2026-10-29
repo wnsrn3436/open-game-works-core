@@ -7,7 +7,7 @@ import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettin
 import { binaryBuild } from '../data/lib/binary-build.ts';
 import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
 import { BOT_PLAYTEST_POLL_MS, botPlaytest, readScenario } from './lib/bot-playtest.ts';
-import { gameEngine } from './lib/engine.ts';
+import { gameEngine, importClient } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
 import { gameChecks, loopCheck, runTimeLimitMs, slotsOf, startTimeLimitMs } from './lib/loop.ts';
 import type { Evidence } from './lib/evidence.ts';
@@ -88,9 +88,16 @@ async function regression(ctx: Context, game: GameRepo, godot: string, path: str
 
 /**
  * `ogw check <game> --bot`: the bot playtest of `--loop` (no blocker and full flow) on the checkout as it is, with no
- * result file, so that the content agent sees them before the lead agent's check.
+ * result file, so that the content agent sees them before the lead agent's check. It imports the client first, as
+ * `--loop` does, so that the client does not run on an import older than the checkout.
  */
-async function bot(ctx: Context, game: GameRepo, db: 'postgresql' | undefined): Promise<CommandResult> {
+async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
+  const importFailure = await importClient(ctx, godot, game.root);
+  if (importFailure !== null) {
+    const failure = [{ where: 'client/project.godot:1', message: `the client import failed: ${importFailure}`, evidence: [] }];
+    const checks = [checkResult('no blocker', null, failure), checkResult('full flow', null, failure)];
+    return { exitCode: 1, text: checks.flatMap(checkText).join('\n'), data: { checks }, summary: summary(checks) };
+  }
   const scenario = await readScenario(game.root);
   const dir = await newPrivateTempFolder('ogw-check-', ctx.env);
   const evidence = { root: dir, dir: '.', relative: false };
@@ -98,15 +105,12 @@ async function bot(ctx: Context, game: GameRepo, db: 'postgresql' | undefined): 
   try {
     checks = await botPlaytest(ctx, game.name, scenario, { evidence, slots: await slotsOf(ctx), db, pollMs: timing.pollMs });
   } finally {
-    // as for --regression: kept only while a printed failure points into it
-    if (!checks.some((c) => c.failures.some((f) => f.evidence.length > 0))) await rm(dir, { recursive: true, force: true });
+    // kept while a check did not pass: its logs, also those of an instance that did not start, are there
+    if (checks.length > 0 && checks.every((c) => c.result === 'pass')) await rm(dir, { recursive: true, force: true });
   }
-  return {
-    exitCode: checks.length > 0 && checks.every((c) => c.result === 'pass') ? 0 : 1,
-    text: checks.flatMap(checkText).join('\n'),
-    data: { checks },
-    summary: summary(checks),
-  };
+  const passed = checks.length > 0 && checks.every((c) => c.result === 'pass');
+  const lines = [...checks.flatMap(checkText), ...(passed ? [] : [`evidence: ${dir}`])];
+  return { exitCode: passed ? 0 : 1, text: lines.join('\n'), data: { checks, ...(passed ? {} : { evidence: dir }) }, summary: summary(checks) };
 }
 
 async function loop(ctx: Context, game: GameRepo, settings: GameSettings, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
@@ -147,7 +151,7 @@ async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult>
   if (mode === 'placeholder') return single(checkResult('no placeholder', null, await placeholderFailures(ctx, game)));
   if (mode === 'static') return single(await staticCheck(ctx, game, db ? { db } : {}));
   if (mode === 'regression') return regression(ctx, game, godot, path, db);
-  if (mode === 'bot') return bot(ctx, game, db);
+  if (mode === 'bot') return bot(ctx, game, godot, db);
   return loop(ctx, game, settings, godot, db);
 }
 

@@ -276,6 +276,9 @@ describe('ogw check --bot', () => {
       const before = await head(root);
       const run = await ogw(ws, ['check', 'g', '--bot']);
       expect(run).toEqual({ code: 0, stdout: 'no blocker: pass\nfull flow: pass\n', stderr: '' });
+      // the client is imported first, as --loop does
+      const godot = vi.mocked(requireEngine).mock.results[0]?.value as Promise<string>;
+      expect(readFileSync(join(dirname(await godot), 'imports'), 'utf8')).toBe('import\n');
       expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless', db: undefined }]);
       expect(staticCheck).not.toHaveBeenCalled();
       expect(await head(root)).toBe(before);
@@ -287,6 +290,10 @@ describe('ogw check --bot', () => {
       const failing = await ogw(ws, ['check', 'g', '--bot']);
       expect(failing.code).toBe(1);
       expect(failing.stdout).toMatch(/^no blocker: pass\nfull flow: fail\n/);
+      // the evidence folder is kept and named while a check did not pass
+      const kept = /\nevidence: (\/.+)\n$/.exec(failing.stdout)?.[1] ?? '';
+      expect(existsSync(kept)).toBe(true);
+      expect(folders()).toHaveLength(1);
       expect(await head(root)).toBe(before);
     } finally {
       remove();
