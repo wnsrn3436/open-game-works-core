@@ -21,6 +21,34 @@ function rowSimulationOwner(message: string): string {
   return message.trim().split(/\s+/)[0] === 'error' ? 'client content' : 'data';
 }
 
+/** The kinds of UI quality problems (`check/lib/ui-quality.ts`), as their messages start. */
+const UI_KINDS: readonly [RegExp, string][] = [
+  [/^low contrast /, 'low contrast'],
+  [/^small text /, 'small text'],
+  [/^flat panel /, 'flat panel'],
+  [/^empty panel /, 'empty panel'],
+  [/^clipped /, 'clipped'],
+  [/^overlap /, 'overlap'],
+  [/^[0-9]+ text sizes /, 'text sizes'],
+  [/^gamepad focus does not reach /, 'gamepad focus'],
+];
+
+function kebab(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * The fields of a UI quality failure that need no judgement: one defect per problem kind in one prefab or scene, the
+ * same `id` in every iteration and every resolution, language and text scale (`game-loop` `## defect list`). Empty for
+ * a failure that names no kind or no prefab or scene.
+ */
+export function uiQualityFields(message: string): Partial<Finding> {
+  const kind = UI_KINDS.find(([pattern]) => pattern.test(message))?.[1];
+  const place = / in ((?:prefab|scene)\/[^\s()]+) \(/.exec(message)?.[1];
+  if (kind === undefined || place === undefined) return {};
+  return { id: `ui-${kebab(kind)}-${kebab(place)}`, severity: 'major', owner: 'client content', why: `UI quality: ${kind} in ${place}` };
+}
+
 export function checkFindings(check: CheckFile, checkPath: string): Finding[] {
   const out: Finding[] = [];
   for (const c of check.checks) {
@@ -32,6 +60,7 @@ export function checkFindings(check: CheckFile, checkPath: string): Finding[] {
         where: f.where,
         what: f.message,
         evidence: [`${checkPath}#${c.name}`, ...f.evidence],
+        ...(c.name === 'UI quality' ? uiQualityFields(f.message) : {}),
       }));
     }
   }
