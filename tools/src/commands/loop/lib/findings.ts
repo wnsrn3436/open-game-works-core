@@ -4,7 +4,8 @@ import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { buildTagName, parseHardeningRecordName } from '../../build/lib/names.ts';
-import { isSeverity, type Finding, type FindingsFile } from './defects.ts';
+import { parseKey, readList } from '../../resource/lib/list.ts';
+import { isSeverity, type Defect, type DefectsFile, type Finding, type FindingsFile } from './defects.ts';
 import type { CheckFile, EvaluateFile, MeasureFile } from './files.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeDefects, observations, referenceRows } from './results.ts';
@@ -46,7 +47,7 @@ export function uiQualityFields(message: string): Partial<Finding> {
   const kind = UI_KINDS.find(([pattern]) => pattern.test(message))?.[1];
   const place = / in ((?:prefab|scene)\/[^\s()]+) \(/.exec(message)?.[1];
   if (kind === undefined || place === undefined) return {};
-  return { id: `ui-${kebab(kind)}-${kebab(place)}`, severity: 'major', owner: 'client content', why: `UI quality: ${kind} in ${place}` };
+  return { id: `${kebab(kind)}-${kebab(place)}`, severity: 'major', owner: 'client content', why: `UI quality: ${kind} in ${place}` };
 }
 
 export function checkFindings(check: CheckFile, checkPath: string): Finding[] {
@@ -142,6 +143,34 @@ export function sortOut(findings: readonly Finding[]): FindingsFile {
   return { findings: kept, discarded };
 }
 
+/** Resource types of what UI is drawn with: while one of them is a placeholder, a UI quality failure may be its doing. */
+const UI_RESOURCE_TYPES: readonly string[] = ['nine_slice', 'background', 'font', 'icon', 'image'];
+
+/**
+ * The UI quality fields `checkFindings` filled, settled against the run: the `id` of a defect of `defects.json` with
+ * the same kind and prefab or scene is kept, so that a defect keeps its `id` (also one the lead agent gave). While a
+ * resource of a UI resource type is `placeholder` or `requested`, `severity`, `owner` and `why` are left to the lead
+ * agent, as the placeholder may be what fails.
+ */
+export function settleUiFindings(findings: readonly Finding[], defects: readonly Pick<Defect, 'id' | 'source' | 'what'>[], uiPlaceholders: boolean): Finding[] {
+  const known = new Map<string, string>();
+  for (const d of defects) {
+    const id = d.source === 'check' ? (uiQualityFields(d.what).id ?? undefined) : undefined;
+    if (id !== undefined && !known.has(id)) known.set(id, d.id);
+  }
+  return findings.map((f) => {
+    const id = f.source === 'check' ? (uiQualityFields(f.what).id ?? undefined) : undefined;
+    if (id === undefined || f.id !== id) return f;
+    const settled = { ...f, id: known.get(id) ?? id };
+    return uiPlaceholders ? { ...settled, severity: null, owner: null, why: null } : settled;
+  });
+}
+
+async function uiPlaceholders(game: GameRepo): Promise<boolean> {
+  const rows = await readList(game.root).catch(() => []);
+  return rows.some((r) => (r.status === 'placeholder' || r.status === 'requested') && UI_RESOURCE_TYPES.includes(parseKey(r.key)?.type ?? ''));
+}
+
 /**
  * Findings of iteration `n`: its check file, and when it has an evaluate file, its measure, done plays and done judges.
  * A confirmation iteration takes only the `blocker` observations of the plays.
@@ -150,7 +179,11 @@ export async function iterationFindings(game: GameRepo, run: RunState, n: number
   const confirming = confirmOf(run, n) !== null;
   const all: Finding[] = [];
   const { checkRel, check, evaluate, measure } = await iterationResults(game, run, n);
-  if (check) all.push(...checkFindings(check, checkRel));
+  if (check) {
+    const defectsText = await readGameText(game, runRel(run, 'defects.json'));
+    const defects = defectsText === null ? [] : (JSON.parse(defectsText) as DefectsFile).defects;
+    all.push(...settleUiFindings(checkFindings(check, checkRel), defects, await uiPlaceholders(game)));
+  }
   if (evaluate) {
     all.push(...memorableMomentFindings(evaluate, runRel(run, `evaluate-${String(n)}.json`)));
     if (evaluate.measure !== null && measure) all.push(...measureFindings(measure, evaluate.measure));
