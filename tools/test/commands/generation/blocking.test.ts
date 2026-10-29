@@ -101,19 +101,19 @@ describe('installMethodJob', () => {
     expect(mocks.startBackground).toHaveBeenCalledWith(ctx, expect.objectContaining({ name: ['generation', 'install'] }), { positionals: ['audio'], values: {}, raw: ['audio'] }, null);
   });
 
-  it('installs every method, tools first, for a provider method while tools.ffmpeg is not installed', async () => {
+  it('does not start the install of a provider method while tools.ffmpeg is not installed', async () => {
     const { ctx } = await open();
-    expect(await installMethodJob(ctx, 'sprite')).toEqual({ job: 'new1', argv: ['generation', 'install'] });
-    expect(mocks.startBackground).toHaveBeenCalledWith(ctx, expect.objectContaining({ name: ['generation', 'install'] }), { positionals: [], values: {}, raw: [] }, null);
+    await expect(installMethodJob(ctx, 'sprite')).rejects.toThrow('tools.ffmpeg is not installed: ogw generation install installs it');
+    expect(mocks.startBackground).not.toHaveBeenCalled();
   });
 
   it('gives the running install job of that method or of every method instead of starting one', async () => {
     const { ws, ctx } = await open();
     await addJob(ws, { command: 'generation install', argv: ['generation', 'install', 'audio'] });
-    await addJob(ws, { command: 'generation install', argv: ['generation', 'install', 'sprite'], status: 'done' });
+    await addJob(ws, { command: 'generation install', argv: ['generation', 'install', 'flux2-klein'], status: 'done' });
     const audio = await installMethodJob(ctx, 'audio');
     expect(audio).toEqual({ job: expect.stringMatching(/^job\d+x$/) as unknown, argv: ['generation', 'install', 'audio'] });
-    expect((await installMethodJob(ctx, 'sprite')).job).toBe('new1');
+    expect((await installMethodJob(ctx, 'flux2-klein')).job).toBe('new1');
     const all = await addJob(ws, { command: 'generation install', argv: ['generation', 'install'] });
     mocks.startBackground.mockClear();
     expect(await installMethodJob(ctx, 'sprite')).toEqual({ job: all.id, argv: ['generation', 'install'] });
