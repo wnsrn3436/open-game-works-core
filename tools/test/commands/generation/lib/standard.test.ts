@@ -235,7 +235,8 @@ const STUBS: Record<string, string> = {
     'class backends:',
     '    mps = _Device("mps")',
     'def manual_seed(seed):',
-    '    os.environ["STUB_SEED"] = str(seed)',
+    '    from stub_record import record',
+    '    record("seed", seed)',
     'class Tensor:',
     '    def __init__(self, shape):',
     '        self.shape = tuple(shape)',
@@ -355,6 +356,7 @@ function runDriver(name: string, args: string[], env: Record<string, string> = {
   mkdirSync(join(dir, 'home'));
   mkdirSync(join(dir, 'out'));
   writeFileSync(join(dir, 'prompt.txt'), 'A coin pickup.\n');
+  writeFileSync(join(dir, 'home', 'line.json'), JSON.stringify({ text: 'Hi.', speaker: 'Ryan', language: 'English' }));
   const items = jobs.map((job) => Object.fromEntries(Object.entries(job).map(([k, v]) => [k, typeof v === 'string' ? v.replaceAll('<dir>', dir) : v])));
   writeFileSync(join(dir, 'jobs.json'), JSON.stringify(items));
   const script = join(dir, 'drivers', driverFile(name));
@@ -420,17 +422,20 @@ describe.runIf(python !== null)('drivers against stub libraries', () => {
     expect(readFileSync(join(run.dir, 'record.json.loads'), 'utf8')).toBe('load\n');
   });
 
-  it('qwen3-tts loads the model once, makes each voice line and writes why one failed', () => {
-    const dir = (run: DriverRun): string => run.dir;
-    const run = runDriver('qwen3-tts', ['<dir>/model', '<dir>/jobs.json'], {}, [
+  it('qwen3-tts loads the model once, makes each voice line with its seed and writes why one failed', () => {
+    const run = runDriver('qwen3-tts', ['<dir>/model', '<dir>/jobs.json'], { STUB_LINE: '1' }, [
       { prompt: '<dir>/prompt.txt', target: '<dir>/out/voice.wav', seed: 7 },
-      { prompt: '<dir>/line.json', target: '<dir>/home/voice.wav', seed: -1 },
+      { prompt: '<dir>/home/line.json', target: '<dir>/home/voice.wav', seed: 9 },
     ]);
-    // prompt.txt is not JSON: the first line fails, the second (written below) is not there either
+    // prompt.txt is not JSON: the first line fails; the second is made
     expect(run.code).toBe(1);
-    expect(readFileSync(join(dir(run), 'out', 'ogw-error.txt'), 'utf8')).toMatch(/^JSONDecodeError: /);
-    expect(existsSync(join(dir(run), 'home', 'ogw-error.txt'))).toBe(true);
-    expect(run.record).toMatchObject({ from_pretrained: { model: join(dir(run), 'model'), device: 'cpu', dtype: 'float32' } });
+    expect(readFileSync(join(run.dir, 'out', 'ogw-error.txt'), 'utf8')).toMatch(/^JSONDecodeError: /);
+    expect(readdirSync(join(run.dir, 'home')).filter((f) => f.endsWith('.wav'))).toEqual(['voice.wav']);
+    expect(run.record).toMatchObject({
+      from_pretrained: { model: join(run.dir, 'model'), device: 'cpu', dtype: 'float32' },
+      voice: { text: 'Hi.', language: 'English', speaker: 'Ryan', instruct: '' },
+      seed: 9,
+    });
   });
 
   const moss = (durationMs: number, seed: string, env: Record<string, string> = {}): DriverRun =>

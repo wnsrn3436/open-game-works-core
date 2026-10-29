@@ -346,6 +346,30 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     expect(await refused(['--batch', join(ws.root, 'batch.json'), '--key', 'sfx/a'])).toContain('--batch goes without --key, --prompt, --image and --out');
   });
 
+  it('keeps an output file of an out folder that an item takes as its input image', async () => {
+    setJob('audio', {
+      stages: [],
+      prompt: '',
+      image: false,
+      outputs: ['sound.wav'],
+      call: (input) => Promise.resolve({ cmd: '/bin/sh', args: ['-c', `touch "${input.out}/sound.wav"`] }),
+      // each item reads its input image, then makes its output
+      batch: (inputs) => Promise.resolve({ cmd: '/bin/sh', args: ['-c', inputs.map((i) => `cp "${i.images[0] ?? ''}" "${i.out}/seen.txt" && echo new > "${i.out}/sound.wav"`).join(' && ')] }),
+    });
+    const { ws, env } = workspace(methods);
+    makeGame(ws, 'g', { 'resource/resources.csv': resources });
+    expect((await ogw(ws, ['generation', 'install', 'audio'], { env })).code).toBe(0);
+    writeFileSync(join(ws.root, 'p.txt'), 'p');
+    const out = join(ws.root, 'edit');
+    mkdirSync(out, { recursive: true });
+    // an edit in place: the item's input is the output file of its own out folder
+    writeFileSync(join(out, 'sound.wav'), 'IN');
+    writeFileSync(join(ws.root, 'e.json'), JSON.stringify([{ key: 'sfx/a', prompt: join(ws.root, 'p.txt'), images: [join(out, 'sound.wav')], out }]));
+    const run = await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--batch', join(ws.root, 'e.json')], { env });
+    expect(run.code).toBe(0);
+    expect(readFileSync(join(out, 'seen.txt'), 'utf8')).toBe('IN');
+  });
+
   it('takes an item made before the call was cut off at its time limit as ok, and the rest as timeout', async () => {
     setJob('audio', {
       stages: [],
@@ -362,13 +386,13 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     const batch = [1, 2].map((n) => ({ key: 'sfx/a', prompt: join(ws.root, 'p.txt'), out: join(ws.root, `t${String(n)}`) }));
     writeFileSync(join(ws.root, 't.json'), JSON.stringify(batch));
     const saved = LIMITS.programMs;
-    LIMITS.programMs = 1000;
+    (LIMITS as { programMs: number }).programMs = 1000;
     try {
       const run = await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--batch', join(ws.root, 't.json'), '--json'], { env });
       expect(run.code).toBe(1);
       expect((JSON.parse(run.stdout) as { items: { result: string }[] }).items.map((i) => i.result)).toEqual(['ok', 'timeout']);
     } finally {
-      LIMITS.programMs = saved;
+      (LIMITS as { programMs: number }).programMs = saved;
     }
   }, 30_000);
 

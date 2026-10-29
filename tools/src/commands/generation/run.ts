@@ -184,7 +184,14 @@ export const runCommand: CommandDef = {
               return { runs: [run], results: [{ key: (items[0] as Item).key, out: input.out, result: run.result }] };
             }
             // what an out folder already holds is not taken for what this call made
-            for (const item of items) for (const output of [...(job.outputs ?? []), ITEM_ERROR]) await rm(join(item.out, output), { force: true });
+            // an input image of an item (an image edited in place) is never removed
+            const inputImages = new Set(await Promise.all(items.flatMap((i) => i.images).map(realPathOf)));
+            for (const item of items) {
+              for (const output of [...(job.outputs ?? []), ITEM_ERROR]) {
+                const path = join(item.out, output);
+                if (!inputImages.has(await realPathOf(path))) await rm(path, { force: true });
+              }
+            }
             return job.batch === undefined ? await eachItem(ctx, method, job, inputs, items) : await oneCall(ctx, method, job, inputs, items);
           } finally {
             await rm(work, { recursive: true, force: true });
