@@ -589,7 +589,7 @@ describe('ogw loop evaluate', () => {
   it('notes for ogw instance wait a later instance of a judge whose save fixture step failed, and clears the notes when the judge ends', async () => {
     const g = await threeMoments({ maxConcurrentInstances: 8 });
     // the m3 save fixture fails only for an instance started after its judge
-    fake.failStart = (opts) => (String(opts.fixture ?? '').endsWith('m3.json') && opts.id !== undefined ? 'fixture' : null);
+    fake.failStart = (opts) => (typeof opts.fixture === 'string' && opts.fixture.endsWith('m3.json') && opts.id !== undefined ? 'fixture' : null);
     const jobs = await jobsDir(g.ws.env);
     const notes = join(jobs, 'instance-unstarted');
     const seen = new Map<string, string>();
