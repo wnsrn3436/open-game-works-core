@@ -28,7 +28,7 @@ How the resource sub-agent makes final resources, and their post-processing. Res
   - A resource made with the temporary method becomes `temporary` in `## finalize`. `--pending` of the next run requests it again
 - A sprite-gen method for an image type is run only through `cli` as `gen --provider <provider of that method> --prompt-file <file> --out <work folder>/image.png`, with `--transparent` when `alpha` of `spec` is `true` and `--ref <file>` per image to edit from (at most 5). Put in `image.png` with `--file`
 - A `local-model` method is called only with `ogw generation run <method> --game <game> --key <resource key> --prompt <file> [--image <file>...] --out <dir>`. The tool runs it with the stage of that method from `ogw generation methods`. `--out` is a folder outside the game repo. The `flux2-klein` of `rig-2d` and `trellis2` is also called this way with that resource key
-- When several keys of one request use the same `local-model` method, make them in one call with `ogw generation run <method> --game <game> --batch <file>`, a JSON array of `{"key", "prompt", "images", "out"}` (`images` optional), one item per key with its own `--out` folder. `moss-sfx`, `ace-step` and `qwen3-tts` then load the model once for all of them. The output shows `ok` or `failed` per key
+- When several keys of one request use the same `local-model` method, make them in one call with `ogw generation run <method> --game <game> --batch <file>`, a JSON array of `{"key", "prompt", "images", "out"}` (`images` optional), one item per key with its own `--out` folder. `moss-sfx`, `ace-step` and `qwen3-tts` then load the model once for all of them. The output shows per key `ok`, or `failed` with the reason, or `timeout`
 - `ogw generation run` runs only one `local-model` task at a time on one host. When a previous task exists, it waits until that task ends, then starts
 - The content of the `--prompt` file of `ogw generation run`, `--image`, and the files produced in `--out` are as below per method
 
@@ -56,7 +56,7 @@ When a target with the body form of a living thing was made by option 3, write i
 The order for `trellis2` follows. All files are kept in a work folder outside the game repo.
 
 1. Make one source illustration with `flux2-klein`. One target, transparent background, 3/4 view, rest pose
-2. Make the mesh with `ogw generation run trellis2 --image <image-alpha.png of the source illustration>`. The mesh has 20000 faces
+2. Make the mesh with `ogw generation run trellis2 --image <image-alpha.png of the source illustration>`. The mesh has about 20000 faces
 3. When the `rig` or `animation_3d` resource key of the same target is made in the same request, load the mesh in `blender`, voxel remesh it (the voxel size is the longest side of the bounding box ÷ 256), then decimate it to 20000 triangles or fewer, unwrap new UVs and bake the base color of the original mesh. Attach a skeleton to that mesh and give it automatic weights
 4. Put it in with `## finalize`
 

@@ -234,6 +234,8 @@ const STUBS: Record<string, string> = {
     'cuda = _Device("cuda")',
     'class backends:',
     '    mps = _Device("mps")',
+    'def manual_seed(seed):',
+    '    os.environ["STUB_SEED"] = str(seed)',
     'class Tensor:',
     '    def __init__(self, shape):',
     '        self.shape = tuple(shape)',
@@ -284,7 +286,26 @@ const STUBS: Record<string, string> = {
     '        return torch.Tensor((1, 1, int(self.sample_rate * seconds)))',
   ].join('\n'),
   'acestep/__init__.py': '',
-  'acestep/handler.py': ['from stub_record import record', 'class AceStepHandler:', '    def initialize_service(self, **kwargs):', '        record("initialize_service", kwargs)'].join('\n'),
+  'acestep/handler.py': [
+    'import os',
+    'from stub_record import record',
+    'class AceStepHandler:',
+    '    def initialize_service(self, **kwargs):',
+    '        record("initialize_service", kwargs)',
+    '        open(os.environ["STUB_RECORD"] + ".loads", "a").write("load\\n")',
+  ].join('\n'),
+  'qwen_tts/__init__.py': [
+    'import torch',
+    'from stub_record import record',
+    'class Qwen3TTSModel:',
+    '    @classmethod',
+    '    def from_pretrained(cls, model, device_map, dtype):',
+    '        record("from_pretrained", {"model": model, "device": device_map, "dtype": dtype})',
+    '        return cls()',
+    '    def generate_custom_voice(self, text, language, speaker, instruct):',
+    '        record("voice", {"text": text, "language": language, "speaker": speaker, "instruct": instruct})',
+    '        return [torch.Tensor((24000,))], 24000',
+  ].join('\n'),
   'acestep/llm_inference.py': [
     'import os',
     'from stub_record import record',
@@ -380,11 +401,36 @@ describe.runIf(python !== null)('drivers against stub libraries', () => {
     const none = ace('42', { timesignature: '4' });
     expect(none.code).not.toBe(0);
     expect(none.stderr).toContain('the LM chose no bpm');
-    expect(existsSync(join(none.dir, 'out', 'music.json'))).toBe(false);
+    expect(readdirSync(join(none.dir, 'out'))).toEqual(['ogw-error.txt']);
+    expect(readFileSync(join(none.dir, 'out', 'ogw-error.txt'), 'utf8')).toBe('RuntimeError: the LM chose no bpm\n');
     const lm = ace('42', { bpm: 120 }, { STUB_LM_FAIL: '1' });
     expect(lm.code).not.toBe(0);
     expect(lm.stderr).toContain('lm failed');
     expect(lm.record).not.toHaveProperty('params');
+  });
+
+  it('ace-step loads the models once for every song and goes on past a song it cannot make', () => {
+    const run = runDriver('ace-step', ['<dir>/checkpoints', '<dir>/jobs.json'], { STUB_LM_METADATA: JSON.stringify({ bpm: 120 }) }, [
+      { prompt: '<dir>/missing.txt', duration_ms: 30000, out: '<dir>/out', seed: 1 },
+      { prompt: '<dir>/prompt.txt', duration_ms: 30000, out: '<dir>/home', seed: 2 },
+    ]);
+    expect(run.code).toBe(1);
+    expect(readFileSync(join(run.dir, 'out', 'ogw-error.txt'), 'utf8')).toMatch(/^FileNotFoundError: /);
+    expect(readdirSync(join(run.dir, 'home')).filter((f) => f.startsWith('music')).sort()).toEqual(['music.json', 'music.wav']);
+    expect(readFileSync(join(run.dir, 'record.json.loads'), 'utf8')).toBe('load\n');
+  });
+
+  it('qwen3-tts loads the model once, makes each voice line and writes why one failed', () => {
+    const dir = (run: DriverRun): string => run.dir;
+    const run = runDriver('qwen3-tts', ['<dir>/model', '<dir>/jobs.json'], {}, [
+      { prompt: '<dir>/prompt.txt', target: '<dir>/out/voice.wav', seed: 7 },
+      { prompt: '<dir>/line.json', target: '<dir>/home/voice.wav', seed: -1 },
+    ]);
+    // prompt.txt is not JSON: the first line fails, the second (written below) is not there either
+    expect(run.code).toBe(1);
+    expect(readFileSync(join(dir(run), 'out', 'ogw-error.txt'), 'utf8')).toMatch(/^JSONDecodeError: /);
+    expect(existsSync(join(dir(run), 'home', 'ogw-error.txt'))).toBe(true);
+    expect(run.record).toMatchObject({ from_pretrained: { model: join(dir(run), 'model'), device: 'cpu', dtype: 'float32' } });
   });
 
   const moss = (durationMs: number, seed: string, env: Record<string, string> = {}): DriverRun =>
@@ -413,7 +459,8 @@ describe.runIf(python !== null)('drivers against stub libraries', () => {
     ]);
     expect(run.code).toBe(1);
     expect(run.stderr).toContain(`${join(run.dir, 'out', 'a.wav')}: failed`);
-    expect(readdirSync(join(run.dir, 'out'))).toEqual(['b.wav']);
+    expect(readdirSync(join(run.dir, 'out')).sort()).toEqual(['b.wav', 'ogw-error.txt']);
+    expect(readFileSync(join(run.dir, 'out', 'ogw-error.txt'), 'utf8')).toMatch(/^FileNotFoundError: /);
     expect(readFileSync(join(run.dir, 'record.json.loads'), 'utf8')).toBe('load\n');
     expect(run.record).toMatchObject({ call: { seed: 2 } });
   });
