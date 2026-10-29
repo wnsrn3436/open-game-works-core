@@ -128,17 +128,19 @@ export function takesTemporary(type: string, imageMethod: string, image: Generat
 
 /** Whether a method has what `generation install` gives it on this host: the install marker of a method with pins. */
 export async function installedOnHost(ctx: Context, method: GenerationMethod): Promise<boolean> {
-  return !hasPins(method) || method.pins === undefined || (await methodMarker(ctx, method)) !== null;
+  return !hasPins(method) || (await methodMarker(ctx, method)) !== null;
 }
 
 /**
  * The methods that block a resource key on this host: when none of its methods other than the temporary method is
  * installed (`installedOnHost`, and for `rig-2d` and `trellis2` `flux2-klein` too, which they call), the methods of
- * those that are not installed, as the key is then made with none of them (`production.md` `## method`). Empty for a
- * key with an installed method or with no method other than the temporary method.
+ * those that are not installed, and the temporary method when it is not installed either, as the key is then made only
+ * with the temporary method or with none (`production.md` `## method`). Empty for a key with an installed method or with
+ * no method other than the temporary method.
  */
 export async function uninstalledMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<string[]> {
-  const names = (await chooseMethods(ctx, settings, game, key)).filter((c) => c.temporary !== true).map((c) => c.name);
+  const choices = await chooseMethods(ctx, settings, game, key);
+  const names = choices.filter((c) => c.temporary !== true).map((c) => c.name);
   const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
   const missing: string[] = [];
   for (const method of settings.resourceGeneration.filter((m) => names.includes(m.name))) {
@@ -148,6 +150,8 @@ export async function uninstalledMethods(ctx: Context, settings: HarnessSettings
     if (lacking.length === 0) return [];
     for (const name of lacking) if (!missing.includes(name)) missing.push(name);
   }
+  const temporary = choices.find((c) => c.temporary === true);
+  if (missing.length > 0 && temporary?.notInstalled === true && !missing.includes(temporary.name)) missing.push(temporary.name);
   return missing;
 }
 

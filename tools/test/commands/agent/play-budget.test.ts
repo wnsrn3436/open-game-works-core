@@ -48,6 +48,9 @@ describe('play budget', () => {
       for (const argv of [['step', 'instp1', '50'], ['input', 'instp1', 'tap', '1', '1']]) {
         expect(await ogw(ws, argv, { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).toMatchObject({ code: 1, stderr: expect.stringContaining(PASSED) as unknown });
       }
+      // the release of a held input still goes in
+      await checkPlayBudget(ctxOf(play.key), 'key_up');
+      expect(await ogw(ws, ['input', 'instp1', 'touch_up', '1', '1'], { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).toMatchObject({ code: 1, stderr: expect.not.stringContaining('play budget') as unknown });
       await checkPlayBudget(ctxOf(judge.key));
       await checkPlayBudget(ctxOf(null));
       expect(existsSync(join(await jobsDir(ws.env), 'play-budget', 'agentjudge1'))).toBe(false);

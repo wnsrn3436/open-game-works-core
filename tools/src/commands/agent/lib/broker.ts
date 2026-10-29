@@ -8,8 +8,10 @@ import { dirname, isAbsolute } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { lineReader, STDIN_REQUEST, type BrokerMessage, type BrokerRequest } from '../../../lib/broker-client.ts';
+import { createContext } from '../../../lib/command.ts';
 import { killTree, spawnTracked } from '../../../lib/proc.ts';
 import type { CliCommand } from './cli-command.ts';
+import { brokerBudgetRefusal } from './play-budget.ts';
 
 /**
  * The broker commands (ogw.md `## agent`): the only commands a broker runs, with their `--help`. The commands the
@@ -160,16 +162,35 @@ function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProces
   socket.setEncoding('utf8');
   socket.on('error', () => undefined);
   let call: { stdin: (text: string) => void } | null = null;
+  // set once the request line is read: a later line before the command runs is not a request
+  let requested = false;
   let size = 0;
   const read = lineReader((text) => {
     if (call === null) {
+      if (requested) {
+        socket.destroy();
+        return;
+      }
+      requested = true;
       const request = parseRequest(text);
       if (request === null) refuse(socket, 'the request is not {"argv": [...], "cwd": "<absolute path>", "key": "..."}');
       else if (!sameKey(request.key, options.key)) refuse(socket, 'the agent key (OGW_AGENT_KEY) is not the key of this agent');
       else if (brokerCommand(request.argv) === null) {
         const allowed = BROKER_COMMANDS.map((name) => `ogw ${name.join(' ')}`).join(', ');
         refuse(socket, `${commandWords(request.argv)} is not a command of the play and judge agents; they run only ${allowed}`);
-      } else call = runCall(socket, request, options, children);
+      } else {
+        // a play agent past its play budget is refused here, before a command starts
+        const ctx = createContext({ cwd: request.cwd, env: options.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+        void brokerBudgetRefusal(ctx, request.argv).then(
+          (refusal) => {
+            if (refusal === null) call = runCall(socket, request, options, children);
+            else refuse(socket, refusal);
+          },
+          (error: unknown) => {
+            refuse(socket, `the play budget could not be read: ${error instanceof Error ? error.message : String(error)}`);
+          },
+        );
+      }
       return;
     }
     try {

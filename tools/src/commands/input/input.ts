@@ -162,8 +162,8 @@ export const input: CommandDef = {
   async run(ctx, args) {
     if (flag(args, 'help')) return { text: inputHelp(), data: { help: inputHelp() } };
     const instanceId = positional(args, 0, 'instance');
-    await checkPlayBudget(ctx);
     const script = str(args, 'script');
+    await checkPlayBudget(ctx, script === undefined ? positional(args, 1, 'input command') : undefined);
     if (script === undefined) {
       if (flag(args, 'video')) throw new OgwError('--video goes with --script');
       return single(ctx, instanceId, positional(args, 1, 'input command'), args.positionals.slice(2));

@@ -10,6 +10,8 @@ import { newTempFolder } from '../../../src/commands/agent/lib/files.ts';
 import { BROKER_RUN, forwardToBroker, type BrokerIo } from '../../../src/lib/broker-client.ts';
 import { findCommand } from '../../../src/lib/cli.ts';
 import { jobsDir } from '../../../src/lib/jobs.ts';
+import { newAgentKey } from '../../../src/lib/agentctx.ts';
+import { fakeAgentJob } from '../instance/agents.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { isAlive } from '../../../src/lib/proc.ts';
 import { ogw, makeWorkspace, realHarness, sh } from '../../helpers/workspace.ts';
@@ -99,6 +101,47 @@ describe('broker', () => {
     const gone = await forward(socket, ['job', 'status', 'ag1'], { OGW_AGENT_KEY: key });
     expect(gone.code).toBe(1);
     expect(gone.stderr).toContain('cannot reach the ogw broker');
+  });
+
+  it('refuses the step or input of a play agent past its play budget before it starts a command, and lets the release of a held input through', async () => {
+    const ws = jobWorkspace();
+    const folder = await newTempFolder('ogw-broker-');
+    const input = join(folder, 'input.json');
+    writeFileSync(input, JSON.stringify({ instance: 'instp1', playGuide: '/x' }));
+    const key = newAgentKey('agplay1');
+    const remove = await fakeAgentJob(ws.env, 'agplay1', { role: 'play', cliPid: 999_999, keyHash: key.hash, input, folder });
+    const socket = join(folder, 'b', 's');
+    const started: string[][] = [];
+    const broker = await startBroker({
+      socket,
+      key: key.value,
+      command: (argv) => {
+        started.push([...argv]);
+        return { cmd: process.execPath, args: ['-e', "process.stdout.write('ran\\n')"] };
+      },
+      env: { ...ws.env, OGW_AGENT_KEY: key.value },
+    });
+    try {
+      const env = { OGW_AGENT_KEY: key.value };
+      // the first step notes the start of the play
+      expect(await forward(socket, ['step', 'instp1', '50'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      const file = join(await jobsDir(ws.env), 'play-budget', 'agplay1');
+      writeFileSync(file, String(Date.now() - 900_000));
+      started.length = 0;
+      for (const argv of [['step', 'instp1', '50', '--state'], ['input', 'instp1', 'key_down', 'a'], ['input', 'instp1', '--script', 's.txt']]) {
+        const refused = await forward(socket, argv, env);
+        expect(refused).toMatchObject({ code: 1, stdout: '' });
+        expect(refused.stderr).toContain('the play budget of 900 s since the first input has passed');
+      }
+      expect(started).toEqual([]);
+      expect(await forward(socket, ['input', 'instp1', 'key_up', 'a'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      expect(await forward(socket, ['capture', 'instp1'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      expect(started).toEqual([['input', 'instp1', 'key_up', 'a'], ['capture', 'instp1']]);
+    } finally {
+      await broker.close();
+      remove();
+      await rm(folder, { recursive: true, force: true });
+    }
   });
 
   it('ends a forwarded command still running when it closes', async () => {

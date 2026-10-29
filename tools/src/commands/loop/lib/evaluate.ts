@@ -746,7 +746,7 @@ async function abort(state: State): Promise<void> {
     ...[...state.jobs].map((job) => killJob(job, state.ctx.env, graceMs).catch(() => undefined)),
     ...[...state.instances.values()].map((instance) => stop(state, instance).catch(() => undefined)),
     ...starting.map((id) => stopInstance(state.ctx, id).catch(() => undefined)),
-    ...[...state.jobs].flatMap((job) => [clearReleases(state.ctx.env, job).catch(() => undefined), clearUnstarted(state.ctx.env, job).catch(() => undefined)]),
+    ...[...state.jobs].flatMap((job) => [clearReleases(state.ctx.env, job).catch(() => undefined), clearUnstarted(state.ctx.env, job).catch(() => undefined), clearPlayBudget(state.ctx.env, job).catch(() => undefined)]),
   ]);
 }
 

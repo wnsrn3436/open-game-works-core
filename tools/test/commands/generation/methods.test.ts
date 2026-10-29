@@ -44,8 +44,20 @@ function methods(imageMeasured: unknown = IMAGE.measured): unknown[] {
   ];
 }
 
+
+/** The install markers of the local-model methods of `list`, which have no pins here, as `generation install` writes them. */
+function installLocal(root: string, list: readonly unknown[]): void {
+  for (const m of list as { name: string; kind: string; pins?: unknown[] }[]) {
+    if (m.kind !== 'local-model') continue;
+    const dir = join(root, '.ogw', 'generation', m.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name: m.name, pins: JSON.stringify(m.pins ?? []), git: [], hf: [], files: null, python: null, cli: null, skill: null }));
+  }
+}
+
 async function methodsOf(key: string, imageMeasured?: unknown): Promise<unknown> {
   const ws = makeWorkspace({ resourceGeneration: methods(imageMeasured) });
+  installLocal(ws.root, methods(imageMeasured));
   makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
   const run = await ogw(ws, ['generation', 'methods', 'g', key, '--json']);
   if (run.code !== 0) throw new Error(run.stderr);
@@ -73,6 +85,7 @@ describe('ogw generation methods', () => {
   it('gives skill and cli of a pinned external-service', async () => {
     expect(await methodsOf('sprite_animation/fx')).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill: null, cli: null, notInstalled: true }, { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: false }, temporary: true }]);
     const ws = makeWorkspace({ resourceGeneration: methods() });
+    installLocal(ws.root, methods());
     makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
     const sprite = methods().find((m) => (m as { name: string }).name === 'sprite') as { pins: unknown[] };
     const dir = join(ws.root, '.ogw', 'generation', 'sprite');
@@ -89,6 +102,7 @@ describe('ogw generation methods', () => {
 
   it('prints one block per method, or none', async () => {
     const ws = makeWorkspace({ resourceGeneration: methods() });
+    installLocal(ws.root, methods());
     makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
     expect((await ogw(ws, ['generation', 'methods', 'g', 'model/rock'])).stdout).toBe('trellis2 local-model resolution 512px\n  flux2-klein resolution 512px\n');
     expect((await ogw(ws, ['generation', 'methods', 'g', 'image/big'])).stdout).toBe('flux2-klein local-model resolution 1024px fallback\n');
@@ -104,6 +118,7 @@ describe('ogw generation methods', () => {
     const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image', 'icon', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
     const grok = { name: 'grok', kind: 'external-service', provider: 'grok', resourceTypes: ['image', 'sprite_sheet', 'sprite_animation'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
     const ws = makeWorkspace({ resourceGeneration: [...methods(imageMeasured), sub, grok], imageMethod });
+    installLocal(ws.root, [...methods(imageMeasured), sub, grok]);
     makeGame(ws, 'g', { 'resource/resources.csv': list });
     const out = await ogw(ws, ['generation', 'methods', 'g', key, '--json']);
     if (out.code !== 0) throw new Error(out.stderr);
@@ -149,6 +164,7 @@ describe('ogw generation methods', () => {
 
   it('fails for a key not in resources.csv or a spec that breaks the rules', async () => {
     const ws = makeWorkspace({ resourceGeneration: methods() });
+    installLocal(ws.root, methods());
     makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
     expect(await ogw(ws, ['generation', 'methods', 'g', 'image/nope'])).toMatchObject({ code: 1, stderr: 'resource key image/nope is not in resource/resources.csv\n' });
     expect(await ogw(ws, ['generation', 'methods', 'g', 'image/bad'])).toMatchObject({ code: 1, stderr: 'image/bad: spec size=10: invalid size value 10\n' });
@@ -180,6 +196,7 @@ describe('ogw generation check', () => {
 
   it('writes host-check.md with status, methods, counts and the total time', async () => {
     const ws = makeWorkspace({ resourceGeneration: settingsMethods, imageMethod: 'a' });
+    installLocal(ws.root, settingsMethods);
     const root = makeGame(ws, 'g');
     const run = await ogw(ws, ['generation', 'check', 'g', '--types', 'image,bgm,sfx,icon,model', '--counts', 'image=3,bgm=2,icon=1']);
     expect(run.code).toBe(0);
@@ -206,6 +223,7 @@ describe('ogw generation check', () => {
       { name: 'local', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ resolution: 512, jobMs: 5, result: 'ok' }] },
     ];
     const ws = makeWorkspace({ resourceGeneration: own, imageMethod: 'grok' });
+    installLocal(ws.root, own);
     const login = join(ws.root, 'grok-login');
     mkdirSync(login);
     writeFileSync(join(login, 'auth.json'), '{}');
@@ -243,6 +261,7 @@ describe('ogw generation check', () => {
       { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X' },
     ];
     const ws = makeWorkspace({ resourceGeneration: own, imageMethod: 'sub' });
+    installLocal(ws.root, own);
     makeGame(ws, 'g');
     const run = await ogw(ws, ['generation', 'check', 'g', '--types', 'image']);
     expect(run).toMatchObject({ code: 0 });
@@ -252,6 +271,7 @@ describe('ogw generation check', () => {
 
   it('writes a dash total when no ok type has a count', async () => {
     const ws = makeWorkspace({ resourceGeneration: settingsMethods });
+    installLocal(ws.root, settingsMethods);
     const root = makeGame(ws, 'g');
     await ogw(ws, ['generation', 'check', 'g', '--types', 'bgm']);
     expect(readFileSync(join(root, 'records', 'setup', 'host-check.md'), 'utf8')).toContain('total time ms: -\n');
@@ -259,6 +279,7 @@ describe('ogw generation check', () => {
 
   it('refuses unknown types and bad counts without writing', async () => {
     const ws = makeWorkspace({ resourceGeneration: settingsMethods });
+    installLocal(ws.root, settingsMethods);
     makeGame(ws, 'g');
     const cases: [string[], string][] = [
       [['--types', 'image,tween'], 'not a resource type of harness settings schema resourceTypes: tween\n'],

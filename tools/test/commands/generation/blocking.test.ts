@@ -59,6 +59,11 @@ describe('blockingMethods', () => {
     expect(await blockingMethods(ctx, game, 'sfx/coin')).toEqual([]);
   });
 
+  it('adds the temporary method when it is not installed either, as the key is then made with nothing', async () => {
+    const { ctx, game } = await open();
+    expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['sprite', 'flux2-klein']);
+  });
+
   it('gives none for a key with another installed method, a method without pins, or a key the list rejects', async () => {
     const { ctx, game } = await open();
     // tone is procedural: nothing to install
@@ -82,6 +87,7 @@ describe('blockingMethods', () => {
     mkdirSync(dir, { recursive: true });
     // the marker of another workspace: its cli puts that workspace's ffmpeg on PATH, while this one has none installed
     writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name: 'sprite', pins: JSON.stringify(PINS), git: [], hf: [], files: null, python: null, cli: '/other/bin/sprite-gen', skill: '/other/SKILL.md', ffmpeg: '/other/ffmpeg' }));
+    install(ws, 'flux2-klein');
     expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['sprite']);
   });
 
