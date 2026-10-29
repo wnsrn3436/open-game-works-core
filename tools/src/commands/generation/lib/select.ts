@@ -4,7 +4,7 @@ import type { GameRepo } from '../../../lib/game.ts';
 import type { GenerationMethod, HarnessSettings, MeasuredStep } from '../../../lib/settings.ts';
 import { findRow, parseKey, readList, requireKey, type ResourceRow } from '../../resource/lib/list.ts';
 import { parseSpec, type Spec } from '../../resource/lib/spec.ts';
-import { methodMarker } from './install.ts';
+import { hasPins, methodMarker } from './install.ts';
 
 export interface Stage {
   resolution?: number;
@@ -122,6 +122,23 @@ export function takesTemporary(type: string, imageMethod: string, image: Generat
   if (!usable(image)) return false;
   if (type === 'sprite_animation') return true;
   return IMAGE_TYPES.includes(type) && imageMethod !== IMAGE_METHOD && image.resourceTypes.includes(type);
+}
+
+/** Whether a method can be called on this host: a method whose pins `generation install` downloads needs its install marker. */
+export async function installedOnHost(ctx: Context, method: GenerationMethod): Promise<boolean> {
+  return !hasPins(method) || (await methodMarker(ctx, method)) !== null;
+}
+
+/**
+ * The methods that block a resource key on this host: its methods other than the temporary method when none of them is
+ * installed (`installedOnHost`), as the key is then made with none of them (`production.md` `## method`). Empty for a key
+ * with an installed method or with no method other than the temporary method.
+ */
+export async function uninstalledMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<string[]> {
+  const names = (await chooseMethods(ctx, settings, game, key)).filter((c) => c.temporary !== true).map((c) => c.name);
+  const methods = settings.resourceGeneration.filter((m) => names.includes(m.name));
+  for (const method of methods) if (await installedOnHost(ctx, method)) return [];
+  return methods.map((m) => m.name);
 }
 
 async function choiceOf(ctx: Context, method: GenerationMethod, spec: Spec, image: GenerationMethod | undefined): Promise<MethodChoice> {

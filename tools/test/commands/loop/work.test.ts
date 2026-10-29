@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   retryAgentJob: vi.fn(),
   placeholderFailures: vi.fn(),
   requestPendingResources: vi.fn(),
+  installMethodJob: vi.fn(),
 }));
 
 vi.mock('../../../src/commands/agent/api.ts', () => ({
@@ -29,6 +30,7 @@ vi.mock('../../../src/commands/agent/api.ts', () => ({
 }));
 vi.mock('../../../src/commands/instance/api.ts', () => ({ listInstances: vi.fn(() => Promise.resolve([])), startInstance: vi.fn(), stopInstance: vi.fn() }));
 vi.mock('../../../src/commands/check/api.ts', async (orig) => ({ ...(await orig<object>()), placeholderFailures: mocks.placeholderFailures }));
+vi.mock('../../../src/commands/generation/api.ts', async (orig) => ({ ...(await orig<object>()), installMethodJob: mocks.installMethodJob }));
 vi.mock('../../../src/commands/resource/api.ts', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   requestPendingResources: mocks.requestPendingResources,
@@ -42,6 +44,7 @@ beforeEach(() => {
   mocks.startAgentJob.mockImplementation(() => Promise.resolve(`new${String(++started)}`));
   mocks.placeholderFailures.mockResolvedValue([]);
   mocks.requestPendingResources.mockResolvedValue({ path: null, leftOut: [] });
+  mocks.installMethodJob.mockImplementation((_ctx: unknown, method: string) => Promise.resolve(`install-${method}`));
   syncDeps.pollMs = 0;
 });
 
@@ -310,6 +313,60 @@ describe('ogw loop dispatch', () => {
     expect(mocks.startAgentJob).toHaveBeenCalledWith(expect.anything(), { role: 'resource', game: 'g', input: join(g.root, rel) });
   });
 
+  it('holds a request file whose keys need methods not installed on this host and starts their install', async () => {
+    const pins = [{ kind: 'git', source: 'x', revision: 'a' }];
+    const g = setupGame(
+      {
+        imageMethod: 'sprite',
+        resourceGeneration: [
+          { name: 'sprite', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins, measured: [{ result: 'ok' }] },
+          { name: 'audio', kind: 'local-model', resourceTypes: ['sfx'], safetyTimeoutMs: 1, license: 'X', pins, measured: [{ durationMs: 3000, result: 'ok' }] },
+          { name: 'tone', kind: 'procedural', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] },
+        ],
+      },
+      {
+        'resource/resources.csv': [
+          'key,description,spec,status,method,source,license,attribution,sha256,text_key,speaker,text_hash',
+          'image/a,a,size=64x64,requested,,,,,,,,',
+          'sfx/b,b,length=500,requested,,,,,,,,',
+          'bgm/c,c,length=1000,requested,,,,,,,,',
+          '',
+        ].join('\n'),
+      },
+    );
+    await openLoopRun(g, { startedAt: 5 });
+    const dir = 'records/loops/update-1/resource-requests';
+    write(g.root, `${dir}/100.md`, '## keys\n\nimage/a\nbgm/c\n\n## see\n\nnone\n\n## base\n\nnone\n');
+    write(g.root, `${dir}/200.md`, '## keys\n\nbgm/c\n\n## see\n\nnone\n\n## base\n\nnone\n');
+    write(g.root, `${dir}/300.md`, '## keys\n\nsfx/b\nimage/a\n\n## see\n\nnone\n\n## base\n\nnone\n');
+    commit(g.root);
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    expect(out).toMatchObject({
+      code: 0,
+      stdout: [
+        `new1 resource ${join(g.root, dir, '200.md')}`,
+        `held ${join(g.root, dir, '100.md')}: sprite not installed on this host`,
+        `held ${join(g.root, dir, '300.md')}: audio, sprite not installed on this host`,
+        'install-sprite generation install sprite',
+        'install-audio generation install audio',
+        '',
+      ].join('\n'),
+    });
+    expect(mocks.startAgentJob).toHaveBeenCalledTimes(1);
+    expect(mocks.installMethodJob.mock.calls.map((c) => c[1] as string)).toEqual(['sprite', 'audio']);
+    // once installed, a later dispatch gives the held files to resource sub-agents
+    await addJob(g.ws, { meta: { role: 'resource', input: join(g.root, dir, '200.md') } });
+    for (const method of ['sprite', 'audio']) {
+      const folder = join(g.ws.root, '.ogw', 'generation', method);
+      write(folder, 'installed.json', { name: method, pins: JSON.stringify(pins), git: [], hf: [], files: null, python: null, cli: null, skill: null });
+    }
+    const json = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
+    const data = JSON.parse(json.stdout) as { started: { input: string }[]; held: unknown[]; installs: unknown[] };
+    expect(data.started.map((s) => s.input)).toEqual([join(g.root, dir, '100.md'), join(g.root, dir, '300.md')]);
+    expect(data.held).toEqual([]);
+    expect(data.installs).toEqual([]);
+  });
+
   it('prints and returns the nine_slice keys the pending resource request left out', async () => {
     const g = setupGame();
     await openLoopRun(g);
@@ -320,7 +377,7 @@ describe('ogw loop dispatch', () => {
       stdout: 'left out nine_slice/small: the long side of a nine_slice size is under 256\nleft out nine_slice/thin: the long side of a nine_slice size is under 256\n',
     });
     const json = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
-    expect(JSON.parse(json.stdout)).toEqual({ started: [], leftOut: ['nine_slice/small', 'nine_slice/thin'] });
+    expect(JSON.parse(json.stdout)).toEqual({ started: [], held: [], installs: [], leftOut: ['nine_slice/small', 'nine_slice/thin'] });
   });
 
   it('fails for a build run without an environment', async () => {

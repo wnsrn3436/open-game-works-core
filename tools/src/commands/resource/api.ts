@@ -2,7 +2,7 @@ import type { Context } from '../../lib/command.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { requestResources } from './lib/request.ts';
 
-export { isRequestFileName, leftOutLine, requestPlace } from './lib/request.ts';
+export { isRequestFileName, leftOutLine, requestFileKeys, requestPlace } from './lib/request.ts';
 import { runSync } from './lib/sync.ts';
 
 /**
