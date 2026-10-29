@@ -145,6 +145,16 @@ describe('local harness settings', () => {
     expect((await loadHarnessSettings({ ...ws.env, OGW_HOST_ID: OTHER })).maxConcurrentInstances).toBe(8);
   });
 
+  it('keeps instanceMeasureLimit per host in settings.local.json, with the schema default 8 and no value below 2', async () => {
+    expect(await settingsCmd('get', 'harness', 'instanceMeasureLimit')).toMatchObject({ code: 0, stdout: expect.stringContaining('8\n') as unknown });
+    expect((await loadHarnessSettings(ws.env)).instanceMeasureLimit).toBe(8);
+    expect((await settingsCmd('set', 'harness', 'instanceMeasureLimit', '1')).code).not.toBe(0);
+    expect(await settingsCmd('set', 'harness', 'instanceMeasureLimit', '12')).toEqual({ code: 0, stdout: `set hosts.${TEST_HOST_ID}.instanceMeasureLimit\n`, stderr: '' });
+    expect((read(localPath) as { hosts: Record<string, { instanceMeasureLimit?: number }> }).hosts[TEST_HOST_ID]?.instanceMeasureLimit).toBe(12);
+    expect((await loadHarnessSettings(ws.env)).instanceMeasureLimit).toBe(12);
+    expect((await loadHarnessSettings({ ...ws.env, OGW_HOST_ID: OTHER })).instanceMeasureLimit).toBe(8);
+  });
+
   it('marks local-scope paths in describe and list', async () => {
     expect((await settingsCmd('describe', 'harness', 'humanLanguage')).stdout).toContain('x-scope: local\n');
     expect((await settingsCmd('describe', 'harness', 'maxConcurrentInstances')).stdout).toContain('x-scope: local\n');

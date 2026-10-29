@@ -418,9 +418,9 @@
           "minimum": 2
         },
         "instanceMeasureLimit": {
-          "description": "The largest number of concurrent instances `ogw instance measure` tries on this host, so that `maxConcurrentInstances` is at most this. The `host-env` skill asks the human for it",
+          "description": "The largest number of concurrent instances `ogw instance measure` tries on this host, so that the measured value, and the `maxConcurrentInstances` it proposes, is at most this. The `host-env` skill asks the human for it before it measures",
           "type": "integer",
-          "minimum": 1,
+          "minimum": 2,
           "default": 8
         },
         "playInstances": {

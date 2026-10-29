@@ -17,8 +17,6 @@ import { runStandardStage } from '../generation/lib/standard.ts';
 import { startInstance, stopInstance, type InstanceInfo, type InstanceOptions } from './api.ts';
 import { gameTargetFps } from './lib/prepare.ts';
 
-/** Upper bound of the instance count one target is measured up to. */
-
 /** Interval of `get_state` polling while a scenario condition is not true yet. */
 export const measureTiming = { pollMs: 200 };
 
