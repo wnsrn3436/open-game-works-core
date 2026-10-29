@@ -100,6 +100,7 @@ export interface TestDevice {
 export interface HostSettings {
   name: string;
   maxConcurrentInstances?: number;
+  instanceMeasureLimit?: number;
   playInstances?: number;
   reviewRunConcurrency?: number;
   testDevices?: TestDevice[];
@@ -108,11 +109,11 @@ export interface HostSettings {
 }
 
 /** Keys of `HostSettings` that hold a value of the host; `ogw settings` reads them as top-level harness settings paths. */
-export const HOST_KEYS = ['maxConcurrentInstances', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'imageMethod', 'measured'] as const;
+export const HOST_KEYS = ['maxConcurrentInstances', 'instanceMeasureLimit', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'imageMethod', 'measured'] as const;
 
 /**
  * Harness settings as commands use them: the file with this host's `hosts` entry in place of `hosts`.
- * `maxConcurrentInstances` is null when this host has no measured value, `playInstances` and `reviewRunConcurrency` are
+ * `maxConcurrentInstances` is null when this host has no measured value, `instanceMeasureLimit`, `playInstances` and `reviewRunConcurrency` are
  * the schema defaults when this host has none, `imageMethod` is the schema default when this host has none, and each
  * method has this host's `measured` steps.
  */
@@ -120,6 +121,7 @@ export interface HarnessSettings {
   humanLanguage: string;
   agents: Partial<Record<Role, AgentSettings>>;
   maxConcurrentInstances: number | null;
+  instanceMeasureLimit: number;
   instanceWaitTimeoutMs: number;
   jobWaitTimeoutMs: number;
   testDevices?: TestDevice[];
@@ -209,12 +211,13 @@ export function schemaPath(name: 'harness-settings' | 'game-settings', env: Node
 }
 
 /** The harness settings file: harness-wide values and `hosts`. */
-export type HarnessSettingsFile = Omit<HarnessSettings, 'maxConcurrentInstances' | 'playInstances' | 'reviewRunConcurrency' | 'testDevices' | 'imageMethod'> & {
+export type HarnessSettingsFile = Omit<HarnessSettings, 'maxConcurrentInstances' | 'instanceMeasureLimit' | 'playInstances' | 'reviewRunConcurrency' | 'testDevices' | 'imageMethod'> & {
   hosts?: Record<string, HostSettings>;
 };
 
 /** The schema defaults of the `$defs/host` values that have one. */
 export interface HostDefaults {
+  instanceMeasureLimit: number;
   playInstances: number;
   reviewRunConcurrency: number;
   imageMethod: string;
@@ -230,6 +233,7 @@ function hostDefault<T extends 'number' | 'string'>(schema: unknown, key: keyof 
 /** The schema defaults of the host values of harness settings schema `schema`. */
 export function hostDefaults(schema: unknown): HostDefaults {
   return {
+    instanceMeasureLimit: hostDefault(schema, 'instanceMeasureLimit', 'number'),
     playInstances: hostDefault(schema, 'playInstances', 'number'),
     reviewRunConcurrency: hostDefault(schema, 'reviewRunConcurrency', 'number'),
     imageMethod: hostDefault(schema, 'imageMethod', 'string'),
@@ -241,6 +245,7 @@ export function withHostValues(file: HarnessSettingsFile, host: HostSettings | u
   const settings: HarnessSettings = {
     ...file,
     maxConcurrentInstances: host?.maxConcurrentInstances ?? null,
+    instanceMeasureLimit: host?.instanceMeasureLimit ?? defaults.instanceMeasureLimit,
     playInstances: host?.playInstances ?? defaults.playInstances,
     reviewRunConcurrency: host?.reviewRunConcurrency ?? defaults.reviewRunConcurrency,
     imageMethod: host?.imageMethod ?? defaults.imageMethod,

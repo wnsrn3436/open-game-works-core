@@ -18,7 +18,6 @@ import { startInstance, stopInstance, type InstanceInfo, type InstanceOptions } 
 import { gameTargetFps } from './lib/prepare.ts';
 
 /** Upper bound of the instance count one target is measured up to. */
-export const MAX_MEASURED_INSTANCES = 8;
 
 /** Interval of `get_state` polling while a scenario condition is not true yet. */
 export const measureTiming = { pollMs: 200 };
@@ -134,9 +133,12 @@ async function countHolds(ctx: Context, target: Target, scenario: Scenario, coun
   }
 }
 
-/** The count measured first (`host-env` 5): this host's last value, else half its CPU count, within 1 and the upper bound. */
-export function firstCount(previous: number | null, cpus: number): number {
-  return Math.min(MAX_MEASURED_INSTANCES, Math.max(1, previous ?? Math.floor(cpus / 2)));
+/**
+ * The count measured first (`host-env` 5): this host's last value, else half its CPU count, within 1 and the upper bound
+ * `limit` (harness settings `instanceMeasureLimit`).
+ */
+export function firstCount(previous: number | null, cpus: number, limit: number): number {
+  return Math.min(limit, Math.max(1, previous ?? Math.floor(cpus / 2)));
 }
 
 /**
@@ -144,21 +146,21 @@ export function firstCount(previous: number | null, cpus: number): number {
  * above the upper bound for none), or null when they are next to each other. With no broken count yet it measures the
  * count after this host's last value, then doubles; with no held count it halves; otherwise it takes the middle.
  */
-export function nextCount(held: number, broke: number, previous: number | null): number | null {
+export function nextCount(held: number, broke: number, previous: number | null, limit: number): number | null {
   if (broke - held <= 1) return null;
-  if (broke > MAX_MEASURED_INSTANCES) return held === previous ? held + 1 : Math.min(MAX_MEASURED_INSTANCES, held * 2);
+  if (broke > limit) return held === previous ? held + 1 : Math.min(limit, held * 2);
   if (held === 0) return Math.max(1, Math.floor(broke / 2));
   return Math.floor((held + broke) / 2);
 }
 
-async function measureTarget(ctx: Context, target: Target, aborted: () => boolean, previous: number | null): Promise<InstanceMeasureTarget> {
+async function measureTarget(ctx: Context, target: Target, aborted: () => boolean, previous: number | null, limit: number): Promise<InstanceMeasureTarget> {
   const scenario = target.scenario;
   if (typeof scenario === 'string') return { name: target.name, kind: target.kind, value: 0, detail: `scenario.json: ${scenario}` };
   // instance counts are taken to hold up to one count and break above it: more instances give less fps
   let held = 0;
-  let broke = MAX_MEASURED_INSTANCES + 1;
+  let broke = limit + 1;
   let detail: string | null = null;
-  let count: number | null = firstCount(previous, measureHost.cpus());
+  let count: number | null = firstCount(previous, measureHost.cpus(), limit);
   while (count !== null && !aborted()) {
     const { holds, reason } = await countHolds(ctx, target, scenario, count);
     if (holds) held = count;
@@ -167,9 +169,9 @@ async function measureTarget(ctx: Context, target: Target, aborted: () => boolea
       // a count that broke on fps has no reason: it keeps the reason of a larger count that did not start
       detail = reason ?? detail;
     }
-    count = nextCount(held, broke, previous);
+    count = nextCount(held, broke, previous, limit);
   }
-  if (held === MAX_MEASURED_INSTANCES) detail = `stopped at the upper bound ${String(MAX_MEASURED_INSTANCES)}`;
+  if (held === limit) detail = `stopped at the upper bound ${String(limit)} (instanceMeasureLimit)`;
   return { name: target.name, kind: target.kind, value: held, detail };
 }
 
@@ -213,7 +215,7 @@ export const measureCommand: CommandDef = {
         return { text: `not measured: no core release has benchmark-<engine>.zip and no game has client/dev/bot/scenario.json\nresult: ${path}`, data: { targets: [], resultFile: path } };
       }
       const job = await heaviestJob(ctx);
-      const previous = (await ctx.settings()).maxConcurrentInstances;
+      const { maxConcurrentInstances: previous, instanceMeasureLimit: limit } = await ctx.settings();
       let stop = false;
       // a load job that fails leaves the instances measured without the load: the measure fails (`host-env` 5)
       const failed: { error: Error | null } = { error: null };
@@ -225,7 +227,7 @@ export const measureCommand: CommandDef = {
         // after a load job failure, no further count or target is measured
         for (const target of targets) {
           if (failed.error !== null) break;
-          results.push(await measureTarget(ctx, target, () => failed.error !== null, previous));
+          results.push(await measureTarget(ctx, target, () => failed.error !== null, previous, limit));
         }
       } finally {
         stop = true;

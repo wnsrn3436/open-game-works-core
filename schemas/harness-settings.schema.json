@@ -417,6 +417,12 @@
           "type": "integer",
           "minimum": 2
         },
+        "instanceMeasureLimit": {
+          "description": "The largest number of concurrent instances `ogw instance measure` tries on this host, so that `maxConcurrentInstances` is at most this. The `host-env` skill asks the human for it",
+          "type": "integer",
+          "minimum": 1,
+          "default": 8
+        },
         "playInstances": {
           "description": "The number of instances that play agents play in parallel on this host each iteration",
           "type": "integer",

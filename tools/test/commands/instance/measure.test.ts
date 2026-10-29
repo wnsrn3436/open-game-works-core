@@ -157,23 +157,29 @@ afterEach(() => {
 
 describe('ogw instance measure', () => {
   it('picks the next count: after the last value, doubling, halving, then the middle', () => {
-    expect(firstCount(null, 12)).toBe(6);
-    expect(firstCount(null, 18)).toBe(8);
-    expect(firstCount(null, 1)).toBe(1);
-    expect(firstCount(5, 18)).toBe(5);
-    expect(firstCount(40, 18)).toBe(8);
+    expect(firstCount(null, 12, 8)).toBe(6);
+    expect(firstCount(null, 18, 8)).toBe(8);
+    expect(firstCount(null, 1, 8)).toBe(1);
+    expect(firstCount(5, 18, 8)).toBe(5);
+    expect(firstCount(40, 18, 8)).toBe(8);
     // no broken count yet: the count after the last value, else doubled, up to the bound
-    expect(nextCount(5, 9, 5)).toBe(6);
-    expect(nextCount(6, 9, 5)).toBe(8);
-    expect(nextCount(3, 9, null)).toBe(6);
-    expect(nextCount(6, 9, null)).toBe(8);
-    expect(nextCount(8, 9, null)).toBeNull();
+    expect(nextCount(5, 9, 5, 8)).toBe(6);
+    expect(nextCount(6, 9, 5, 8)).toBe(8);
+    expect(nextCount(3, 9, null, 8)).toBe(6);
+    expect(nextCount(6, 9, null, 8)).toBe(8);
+    expect(nextCount(8, 9, null, 8)).toBeNull();
     // no held count yet: halved; otherwise the middle, until held and broke are next to each other
-    expect(nextCount(0, 8, null)).toBe(4);
-    expect(nextCount(0, 2, null)).toBe(1);
-    expect(nextCount(0, 1, null)).toBeNull();
-    expect(nextCount(3, 8, null)).toBe(5);
-    expect(nextCount(5, 6, null)).toBeNull();
+    expect(nextCount(0, 8, null, 8)).toBe(4);
+    expect(nextCount(0, 2, null, 8)).toBe(1);
+    expect(nextCount(0, 1, null, 8)).toBeNull();
+    expect(nextCount(3, 8, null, 8)).toBe(5);
+    expect(nextCount(5, 6, null, 8)).toBeNull();
+    // another upper bound of this host (harness settings instanceMeasureLimit)
+    expect(firstCount(null, 40, 16)).toBe(16);
+    expect(firstCount(null, 18, 4)).toBe(4);
+    expect(nextCount(8, 17, null, 16)).toBe(16);
+    expect(nextCount(16, 17, null, 16)).toBeNull();
+    expect(nextCount(2, 5, null, 4)).toBe(4);
   });
 
   it('starts the instances of a count together, from this host\'s last value, and checks the count after it', async () => {
@@ -185,6 +191,16 @@ describe('ogw instance measure', () => {
     // 3 holds, 4 (the count after 3) holds, 8 breaks, 6 breaks, 5 breaks
     expect(state.started).toHaveLength(3 + 4 + 8 + 6 + 5);
     expect(state.maxStarting).toBe(8);
+    expect(state.running.size).toBe(0);
+  });
+
+  it('measures no more instances than this host\'s instanceMeasureLimit, and says it stopped there', async () => {
+    const { ws, env } = setup();
+    state.versions = [];
+    expect((await ogw(ws, ['settings', 'set', 'harness', 'instanceMeasureLimit', '3'])).code).toBe(0);
+    const run = await ogw(ws, ['instance', 'measure', '--json'], { env });
+    expect(JSON.parse(run.stdout)).toMatchObject({ targets: [{ name: 'g', kind: 'game', value: 3, detail: 'stopped at the upper bound 3 (instanceMeasureLimit)' }] });
+    expect(state.maxStarting).toBe(3);
     expect(state.running.size).toBe(0);
   });
 
