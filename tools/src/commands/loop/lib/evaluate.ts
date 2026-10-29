@@ -490,11 +490,14 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
 }
 
 /**
- * Starts the next pending instances of a running judge while it holds fewer than its budget. An instance whose save
- * fixture step failed is noted for `ogw instance wait`, which tells the judge it is not put in.
+ * Starts the next pending instances of a running judge while it holds fewer than its budget and a slot is free. An
+ * instance whose save fixture step failed is noted for `ogw instance wait`, which tells the judge it is not put in.
  */
 async function startPending(state: State, slot: JudgeSlot): Promise<void> {
+  const max = state.plan.settings.maxConcurrentInstances;
   while (slot.pending.length > 0 && slot.instances.length < slot.budget) {
+    // without a free slot now, the start waits for the next poll instead of holding up the other agents
+    if (max !== null && (await listInstances(state.ctx)).length >= max) return;
     const next = slot.pending.shift() as { id: string; spec: Spec };
     const info = await start(state, { ...next.spec, id: next.id });
     if (info) slot.instances.push(info);
@@ -516,7 +519,16 @@ async function hasRoom(state: State, size: number): Promise<boolean> {
   const max = state.plan.settings.maxConcurrentInstances;
   if (max === null) return true;
   if (size > max) return state.instances.size === 0;
-  return (await listInstances(state.ctx)).length + size <= max;
+  return (await listInstances(state.ctx)).length + heldForJudges(state) + size <= max;
+}
+
+/** The slots the running judges keep for their pending instances: each one's budget not in use, at most its pending count. */
+function heldForJudges(state: State): number {
+  let held = 0;
+  for (const slot of state.active) {
+    if (slot.role === 'judge') held += Math.min(slot.pending.length, Math.max(0, slot.budget - slot.instances.length));
+  }
+  return held;
 }
 
 /**
@@ -688,7 +700,11 @@ async function carryOutReleases(state: State, slot: JudgeSlot): Promise<boolean>
   const released = slot.instances.filter((instance) => ids.has(instance.id));
   for (const instance of released) await stop(state, instance);
   slot.instances = slot.instances.filter((instance) => !ids.has(instance.id));
-  return released.length > 0;
+  // a pending instance given back is never started
+  const dropped = slot.pending.filter((p) => ids.has(p.id));
+  slot.pending = slot.pending.filter((p) => !ids.has(p.id));
+  for (const id of [...released.map((i) => i.id), ...dropped.map((p) => p.id)]) await noteUnstarted(state.ctx.env, slot.job as string, id, 'it was given back');
+  return released.length + dropped.length > 0;
 }
 
 /** Polls one running agent. Returns true when it ended or a judge released an instance. */
@@ -728,6 +744,7 @@ async function abort(state: State): Promise<void> {
     ...[...state.jobs].map((job) => killJob(job, state.ctx.env, graceMs).catch(() => undefined)),
     ...[...state.instances.values()].map((instance) => stop(state, instance).catch(() => undefined)),
     ...starting.map((id) => stopInstance(state.ctx, id).catch(() => undefined)),
+    ...[...state.jobs].flatMap((job) => [clearReleases(state.ctx.env, job).catch(() => undefined), clearUnstarted(state.ctx.env, job).catch(() => undefined)]),
   ]);
 }
 

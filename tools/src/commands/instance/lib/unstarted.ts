@@ -5,8 +5,8 @@ import { jobsDir } from '../../../lib/jobs.ts';
 import { checkInstanceId } from './records.ts';
 
 /**
- * Instances of the input of one judge agent job that `ogw loop evaluate` started after the agent and could not start:
- * one file per instance, holding why. They are in the jobs folder, which `ogw instance wait` reads in the broker sandbox.
+ * Instances of the input of one judge agent job that do not run: those `ogw loop evaluate` could not start after the
+ * agent started, and those the judge gave back. One file per instance, holding why. They are in the jobs folder, which `ogw instance wait` reads in the broker sandbox.
  */
 async function unstartedDir(env: NodeJS.ProcessEnv, agentJob: string): Promise<string> {
   return join(await jobsDir(env), 'instance-unstarted', agentJob);

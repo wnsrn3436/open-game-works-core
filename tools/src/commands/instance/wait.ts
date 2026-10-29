@@ -17,7 +17,7 @@ export const waitDeps = {
  * `ogw instance wait`: a judge agent waits until an instance of its input runs. `ogw loop evaluate` starts some
  * instances of a judge after the judge, as the judge gives back others (`game-loop` `## iteration` 3). The command runs
  * in the broker sandbox: it reads the play access file the instance writes once it runs, and the note
- * `ogw loop evaluate` leaves when it could not start the instance.
+ * `ogw loop evaluate` leaves when it could not start the instance or the judge gave it back.
  */
 export const wait: CommandDef = {
   name: ['instance', 'wait'],
@@ -35,10 +35,10 @@ export const wait: CommandDef = {
       if ((await readJsonIfExists(access)) !== null) return { text: `ready ${id}`, data: { id, state: 'ready' } };
       const reason = await unstartedReason(ctx.env, agent.job.id, id);
       if (reason !== null) {
-        return { exitCode: 1, text: `instance ${id} was not started (${reason}): it is not put in`, data: { id, state: 'not started', reason } };
+        return { exitCode: 1, text: `instance ${id} does not run: ${reason}`, data: { id, state: 'not running', reason } };
       }
       if (Date.now() >= until) {
-        return { exitCode: EXIT_STILL_RUNNING, text: `instance ${id} is still starting: run ogw instance wait ${id} again`, data: { id, state: 'starting' } };
+        return { exitCode: EXIT_STILL_RUNNING, text: `instance ${id} is still starting: give back the instances you finished, then run ogw instance wait ${id} again`, data: { id, state: 'starting' } };
       }
       await sleep(waitDeps.pollMs);
     }

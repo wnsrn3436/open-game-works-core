@@ -44,10 +44,10 @@ describe('ogw instance wait', () => {
       await writePlayAccess(access('insta1'), ws.env);
       expect(await ogw(ws, ['instance', 'wait', 'insta1'], { env })).toMatchObject({ code: 0, stdout: 'ready insta1\n' });
       const starting = await ogw(ws, ['instance', 'wait', 'instfa1'], { env });
-      expect(starting).toMatchObject({ code: 75, stdout: 'instance instfa1 is still starting: run ogw instance wait instfa1 again\n' });
+      expect(starting).toMatchObject({ code: 75, stdout: 'instance instfa1 is still starting: give back the instances you finished, then run ogw instance wait instfa1 again\n' });
       await noteUnstarted(ws.env, 'agentjudge1', 'instfb1', 'its save fixture step failed');
       const failed = await ogw(ws, ['instance', 'wait', 'instfb1'], { env });
-      expect(failed).toMatchObject({ code: 1, stdout: 'instance instfb1 was not started (its save fixture step failed): it is not put in\n' });
+      expect(failed).toMatchObject({ code: 1, stdout: 'instance instfb1 does not run: its save fixture step failed\n' });
     } finally {
       judge.remove();
       await rm(folder, { recursive: true, force: true });
@@ -92,7 +92,7 @@ describe('ogw instance wait', () => {
         return { out: `${result.stdout}${result.stderr}`, code: result.code };
       };
       expect(await runIn('instb1')).toEqual({ out: 'ready instb1\n', code: 0 });
-      expect(await runIn('instfa1')).toEqual({ out: 'instance instfa1 was not started (its save fixture step failed): it is not put in\n', code: 1 });
+      expect(await runIn('instfa1')).toEqual({ out: 'instance instfa1 does not run: its save fixture step failed\n', code: 1 });
     } finally {
       judge.remove();
       await rm(cli.profileFolder as string, { recursive: true, force: true });

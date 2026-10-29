@@ -619,6 +619,78 @@ describe('ogw loop evaluate', () => {
     expect(existsSync(notes) ? readdirSync(notes) : []).toEqual([]);
   });
 
+  it('keeps the slot of a judge whose first save fixture failed for its next instance, and starts that one only when a slot is free', async () => {
+    const g = await threeMoments({ maxConcurrentInstances: 8 });
+    const jobs = await jobsDir(g.ws.env);
+    // the first judge's m1 save fixture fails at its start: it holds 3 of its budget of 4
+    let failedOnce = false;
+    fake.failStart = (opts) => {
+      if (!failedOnce && typeof opts.fixture === 'string' && opts.fixture.endsWith('m1.json') && opts.id === undefined) {
+        failedOnce = true;
+        return 'fixture';
+      }
+      return null;
+    };
+    // a start while every slot is taken would wait in reserveSlot, holding up every other agent
+    let startedWhenFull = 0;
+    fake.reserving = () => {
+      if (fake.running.size >= 8) startedWhenFull++;
+      return Promise.resolve();
+    };
+    const released = new Set<string>();
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return 'feedback';
+      const { first, fixtures } = judgeIds(agent);
+      const started = new Set(fake.instances.map((i) => i.id));
+      const next = fixtures.filter((id) => started.has(id) && !released.has(id));
+      if (next.length === 0 && fixtures.every((id) => released.has(id) || !started.has(id)) && fixtures.slice(-2).every((id) => released.has(id))) {
+        for (const id of first) release(jobs, agent, id);
+        return judgeText('A', 'A', 'fail');
+      }
+      for (const id of next) {
+        released.add(id);
+        release(jobs, agent, id);
+      }
+      return undefined;
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect(startedWhenFull).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.filter((j) => j.kind === 'main').map((j) => j.status)).toEqual(['done', 'done']);
+  });
+
+  it('never starts a pending instance the judge gave back, and starts the next one in its place', async () => {
+    const g = await threeMoments({ maxConcurrentInstances: 8 });
+    const jobs = await jobsDir(g.ws.env);
+    const notes = join(jobs, 'instance-unstarted');
+    const skipped = new Map<string, string[]>();
+    const seen = new Map<string, string>();
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const input = agent.input as { fixtures: { moment: { name: string }; A: string; B: string }[] };
+      const [m1, m2, m3] = input.fixtures;
+      if (!m1 || !m2 || !m3) throw new Error('three moments');
+      if (!skipped.has(agent.id)) {
+        // it will not play m2: it gives m2 back before it starts, then m1 once played
+        skipped.set(agent.id, [m2.A, m2.B]);
+        for (const id of [m2.A, m2.B, m1.A, m1.B]) release(jobs, agent, id);
+        return undefined;
+      }
+      for (const id of [m2.A, m2.B]) if (existsSync(join(notes, agent.id, id))) seen.set(id, readFileSync(join(notes, agent.id, id), 'utf8'));
+      const started = new Set(fake.instances.map((i) => i.id));
+      return started.has(m3.A) && started.has(m3.B) ? judgeText('A', 'A', 'fail') : undefined;
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const never = [...skipped.values()].flat();
+    expect(never).toHaveLength(4);
+    for (const id of never) expect(fake.instances.some((i) => i.id === id)).toBe(false);
+    expect([...new Set(seen.values())]).toEqual(['it was given back']);
+  });
+
   it('gives a judge its share of maxConcurrentInstances, at least the first-screen instances and one save fixture pair', () => {
     expect(judgeBudget(8, 2, 3, 2)).toBe(4);
     expect(judgeBudget(16, 2, 3, 2)).toBe(8);
