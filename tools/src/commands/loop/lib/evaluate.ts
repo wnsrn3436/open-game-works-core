@@ -11,7 +11,7 @@ import type { RunState } from '../../../lib/runstate.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
-import { recordPath } from '../../instance/lib/records.ts';
+import { clearReleases, takeReleases } from '../../instance/lib/releases.ts';
 import { collectMeasure, measureCollected } from '../../measure/api.ts';
 import { telemetrySummary } from '../../telemetry/api.ts';
 import {
@@ -365,11 +365,7 @@ async function startJob(state: State, slot: Slot, input: string): Promise<void> 
 async function stop(state: State, instance: InstanceInfo | null): Promise<void> {
   if (!instance || !state.instances.has(instance.id)) return;
   state.instances.delete(instance.id);
-  // the agent of the instance may have released it already, or releases it meanwhile (`ogw instance release`)
-  const record = await recordPath(instance.id, state.ctx.env);
-  await stopInstance(state.ctx, instance.id).catch((error: unknown) => {
-    if (exists(record)) throw error;
-  });
+  await stopInstance(state.ctx, instance.id);
 }
 
 function guide(instance: InstanceInfo | null): { instance: string; playGuide: string } | null {
@@ -595,10 +591,21 @@ async function retryOrFail(state: State, slot: Slot): Promise<void> {
   }
 }
 
-/** Polls one running agent. Returns true when it ended. */
+/** Stops the instances a judge released with `ogw instance release`, so a waiting group can start. True when it stopped one. */
+async function carryOutReleases(state: State, slot: JudgeSlot): Promise<boolean> {
+  const ids = new Set(await takeReleases(state.ctx.env, slot.job as string));
+  const released = slot.instances.filter((instance) => ids.has(instance.id));
+  for (const instance of released) await stop(state, instance);
+  slot.instances = slot.instances.filter((instance) => !ids.has(instance.id));
+  return released.length > 0;
+}
+
+/** Polls one running agent. Returns true when it ended or a judge released an instance. */
 async function poll(state: State, slot: Slot): Promise<boolean> {
+  const released = slot.role === 'judge' ? await carryOutReleases(state, slot) : false;
   const outcome = await agentOutcome(state.ctx, slot.job as string);
-  if (outcome.status === 'running') return false;
+  if (outcome.status === 'running') return released;
+  await clearReleases(state.ctx.env, slot.job as string);
   state.active.splice(state.active.indexOf(slot), 1);
   if (outcome.status === 'done' && outcome.output !== null && exists(outcome.output)) {
     if (slot.role === 'play') {
