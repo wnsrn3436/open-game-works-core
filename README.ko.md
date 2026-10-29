@@ -102,10 +102,10 @@ create game: block-drop
   |    contract, play-guide.md를 고치고 플레이스홀더 리소스를 넣음
   | 2. 자동 검사: 회귀 테스트, 정적 검사, 완성도 검사, row simulation
   |    -> 게이트: pass 또는 fail
-  | 3. 플레이 에이전트: 이번 커밋의 인스턴스를 실제 입력으로 플레이
-  | 4. 판정 에이전트: 새 컨텍스트. 기준 게임과 블라인드 A/B 비교,
-  |    레퍼런스 게임의 게임플레이 영상과 비교
-  | 5. ogw: 결함 목록, 루프 반복 기록, 중지 판정
+  | 3. 플레이 에이전트(완성도 반복): 이번 커밋의 인스턴스를 실제 입력으로 플레이
+  | 4. 판정 에이전트들: 각자 새 컨텍스트, 서로 A/B를 바꿔 맡음. 기준 게임과
+  |    블라인드 A/B 비교, 레퍼런스 게임의 게임플레이 영상과 비교
+  | 5. ogw: 투표 집계, 결함 목록, 루프 반복 기록, 중지 판정
   +-------------------------------------------------------------------
      병행: 리소스·번역 하위 에이전트. `ogw loop sync`가 그 결과를 병합
                          |
@@ -114,13 +114,17 @@ create game: block-drop
   루프 종료 기록 -> main에 병합 -> 사람에게 보고
 ```
 
+반복은 **재미 반복**(fun iteration)과 **완성도 반복**(completeness iteration) 두 종류다. 재미 반복은 재미를 노린 변경 하나(콘텐츠 에이전트의 가설)를 시도하고, 플레이를 막는 검사(회귀 테스트, 정적 검사, no blocker, full flow)만 돌린다. 플레이 에이전트는 없고, 판정 에이전트는 레퍼런스 게임 없이 짧게 플레이해서 game feel, tension and release, no friction만 판정하므로 몇 분 안에 끝난다. 완성도 반복은 결함을 고치고 아래 단계를 모두 돌린다. 1번째 반복, 재미 반복을 `loop.funIterations`번 연달아 한 다음 반복, 게이트가 fail인 완성도 반복 다음 반복은 완성도 반복이다. 성공은 완성도 반복에서만 판정한다.
+
 1. **콘텐츠 에이전트**가 `design.md`, 클라이언트·서버 콘텐츠 코드, 데이터, contract를 함께 고치고 `play-guide.md`를 게임에 맞춰 유지한다. `create game`의 첫 반복에서는 먼저 `setup game`이 저장한 요청으로 `brief.md`를 쓴다. 리소스가 필요하면 플레이스홀더 리소스를 넣고 최종 리소스를 요청한 뒤 기다리지 않고 진행한다.
 2. **자동 검사**를 실행한다(아래 표). 회귀 테스트, 정적 검사, no blocker, full flow 중 하나라도 실패하면 플레이와 판정을 건너뛰고 바로 결함 목록으로 간다.
-3. **플레이 에이전트**가 `play-guide.md`를 읽고 같은 커밋의 인스턴스 여러 개를 자동화 채널을 통한 실제 입력으로 플레이한다. 피드백은 총점이 아니라 관찰마다 쓴다.
-4. **판정 에이전트**는 새 컨텍스트에서 시작해 두 인스턴스 `A`, `B`를 플레이한다. 어느 쪽이 이번 커밋이고 어느 쪽이 기준 게임(baseline game)인지는 알려 주지 않는다. 재미 요소(game feel, tension and release, progression, one more run, no friction, presentation)마다 승자를 고르고 각 요소를 정해진 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 레퍼런스 게임 게임플레이 영상과 비교한다. 화면이 상용 게임답게 보이는지(`lobby`, `hud`, `reward popup`, `result`)는 프레젠테이션 게임 영상과 비교한다. 콘텐츠 에이전트가 만든 세이브 픽스처로 판정 순간(judge moment)마다 바로 그 장면을 플레이하기도 한다. `create game`에서는 `brief.md`의 `memorable_moment`가 그중 하나이고, 판정 순간 하나에서라도 기준 게임이 낫다면 이번 커밋을 더 낫다고 판정하지 않는다. 플레이 에이전트와 판정 에이전트는 `brief.md`와 `design.md`를 보지 못한다. 3단계와 4단계는 함께 실행되며(`ogw loop evaluate`), 판정 에이전트는 플레이 피드백을 받지 않는다.
-5. **`ogw`**가 검사 실패, 플레이 피드백, 판정 결과를 결함 목록으로 정리하고 루프 반복 기록을 쓴다. 이어 다음 기준 게임을 정하고 루프를 멈출지 판정한다.
+3. 완성도 반복에서는 **플레이 에이전트**가 `play-guide.md`를 읽고 같은 커밋의 인스턴스 여러 개를 자동화 채널을 통한 실제 입력으로 플레이한다. 피드백은 총점이 아니라 관찰마다 쓴다.
+4. **판정 에이전트** `loop.judgeVotes`명이 각자 새 컨텍스트에서 시작해 두 인스턴스 `A`, `B`를 플레이한다. 어느 쪽이 이번 커밋이고 어느 쪽이 기준 게임(baseline game)인지는 알려 주지 않는다. 판정 에이전트마다 `A`, `B`를 바꿔 맡고, 인스턴스마다 플레이 시간 예산이 있다. 플레이하기 전에 `ogw`가 커밋마다 같은 입력으로 봇 실행을 세 번 돌린다. 지표 차이가 실행 간 편차보다 큰 요소는 그 텔레메트리로 승자를 정하고, 재미 반복에서는 판정 에이전트가 나머지 요소만 플레이로 판정한다. 재미 요소(game feel, tension and release, progression, one more run, no friction, presentation)마다 승자를 고르고 각 요소를 정해진 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 레퍼런스 게임 게임플레이 영상과 비교한다. 화면이 상용 게임답게 보이는지(`lobby`, `hud`, `reward popup`, `result`)는 프레젠테이션 게임 영상과 비교한다. 콘텐츠 에이전트가 만든 세이브 픽스처로 판정 순간(judge moment)마다 바로 그 장면을 플레이하기도 한다. `create game`에서는 `brief.md`의 `memorable_moment`가 그중 하나이고, 판정 순간 하나에서라도 기준 게임이 낫다면 이번 커밋을 더 낫다고 판정하지 않는다. 플레이 에이전트와 판정 에이전트는 `brief.md`와 `design.md`를 보지 못한다. 3단계와 4단계는 함께 실행되며(`ogw loop evaluate`), 판정 에이전트는 플레이 피드백을 받지 않는다.
+5. **`ogw`**가 판정 에이전트들의 표를 요소마다 센다. 판정 에이전트의 3분의 2 이상(최소 2명)이 같은 쪽에 투표하고, 그 표가 양쪽 A/B 배정에서 모두 나오고, 반대쪽 표가 없을 때만 그 요소를 그쪽으로 정한다. 이어 검사 실패, 플레이 피드백, 판정 결과를 결함 목록으로 정리하고 루프 반복 기록을 쓴다. 이어 다음 기준 게임을 정하고 루프를 멈출지 판정한다.
 
 루프는 다음 이유 중 하나로 멈춘다. success(성공), repeated defect(같은 결함 반복), oscillation(수정과 재발의 반복), plateau(개선 정체), limit reached(게임 설정 `loopIterationLimit` 도달), stopped by human(사람이 중지). 성공하려면 후보 반복(candidate iteration)이 있어야 한다. 후보 반복이 되려면 판정 결과가 레퍼런스 게임 수준에 이르고 기준 게임보다 나쁘지 않아야 하고 no placeholder를 뺀 완성도 요소가 모두 통과해야 한다. 추가로 부르는 성공 확인 판정 에이전트들도 레퍼런스 게임 수준이라고 판정해야 한다. 리소스 작업과 번역 작업은 루프를 기다리게 하지 않는다. 그래서 후보 반복 시점에 끝나지 않은 작업이 있었다면 그 작업을 병합한 상태에서 콘텐츠 수정 없이 확인 반복(confirmation iteration)을 한 번 더 돌려 성공을 다시 판정한다.
+
+표를 믿을 수 있는지 확인하려면 리드 에이전트에게 판정 보정(`ogw judge calibrate <game>`)을 요청한다. main을 자기 자신과 비교하는 쌍(null pair), 마지막으로 판정한 쌍을 A/B를 바꿔 다시 판정하는 쌍(order pair), main과 입력 지연을 더한 main을 비교하는 쌍(degraded pair)을 판정해서 잘못된 승리 비율, 순서 일관성, 민감도를 `loop.judgeVotes`와 `loop.judgePanel`에 대한 권고와 함께 보고한다. 최근 결과는 루프 종료 기록마다 다시 실린다.
 
 루프가 멈추면 리드 에이전트는 진행 중인 리소스 작업과 번역 작업을 기다린 뒤 루프 종료 기록 `records/loops/<run>/end.md`를 쓰고 고른 커밋을 main에 병합한 다음 보고한다. 플레이스홀더 리소스나 누락·만료된 번역이 남아 있으면 실패로 보고한다.
 
@@ -291,9 +295,11 @@ PROD 문제는 PROD 사용자를 스냅숏으로 복제해(`ogw clone`) 최신 m
 
 설정은 JSON 파일이고 각각 JSON 스키마가 있다. 에이전트는 `ogw settings`로만 설정을 읽고 쓰며 이 명령은 스키마, 조건, 호출한 역할의 권한을 검사한다.
 
+하네스 설정은 `settings.json` 위에 `settings.local.json`을 합친 것이다. `settings.local.json`은 커밋하지 않으며 사용자 한 명, 호스트 하나의 값을 담는다. `ogw settings set`은 로컬 범위 경로(`humanLanguage`, `agents`, `hosts`, `loopStop`, `loop`)를 이 파일에 쓰고, `settings.json`에 있는 그 경로의 값은 모든 사용자의 기본값이다.
+
 | 설정 | 파일 | 내용 |
 |---|---|---|
-| 하네스 설정 | `settings.json` (스키마 `schemas/harness-settings.schema.json`) | `humanLanguage`, 역할별 에이전트 CLI·모델·effort, 워크스페이스 `paths`, `coreReleaseRepository`, `useLocalCore`, `resourceGeneration`, 고정된 `tools`, 루프 중지 값, `hosts` 아래의 호스트별 값 |
+| 하네스 설정 | `settings.json` (스키마 `schemas/harness-settings.schema.json`) | `humanLanguage`, 역할별 에이전트 CLI·모델·effort, 워크스페이스 `paths`, `coreReleaseRepository`, `useLocalCore`, `resourceGeneration`, 고정된 `tools`, 루프 중지 값, 반복 종류와 판정 에이전트(`loop`), 판정 보정, `hosts` 아래의 호스트별 값 |
 | 코어 설정 | `open-game-works-core-impl/settings/core-settings.json` | 코어 기본값 |
 | 게임 설정 | `games/<game>/settings.json` (스키마 `schemas/game-settings.schema.json`) | 엔진, `coreVersion`, `coreModules`, 앱 ID, 원문 언어와 지원 언어, 빌드 플랫폼, 서명, 환경별 서버와 배포 호스트, 어댑터, 시크릿 이름, 코어 설정 덮어쓰기 |
 
@@ -329,7 +335,7 @@ build: <game> PROD                  STG에서 확인한 커밋의 PROD 빌드, P
 ```
 
 - `setup game`에서는 레퍼런스 게임(요청에 없으면 에이전트가 후보 세 개를 제안한다)과 게임플레이 영상 하나 이상을 파일이나 YouTube URL로 주고 각 순간(`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`)의 시작과 끝을 알려 준다. 게임에 `lobby`, `hud`, `reward popup`, `result` 화면 중 어느 것이 있을지도 답하고 화면 수준의 기준으로 삼을 프레젠테이션 게임을 줄 수 있다. 주지 않으면 레퍼런스 게임을 기준으로 쓴다. 금칙어 목록은 게임이 `nickname`, `guild`, `chat` 중 하나를 쓸 때만 묻는다. 마지막에 `ogw secret generate`로 게임의 시크릿을 만들고 환경별로 사람이 준비할 것(`ogw game check <game> --human-prep`)을 보여 준다.
-- 루프가 끝나면 루프 종료 기록 `records/loops/<run>/end.md`를 읽는다. `## human` 절에 사람이 할 일이 있다. `needs human` 표시가 붙은 가정, 새 코어 제안, 라이선스가 `unknown`인 리소스, 건너뛴 코어 버전이 여기에 나온다.
+- 루프가 끝나면 루프 종료 기록 `records/loops/<run>/end.md`를 읽는다. `## human` 절에 사람이 할 일이 있다. `needs human` 표시가 붙은 가정, 새 코어 제안, 라이선스가 `unknown`인 리소스, 건너뛴 코어 버전, 최근 판정 보정 결과가 여기에 나온다.
 - 빌드는 리포트를 `records/loops/<run>/end.md`에, 산출물을 게임 저장소의 `builds/<env>-<version>/`에 쓴다. PROD 빌드 리포트에는 이 빌드의 파일을 채운 PROD 배포 순서, 롤백 순서, 점검 순서가 들어 있다.
 - 요청하면 리드 에이전트가 `ogw video`로 게임 플레이 영상을 녹화해 게임 저장소의 `builds/videos/`에 쓴다.
 - 실행이 중간에 끊겼다면 리드 에이전트가 그 상태를 보여 주고 사람이 말하면 이어서 진행하거나(`ogw loop resume`) 닫는다.
@@ -433,11 +439,12 @@ pbpaste | tr -d '[:space:]' | ogw secret set --harness huggingface
 2. 엔진과 내려받을 수 있는 빌드 도구(`ogw env install-engines`), 고정된 도구와 생성 방법(`ogw generation install`)을 `<workspace>/.ogw/`에 설치한다.
 3. 생성 방법마다 표준 테스트 작업을 단계별로 실행한다(`ogw generation measure`). 외부 서비스를 호출하기 전에는 비용을 알려 주고(`sprite-gen-codex`와 `sprite-gen-grok`이면 호출이 ChatGPT나 Grok 구독의 사용량을 쓰는지, API 키에 호출마다 과금되는지 알려 준다), 사람이 허락한 것만 호출한다.
 4. 코어 릴리스의 벤치마크 게임으로 이 호스트가 동시에 실행할 수 있는 인스턴스 수를 측정한다(`ogw instance measure`).
-5. 이 호스트에 맞는 하네스 설정 수정안을 제안하고(`ogw env propose`), 수락한 것을 적용해 커밋한다.
+5. 선호 설정을 묻는다. `humanLanguage`, 역할별 모델과 effort, 루프 중지 값, `loop`의 반복·판정 값이다.
+6. 이 호스트에 맞는 하네스 설정 수정안을 제안하고(`ogw env propose`), 수락한 것을 적용한 뒤 `settings.json`이 바뀌었으면 커밋한다.
 
-호스트별 값(측정 결과, `maxConcurrentInstances`)은 `settings.json`의 `hosts.<host id>` 아래에 저장되므로 다른 호스트에서 `update env`를 실행해도 덮어쓰지 않는다.
+호스트별 값(측정 결과, `maxConcurrentInstances`)은 `settings.local.json`의 `hosts.<host id>` 아래에 저장되므로 다른 호스트에서 `update env`를 실행해도 덮어쓰지 않는다.
 
-사람에게 하는 보고와 질문은 `settings.json`의 `humanLanguage`(BCP 47 태그, 이 저장소에서는 `en`)로 작성된다. 역할별 에이전트 CLI, 모델, effort는 `agents`에 있다.
+사람에게 하는 보고와 질문은 하네스 설정의 `humanLanguage`(BCP 47 태그, 이 저장소의 `settings.json`에서는 `en`)로 작성된다. 역할별 에이전트 CLI, 모델, effort는 `agents`에 있다.
 
 ### 로컬 모델
 

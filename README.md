@@ -102,10 +102,10 @@ human -- one command --> lead agent (the Claude Code or Codex session a human op
   |    contract and play-guide.md; adds placeholder resources
   | 2. automated checks: regression test, static check, completeness check, row simulation
   |    -> gate: pass or fail
-  | 3. play agents: play instances of this commit with real input
-  | 4. judge agent: new context; blind A/B against the baseline game,
-  |    comparison with the reference game's gameplay video
-  | 5. ogw: defect list, loop iteration record, stop judgement
+  | 3. play agents (completeness iteration): play instances of this commit with real input
+  | 4. judge agents: new contexts, sides swapped between them; blind A/B against
+  |    the baseline game, comparison with the reference game's gameplay video
+  | 5. ogw: votes, defect list, loop iteration record, stop judgement
   +-------------------------------------------------------------------
      in parallel: resource and translation sub-agents; `ogw loop sync` merges their results
                          |
@@ -114,13 +114,17 @@ human -- one command --> lead agent (the Claude Code or Codex session a human op
   loop end record -> merge into main -> report to the human
 ```
 
+An iteration is a **fun iteration** or a **completeness iteration**. A fun iteration tries one change aimed at fun (the content agent's hypothesis), runs only the checks that block play (regression test, static check, no blocker, full flow), has no play agents, and its judges judge only game feel, tension and release and no friction from a short play, without the reference game, so it ends in minutes. A completeness iteration fixes defects and runs every step below. Iteration 1 is a completeness iteration, and so is the iteration after `loop.funIterations` fun iterations in a row or after a completeness iteration whose gate failed. Success is judged only in completeness iterations.
+
 1. The **content agent** edits `design.md`, client and server content code, data and contract together, and keeps `play-guide.md` in step with the game. In the first iteration of `create game`, it starts by writing `brief.md` from the request that `setup game` saved. When it needs a resource, it adds a placeholder resource, requests the final one and carries on without waiting.
 2. **Automated checks** run (see the table below). If any of regression test, static check, no blocker or full flow fails, the iteration skips play and judging and goes straight to the defect list.
-3. **Play agents** read `play-guide.md` and play several instances of the same commit with real input through the automation channel. They write feedback for each observation instead of giving a total score.
-4. The **judge agent** starts in a new context and plays two instances, `A` and `B`, without being told which is this commit and which is the baseline game. It picks a winner for each fun element (game feel, tension and release, progression, one more run, no friction, presentation) and compares each element with the reference game's gameplay video at fixed moments (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). Whether the screens (`lobby`, `hud`, `reward popup`, `result`) look like a commercial game is judged against a presentation game's video. The judge agent also plays each judge moment directly from a save fixture the content agent made. In `create game`, the `memorable_moment` from `brief.md` is one of these moments, and if the baseline game is better at even one judge moment, this commit is not judged better. Play and judge agents never see `brief.md` or `design.md`. Steps 3 and 4 run together (`ogw loop evaluate`), and the judge agent does not get the play feedback.
-5. **`ogw`** turns check failures, play feedback and judge results into the defect list, writes the loop iteration record, chooses the next baseline game and decides whether the loop stops.
+3. In a completeness iteration, **play agents** read `play-guide.md` and play several instances of the same commit with real input through the automation channel. They write feedback for each observation instead of giving a total score.
+4. **Judge agents** (`loop.judgeVotes` of them) each start in a new context and play two instances, `A` and `B`, without being told which is this commit and which is the baseline game. The sides are swapped from judge to judge, and each judge has a play budget per instance. Before they play, `ogw` gives the same inputs to three bot runs of each commit; an element whose metrics differ by more than the spread of the runs takes its winner from that telemetry, and in a fun iteration the judges play only for the other elements. A judge picks a winner for each fun element (game feel, tension and release, progression, one more run, no friction, presentation) and compares each element with the reference game's gameplay video at fixed moments (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). Whether the screens (`lobby`, `hud`, `reward popup`, `result`) look like a commercial game is judged against a presentation game's video. The judge agent also plays each judge moment directly from a save fixture the content agent made. In `create game`, the `memorable_moment` from `brief.md` is one of these moments, and if the baseline game is better at even one judge moment, this commit is not judged better. Play and judge agents never see `brief.md` or `design.md`. Steps 3 and 4 run together (`ogw loop evaluate`), and the judge agents do not get the play feedback.
+5. **`ogw`** counts the judges' votes per element: an element goes to one side only when at least two thirds of the judges (and at least two) vote for it, from both side assignments, and none votes for the other side. It then turns check failures, play feedback and judge results into the defect list, writes the loop iteration record, chooses the next baseline game and decides whether the loop stops.
 
 The loop stops for one of these reasons: success, repeated defect (the same defect repeats), oscillation (a cycle of fixes and recurrences), plateau (improvement has stalled), limit reached (game settings `loopIterationLimit`), or stopped by human. Success needs a candidate iteration. For an iteration to be a candidate, its judge result must reach the level of the reference game without being worse than the baseline game, and every completeness element except no placeholder must pass. The extra judge agents called to confirm success must also put it at the level of the reference game. Resource and translation work never makes the loop wait. So if some of that work was still unfinished at the candidate iteration, the loop merges it, runs one more confirmation iteration with no content edits, and judges success again.
+
+Ask the lead agent for a judge calibration (`ogw judge calibrate <game>`) to check whether the votes can be trusted. It judges main against itself (null pairs), the last judged pair with the sides swapped (order pair) and main against main with added input latency (degraded pair), and reports the false win rate, the order consistency and the sensitivity with recommendations for `loop.judgeVotes` and `loop.judgePanel`. Every loop end record repeats the latest results.
 
 When the loop stops, the lead agent waits for the resource and translation work in progress, writes the loop end record `records/loops/<run>/end.md`, merges the chosen commit into main and reports. If placeholder resources, missing translations or stale translations remain, it reports failure.
 
@@ -291,9 +295,11 @@ Agents read the procedures and rules of each task from `skills/`.
 
 Settings are JSON files, each with a JSON schema. Agents read and write them only through `ogw settings`, which checks the schema, the conditions and the permission of the calling role.
 
+Harness settings are `settings.json` with `settings.local.json` merged over it. `settings.local.json` is not committed and holds the values of one user and one host: `ogw settings set` writes the local-scope paths (`humanLanguage`, `agents`, `hosts`, `loopStop`, `loop`) there, and the values of those paths in `settings.json` are defaults for every user.
+
 | settings | file | contents |
 |---|---|---|
-| harness settings | `settings.json` (schema `schemas/harness-settings.schema.json`) | `humanLanguage`, agent CLI, model and effort per role, workspace `paths`, `coreReleaseRepository`, `useLocalCore`, `resourceGeneration`, pinned `tools`, loop stop values, and per-host values under `hosts` |
+| harness settings | `settings.json` (schema `schemas/harness-settings.schema.json`) | `humanLanguage`, agent CLI, model and effort per role, workspace `paths`, `coreReleaseRepository`, `useLocalCore`, `resourceGeneration`, pinned `tools`, loop stop values, iteration kinds and judges (`loop`), judge calibration, and per-host values under `hosts` |
 | core settings | `open-game-works-core-impl/settings/core-settings.json` | core defaults |
 | game settings | `games/<game>/settings.json` (schema `schemas/game-settings.schema.json`) | engine, `coreVersion`, `coreModules`, app ID, source and supported languages, build platforms, signing, servers and deploy hosts per environment, adapters, secret names, core settings overrides |
 
@@ -329,7 +335,7 @@ build: <game> PROD                  PROD build of the commit checked on STG; you
 ```
 
 - In `setup game`, you give the reference game (the agent suggests three candidates when your request names none) and one or more gameplay videos as files or YouTube URLs, with the start and end of each moment (`first 30000ms`, `core action`, `first failure`, `first reward`, `restart`). You also say which of the screens `lobby`, `hud`, `reward popup` and `result` the game will have, and you can name a presentation game whose screens set the bar. Without one, the reference game is used. Banned word lists are asked for only when the game uses `nickname`, `guild` or `chat`. At the end it generates the game's secrets with `ogw secret generate` and shows, per environment, what you have to prepare (`ogw game check <game> --human-prep`).
-- After a loop, read the loop end record `records/loops/<run>/end.md`. Its `## human` section lists what needs your attention: assumptions marked `needs human`, new core proposals, resources whose license is `unknown`, skipped core versions.
+- After a loop, read the loop end record `records/loops/<run>/end.md`. Its `## human` section lists what needs your attention: assumptions marked `needs human`, new core proposals, resources whose license is `unknown`, skipped core versions, the latest judge calibration rates.
 - A build writes its report to `records/loops/<run>/end.md` and its artifacts to `builds/<env>-<version>/` of the game repo. The PROD build report carries the PROD deploy order, rollback order and maintenance order with this build's files filled in.
 - On request, the lead agent records a gameplay video with `ogw video` and writes it to `builds/videos/` of the game repo.
 - If a run was interrupted, the lead agent shows its state and then either continues it when you say so (`ogw loop resume`) or closes it.
@@ -433,11 +439,12 @@ Start Claude Code or Codex in `open-game-works-core/` and give the command `upda
 2. installs the engines and the downloadable build tools (`ogw env install-engines`) and the pinned tools and generation methods (`ogw generation install`) into `<workspace>/.ogw/`;
 3. runs a standard test task of each generation method stage by stage (`ogw generation measure`). Before calling an external service it tells you the cost (for `sprite-gen-codex` and `sprite-gen-grok`, whether the calls use your ChatGPT or Grok subscription or are billed per call to an API key) and calls only the ones you allow;
 4. measures how many instances this host can run at once, using the benchmark game of the core release (`ogw instance measure`);
-5. proposes harness settings revisions for this host (`ogw env propose`), applies the ones you accept and commits them.
+5. asks for your preferences: `humanLanguage`, the model and effort of each role, the loop stop values, and the iteration and judge values of `loop`;
+6. proposes harness settings revisions for this host (`ogw env propose`), applies the ones you accept and commits `settings.json` when it changed.
 
-Per-host values (measurement results, `maxConcurrentInstances`) are kept under `hosts.<host id>` in `settings.json`, so running `update env` on another host does not overwrite them.
+Per-host values (measurement results, `maxConcurrentInstances`) are kept under `hosts.<host id>` in `settings.local.json`, so running `update env` on another host does not overwrite them.
 
-Reports and questions to you are written in `humanLanguage` of `settings.json` (a BCP 47 tag; it is `en` in this repository). The agent CLI, model and effort of each role are in `agents`.
+Reports and questions to you are written in `humanLanguage` of harness settings (a BCP 47 tag; it is `en` in this repository's `settings.json`). The agent CLI, model and effort of each role are in `agents`.
 
 ### Local models
 
