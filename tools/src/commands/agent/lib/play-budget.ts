@@ -13,13 +13,19 @@ async function startFile(env: NodeJS.ProcessEnv, agentJob: string): Promise<stri
   return join(await jobsDir(env), 'play-budget', agentJob);
 }
 
+/** Whether an input releases what an earlier input holds: an `_up` command, or `pad_axis` back to 0. */
+export function releasesHeld(input: readonly string[]): boolean {
+  const [command, , value] = input;
+  return command?.endsWith('_up') === true || (command === 'pad_axis' && Number(value) === 0);
+}
+
 /**
  * Fails an input or step of a play agent once harness settings `loop.playBudgetMs` has passed since its first input or
- * step; notes the time of the first one. Other callers pass, and so does the release of a held input (`inputCommand`
- * ending in `_up`), so that no input stays held.
+ * step; notes the time of the first one. Other callers pass, and so does an input that releases a held one
+ * (`releasesHeld` of `input`, the input command and its arguments), so that no input stays held.
  */
-export async function checkPlayBudget(ctx: Context, inputCommand?: string): Promise<void> {
-  if (inputCommand?.endsWith('_up') === true) return;
+export async function checkPlayBudget(ctx: Context, input?: readonly string[]): Promise<void> {
+  if (input !== undefined && releasesHeld(input)) return;
   const agent = await agentContext(ctx.env);
   if (agent?.meta.role !== 'play') return;
   const budget = (await ctx.settings()).loop.playBudgetMs;
@@ -50,9 +56,9 @@ export async function clearPlayBudget(env: NodeJS.ProcessEnv, agentJob: string):
 export async function brokerBudgetRefusal(ctx: Context, argv: readonly string[]): Promise<string | null> {
   if (argv[0] !== 'step' && argv[0] !== 'input') return null;
   if (argv.includes('--help')) return null;
-  const inputCommand = argv[0] === 'input' && !argv.some((a) => a === '--script' || a.startsWith('--script=')) ? argv.filter((a) => !a.startsWith('-'))[2] : undefined;
+  const input = argv[0] === 'input' && !argv.some((a) => a === '--script' || a.startsWith('--script=')) ? argv.filter((a) => !a.startsWith('--')).slice(2) : undefined;
   try {
-    await checkPlayBudget(ctx, inputCommand);
+    await checkPlayBudget(ctx, input);
     return null;
   } catch (error) {
     if (error instanceof OgwError) return error.message;

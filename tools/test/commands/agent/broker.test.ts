@@ -135,8 +135,10 @@ describe('broker', () => {
       }
       expect(started).toEqual([]);
       expect(await forward(socket, ['input', 'instp1', 'key_up', 'a'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      expect(await forward(socket, ['input', 'instp1', 'pad_axis', 'left_x', '0'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      expect((await forward(socket, ['input', 'instp1', 'pad_axis', 'left_x', '1'], env)).code).toBe(1);
       expect(await forward(socket, ['capture', 'instp1'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
-      expect(started).toEqual([['input', 'instp1', 'key_up', 'a'], ['capture', 'instp1']]);
+      expect(started).toEqual([['input', 'instp1', 'key_up', 'a'], ['input', 'instp1', 'pad_axis', 'left_x', '0'], ['capture', 'instp1']]);
     } finally {
       await broker.close();
       remove();

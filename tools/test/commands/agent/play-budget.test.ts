@@ -49,7 +49,9 @@ describe('play budget', () => {
         expect(await ogw(ws, argv, { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).toMatchObject({ code: 1, stderr: expect.stringContaining(PASSED) as unknown });
       }
       // the release of a held input still goes in
-      await checkPlayBudget(ctxOf(play.key), 'key_up');
+      await checkPlayBudget(ctxOf(play.key), ['key_up', 'a']);
+      await checkPlayBudget(ctxOf(play.key), ['pad_axis', 'left_x', '0']);
+      await expect(checkPlayBudget(ctxOf(play.key), ['pad_axis', 'left_x', '0.5'])).rejects.toThrow(PASSED);
       expect(await ogw(ws, ['input', 'instp1', 'touch_up', '1', '1'], { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).toMatchObject({ code: 1, stderr: expect.not.stringContaining('play budget') as unknown });
       await checkPlayBudget(ctxOf(judge.key));
       await checkPlayBudget(ctxOf(null));

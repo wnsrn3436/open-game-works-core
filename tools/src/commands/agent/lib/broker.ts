@@ -183,6 +183,8 @@ function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProces
         const ctx = createContext({ cwd: request.cwd, env: options.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
         void brokerBudgetRefusal(ctx, request.argv).then(
           (refusal) => {
+            // a client gone during the check gets no command, which nothing would end
+            if (socket.destroyed) return;
             if (refusal === null) call = runCall(socket, request, options, children);
             else refuse(socket, refusal);
           },
