@@ -5,7 +5,7 @@ import { syncDeps, taskInput } from '../../../src/commands/loop/lib/sync.ts';
 import { translationLanguages, unmergedLanguages } from '../../../src/commands/loop/dispatch.ts';
 import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
-import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write } from './helpers.ts';
+import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write, type TestGame } from './helpers.ts';
 
 const MEMORABLE = (request: string): string =>
   `- judge moment \`memorable_moment\`: add the line \`\`- \`memorable_moment\`: <description>\`\` to \`## judge moments\` of \`${request}\`, where <description> is` +
@@ -38,13 +38,14 @@ vi.mock('../../../src/commands/resource/api.ts', async (importOriginal) => ({
 }));
 
 let started = 0;
+let currentWs: TestGame['ws'];
 beforeEach(() => {
   started = 0;
   for (const m of Object.values(mocks)) m.mockReset();
   mocks.startAgentJob.mockImplementation(() => Promise.resolve(`new${String(++started)}`));
   mocks.placeholderFailures.mockResolvedValue([]);
   mocks.requestPendingResources.mockResolvedValue({ path: null, leftOut: [] });
-  mocks.installMethodJob.mockImplementation((_ctx: unknown, method: string) => Promise.resolve(`install-${method}`));
+  mocks.installMethodJob.mockImplementation(async (_ctx: unknown, method: string) => ({ job: (await addJob(currentWs, { command: 'generation install', argv: ['generation', 'install', method] })).id, argv: ['generation', 'install', method] }));
   syncDeps.pollMs = 0;
 });
 
@@ -313,14 +314,15 @@ describe('ogw loop dispatch', () => {
     expect(mocks.startAgentJob).toHaveBeenCalledWith(expect.anything(), { role: 'resource', game: 'g', input: join(g.root, rel) });
   });
 
-  it('holds a request file whose keys need methods not installed on this host and starts their install', async () => {
-    const pins = [{ kind: 'git', source: 'x', revision: 'a' }];
+  const PINS = [{ kind: 'git', source: 'x', revision: 'a' }];
+  /** A loop run whose image method `sprite` and sound method `audio` are not installed, and three request files. */
+  async function heldGame(): Promise<{ g: TestGame; file: (name: string) => string }> {
     const g = setupGame(
       {
         imageMethod: 'sprite',
         resourceGeneration: [
-          { name: 'sprite', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins, measured: [{ result: 'ok' }] },
-          { name: 'audio', kind: 'local-model', resourceTypes: ['sfx'], safetyTimeoutMs: 1, license: 'X', pins, measured: [{ durationMs: 3000, result: 'ok' }] },
+          { name: 'sprite', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ result: 'ok' }] },
+          { name: 'audio', kind: 'local-model', resourceTypes: ['sfx'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ durationMs: 3000, result: 'ok' }] },
           { name: 'tone', kind: 'procedural', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] },
         ],
       },
@@ -334,37 +336,83 @@ describe('ogw loop dispatch', () => {
         ].join('\n'),
       },
     );
+    currentWs = g.ws;
     await openLoopRun(g, { startedAt: 5 });
     const dir = 'records/loops/update-1/resource-requests';
-    write(g.root, `${dir}/100.md`, '## keys\n\nimage/a\nbgm/c\n\n## see\n\nnone\n\n## base\n\nnone\n');
-    write(g.root, `${dir}/200.md`, '## keys\n\nbgm/c\n\n## see\n\nnone\n\n## base\n\nnone\n');
-    write(g.root, `${dir}/300.md`, '## keys\n\nsfx/b\nimage/a\n\n## see\n\nnone\n\n## base\n\nnone\n');
+    const keys = (list: string): string => `## keys\n\n${list}\n\n## see\n\nnone\n\n## base\n\nnone\n`;
+    write(g.root, `${dir}/100.md`, keys('image/a\nbgm/c'));
+    write(g.root, `${dir}/200.md`, keys('bgm/c'));
+    write(g.root, `${dir}/300.md`, keys('sfx/b\nimage/a'));
     commit(g.root);
+    return { g, file: (name) => join(g.root, dir, name) };
+  }
+
+  function installed(g: TestGame, method: string): void {
+    write(join(g.ws.root, '.ogw', 'generation', method), 'installed.json', { name: method, pins: JSON.stringify(PINS), git: [], hf: [], files: null, python: null, cli: null, skill: null });
+  }
+
+  it('holds a request file whose keys need methods not installed on this host while their install runs, once per run', async () => {
+    const { g, file } = await heldGame();
     const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    const jobs = (await currentRun(g)).data.loop as { installs: { method: string; job: string }[] };
+    const job = (method: string): string => jobs.installs.find((i) => i.method === method)?.job ?? '';
+    expect(jobs.installs.map((i) => i.method)).toEqual(['sprite', 'audio']);
     expect(out).toMatchObject({
       code: 0,
       stdout: [
-        `new1 resource ${join(g.root, dir, '200.md')}`,
-        `held ${join(g.root, dir, '100.md')}: sprite not installed on this host`,
-        `held ${join(g.root, dir, '300.md')}: audio, sprite not installed on this host`,
-        'install-sprite generation install sprite',
-        'install-audio generation install audio',
+        `new1 resource ${file('200.md')}`,
+        `held ${file('100.md')}: sprite not installed on this host`,
+        `held ${file('300.md')}: audio, sprite not installed on this host`,
+        `${job('sprite')} ogw generation install sprite`,
+        `${job('audio')} ogw generation install audio`,
         '',
       ].join('\n'),
     });
-    expect(mocks.startAgentJob).toHaveBeenCalledTimes(1);
-    expect(mocks.installMethodJob.mock.calls.map((c) => c[1] as string)).toEqual(['sprite', 'audio']);
-    // once installed, a later dispatch gives the held files to resource sub-agents
-    await addJob(g.ws, { meta: { role: 'resource', input: join(g.root, dir, '200.md') } });
-    for (const method of ['sprite', 'audio']) {
-      const folder = join(g.ws.root, '.ogw', 'generation', method);
-      write(folder, 'installed.json', { name: method, pins: JSON.stringify(pins), git: [], hf: [], files: null, python: null, cli: null, skill: null });
-    }
+    // a later dispatch while the jobs run starts no install again
+    await addJob(g.ws, { meta: { role: 'resource', input: file('200.md') } });
+    expect((await ogw(g.ws, ['loop', 'dispatch', 'g'])).stdout).toContain(`held ${file('100.md')}`);
+    expect(mocks.installMethodJob).toHaveBeenCalledTimes(2);
+    // once installed, the held files go to resource sub-agents
+    installed(g, 'sprite');
+    installed(g, 'audio');
     const json = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
     const data = JSON.parse(json.stdout) as { started: { input: string }[]; held: unknown[]; installs: unknown[] };
-    expect(data.started.map((s) => s.input)).toEqual([join(g.root, dir, '100.md'), join(g.root, dir, '300.md')]);
+    expect(data.started.map((s) => s.input)).toEqual([file('100.md'), file('300.md')]);
     expect(data.held).toEqual([]);
     expect(data.installs).toEqual([]);
+  });
+
+  it('gives a held file to a sub-agent once the install of its methods ended without installing them, and does not install again', async () => {
+    const { g, file } = await heldGame();
+    await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    await addJob(g.ws, { meta: { role: 'resource', input: file('200.md') } });
+    const { installs } = (await currentRun(g)).data.loop as { installs: { method: string; job: string }[] };
+    const { updateJob } = await import('../../../src/lib/jobs.ts');
+    for (const i of installs) {
+      await updateJob(i.job, (j) => {
+        j.status = 'failed';
+        j.exitCode = 1;
+      }, g.ws.env);
+    }
+    installed(g, 'audio');
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    const sprite = installs.find((i) => i.method === 'sprite')?.job ?? '';
+    expect(out).toMatchObject({
+      code: 0,
+      stdout: `new2 resource ${file('100.md')}\nnew3 resource ${file('300.md')}\ninstall failed sprite: ogw generation install sprite (job ${sprite}: ogw job status ${sprite})\n`,
+    });
+    expect(mocks.installMethodJob).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives the file to a sub-agent when the install job does not start', async () => {
+    const { g, file } = await heldGame();
+    installed(g, 'audio');
+    mocks.installMethodJob.mockRejectedValue(new Error('no room\nmore'));
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    expect(out).toMatchObject({
+      code: 0,
+      stdout: `new1 resource ${file('100.md')}\nnew2 resource ${file('200.md')}\nnew3 resource ${file('300.md')}\ninstall failed sprite: not started: no room\n`,
+    });
   });
 
   it('prints and returns the nine_slice keys the pending resource request left out', async () => {

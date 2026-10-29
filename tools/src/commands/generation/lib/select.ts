@@ -124,21 +124,29 @@ export function takesTemporary(type: string, imageMethod: string, image: Generat
   return IMAGE_TYPES.includes(type) && imageMethod !== IMAGE_METHOD && image.resourceTypes.includes(type);
 }
 
-/** Whether a method can be called on this host: a method whose pins `generation install` downloads needs its install marker. */
+/** Whether a method has what `generation install` gives it on this host: the install marker of a method with pins. */
 export async function installedOnHost(ctx: Context, method: GenerationMethod): Promise<boolean> {
   return !hasPins(method) || (await methodMarker(ctx, method)) !== null;
 }
 
 /**
- * The methods that block a resource key on this host: its methods other than the temporary method when none of them is
- * installed (`installedOnHost`), as the key is then made with none of them (`production.md` `## method`). Empty for a key
- * with an installed method or with no method other than the temporary method.
+ * The methods that block a resource key on this host: when none of its methods other than the temporary method is
+ * installed (`installedOnHost`, and for `rig-2d` and `trellis2` `flux2-klein` too, which they call), the methods of
+ * those that are not installed, as the key is then made with none of them (`production.md` `## method`). Empty for a
+ * key with an installed method or with no method other than the temporary method.
  */
 export async function uninstalledMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<string[]> {
   const names = (await chooseMethods(ctx, settings, game, key)).filter((c) => c.temporary !== true).map((c) => c.name);
-  const methods = settings.resourceGeneration.filter((m) => names.includes(m.name));
-  for (const method of methods) if (await installedOnHost(ctx, method)) return [];
-  return methods.map((m) => m.name);
+  const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
+  const missing: string[] = [];
+  for (const method of settings.resourceGeneration.filter((m) => names.includes(m.name))) {
+    const needs = NEEDS_IMAGE_METHOD.has(method.name) && image !== undefined ? [method, image] : [method];
+    const lacking: string[] = [];
+    for (const m of needs) if (!(await installedOnHost(ctx, m))) lacking.push(m.name);
+    if (lacking.length === 0) return [];
+    for (const name of lacking) if (!missing.includes(name)) missing.push(name);
+  }
+  return missing;
 }
 
 async function choiceOf(ctx: Context, method: GenerationMethod, spec: Spec, image: GenerationMethod | undefined): Promise<MethodChoice> {

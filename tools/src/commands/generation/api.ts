@@ -1,9 +1,9 @@
 // Generation group API for other groups: the `## method` rule of `skills/resource/production.md`, the catalog listing and method installs.
 import type { Context } from '../../lib/command.ts';
 import { startBackground } from '../../lib/cli.ts';
-import { OgwError } from '../../lib/errors.ts';
-import { listJobs } from '../../lib/jobs.ts';
 import type { GameRepo } from '../../lib/game.ts';
+import { listJobs } from '../../lib/jobs.ts';
+import { toolProgram } from '../env/api.ts';
 import { installCommand } from './install.ts';
 import { chooseMethods, uninstalledMethods, type MethodChoice } from './lib/select.ts';
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
@@ -21,27 +21,30 @@ export function catalogEntries(ctx: Context, method: string): Promise<CatalogFil
 }
 
 /**
- * The methods of a resource key that are all not installed on this host while the key has no other method, as
- * `uninstalledMethods` says; empty for a key the list or its spec rejects, which the resource sub-agent reports.
+ * The methods that block a resource key on this host, as `uninstalledMethods` says; empty when they cannot be told (a
+ * key the list or its spec rejects, which the resource sub-agent reports, or a file that cannot be read).
  */
 export async function blockingMethods(ctx: Context, game: GameRepo, resourceKey: string): Promise<string[]> {
   try {
     return await uninstalledMethods(ctx, await ctx.settings(), game, resourceKey);
-  } catch (error) {
-    if (error instanceof OgwError) return [];
-    throw error;
+  } catch {
+    return [];
   }
 }
 
 /**
- * Starts `ogw generation install <method>` as a background job and returns its id, or returns the id of a running
- * `ogw generation install` job of that method or of every method.
+ * The job that installs `method`: a running `ogw generation install` job of that method or of every method, else a new
+ * background job. That is `ogw generation install` of every method when `method` has a `provider` and `tools.ffmpeg` is
+ * not installed, as its `cli` puts that program on PATH and only the install of every method installs `tools`; else
+ * `ogw generation install <method>`. Returns the job id and its argv.
  */
-export async function installMethodJob(ctx: Context, method: string): Promise<string> {
+export async function installMethodJob(ctx: Context, method: string): Promise<{ job: string; argv: string[] }> {
   const running = (await listJobs(ctx.env)).find(
     (job) => job.status === 'running' && job.command === 'generation install' && (job.argv.length === 2 || job.argv[2] === method),
   );
-  if (running) return running.id;
-  const started = await startBackground(ctx, installCommand, { positionals: [method], values: {}, raw: [method] }, null);
-  return (started.data as { job: string }).job;
+  if (running) return { job: running.id, argv: running.argv };
+  const provider = (await ctx.settings()).resourceGeneration.find((m) => m.name === method)?.provider !== undefined;
+  const only = provider && (await toolProgram(ctx, 'ffmpeg')) === null ? [] : [method];
+  const started = await startBackground(ctx, installCommand, { positionals: only, values: {}, raw: only }, null);
+  return { job: (started.data as { job: string }).job, argv: ['generation', 'install', ...only] };
 }

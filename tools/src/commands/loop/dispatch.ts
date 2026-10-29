@@ -4,8 +4,8 @@ import { expectPositionals, positional, type CommandDef, type Context } from '..
 import { writeFileAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { commitPaths } from '../../lib/git.ts';
-import type { JobRecord } from '../../lib/jobs.ts';
-import type { RunState } from '../../lib/runstate.ts';
+import { readJob, type JobRecord } from '../../lib/jobs.ts';
+import { changeOpenRun, requireOpenRun, type RunState } from '../../lib/runstate.ts';
 import { startAgentJob } from '../agent/api.ts';
 import { placeholderFailures } from '../check/api.ts';
 import { blockingMethods, installMethodJob } from '../generation/api.ts';
@@ -45,48 +45,84 @@ interface Started {
   input: string;
 }
 
-/** A request file not given to a resource sub-agent because methods its keys need are not installed on this host. */
+/** A request file not given to a resource sub-agent while an install job of methods its keys need runs. */
 interface Held {
   input: string;
   methods: string[];
 }
 
-/** An `ogw generation install` job a held request file waits for. */
+/** An install job dispatch started or took in this run for a method, and how it ended: `running`, or `failed` when the method is still not installed. */
 interface Install {
-  job: string;
   method: string;
+  job: string;
+  /** The command of the job, `ogw generation install [<method>]`. */
+  command: string;
+  state: 'running' | 'failed';
 }
 
 /** The methods not installed on this host that some key of the request file needs (`blockingMethods`), in first-seen order. */
 async function heldBy(ctx: Context, game: GameRepo, file: string): Promise<string[]> {
   const methods: string[] = [];
-  for (const key of requestFileKeys(await readFile(file, 'utf8'))) {
+  for (const key of requestFileKeys(await readFile(file, 'utf8').catch(() => ''))) {
     for (const method of await blockingMethods(ctx, game, key)) if (!methods.includes(method)) methods.push(method);
   }
   return methods;
 }
 
 /**
- * Starts a resource job per request file never given to one, except a file held by methods not installed on this host:
- * a sub-agent would make none of its keys, and each such run counts toward `backgroundRetryLimit` of `--pending`. For
- * each method a held file needs, an `ogw generation install <method>` job runs, and a later dispatch starts the file.
+ * The install of a method a request file needs, once per run: the install job recorded in the run, else a new one
+ * (`installMethodJob`) recorded there. A recorded job that ended while the method is still not installed is `failed`,
+ * and is not started again in the run. A job that cannot start is `failed` too.
+ */
+async function installOf(ctx: Context, game: GameRepo, method: string): Promise<Install> {
+  const recorded = loopData(await requireOpenRun(game)).installs.find((i) => i.method === method);
+  if (recorded) {
+    const job = await readJob(recorded.job, ctx.env).catch(() => null);
+    const command = `ogw ${(job?.argv ?? ['generation', 'install', method]).join(' ')}`;
+    return { method, job: recorded.job, command, state: job?.status === 'running' ? 'running' : 'failed' };
+  }
+  try {
+    const { job, argv } = await installMethodJob(ctx, method);
+    await changeOpenRun(game, (run) => {
+      loopData(run).installs.push({ method, job });
+    });
+    return { method, job, command: `ogw ${argv.join(' ')}`, state: 'running' };
+  } catch (error) {
+    return { method, job: '', command: `not started: ${(error instanceof Error ? error.message : String(error)).split('\n', 1)[0] as string}`, state: 'failed' };
+  }
+}
+
+/**
+ * Starts a resource job per request file never given to one. A file with a key whose methods are not installed on this
+ * host (`heldBy`) waits while an install job of those methods runs: a sub-agent would make none of those keys, and its
+ * run counts toward `backgroundRetryLimit` of `--pending`. Once each such install has failed, the file goes to a
+ * sub-agent, which makes the other keys and reports those it cannot make.
  */
 async function startResources(ctx: Context, game: GameRepo, run: RunState, jobs: readonly JobRecord[]): Promise<{ started: Started[]; held: Held[]; installs: Install[] }> {
   const used = new Set(agentJobsOf(jobs, ['resource']).map(inputOf));
   const started: Started[] = [];
   const held: Held[] = [];
+  const installs = new Map<string, Install>();
   for (const file of await requestFiles(game, run)) {
     if (used.has(file)) continue;
-    const methods = await heldBy(ctx, game, file);
-    if (methods.length > 0) {
-      held.push({ input: file, methods });
+    const waiting: string[] = [];
+    for (const method of await heldBy(ctx, game, file)) {
+      if (!installs.has(method)) installs.set(method, await installOf(ctx, game, method));
+      if (installs.get(method)?.state === 'running') waiting.push(method);
+    }
+    if (waiting.length > 0) {
+      held.push({ input: file, methods: waiting });
       continue;
     }
     started.push({ job: await startAgentJob(ctx, { role: 'resource', game: game.name, input: file }), role: 'resource', input: file });
   }
-  const installs: Install[] = [];
-  for (const method of [...new Set(held.flatMap((h) => h.methods))]) installs.push({ job: await installMethodJob(ctx, method), method });
-  return { started, held, installs };
+  return { started, held, installs: [...installs.values()] };
+}
+
+function installLine(install: Install): string {
+  if (install.state === 'running') return `${install.job} ${install.command}`;
+  if (install.job === '') return `install failed ${install.method}: ${install.command}`;
+  return `install failed ${install.method}: ${install.command} (job ${install.job}: ogw job status ${install.job})`;
 }
 
 /**
@@ -136,7 +172,7 @@ export const loopDispatch: CommandDef = {
     const lines = [
       ...started.map((s) => `${s.job} ${s.role} ${s.input}`),
       ...held.map((h) => `held ${h.input}: ${h.methods.join(', ')} not installed on this host`),
-      ...installs.map((i) => `${i.job} generation install ${i.method}`),
+      ...installs.map(installLine),
       ...leftOut.map(leftOutLine),
     ];
     return { text: lines.length > 0 ? lines.join('\n') : 'nothing to dispatch', data: { started, held, installs, leftOut } };

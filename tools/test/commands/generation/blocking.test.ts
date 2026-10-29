@@ -17,6 +17,7 @@ const RESOURCES = [
   'sfx/hit,hit,length=500,placeholder,,,,,,,,',
   'image/bad,bad,size=10,placeholder,,,,,,,,',
   'bgm/song,song,length=1000,placeholder,,,,,,,,',
+  'model/rock,rock,bounds=1x0.5x2,placeholder,,,,,,,,',
   '',
 ].join('\n');
 
@@ -25,9 +26,10 @@ const IMAGE = { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image
 const SPRITE = { name: 'sprite', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ result: 'ok' }] };
 const AUDIO = { name: 'audio', kind: 'local-model', resourceTypes: ['sfx', 'bgm'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ durationMs: 3000, result: 'ok' }] };
 const TONE = { name: 'tone', kind: 'procedural', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+const MESH = { name: 'trellis2', kind: 'local-model', resourceTypes: ['model'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ resolution: 512, result: 'ok' }] };
 
 async function open(): Promise<{ ws: TestWorkspace; ctx: Context; game: GameRepo }> {
-  const ws = makeWorkspace({ resourceGeneration: [IMAGE, SPRITE, AUDIO, TONE], imageMethod: 'sprite' });
+  const ws = makeWorkspace({ resourceGeneration: [IMAGE, SPRITE, AUDIO, TONE, MESH], imageMethod: 'sprite' });
   makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
   const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
   return { ws, ctx, game: await ctx.game('g') };
@@ -65,6 +67,24 @@ describe('blockingMethods', () => {
     expect(await blockingMethods(ctx, game, 'image/missing')).toEqual([]);
   });
 
+  it('needs flux2-klein installed for trellis2, which calls it', async () => {
+    const { ws, ctx, game } = await open();
+    expect(await blockingMethods(ctx, game, 'model/rock')).toEqual(['trellis2', 'flux2-klein']);
+    install(ws, 'trellis2');
+    expect(await blockingMethods(ctx, game, 'model/rock')).toEqual(['flux2-klein']);
+    install(ws, 'flux2-klein');
+    expect(await blockingMethods(ctx, game, 'model/rock')).toEqual([]);
+  });
+
+  it('treats a provider method whose cli puts another ffmpeg on PATH as not installed', async () => {
+    const { ws, ctx, game } = await open();
+    const dir = join(ws.root, '.ogw', 'generation', 'sprite');
+    mkdirSync(dir, { recursive: true });
+    // the marker of another workspace: its cli puts that workspace's ffmpeg on PATH, while this one has none installed
+    writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name: 'sprite', pins: JSON.stringify(PINS), git: [], hf: [], files: null, python: null, cli: '/other/bin/sprite-gen', skill: '/other/SKILL.md', ffmpeg: '/other/ffmpeg' }));
+    expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['sprite']);
+  });
+
   it('treats a marker installed from other pins as not installed', async () => {
     const { ws, ctx, game } = await open();
     const dir = join(ws.root, '.ogw', 'generation', 'audio');
@@ -77,8 +97,14 @@ describe('blockingMethods', () => {
 describe('installMethodJob', () => {
   it('starts ogw generation install <method> in the background', async () => {
     const { ctx } = await open();
-    expect(await installMethodJob(ctx, 'sprite')).toBe('new1');
-    expect(mocks.startBackground).toHaveBeenCalledWith(ctx, expect.objectContaining({ name: ['generation', 'install'] }), { positionals: ['sprite'], values: {}, raw: ['sprite'] }, null);
+    expect(await installMethodJob(ctx, 'audio')).toEqual({ job: 'new1', argv: ['generation', 'install', 'audio'] });
+    expect(mocks.startBackground).toHaveBeenCalledWith(ctx, expect.objectContaining({ name: ['generation', 'install'] }), { positionals: ['audio'], values: {}, raw: ['audio'] }, null);
+  });
+
+  it('installs every method, tools first, for a provider method while tools.ffmpeg is not installed', async () => {
+    const { ctx } = await open();
+    expect(await installMethodJob(ctx, 'sprite')).toEqual({ job: 'new1', argv: ['generation', 'install'] });
+    expect(mocks.startBackground).toHaveBeenCalledWith(ctx, expect.objectContaining({ name: ['generation', 'install'] }), { positionals: [], values: {}, raw: [] }, null);
   });
 
   it('gives the running install job of that method or of every method instead of starting one', async () => {
@@ -86,11 +112,11 @@ describe('installMethodJob', () => {
     await addJob(ws, { command: 'generation install', argv: ['generation', 'install', 'audio'] });
     await addJob(ws, { command: 'generation install', argv: ['generation', 'install', 'sprite'], status: 'done' });
     const audio = await installMethodJob(ctx, 'audio');
-    expect(audio).toMatch(/^job\d+x$/);
-    expect(await installMethodJob(ctx, 'sprite')).toBe('new1');
+    expect(audio).toEqual({ job: expect.stringMatching(/^job\d+x$/) as unknown, argv: ['generation', 'install', 'audio'] });
+    expect((await installMethodJob(ctx, 'sprite')).job).toBe('new1');
     const all = await addJob(ws, { command: 'generation install', argv: ['generation', 'install'] });
     mocks.startBackground.mockClear();
-    expect(await installMethodJob(ctx, 'sprite')).toBe(all.id);
+    expect(await installMethodJob(ctx, 'sprite')).toEqual({ job: all.id, argv: ['generation', 'install'] });
     expect(mocks.startBackground).not.toHaveBeenCalled();
   });
 });

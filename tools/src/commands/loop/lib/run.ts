@@ -74,6 +74,13 @@ export interface LoopData {
   stuck: StuckJob[];
   /** Iteration kinds of the run, in iteration order. */
   kinds: KindRecord[];
+  /** The install job `ogw loop dispatch` started or took for each method that held a resource request file, one per method. */
+  installs: InstallRecord[];
+}
+
+export interface InstallRecord {
+  method: string;
+  job: string;
 }
 
 export interface StuckJob {
@@ -102,7 +109,7 @@ export function memorableMomentAsked(run: RunState): boolean {
 /** `run.data.loop`, created with defaults. The object is the one in the run, so changes stay in it. */
 export function loopData(run: RunState): LoopData {
   const current = (run.data.loop ?? {}) as Partial<LoopData>;
-  const defaults: LoopData = { tasks: [], handled: [], merges: [], verdict: null, prepareMerge: null, confirms: [], stuck: [], kinds: [] };
+  const defaults: LoopData = { tasks: [], handled: [], merges: [], verdict: null, prepareMerge: null, confirms: [], stuck: [], kinds: [], installs: [] };
   const data: LoopData = { ...defaults, ...current };
   run.data.loop = data;
   return data;
