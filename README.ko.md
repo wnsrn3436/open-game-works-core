@@ -106,8 +106,7 @@ create game: block-drop
 
 ## 더 보기
 
-<details>
-<summary>전체 요구 사항</summary>
+### 전체 요구 사항
 
 `update env`(`ogw env check`)가 아래를 확인하고 없는 것을 알려 준다.
 
@@ -124,10 +123,7 @@ create game: block-drop
 
 Windows: 클론하기 전에 개발자 모드를 켜고 `git config --global core.symlinks true`를 실행한다. 플레이·판정 샌드박스는 macOS와 Linux에서만 돌아가므로 Windows에서는 루프가 돌지 않는다.
 
-</details>
-
-<details>
-<summary>워크스페이스 구조</summary>
+### 워크스페이스 구조
 
 ```
 <workspace>/
@@ -139,23 +135,15 @@ Windows: 클론하기 전에 개발자 모드를 켜고 `git config --global cor
   .ogw/                            엔진, 도구, 로컬 모델 (update env가 만듦)
 ```
 
-</details>
-
-<details>
-<summary>설정과 시크릿</summary>
+### 설정과 시크릿
 
 - 하네스 설정은 `settings.json` 위에 각자의 `settings.local.json`을 합친 것이다. 로컬 파일은 커밋하지 않으며 언어, 역할별 모델과 effort, 루프 값, 호스트별 값을 담는다. 게임 설정은 `games/<game>/settings.json`이다.
 - 설정에는 시크릿 이름만 둔다. 값은 `ogw secret set --harness <name>`(표준 입력으로 읽음)으로 저장하고 `ogw secret show`로 본다. 저장소는 macOS에서는 별도 키체인, Linux에서는 `~/.local/share/ogw/` 아래 폴더다.
 - `huggingface`(선택)는 가중치 접근이 제한된 `trellis2` 방법(3D 모델)에만 필요하다.
 
-</details>
-
-<details>
-<summary>리소스 생성과 로컬 모델</summary>
+### 리소스 생성과 로컬 모델
 
 `update env`는 `settings.json` `resourceGeneration`에 있는 방법을 설치한다. 이미지, 음악, 효과음, 음성은 로컬 모델(`flux2-klein`, `ace-step`, `moss-sfx`, `qwen3-tts`)이, 3D 모델은 `trellis2`나 `blender`가, 스프라이트 애니메이션은 `sprite-gen-codex`나 `sprite-gen-grok`이 만든다. 이 둘은 ChatGPT나 Grok 구독 사용량을 쓴다(API 키를 쓰면 호출마다 과금된다). 로컬 모델을 건너뛰려면 `update env` 전에 그 방법을 지운다. 어떤 리소스 종류를 만들 방법이 없으면 루프는 그 종류의 플레이스홀더로 돌지만 STG와 PROD 빌드는 막힌다.
-
-</details>
 
 ## 기여
 

@@ -106,8 +106,7 @@ What you do: give commands, read the loop end record (`records/loops/<run>/end.m
 
 ## More
 
-<details>
-<summary>Full requirements</summary>
+### Full requirements
 
 `update env` (`ogw env check`) checks these and tells you what is missing.
 
@@ -124,10 +123,7 @@ What you do: give commands, read the loop end record (`records/loops/<run>/end.m
 
 Windows: enable Developer Mode and run `git config --global core.symlinks true` before cloning. The play and judge sandboxes run only on macOS and Linux, so the loop does not run on Windows.
 
-</details>
-
-<details>
-<summary>Workspace layout</summary>
+### Workspace layout
 
 ```
 <workspace>/
@@ -139,23 +135,15 @@ Windows: enable Developer Mode and run `git config --global core.symlinks true` 
   .ogw/                            engines, tools, local models (created by update env)
 ```
 
-</details>
-
-<details>
-<summary>Settings and secrets</summary>
+### Settings and secrets
 
 - Harness settings are `settings.json` with your `settings.local.json` merged over it. The local file is not committed and holds your language, the model and effort per role, loop values and per-host values. Game settings are `games/<game>/settings.json`.
 - Settings hold only the names of secrets. Store values with `ogw secret set --harness <name>` (reads stdin) and view them with `ogw secret show`. The store is a separate keychain on macOS, a folder under `~/.local/share/ogw/` on Linux.
 - `huggingface` (optional) is needed only for the `trellis2` method (3D models), whose weights are gated.
 
-</details>
-
-<details>
-<summary>Resource generation and local models</summary>
+### Resource generation and local models
 
 `update env` installs the methods in `settings.json` `resourceGeneration`. Images, music, sound effects and voice come from local models (`flux2-klein`, `ace-step`, `moss-sfx`, `qwen3-tts`), 3D models from `trellis2` or `blender`, and sprite animations from `sprite-gen-codex` or `sprite-gen-grok`, which use your ChatGPT or Grok subscription (or bill an API key). To skip a local model, remove its method before `update env`. Without a method for a resource type, the loop runs with placeholders of that type, but STG and PROD builds are blocked.
-
-</details>
 
 ## Contributing
 
