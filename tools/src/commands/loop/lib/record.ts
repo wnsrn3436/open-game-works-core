@@ -7,6 +7,7 @@ import type { RunState } from '../../../lib/runstate.ts';
 import {
   evidenceChecks,
   evidenceMetrics,
+  fillFromSameId,
   incompleteFindings,
   recordDefects,
   type Defect,
@@ -187,8 +188,9 @@ export interface RecordResult {
 /** Records the finding file of this iteration (or with `hardening`, the latest hardening round) into the defect list. */
 export async function recordFindings(game: GameRepo, run: RunState, hardening: boolean): Promise<RecordResult> {
   const label = await labelOf(game, run, hardening);
-  const findings = await readJsonIfExists<FindingsFile>(abs(game, label.findingsRel));
-  if (!findings) throw new OgwError(`finding file missing: ${label.findingsRel}`);
+  const file = await readJsonIfExists<FindingsFile>(abs(game, label.findingsRel));
+  if (!file) throw new OgwError(`finding file missing: ${label.findingsRel}`);
+  const findings: FindingsFile = { ...file, findings: fillFromSameId(file.findings) };
   const incomplete = incompleteFindings(findings.findings);
   if (incomplete.length > 0) {
     const what = 'findings without id, severity, owner or why, with a non-kebab-case id or an owner not in the defect list, or with a blank drop';

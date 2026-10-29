@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkFindings, hardeningFindings, judgeFindings, measureFindings, playFindings, sortOut } from '../../../../src/commands/loop/lib/findings.ts';
+import { checkFindings, hardeningFindings, judgeFindings, measureFindings, playFindings, settleUiFindings, sortOut, uiQualityFields } from '../../../../src/commands/loop/lib/findings.ts';
 import { judgeMoments, readReference, referenceMoments } from '../../../../src/commands/loop/lib/setup.ts';
 import { setupGame, write } from '../helpers.ts';
 
@@ -90,6 +90,59 @@ describe('finding sources', () => {
     }, 'c.json');
     expect(out).toEqual([{ source: 'check', severity: null, owner: null, where: 'w', what: 'm', why: null, evidence: ['c.json#UI quality'], id: null, drop: null }]);
     expect(measureFindings({ commit: 'c', targets: [{ metric: 'm', min: 1, max: 2, value: null, result: 'out', data: null }] }, 'm.json')[0]?.what).toBe('value null out of 1..2');
+  });
+
+  it('fills one defect per UI quality problem kind and prefab or scene, the same in every resolution, language and text scale', () => {
+    const ui = (message: string): { where: string; message: string; evidence: string[] } => ({ where: 'scene/menu/menu', message, evidence: ['shot.png'] });
+    const out = checkFindings({
+      commit: 'c',
+      gate: 'pass',
+      checks: [
+        {
+          name: 'UI quality',
+          platform: 'macos',
+          result: 'fail',
+          failures: [
+            ui('low contrast UICore/Panel/A/Label: 1.83:1 in prefab/match/hud_panel (ko, macbook_air_13, match.open_match, text scale 1000)'),
+            ui('low contrast UICore/Panel/B/Score: 2.56:1 in prefab/match/hud_panel (en, display_16_9, match.open_pause, text scale 1300)'),
+            ui('flat panel UICore/Panel/MenuPanel/Button: 97% one color in prefab/menu/menu_panel (ko, display_16_9, first screen, text scale 1000)'),
+            ui('5 text sizes (12, 14, 18, 24, 40 px), more than 4 in scene/result/result (ko, display_16_9, first screen, text scale 1000)'),
+            ui('gamepad focus does not reach A B after menu.open in prefab/menu/menu_panel (ko, display_16_9, gamepad)'),
+            ui('menu.open failed: no such command (ko, display_16_9, first screen, text scale 1000)'),
+          ],
+          warnings: [],
+        },
+        { name: 'performance', platform: 'macos', result: 'fail', failures: [ui('low contrast X: 1.0:1 in prefab/a/b (ko, s, t, text scale 1000)')], warnings: [] },
+      ],
+    }, 'c.json');
+    expect(out.map((f) => [f.id, f.severity, f.owner])).toEqual([
+      ['low-contrast-prefab-match-hud-panel', 'major', 'client content'],
+      ['low-contrast-prefab-match-hud-panel', 'major', 'client content'],
+      ['flat-panel-prefab-menu-menu-panel', 'major', 'client content'],
+      ['text-sizes-scene-result-result', 'major', 'client content'],
+      ['gamepad-focus-prefab-menu-menu-panel', 'major', 'client content'],
+      // a failure that names no kind or no prefab or scene, and another check, are the lead agent's to fill
+      [null, null, null],
+      [null, null, null],
+    ]);
+    expect(out[0]?.why).toBe('UI quality: low contrast in prefab/match/hud_panel');
+    expect(uiQualityFields('overlap A B in prefab/x/y (ko, s, keyboard)')).toMatchObject({ id: 'overlap-prefab-x-y' });
+    expect(uiQualityFields('clipped A')).toEqual({});
+  });
+
+  it('keeps the id a defect of the run already has for the same kind and prefab or scene, and leaves the rest to the lead agent while a UI resource is a placeholder', () => {
+    const what = (n: string): string => `low contrast UICore/Panel/${n}: 1.10:1 in prefab/menu/option_panel (ko, phone, menu.open, text scale 1000)`;
+    const found = checkFindings({ commit: 'c', gate: 'pass', checks: [{ name: 'UI quality', platform: 'web', result: 'fail', failures: [{ where: 'w', message: what('B'), evidence: [] }], warnings: [] }] }, 'c.json');
+    const defects = [
+      { id: 'option-panel-low-contrast', source: 'check' as const, what: what('A') },
+      { id: 'other', source: 'play' as const, what: what('A') },
+    ];
+    expect(settleUiFindings(found, defects, false).map((f) => [f.id, f.severity, f.owner])).toEqual([['option-panel-low-contrast', 'major', 'client content']]);
+    expect(settleUiFindings(found, [], false).map((f) => f.id)).toEqual(['low-contrast-prefab-menu-option-panel']);
+    expect(settleUiFindings(found, defects, true).map((f) => [f.id, f.severity, f.owner, f.why])).toEqual([['option-panel-low-contrast', null, null, null]]);
+    // a finding the lead agent changed, or another check, is left as it is
+    const changed = { ...(found[0] as (typeof found)[number]), id: 'mine' };
+    expect(settleUiFindings([changed], defects, true)).toEqual([changed]);
   });
 
   it('reads play and judge findings', () => {

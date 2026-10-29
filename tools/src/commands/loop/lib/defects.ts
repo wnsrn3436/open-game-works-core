@@ -69,6 +69,23 @@ function isFilled(value: unknown): boolean {
 }
 
 /**
+ * Findings with `severity`, `owner` and `why` that a finding of the same `id` left empty takes from the first finding of
+ * that `id` that has all three, so that the lead agent fills them once per defect (`game-loop` `## defect list`).
+ */
+export function fillFromSameId(findings: readonly Finding[]): Finding[] {
+  const filled = new Map<string, Pick<Finding, 'severity' | 'owner' | 'why'>>();
+  for (const f of findings) {
+    if (f.drop !== null || f.id === null || filled.has(f.id)) continue;
+    if (isSeverity(f.severity) && isOwner(f.owner) && isFilled(f.why)) filled.set(f.id, { severity: f.severity, owner: f.owner, why: f.why });
+  }
+  return findings.map((f) => {
+    const from = f.drop === null && f.id !== null ? filled.get(f.id) : undefined;
+    if (from === undefined) return f;
+    return { ...f, severity: f.severity ?? from.severity, owner: f.owner ?? from.owner, why: f.why ?? from.why };
+  });
+}
+
+/**
  * Findings that `ogw loop record` refuses: a `drop` that is neither null nor filled, or not dropped and missing
  * `id`, `severity`, `owner` or `why`, with a non-kebab-case `id`, or an `owner` outside `## defect list`.
  */

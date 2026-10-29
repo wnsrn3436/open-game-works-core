@@ -4,6 +4,7 @@ import {
   evidenceChecks,
   evidenceMetrics,
   groupFindings,
+  fillFromSameId,
   incompleteFindings,
   isSeverity,
   recordDefects,
@@ -50,6 +51,26 @@ const always = (): boolean => true;
 const never = (): boolean => false;
 
 describe('finding checks', () => {
+  it('fills the empty severity, owner and why of a finding from the first finding of its id that has all three', () => {
+    const blank = { severity: null, owner: null, why: null };
+    const out = fillFromSameId([
+      f({ id: 'a', ...blank, what: 'a1' }),
+      f({ id: 'a', severity: 'minor', owner: 'design', why: 'w', what: 'a2' }),
+      f({ id: 'a', severity: 'major', owner: 'data', why: 'x', what: 'a3' }),
+      f({ id: 'b', ...blank }),
+      f({ id: null, ...blank, drop: 'placeholder' }),
+    ]);
+    expect(out.map((x) => [x.id, x.severity, x.owner, x.why])).toEqual([
+      ['a', 'minor', 'design', 'w'],
+      ['a', 'minor', 'design', 'w'],
+      ['a', 'major', 'data', 'x'],
+      // no finding of b has them: still refused
+      ['b', null, null, null],
+      [null, null, null, null],
+    ]);
+    expect(incompleteFindings(out).map((x) => x.id)).toEqual(['b']);
+  });
+
   it('finds findings record refuses', () => {
     const bad = [f({ id: null }), f({ severity: null }), f({ owner: null }), f({ why: null }), f({ id: 'Not-Kebab' }), f({ id: 'a--b' })];
     expect(incompleteFindings([...bad, f({}), f({ id: null, drop: 'placeholder' })])).toEqual(bad);
