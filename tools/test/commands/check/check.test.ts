@@ -158,7 +158,7 @@ beforeEach(() => {
 describe('ogw check usage', () => {
   it('needs exactly one mode, the game, and only --db postgresql', async () => {
     setupGame(ws);
-    expect((await ogw(ws, ['check', 'g'])).stderr).toMatch(/^give one of --loop, --regression, --static, --placeholder/);
+    expect((await ogw(ws, ['check', 'g'])).stderr).toMatch(/^give one of --loop, --regression, --static, --bot, --placeholder/);
     expect((await ogw(ws, ['check', 'g', '--static', '--placeholder'])).code).toBe(1);
     expect((await ogw(ws, ['check', '--static'])).stderr).toContain('usage: ogw check <game>');
     expect((await ogw(ws, ['check', 'g', 'x', '--static'])).stderr).toContain('usage: ogw check <game>');
@@ -173,7 +173,7 @@ describe('ogw check usage', () => {
     try {
       const run = await ogw(ws, ['check', 'g', '--loop']);
       expect(run.code).toBe(1);
-      expect(run.stderr).toContain('ogw check --loop is for the lead agent, not the content agent');
+      expect(run.stderr).toContain('ogw check --loop is for the lead agent, not the content agent: run --regression, --static or --bot');
     } finally {
       remove();
     }
@@ -263,6 +263,36 @@ async function checkSummary(values: Record<string, string | boolean>): Promise<u
   const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
   return (await check.run(ctx, { positionals: ['g'], values, raw: [] })).summary;
 }
+
+describe('ogw check --bot', () => {
+  it('runs only the bot playtest on the checkout for a content agent, writes and commits no result file, and keeps its evidence only for a failure it points into', async () => {
+    const root = setupGame(ws);
+    await openRun(1);
+    const temp = join(ws.harness, '.git', 'ogw-temp');
+    const folders = (): string[] => (existsSync(temp) ? readdirSync(temp).filter((name) => name.startsWith('ogw-check-')) : []);
+    const remove = await fakeAgentJob(ws.env, 'agentcontent2', { role: 'content', cliPid: process.ppid });
+    try {
+      serveClient();
+      const before = await head(root);
+      const run = await ogw(ws, ['check', 'g', '--bot']);
+      expect(run).toEqual({ code: 0, stdout: 'no blocker: pass\nfull flow: pass\n', stderr: '' });
+      expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless', db: undefined }]);
+      expect(staticCheck).not.toHaveBeenCalled();
+      expect(await head(root)).toBe(before);
+      expect(existsSync(join(root, 'records/loops/create-1/check-1.json'))).toBe(false);
+      expect(folders()).toEqual([]);
+      // the goal is never reached: full flow fails
+      const answer = fakeAutomation((command) => (command === 'get_state' ? ok(doneState()) : command === 'get_telemetry' ? ok({ goal_intervals: [], scene_loads: [] }) : ok(command === 'extract_logs' ? [] : null)));
+      vi.mocked(automationRequest).mockImplementation(answer);
+      const failing = await ogw(ws, ['check', 'g', '--bot']);
+      expect(failing.code).toBe(1);
+      expect(failing.stdout).toMatch(/^no blocker: pass\nfull flow: fail\n/);
+      expect(await head(root)).toBe(before);
+    } finally {
+      remove();
+    }
+  });
+});
 
 describe('ogw check --regression start limit', () => {
   it('ends a client run that sends no PUT /started within UnitTestCore.startTimeLimitMs of the game', async () => {

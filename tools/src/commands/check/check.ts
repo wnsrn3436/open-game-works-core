@@ -6,18 +6,18 @@ import { LIMITS } from '../../lib/limits.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../lib/settings.ts';
 import { binaryBuild } from '../data/lib/binary-build.ts';
 import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
-import { BOT_PLAYTEST_POLL_MS } from './lib/bot-playtest.ts';
+import { BOT_PLAYTEST_POLL_MS, botPlaytest, readScenario } from './lib/bot-playtest.ts';
 import { gameEngine } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
-import { gameChecks, loopCheck, runTimeLimitMs, startTimeLimitMs } from './lib/loop.ts';
+import { gameChecks, loopCheck, runTimeLimitMs, slotsOf, startTimeLimitMs } from './lib/loop.ts';
 import type { Evidence } from './lib/evidence.ts';
 import { regressionTargets, regressionTest } from './lib/regression.ts';
 import { staticCheck } from './static-api.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import { agentContext } from '../../lib/agentctx.ts';
 
-const USAGE = 'ogw check <game> [--loop|--regression [<path>]|--static|--placeholder] [--db postgresql]';
-const MODES = ['loop', 'regression', 'static', 'placeholder'] as const;
+const USAGE = 'ogw check <game> [--loop|--regression [<path>]|--static|--bot|--placeholder] [--db postgresql]';
+const MODES = ['loop', 'regression', 'static', 'bot', 'placeholder'] as const;
 type Mode = (typeof MODES)[number];
 
 /** Polling interval of instance state while a condition is not true yet. */
@@ -26,7 +26,7 @@ export const timing = { pollMs: BOT_PLAYTEST_POLL_MS, sampleMs: 1000 };
 function modeOf(args: CommandArgs): Mode {
   const given = MODES.filter((mode) => flag(args, mode));
   const [mode] = given;
-  if (given.length !== 1 || mode === undefined) throw new OgwError(`give one of --loop, --regression, --static, --placeholder\nusage: ${USAGE}`);
+  if (given.length !== 1 || mode === undefined) throw new OgwError(`give one of --loop, --regression, --static, --bot, --placeholder\nusage: ${USAGE}`);
   return mode;
 }
 
@@ -86,6 +86,29 @@ async function regression(ctx: Context, game: GameRepo, godot: string, path: str
   return single(result);
 }
 
+/**
+ * `ogw check <game> --bot`: the bot playtest of `--loop` (no blocker and full flow) on the checkout as it is, with no
+ * result file, so that the content agent sees them before the lead agent's check.
+ */
+async function bot(ctx: Context, game: GameRepo, db: 'postgresql' | undefined): Promise<CommandResult> {
+  const scenario = await readScenario(game.root);
+  const dir = await newPrivateTempFolder('ogw-check-', ctx.env);
+  const evidence = { root: dir, dir: '.', relative: false };
+  let checks: CheckResult[] = [];
+  try {
+    checks = await botPlaytest(ctx, game.name, scenario, { evidence, slots: await slotsOf(ctx), db, pollMs: timing.pollMs });
+  } finally {
+    // as for --regression: kept only while a printed failure points into it
+    if (!checks.some((c) => c.failures.some((f) => f.evidence.length > 0))) await rm(dir, { recursive: true, force: true });
+  }
+  return {
+    exitCode: checks.length > 0 && checks.every((c) => c.result === 'pass') ? 0 : 1,
+    text: checks.flatMap(checkText).join('\n'),
+    data: { checks },
+    summary: summary(checks),
+  };
+}
+
 async function loop(ctx: Context, game: GameRepo, settings: GameSettings, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
   const outcome = await loopCheck(ctx, game, settings, { godot, db, ...timing });
   const text = [...outcome.checks.flatMap(checkText), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
@@ -115,7 +138,7 @@ async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult>
   if (name === undefined || rest.length > 0 || (path !== undefined && mode !== 'regression')) throw new OgwError(`usage: ${USAGE}`);
   // the iteration result file is the lead agent's: an agent `ogw agent` started gets the other modes only
   const agent = mode === 'loop' ? await agentContext(ctx.env) : null;
-  if (agent) throw new OgwError(`ogw check --loop is for the lead agent, not the ${agent.meta.role} agent: run --regression or --static`);
+  if (agent) throw new OgwError(`ogw check --loop is for the lead agent, not the ${agent.meta.role} agent: run --regression, --static or --bot`);
   const db = dbOf(args);
   const game = await ctx.game(name);
   const settings = await gameSettings(ctx, game);
@@ -124,6 +147,7 @@ async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult>
   if (mode === 'placeholder') return single(checkResult('no placeholder', null, await placeholderFailures(ctx, game)));
   if (mode === 'static') return single(await staticCheck(ctx, game, db ? { db } : {}));
   if (mode === 'regression') return regression(ctx, game, godot, path, db);
+  if (mode === 'bot') return bot(ctx, game, db);
   return loop(ctx, game, settings, godot, db);
 }
 
@@ -134,6 +158,7 @@ export const check: CommandDef = {
     loop: { type: 'boolean' },
     regression: { type: 'boolean' },
     static: { type: 'boolean' },
+    bot: { type: 'boolean' },
     placeholder: { type: 'boolean' },
     db: { type: 'string' },
   },

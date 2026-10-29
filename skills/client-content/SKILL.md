@@ -199,7 +199,7 @@ Bot playtests and the play agent's instance control use the automation channel o
 
 ## bot playtest
 
-`ogw check` runs `client/dev/bot/scenario.json` on a headless instance and judges no blocker and full flow. The content agent writes the scenario and the save fixtures.
+`ogw check` runs `client/dev/bot/scenario.json` on a headless instance and judges no blocker and full flow; `ogw check <game> --bot` runs only this, on the checkout as it is, and writes no result file. The content agent writes the scenario and the save fixtures.
 
 - scenario: UTF-8 JSON object `{"steps": [<step>, ...], "goal": <condition>}`. The steps run in order, and `goal` must be `true` after the last step
 - save fixture: `client/dev/bot/fixtures/<name>.json`. It is `{"steps": [<step>, ...]}` and holds only steps whose `kind` is `setup`. `<name>` is snake_case. The runner uses it to start an instance at that moment. A moment that comes only after time passes is made by moving the server time forward by that duration with a `set_server_time_offset` step
