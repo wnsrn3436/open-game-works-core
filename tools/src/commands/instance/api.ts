@@ -17,12 +17,14 @@ import { controlCall, type ClientRef } from './automation.ts';
 import { concurrencyLimit, generateIfNeeded, importIfNeeded, instancePlatform, makePlan } from './lib/prepare.ts';
 import { removePostgres } from './lib/postgres.ts';
 import {
+  checkInstanceId,
   deleteRecord,
   fromEarlierBoot,
   instanceFolder,
   listRecords,
   plannedClients,
   readRecord,
+  recordPath,
   slotLock,
   takesSlot,
   updateRecord,
@@ -75,6 +77,8 @@ export interface InstanceOptions {
   ignoreConcurrencyLimit?: boolean;
   /** `--input-latency`: the supervisor delays each input command to the client `main` by this many ms. */
   inputLatencyMs?: number;
+  /** The id of the instance, made with `newId` by a caller that names the instance before it starts (a judge input); a new id otherwise. */
+  id?: string;
 }
 
 export interface InstanceInfo {
@@ -310,7 +314,11 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
   const settings = await ctx.settings();
   const max = options.ignoreConcurrencyLimit === true ? Number.POSITIVE_INFINITY : concurrencyLimit(settings);
   const game = await gameOf(ctx, options);
-  const id = newId();
+  const id = options.id ?? newId();
+  if (options.id !== undefined) {
+    checkInstanceId(id);
+    if (exists(await recordPath(id, ctx.env))) throw new OgwError(`instance ${id} exists`);
+  }
   const { signal } = hooks;
   await reserveSlot(ctx, newRecord(id, game, await startingAgent(ctx)), max, settings.instanceWaitTimeoutMs, signal);
   hooks.onReserved?.(id);

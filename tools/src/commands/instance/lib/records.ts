@@ -176,7 +176,7 @@ export interface PlayAccess {
   inputLatencyMs?: number;
 }
 
-async function playAccessPath(id: string, env: NodeJS.ProcessEnv): Promise<string> {
+export async function playAccessPath(id: string, env: NodeJS.ProcessEnv): Promise<string> {
   checkInstanceId(id);
   return join(await playAccessDir(env), `${id}.json`);
 }

@@ -6,12 +6,14 @@ import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, showFile } from '../../../lib/git.ts';
+import { newId } from '../../../lib/ids.ts';
 import { killJob, readJob } from '../../../lib/jobs.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
 import { clearReleases, takeReleases } from '../../instance/lib/releases.ts';
+import { clearUnstarted, noteUnstarted } from '../../instance/lib/unstarted.ts';
 import { collectMeasure, measureCollected } from '../../measure/api.ts';
 import { telemetrySummary } from '../../telemetry/api.ts';
 import {
@@ -140,6 +142,8 @@ interface Spec {
   headless?: boolean;
   /** `--input-latency` of the instance; absent or 0 for none. */
   inputLatencyMs?: number;
+  /** The id the instance gets: one a judge input named before the start. */
+  id?: string;
 }
 
 interface PlaySlot {
@@ -169,6 +173,10 @@ export interface JudgeSlot {
   side: 'A' | 'B';
   moments: Moment[];
   omitted: string[];
+  /** Most instances the judge holds at once: those it starts with, and as it gives back instances, the next of `pending`. */
+  budget: number;
+  /** Instances of the judge input not started yet, in the order the judge plays them, with the ids the input names. */
+  pending: { id: string; spec: Spec }[];
   attempts: number;
   instances: InstanceInfo[];
   job: string | null;
@@ -240,11 +248,36 @@ function judgeMoments(plan: Pick<JudgingPlan, 'moments' | 'settings'>, pair: Jud
   return { included, omitted, size: (included.length + 1) * perGame };
 }
 
-/** Instances of one judge: this commit and the baseline, then a pair per judge moment, within `maxConcurrentInstances`. */
-export function judgeGroup(plan: Pick<JudgingPlan, 'moments' | 'settings'>, pair: JudgePair, kind: 'main' | 'success', k: number, side: 'A' | 'B', agent: AgentSettings): Group {
+/**
+ * Instances of one judge: this commit and the baseline, then a pair per judge moment, within `maxConcurrentInstances`.
+ * The group holds the judge's budget (`judgeBudget`): the judge starts with that many of its instances and gets the
+ * others as it gives instances back, so `together` judges that start together run at once.
+ */
+export function judgeGroup(
+  plan: Pick<JudgingPlan, 'moments' | 'settings'>,
+  pair: JudgePair,
+  kind: 'main' | 'success',
+  k: number,
+  side: 'A' | 'B',
+  agent: AgentSettings,
+  together: number,
+): Group {
   const { included, omitted, size } = judgeMoments(plan, pair);
-  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, telemetry: null, side, moments: included, omitted, attempts: 0, instances: [], job: null, entry: null };
-  return { size, slots: [slot], gate: kind === 'success' ? 'success' : 'none' };
+  const budget = judgeBudget(plan.settings.maxConcurrentInstances, pair.baseline === null ? 1 : 2, included.length, together);
+  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], job: null, entry: null };
+  return { size: slot.budget, slots: [slot], gate: kind === 'success' ? 'success' : 'none' };
+}
+
+/**
+ * Most instances a judge holds at once: its share of `maxConcurrentInstances` among the `together` judges that start
+ * together, and at least the first-screen instances and, with moments, one save fixture pair, as the judge plays the
+ * save fixture instances first while it holds the first-screen ones. All of them without `maxConcurrentInstances`.
+ */
+export function judgeBudget(max: number | null, perGame: number, moments: number, together: number): number {
+  const all = (moments + 1) * perGame;
+  if (max === null) return all;
+  const least = perGame * (moments > 0 ? 2 : 1);
+  return Math.min(all, Math.max(least, Math.floor(max / Math.max(1, together))));
 }
 
 /**
@@ -286,7 +319,7 @@ export function planGroups(plan: EvaluatePlan): Group[] {
   const count = plan.baseline === null ? 1 : plan.settings.loop.judgeVotes;
   const first = plan.baseline === null ? 'A' : drawSide();
   for (let k = 1; k <= count; k++) {
-    groups.push(judgeGroup(plan, pair, 'main', k, alternateSide(first, k), judgeAgent(plan.settings, k)));
+    groups.push(judgeGroup(plan, pair, 'main', k, alternateSide(first, k), judgeAgent(plan.settings, k), count));
   }
   const plays: Slot[] = [];
   // no play agent plays in a fun iteration: its findings would wait for a completeness iteration, and the bot playtest gates blockers
@@ -301,7 +334,7 @@ export function planGroups(plan: EvaluatePlan): Group[] {
   }
   if (plan.run.kind === 'loop' && plan.kind === 'completeness') {
     for (let i = 0; i < plan.settings.loopStop.successJudges; i++) {
-      groups.push(judgeGroup(plan, pair, 'success', 0, plan.baseline === null ? 'A' : drawSide(), judgeAgent(plan.settings, 1)));
+      groups.push(judgeGroup(plan, pair, 'success', 0, plan.baseline === null ? 'A' : drawSide(), judgeAgent(plan.settings, 1), plan.settings.loopStop.successJudges));
     }
   }
   return groups;
@@ -330,6 +363,7 @@ async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
   else if (spec.headless !== true) options.played = true;
   if (state.plan.db) options.db = state.plan.db;
   if (spec.inputLatencyMs !== undefined && spec.inputLatencyMs > 0) options.inputLatencyMs = spec.inputLatencyMs;
+  if (spec.id !== undefined) options.id = spec.id;
   const reserved: string[] = [];
   try {
     // A signal ends a wait for a slot without one, and stops an instance start that reserved one at its next step.
@@ -395,22 +429,80 @@ function sideLatency(slot: JudgeSlot, side: 'A' | 'B'): { inputLatencyMs?: numbe
   return latency > 0 && side !== slot.side ? { inputLatencyMs: latency } : {};
 }
 
+interface JudgeSpec {
+  side: 'A' | 'B';
+  /** null for the first-screen instance of the side. */
+  moment: Moment | null;
+  spec: Spec;
+}
+
+/** The instances of a judge in the order it plays them after the first-screen ones: those, then the save fixture pairs in moment order. */
+function judgeSpecs(plan: JudgingPlan, slot: JudgeSlot): JudgeSpec[] {
+  const { A, B } = sides(slot);
+  const commits: ['A' | 'B', string][] = B === null ? [['A', A]] : [['A', A], ['B', B]];
+  const specs: JudgeSpec[] = commits.map(([side, commit]) => ({ side, moment: null, spec: { commit, ...sideLatency(slot, side) } }));
+  for (const moment of slot.moments) {
+    for (const [side, commit] of commits) specs.push({ side, moment, spec: { commit, fixture: fixturePath(plan, moment), ...sideLatency(slot, side) } });
+  }
+  return specs;
+}
+
+/** The `fixtures` of a judge input: per moment, the instance id of each side (null for one not put in). */
+function fixtureEntries(specs: readonly JudgeSpec[], ids: readonly (string | null)[]): { moment: Moment; A: string | null; B: string | null }[] {
+  const fixtures: { moment: Moment; A: string | null; B: string | null }[] = [];
+  for (const [i, item] of specs.entries()) {
+    if (item.moment === null) continue;
+    let entry = fixtures.find((f) => f.moment === item.moment);
+    if (!entry) fixtures.push((entry = { moment: item.moment, A: null, B: null }));
+    entry[item.side] = ids[i] ?? null;
+  }
+  return fixtures;
+}
+
+/**
+ * Starts the judge: the first `budget` of its instances (`judgeSpecs`) now, and the others into `pending` with ids made
+ * now, which its input names.
+ */
 async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
   const { plan } = state;
-  const { A, B } = sides(slot);
-  const a = await start(state, { commit: A, ...sideLatency(slot, 'A') });
-  const b = B === null ? null : await start(state, { commit: B, ...sideLatency(slot, 'B') });
-  const fixtures: { moment: Moment; A: string | null; B: string | null }[] = [];
-  slot.instances = [a, b].filter((i): i is InstanceInfo => i !== null);
-  for (const moment of slot.moments) {
-    const fa = await start(state, { commit: A, fixture: fixturePath(plan, moment), ...sideLatency(slot, 'A') });
-    const fb = B === null ? null : await start(state, { commit: B, fixture: fixturePath(plan, moment), ...sideLatency(slot, 'B') });
-    slot.instances.push(...[fa, fb].filter((i): i is InstanceInfo => i !== null));
-    fixtures.push({ moment, A: fa?.id ?? null, B: fb?.id ?? null });
+  const specs = judgeSpecs(plan, slot);
+  slot.instances = [];
+  slot.pending = [];
+  const started: (InstanceInfo | null)[] = [];
+  const ids: (string | null)[] = [];
+  for (const [i, item] of specs.entries()) {
+    if (i < slot.budget) {
+      const info = await start(state, item.spec);
+      if (info) slot.instances.push(info);
+      started.push(info);
+      ids.push(info?.id ?? null);
+    } else {
+      const id = newId();
+      slot.pending.push({ id, spec: item.spec });
+      started.push(null);
+      ids.push(id);
+    }
   }
+  const b = specs[1]?.moment === null ? (started[1] ?? null) : null;
   const reference = plan.kind === 'fun' || plan.reference === null ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
-  const input = await inputFile(state, 'judge', { A: guide(a), B: guide(b), fixtures, elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
+  const input = await inputFile(state, 'judge', { A: guide(started[0] ?? null), B: guide(b), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
   await startJob(state, slot, input);
+}
+
+/**
+ * Starts the next pending instances of a running judge while it holds fewer than its budget and a slot is free. An
+ * instance whose save fixture step failed is noted for `ogw instance wait`, which tells the judge it is not put in.
+ */
+async function startPending(state: State, slot: JudgeSlot): Promise<void> {
+  const max = state.plan.settings.maxConcurrentInstances;
+  while (slot.pending.length > 0 && slot.instances.length < slot.budget) {
+    // without a free slot now, the start waits for the next poll instead of holding up the other agents
+    if (max !== null && (await listInstances(state.ctx)).length >= max) return;
+    const next = slot.pending.shift() as { id: string; spec: Spec };
+    const info = await start(state, { ...next.spec, id: next.id });
+    if (info) slot.instances.push(info);
+    else await noteUnstarted(state.ctx.env, slot.job as string, next.id, 'its save fixture step failed');
+  }
 }
 
 async function launch(state: State, slot: Slot): Promise<void> {
@@ -427,7 +519,16 @@ async function hasRoom(state: State, size: number): Promise<boolean> {
   const max = state.plan.settings.maxConcurrentInstances;
   if (max === null) return true;
   if (size > max) return state.instances.size === 0;
-  return (await listInstances(state.ctx)).length + size <= max;
+  return (await listInstances(state.ctx)).length + heldForJudges(state) + size <= max;
+}
+
+/** The slots the running judges keep for their pending instances: each one's budget not in use, at most its pending count. */
+function heldForJudges(state: State): number {
+  let held = 0;
+  for (const slot of state.active) {
+    if (slot.role === 'judge') held += Math.min(slot.pending.length, Math.max(0, slot.budget - slot.instances.length));
+  }
+  return held;
 }
 
 /**
@@ -556,8 +657,10 @@ function updateSuccessGate(state: State, slot: JudgeSlot, entry: JudgeEntry): vo
 }
 
 async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> {
+  slot.pending = [];
   for (const instance of slot.instances) await stop(state, instance);
   slot.instances = [];
+  if (slot.job !== null) await clearUnstarted(state.ctx.env, slot.job);
 }
 
 /** Reads the judge result; null when its tables cannot be read. */
@@ -597,14 +700,22 @@ async function carryOutReleases(state: State, slot: JudgeSlot): Promise<boolean>
   const released = slot.instances.filter((instance) => ids.has(instance.id));
   for (const instance of released) await stop(state, instance);
   slot.instances = slot.instances.filter((instance) => !ids.has(instance.id));
-  return released.length > 0;
+  // a pending instance given back is never started
+  const dropped = slot.pending.filter((p) => ids.has(p.id));
+  slot.pending = slot.pending.filter((p) => !ids.has(p.id));
+  for (const id of [...released.map((i) => i.id), ...dropped.map((p) => p.id)]) await noteUnstarted(state.ctx.env, slot.job as string, id, 'it was given back');
+  return released.length + dropped.length > 0;
 }
 
 /** Polls one running agent. Returns true when it ended or a judge released an instance. */
 async function poll(state: State, slot: Slot): Promise<boolean> {
   const released = slot.role === 'judge' ? await carryOutReleases(state, slot) : false;
   const outcome = await agentOutcome(state.ctx, slot.job as string);
-  if (outcome.status === 'running') return released;
+  if (outcome.status === 'running') {
+    // the judge's next instances take the slots it gave back before a waiting group does
+    if (slot.role === 'judge') await startPending(state, slot);
+    return released;
+  }
   await clearReleases(state.ctx.env, slot.job as string);
   state.active.splice(state.active.indexOf(slot), 1);
   if (outcome.status === 'done' && outcome.output !== null && exists(outcome.output)) {
@@ -633,6 +744,7 @@ async function abort(state: State): Promise<void> {
     ...[...state.jobs].map((job) => killJob(job, state.ctx.env, graceMs).catch(() => undefined)),
     ...[...state.instances.values()].map((instance) => stop(state, instance).catch(() => undefined)),
     ...starting.map((id) => stopInstance(state.ctx, id).catch(() => undefined)),
+    ...[...state.jobs].flatMap((job) => [clearReleases(state.ctx.env, job).catch(() => undefined), clearUnstarted(state.ctx.env, job).catch(() => undefined)]),
   ]);
 }
 
