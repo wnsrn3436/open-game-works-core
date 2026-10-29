@@ -143,8 +143,8 @@ export function sortOut(findings: readonly Finding[]): FindingsFile {
   return { findings: kept, discarded };
 }
 
-/** Resource types of what UI is drawn with: while one of them is a placeholder, a UI quality failure may be its doing. */
-const UI_RESOURCE_TYPES: readonly string[] = ['nine_slice', 'background', 'font', 'icon', 'image'];
+/** Resource types that panels and text are drawn with: while one of them is a placeholder, a UI quality failure may be its doing. */
+const UI_RESOURCE_TYPES: readonly string[] = ['nine_slice', 'background', 'font'];
 
 /**
  * The UI quality fields `checkFindings` filled, settled against the run: the `id` of a defect of `defects.json` with
