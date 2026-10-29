@@ -99,14 +99,15 @@ async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql'
     return { exitCode: 1, text: checks.flatMap(checkText).join('\n'), data: { checks }, summary: summary(checks) };
   }
   const scenario = await readScenario(game.root);
+  const slots = await slotsOf(ctx);
   const dir = await newPrivateTempFolder('ogw-check-', ctx.env);
   const evidence = { root: dir, dir: '.', relative: false };
   let checks: CheckResult[] = [];
   try {
-    checks = await botPlaytest(ctx, game.name, scenario, { evidence, slots: await slotsOf(ctx), db, pollMs: timing.pollMs });
+    checks = await botPlaytest(ctx, game.name, scenario, { evidence, slots, db, pollMs: timing.pollMs });
   } finally {
     // kept while a check did not pass: its logs, also those of an instance that did not start, are there
-    if (checks.length > 0 && checks.every((c) => c.result === 'pass')) await rm(dir, { recursive: true, force: true });
+    if (checks.every((c) => c.result === 'pass')) await rm(dir, { recursive: true, force: true });
   }
   const passed = checks.length > 0 && checks.every((c) => c.result === 'pass');
   const lines = [...checks.flatMap(checkText), ...(passed ? [] : [`evidence: ${dir}`])];
