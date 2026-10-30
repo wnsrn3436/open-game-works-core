@@ -528,8 +528,8 @@ describe('ogw resource finalize', () => {
     await sync(f);
     const file = touch(f, 'Body.ttf');
     vi.mocked(catalogEntries).mockResolvedValueOnce([
-      { path: `${file}.other`, license: 'X', source: 'x', attribution: 'x', charset: [] },
-      { path: file, license: 'OFL-1.1', source: 'https://github.com/google/fonts/blob/abc/ofl/body/Body.ttf', attribution: 'Copyright Body', charset: ['latin'] },
+      { path: `${file}.other`, license: 'X', source: 'x', attribution: 'x', charset: [], style: [] },
+      { path: file, license: 'OFL-1.1', source: 'https://github.com/google/fonts/blob/abc/ofl/body/Body.ttf', attribution: 'Copyright Body', charset: ['latin'], style: [] },
     ]);
     const run = await finalize(f, ['font/body', '--method', 'font-catalog', '--file', file, '--inputs', 'icon/a']);
     expect(run.stderr).toBe('');
@@ -551,14 +551,14 @@ describe('ogw resource finalize', () => {
     const one = touch(f, 'one.wav');
     const two = touch(f, 'two.wav');
     const argv = ['sfx/hit', '--method', 'sfx-catalog', '--file', one, two, '--bus', 'Sfx'];
-    vi.mocked(catalogEntries).mockResolvedValueOnce([{ path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [] }]);
+    vi.mocked(catalogEntries).mockResolvedValueOnce([{ path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [], style: [] }]);
     const before = snapshot(f);
     const bad = await finalize(f, argv);
     expect(bad.stderr).toContain(`--file ${two} is not a path ogw generation list sfx-catalog gives`);
     expect(snapshot(f)).toBe(before);
     vi.mocked(catalogEntries).mockResolvedValueOnce([
-      { path: two, license: 'CC-BY-4.0', source: 'https://s/2', attribution: 'Bea', charset: [] },
-      { path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [] },
+      { path: two, license: 'CC-BY-4.0', source: 'https://s/2', attribution: 'Bea', charset: [], style: [] },
+      { path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [], style: [] },
     ]);
     const run = await finalize(f, argv);
     expect(run.stderr).toBe('');
@@ -613,6 +613,23 @@ describe('ogw resource finalize', () => {
     expect(bare.stderr).toContain('--inputs needs image/ui_kit: icon keys are made from the UI kit sheet');
     const kit = await finalize(f, await okPng(f, ['icon/coin', '--method', 'flux2-klein', '--inputs', 'image/ui_kit']));
     expect(kit.stderr).toBe('');
+  });
+
+  it('takes a logo only from the logotype method and only with alpha=true in its spec', async () => {
+    const f = setup([
+      { key: 'image/logo/ko', spec: 'size=4x4', status: 'requested' },
+      { key: 'image/logo/en', spec: 'size=4x4;alpha=true', status: 'requested' },
+    ]);
+    await sync(f);
+    const clear = work(f, 'logo.png');
+    await png(clear, 4, 4, [250, 200, 120, 255], 1);
+    const opaqueSpec = await finalize(f, ['image/logo/ko', '--method', 'logotype', '--file', clear]);
+    expect(opaqueSpec.stderr).toContain('image/logo/ko: a logo has alpha=true in spec, so that it is fitted whole and not cropped');
+    const generated = await finalize(f, ['image/logo/en', '--method', 'flux2-klein', '--file', clear]);
+    expect(generated.code).toBe(1);
+    const lettered = await finalize(f, ['image/logo/en', '--method', 'logotype', '--file', clear]);
+    expect(lettered.stderr).toBe('');
+    expect(rowOf(f.game, 'image/logo/en')).toMatchObject({ status: 'final', method: 'logotype' });
   });
 
   it('removes the other files of the key', async () => {

@@ -12,6 +12,8 @@ export interface CatalogFile {
   source: string;
   attribution: string;
   charset: string[];
+  /** The google/fonts `METADATA.pb` `category` and `classifications` (e.g. `SANS_SERIF`, `DISPLAY`, `HANDWRITING`). */
+  style: string[];
 }
 
 /** google/fonts `METADATA.pb` license names as SPDX IDs. */
@@ -20,6 +22,7 @@ const LICENSES: Record<string, string> = { OFL: 'OFL-1.1', APACHE2: 'Apache-2.0'
 interface FamilyMetadata {
   license: string;
   subsets: string[];
+  style: string[];
   copyright: Map<string, string>;
 }
 
@@ -27,6 +30,7 @@ interface FamilyMetadata {
 export function parseMetadata(text: string): FamilyMetadata {
   const license = /^license:\s*"([^"]*)"/m.exec(text)?.[1] ?? '';
   const subsets = [...text.matchAll(/^subsets:\s*"([^"]*)"/gm)].map((m) => m[1] as string);
+  const style = [...new Set([...text.matchAll(/^(?:category|classifications):\s*"([^"]*)"/gm)].map((m) => m[1] as string))];
   const copyright = new Map<string, string>();
   for (const block of text.matchAll(/^fonts\s*\{([\s\S]*?)^\}/gm)) {
     const body = block[1] as string;
@@ -34,7 +38,7 @@ export function parseMetadata(text: string): FamilyMetadata {
     const notice = /copyright:\s*"((?:[^"\\]|\\.)*)"/.exec(body)?.[1];
     if (filename !== undefined && notice !== undefined) copyright.set(filename, notice.replace(/\\(.)/g, '$1'));
   }
-  return { license: LICENSES[license] ?? 'unknown', subsets, copyright };
+  return { license: LICENSES[license] ?? 'unknown', subsets, style, copyright };
 }
 
 /** Source URL of a file in a GitHub repository at a revision; other git hosts have no known file URL form. */
@@ -68,7 +72,7 @@ async function gitEntries(repo: MethodMarker['git'][number], plain: Plain): Prom
     if (family === null) files.push(plain(join(repo.dir, rel), source));
     else if (FONT.test(rel)) {
       const fileName = rel.slice(rel.lastIndexOf('/') + 1);
-      files.push({ path: join(repo.dir, rel), license: family.license, source, attribution: family.copyright.get(fileName) ?? '', charset: family.subsets });
+      files.push({ path: join(repo.dir, rel), license: family.license, source, attribution: family.copyright.get(fileName) ?? '', charset: family.subsets, style: family.style });
     }
   }
   return files;
@@ -86,7 +90,7 @@ export async function catalogEntries(ctx: Context, name: string): Promise<Catalo
   const marker = await methodMarker(ctx, method);
   if (!marker) throw new OgwError(`method ${name} is not installed as pinned on this host: the update env command installs it`);
   const attribution = typeof method.attribution === 'string' ? method.attribution : '';
-  const plain: Plain = (path, source) => ({ path, license: method.license ?? 'unknown', source, attribution, charset: [] });
+  const plain: Plain = (path, source) => ({ path, license: method.license ?? 'unknown', source, attribution, charset: [], style: [] });
   const files: CatalogFile[] = [];
   for (const repo of marker.git) files.push(...(await gitEntries(repo, plain)));
   const pins = method.pins ?? [];
@@ -106,7 +110,7 @@ export const listCommand: CommandDef = {
   async run(ctx, args) {
     expectPositionals(args, 1, 1, this.usage);
     const files = await catalogEntries(ctx, positional(args, 0, 'method'));
-    const text = files.map((f) => `${f.path}\n  license ${f.license}\n  source ${f.source}\n  attribution ${f.attribution}\n  charset ${f.charset.join(', ')}`);
+    const text = files.map((f) => `${f.path}\n  license ${f.license}\n  source ${f.source}\n  attribution ${f.attribution}\n  charset ${f.charset.join(', ')}\n  style ${f.style.join(', ')}`);
     return { text: files.length === 0 ? 'none' : text.join('\n'), data: { files } };
   },
 };

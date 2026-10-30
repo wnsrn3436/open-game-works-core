@@ -19,6 +19,7 @@ import { parseRequirement, parseVersion, compareVersions, isPrerelease } from '.
 import { envResultPath, type HostPlatform } from './host.ts';
 import { agentCliLabel, loginTokenError, loginTokenState, readEnvResult, type EnvResults, type MeasuredRun, type ProviderCliCheck } from './results.ts';
 import { FIRST_PYTHON_MINOR, hostOf, markerFits, normalizeName, pinEntries, Pypi, resolveWheels, WHEEL_PLATFORMS, type PypiFile, type PypiProject, type ResolvedWheel } from './wheels.ts';
+import { LOGOTYPE_METHOD } from '../../generation/api.ts';
 
 export interface Proposal {
   id: string;
@@ -726,7 +727,8 @@ export async function computeNotices(ctx: Context, inputs: Inputs): Promise<Noti
     notices.push({ id: 'no-loop', detail: 'the smallest measured instance count is below 2. This host cannot run the loop' });
   }
   if (inputs.measure) {
-    const methods = inputs.settings.resourceGeneration;
+    // the logotype method letters only logos, so it does not count as a method that makes images
+    const methods = inputs.settings.resourceGeneration.filter((m) => m.name !== LOGOTYPE_METHOD);
     const missing = (await schemaResourceTypes(ctx.env)).filter((type) => !methods.some((m) => m.resourceTypes.includes(type) && hasOk(inputs, m)));
     if (missing.length > 0) notices.push({ id: 'no-method', detail: `no method makes: ${missing.join(', ')}` });
   }

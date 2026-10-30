@@ -122,12 +122,12 @@ function glyphOf(data: Buffer, subtables: readonly number[], char: string): numb
 }
 
 /**
- * The characters of `text` (spaces left out) that the font has no glyph for, each once, in the order of `text`. Every
+ * The characters of `text` (the space U+0020 left out) that the font has no glyph for, each once, in the order of `text`. Every
  * character is missing when the file has no Unicode cmap subtable of format 4 or 12.
  */
 export function missingCharacters(data: Buffer, text: string): string[] {
   const subtables = unicodeSubtables(data);
-  return [...new Set(Array.from(text).filter((c) => !/\s/.test(c)))].filter((c) => glyphOf(data, subtables, c) === 0);
+  return [...new Set(Array.from(text).filter((c) => c !== ' '))].filter((c) => glyphOf(data, subtables, c) === 0);
 }
 
 type Point = { x: number; y: number; on: boolean };
@@ -257,9 +257,12 @@ function pathOf(glyph: Point[][], x0: number, baseline: number): string {
 export interface TextOutline {
   /** SVG path data, in font units, y down, the top of the line at 0. */
   path: string;
+  /** The advance width of the line. */
   width: number;
   /** The line height: ascender − descender of `hhea`. */
   height: number;
+  /** The box that holds the line box and every point of the outlines (ink past the line box included), in path units. */
+  box: { x: number; y: number; width: number; height: number };
   unitsPerEm: number;
 }
 
@@ -288,10 +291,20 @@ export function textOutline(data: Buffer, text: string, spacing: number): TextOu
   let x = 0;
   const parts: string[] = [];
   const chars = Array.from(text);
+  const bounds = { left: 0, top: 0, right: 0, bottom: ascender - descender };
   chars.forEach((char, i) => {
     const glyph = glyphOf(data, subtables, char);
-    parts.push(pathOf(contours(data, glyfTable.offset, loca, glyph), x, ascender));
+    const outline = contours(data, glyfTable.offset, loca, glyph);
+    for (const q of outline.flat()) {
+      bounds.left = Math.min(bounds.left, q.x + x);
+      bounds.right = Math.max(bounds.right, q.x + x);
+      bounds.top = Math.min(bounds.top, ascender - q.y);
+      bounds.bottom = Math.max(bounds.bottom, ascender - q.y);
+    }
+    parts.push(pathOf(outline, x, ascender));
     x += advance(glyph) + (i < chars.length - 1 ? spacing : 0);
   });
-  return { path: parts.join(''), width: x, height: ascender - descender, unitsPerEm };
+  bounds.right = Math.max(bounds.right, x);
+  const box = { x: Math.floor(bounds.left), y: Math.floor(bounds.top), width: Math.ceil(bounds.right) - Math.floor(bounds.left), height: Math.ceil(bounds.bottom) - Math.floor(bounds.top) };
+  return { path: parts.join(''), width: x, height: ascender - descender, box, unitsPerEm };
 }

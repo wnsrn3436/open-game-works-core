@@ -25,6 +25,17 @@ describe('font tables', () => {
     const two = textOutline(data, 'LL', 100);
     expect(two?.width).toBe((one?.width ?? 0) * 2 + 100);
     expect(two?.height).toBeGreaterThan(0);
+    // the box holds the line box and every outline point, so ink past the advance or the descender is not cut
+    for (const text of ['LL', 'jgy', 'Q_']) {
+      const set = textOutline(data, text, 100);
+      if (set === null) throw new Error('no outline');
+      expect(set.box.x).toBeLessThanOrEqual(0);
+      expect(set.box.x + set.box.width).toBeGreaterThanOrEqual(set.width);
+      expect(set.box.y).toBeLessThanOrEqual(0);
+      expect(set.box.y + set.box.height).toBeGreaterThanOrEqual(set.height);
+      const ys = [...set.path.matchAll(/[MLQ]([-\d.]+) ([-\d.]+)/g)].map((m) => Number(m[2]));
+      expect(Math.max(...ys)).toBeLessThanOrEqual(set.box.y + set.box.height);
+    }
     expect(textOutline(Buffer.from('not a font'), 'L', 0)).toBeNull();
   });
 });
@@ -63,7 +74,22 @@ describe('ogw resource logotype', () => {
       return values.length === 0 ? -1 : values.reduce((a, b) => a + b, 0) / values.length;
     };
     const rows = Array.from({ length: height }, (_, y) => lightness(y)).filter((v) => v >= 0);
-    expect(rows[0]).toBeGreaterThan((rows[rows.length - 1] ?? 255) + 100);
+    // the gradient spans the ink, not the line box: the top of the letter is near the top color, its foot near the bottom one
+    expect(rows[0]).toBeGreaterThan(230);
+    expect(rows[rows.length - 1]).toBeLessThan(25);
+  });
+
+  it('refuses a text it cannot set without shaping, and characters other than the space that the font lacks', async () => {
+    const ws = makeWorkspace();
+    for (const [text, code] of [['مرحبا', 'U+0645'], ['a\u0301', 'U+0301'], ['A\u200bB', 'U+200B'], ['A\nB', 'U+000A']]) {
+      const run = await ogw(ws, ['resource', 'logotype', '--font', FONT, '--text', text as string, '--out', 'x.png']);
+      expect(run.code).not.toBe(0);
+      expect(run.stderr).toContain('with no shaping');
+      expect(run.stderr).toContain(code as string);
+    }
+    expect((await ogw(ws, ['resource', 'logotype', '--font', FONT, '--text', 'A\u3000B', '--out', 'x.png'])).stderr).toContain('has no glyph for: \u3000');
+    const nested = await ogw(ws, ['resource', 'logotype', '--font', FONT, '--text', 'A B', '--out', join('new', 'dir', 'x.png')]);
+    expect(nested.code).toBe(0);
   });
 
   it('refuses a text with characters the font has no glyph for, and checks its options', async () => {

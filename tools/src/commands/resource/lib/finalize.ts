@@ -5,7 +5,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJson } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { mergedCoreSettings } from '../../generate/api.ts';
-import { catalogEntries, generationMethods } from '../../generation/api.ts';
+import { catalogEntries, generationMethods, LOGO_PREFIX } from '../../generation/api.ts';
 import { processSound, type SoundShape } from './audio.ts';
 import { FileChanges } from './files.ts';
 import { engineOf, gameSettings, lineVoices, sourceLanguageOf, sourceTranslations } from './gamedata.ts';
@@ -215,8 +215,13 @@ async function rigProblems(job: Job): Promise<string[]> {
   return [...problems, ...rigCanvasProblems(job, scene)];
 }
 
-/** An image of a type with `alpha` in `spec` (every such type is an image type) whose `alpha` is `true` has a pixel with alpha under 255; a fully opaque file has its background baked in. */
+/**
+ * An image of a type with `alpha` in `spec` (every such type is an image type) whose `alpha` is `true` has a pixel with
+ * alpha under 255; a fully opaque file has its background baked in. A logo `image/logo/<language>` has `alpha=true`, as
+ * it is fitted whole over the key art, not cropped to cover its size.
+ */
 async function alphaProblems(job: Job): Promise<string[]> {
+  if (job.row.key.startsWith(LOGO_PREFIX) && !job.spec.alpha) return [`${job.row.key}: a logo has alpha=true in spec, so that it is fitted whole and not cropped`];
   if (!job.spec.alpha) return [];
   const file = job.options.files[0] as string;
   return hasTransparency(await decodeRgba(file, file)) ? [] : [`${file}: every pixel is opaque; the background is baked in`];

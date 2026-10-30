@@ -10,6 +10,7 @@ import { changedPaths, display, isPlainObject, type JsonObject } from './json-pa
 import { routeHarnessWrite } from './scope.ts';
 import { locatePath, withValue, type Target, type TargetKind } from './target.ts';
 import { schemaIssues, type Issue } from './validate.ts';
+import { LOGOTYPE_METHOD } from '../../generation/api.ts';
 
 export interface WriteOptions {
   /** Let paths whose `x-owner` is `tool` change. */
@@ -84,7 +85,8 @@ async function imageMethodIssues(target: Target, value: JsonObject): Promise<Iss
   const hosts = isPlainObject(value.hosts) ? value.hosts : {};
   const id = await target.hostEntryId(value.hosts);
   const methods = Array.isArray(value.resourceGeneration) ? value.resourceGeneration : [];
-  const makesImage = (name: string): boolean => methods.some((m) => isPlainObject(m) && m.name === name && Array.isArray(m.resourceTypes) && m.resourceTypes.includes('image'));
+  const makesImage = (name: string): boolean =>
+    name !== LOGOTYPE_METHOD && methods.some((m) => isPlainObject(m) && m.name === name && Array.isArray(m.resourceTypes) && m.resourceTypes.includes('image'));
   const fallback = hostDefaults(target.schema).imageMethod;
   const taken: { path: string; name: unknown }[] = Object.entries(hosts).map(([entryId, entry]) => {
     const own = isPlainObject(entry) ? entry.imageMethod : undefined;

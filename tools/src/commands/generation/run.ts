@@ -10,7 +10,7 @@ import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import type { GenerationMethod } from '../../lib/settings.ts';
 import { dataDir } from '../env/lib/host.ts';
 import { methodDir, methodMarker, withMethodLock } from './lib/install.ts';
-import { gameImageMethod, IMAGE_METHOD, keySpec, methodChoices, type Stage } from './lib/select.ts';
+import { IMAGE_METHOD, keyChoices, keySpec, type Stage } from './lib/select.ts';
 import { outputsPresent, runCall, standardJob, type CallInput, type StageValues, type StandardJob } from './lib/standard.ts';
 import type { MeasuredRun } from '../env/lib/results.ts';
 
@@ -31,8 +31,9 @@ async function stageFor(
   key: string,
 ): Promise<{ stage: Stage | null; spec: { size: [number, number] | null; lengthMs: number | null; loop: boolean } }> {
   const settings = await ctx.settings();
-  const { type, spec, rows } = await keySpec(await ctx.game(gameName), key);
-  const choices = await methodChoices(ctx, settings, type, spec, gameImageMethod(settings, rows));
+  const keyed = await keySpec(await ctx.game(gameName), key);
+  const { spec } = keyed;
+  const choices = await keyChoices(ctx, settings, key, keyed);
   const sizes = { size: spec.size, lengthMs: spec.lengthMs, loop: spec.loop };
   const own = choices.find((c) => c.name === method.name);
   if (own) return { stage: own.stage, spec: sizes };

@@ -156,8 +156,9 @@ describe('ogw generation methods', () => {
   it('gives a logo key only the logotype method, and a logotype logo does not fix the image method of the game', async () => {
     const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
     const logotype = { name: 'logotype', kind: 'procedural', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
-    const ws = makeWorkspace({ resourceGeneration: [...methods(), sub, logotype], imageMethod: 'sub' });
-    installLocal(ws.root, [...methods(), sub, logotype]);
+    const fonts = { name: 'font-catalog', kind: 'catalog', resourceTypes: ['font'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const ws = makeWorkspace({ resourceGeneration: [...methods(), sub, logotype, fonts], imageMethod: 'sub' });
+    installLocal(ws.root, [...methods(), sub, logotype, fonts]);
     const list = `${RESOURCES}${row('image/logo/ko', 'final', 'logotype')}\n${row('image/logo/en', 'placeholder', '')}\n`;
     makeGame(ws, 'g', { 'resource/resources.csv': list });
     const names = async (key: string): Promise<string[]> => {
@@ -168,6 +169,11 @@ describe('ogw generation methods', () => {
     expect(await names('image/logo/en')).toEqual(['logotype']);
     // the final logo comes first in the list but the image method of the game stays the host's
     expect(await names('image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+    // the logotype method letters with the fonts of font-catalog, so it is not usable without it
+    const unmeasured = makeWorkspace({ resourceGeneration: [...methods(), sub, logotype, { ...fonts, measured: [{ result: 'failed' }] }], imageMethod: 'sub' });
+    makeGame(unmeasured, 'g', { 'resource/resources.csv': list });
+    const none = await ogw(unmeasured, ['generation', 'methods', 'g', 'image/logo/en', '--json']);
+    expect((JSON.parse(none.stdout) as { methods: unknown[] }).methods).toEqual([]);
   });
 
   it('gives the temporary method only when flux2-klein is usable, and for an image type only when flux2-klein lists it', async () => {

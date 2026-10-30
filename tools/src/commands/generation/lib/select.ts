@@ -67,6 +67,8 @@ export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 
 /** The method of the logo keys `image/logo/<language>`: lettering with a font file (`ogw resource logotype`). */
 export const LOGOTYPE_METHOD = 'logotype';
 export const LOGO_PREFIX = 'image/logo/';
+/** The catalog of the fonts that the logotype method letters with. */
+export const FONT_CATALOG = 'font-catalog';
 
 /**
  * The image method of a game: the method of the first `final` row of an image type made by a method of the image types,
@@ -103,12 +105,17 @@ export async function keySpec(game: GameRepo, key: string): Promise<{ type: stri
  * takes only the logotype method, as image generation does not letter text reliably.
  */
 export async function chooseMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<MethodChoice[]> {
-  const { type, spec, rows } = await keySpec(game, key);
+  return keyChoices(ctx, settings, key, await keySpec(game, key));
+}
+
+/** `chooseMethods` for a key whose type, parsed `spec` and list rows were read already (`keySpec`). */
+export async function keyChoices(ctx: Context, settings: HarnessSettings, key: string, keyed: { type: string; spec: Spec; rows: ResourceRow[] }): Promise<MethodChoice[]> {
   if (key.startsWith(LOGO_PREFIX)) {
     const logotype = settings.resourceGeneration.find((m) => m.name === LOGOTYPE_METHOD);
-    return logotype && usable(logotype) ? [await choiceOf(ctx, logotype, spec, undefined)] : [];
+    const fonts = settings.resourceGeneration.find((m) => m.name === FONT_CATALOG);
+    return logotype && usable(logotype) && usable(fonts) ? [await choiceOf(ctx, logotype, keyed.spec, undefined)] : [];
   }
-  return methodChoices(ctx, settings, type, spec, gameImageMethod(settings, rows));
+  return methodChoices(ctx, settings, keyed.type, keyed.spec, gameImageMethod(settings, keyed.rows));
 }
 
 /**
@@ -144,7 +151,8 @@ export async function installedOnHost(ctx: Context, method: GenerationMethod): P
 
 /**
  * The methods that block a resource key on this host: when none of its methods other than the temporary method is
- * installed (`installedOnHost`, and for `rig-2d` and `trellis2` `flux2-klein` too, which they call), the methods of
+ * installed (`installedOnHost`, and for `rig-2d` and `trellis2` `flux2-klein` too, which they call, and for `logotype`
+ * `font-catalog`, whose fonts it letters with), the methods of
  * those that are not installed, and the temporary method when it is not installed either, as the key is then made only
  * with the temporary method or with none (`production.md` `## method`). Empty for a key with an installed method or with
  * no method other than the temporary method.
@@ -154,8 +162,10 @@ export async function uninstalledMethods(ctx: Context, settings: HarnessSettings
   const names = choices.filter((c) => c.temporary !== true).map((c) => c.name);
   const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
   const missing: string[] = [];
+  const fonts = settings.resourceGeneration.find((m) => m.name === FONT_CATALOG);
   for (const method of settings.resourceGeneration.filter((m) => names.includes(m.name))) {
-    const needs = NEEDS_IMAGE_METHOD.has(method.name) && image !== undefined ? [method, image] : [method];
+    const calls = NEEDS_IMAGE_METHOD.has(method.name) ? image : method.name === LOGOTYPE_METHOD ? fonts : undefined;
+    const needs = calls !== undefined ? [method, calls] : [method];
     const lacking: string[] = [];
     for (const m of needs) if (!(await installedOnHost(ctx, m))) lacking.push(m.name);
     if (lacking.length === 0) return [];
