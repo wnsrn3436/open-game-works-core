@@ -73,7 +73,7 @@ For each screen of the moments of `presentation` (the lobby, the play screen wit
 
 ### presentation checks
 
-For each of those screens of the game, answer yes or no for the final resources on it, and name the element and where it is. Ornament is decoration beyond the surface of a material: filigree, gems, metal inlay, a glowing edge, a carved or painted motif. A plain surface of a world material, a plain fill, a soft gradient, a thin line and a plain plate are not ornament. A place is one element, except that the cards, items or portraits that are the content of the screen count as one place together:
+For each of those screens of the game, answer yes or no for the final resources on it, and name the element and where it is. Ornament is decoration beyond a plain fill: the texture of a material (stone or wood grain, cracks, chipped edges), filigree, gems, metal inlay, a glowing edge, a carved or painted motif. A flat or translucent fill, a soft gradient, a thin line and a plain plate are not ornament. A place is one element, except that the cards, items or portraits that are the content of the screen count as one place together:
 
 - effects: a button, frame, panel, band, tag or icon has a bevel or emboss, a glossy or plastic highlight, or a thick dark outline, and the world art of the game is not drawn that way
 - detail: an icon or a UI part (a panel, plate, band or button, not the card art, portraits or logo it holds) carries detail that turns to noise at the size it is shown at (fine texture, cracks, filigree, sparkles), or is drawn with more detail than the world art of the game
