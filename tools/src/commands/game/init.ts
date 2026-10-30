@@ -5,7 +5,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { exists, readJson, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
 import { git, gitLine } from '../../lib/git.ts';
 import { gameSettingsPath, schemaPath } from '../../lib/settings.ts';
-import { remoteReleaseVersions } from '../core/api.ts';
+import { coreRelease, remoteReleaseVersions } from '../core/api.ts';
 import { isPlainObject } from '../settings/lib/json-path.ts';
 import { deriveSettings } from './lib/derive.ts';
 import { installHook } from './lib/pre-commit.ts';
@@ -44,16 +44,14 @@ async function createIdRegistry(root: string, env: NodeJS.ProcessEnv): Promise<v
 export const TEST_TIME_LIMIT: readonly [string, number] = ['UnitTestCore.testTimeLimitMs', 10_000];
 
 /**
- * `core` of the draft: the test time limit, when the core settings of that core are already here (the release folder,
- * or `settings/` of the core implementation repo with harness settings `useLocalCore`; nothing is fetched or built) and
- * have that key with a longer default; nothing otherwise.
+ * `core` of the draft: the test time limit, when the core release is here (none is fetched) and its core settings have
+ * that key with a longer default; nothing otherwise.
  */
 async function draftCore(ctx: Context, version: string): Promise<Record<string, unknown>> {
   const [key, limit] = TEST_TIME_LIMIT;
   try {
-    const ws = await ctx.workspace();
-    const dir = (await ctx.settings()).useLocalCore ? join(ws.coreImpl, 'settings') : join(ws.coreReleases, version);
-    if (!exists(join(dir, 'core-settings.json')) || !exists(join(dir, 'core-settings.schema.json'))) return {};
+    if (!(await ctx.settings()).useLocalCore && !exists(join((await ctx.workspace()).coreReleases, version, 'manifest.json'))) return {};
+    const { dir } = await coreRelease(ctx, version);
     const [defaults, schema] = await Promise.all([readJson(join(dir, 'core-settings.json')), readJson(join(dir, 'core-settings.schema.json'))]);
     const known = isPlainObject(schema) && isPlainObject(schema.properties) && key in schema.properties;
     const current = isPlainObject(defaults) ? defaults[key] : undefined;
