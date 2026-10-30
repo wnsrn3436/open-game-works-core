@@ -145,7 +145,8 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
   }
 }
 
-function single(ctx: Context, instanceId: string, command: string, args: string[]): Promise<CommandResult> {
+/** One input command on the main client, as `ogw input <instance> <command> <argument...>` puts it in. */
+export function singleInput(ctx: Context, instanceId: string, command: string, args: string[]): Promise<CommandResult> {
   if (!isInputCommand(command)) {
     return Promise.reject(new OgwError(`${command} is not an input command; see ogw input --help`));
   }
@@ -166,7 +167,7 @@ export const input: CommandDef = {
     await checkPlayBudget(ctx, script === undefined ? args.positionals.slice(1) : undefined);
     if (script === undefined) {
       if (flag(args, 'video')) throw new OgwError('--video goes with --script');
-      return single(ctx, instanceId, positional(args, 1, 'input command'), args.positionals.slice(2));
+      return singleInput(ctx, instanceId, positional(args, 1, 'input command'), args.positionals.slice(2));
     }
     if (args.positionals.length !== 1) throw new OgwError(`usage: ${this.usage}`);
     const fps = await instanceTargetFps(ctx, instanceId);

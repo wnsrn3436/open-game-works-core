@@ -33,6 +33,10 @@ export interface Context {
   env: NodeJS.ProcessEnv;
   /** All of stdin as text. */
   stdin(): Promise<string>;
+  /** stdin line by line as it comes, without the line breaks. A command reads stdin with this or with `stdin`, not both. */
+  stdinLines(): AsyncIterable<string>;
+  /** Writes text to stdout at once, before the command ends (e.g. one result line per stdin line). */
+  out(text: string): void;
   /** A progress line on stderr. */
   log(line: string): void;
   settings(): Promise<HarnessSettings>;
@@ -157,9 +161,30 @@ export interface ContextInit {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdin: () => Promise<string>;
+  /** stdin in chunks as it comes; without it, `stdin` read as one chunk. */
+  stdinChunks?: () => AsyncIterable<string>;
+  /** stdout; without it, `out` writes nothing. */
+  stdout?: (text: string) => void;
   stderr: (text: string) => void;
   /** True when stdin and stdout are both a terminal; without it, never. */
   terminal?: () => boolean;
+}
+
+/** The lines of text chunks, without the line breaks; a last line without a line break too. */
+export async function* linesOf(chunks: AsyncIterable<string>): AsyncIterable<string> {
+  let buffer = '';
+  for await (const chunk of chunks) {
+    buffer += chunk;
+    for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+      yield buffer.slice(0, end).replace(/\r$/, '');
+      buffer = buffer.slice(end + 1);
+    }
+  }
+  if (buffer !== '') yield buffer.replace(/\r$/, '');
+}
+
+async function* oneChunk(read: () => Promise<string>): AsyncIterable<string> {
+  yield await read();
 }
 
 export function createContext(init: ContextInit): Context {
@@ -168,6 +193,10 @@ export function createContext(init: ContextInit): Context {
     cwd: init.cwd,
     env: init.env,
     stdin: init.stdin,
+    stdinLines: () => linesOf(init.stdinChunks?.() ?? oneChunk(init.stdin)),
+    out: (text) => {
+      init.stdout?.(text);
+    },
     log: (line) => {
       init.stderr(`${line}\n`);
     },

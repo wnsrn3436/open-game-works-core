@@ -1,7 +1,7 @@
 // The `ogw` side of the play and judge broker (ogw.md `## agent`): inside the sandbox, `ogw` does not run a
 // command itself but sends it to the broker of its agent over a unix socket. Kept free of the command modules, so a
 // forwarded call loads nothing else.
-import { connect } from 'node:net';
+import { connect, type Socket } from 'node:net';
 import { AGENT_KEY_ENV } from './jobs.ts';
 
 /** The environment variable that gives a sandboxed agent CLI the path of its broker socket. */
@@ -19,18 +19,28 @@ export const BROKER_WORKER = '__broker-worker';
 /** The broker's request for stdin, written to fd 3 by the process that runs the forwarded command. */
 export const STDIN_REQUEST = 'stdin\n';
 
-/** The first message of a connection: one JSON line. Later client lines are `{"stdin": "<text>"}`. */
+/** The broker's request for stdin as it comes, written to fd 3 by a forwarded command that reads stdin line by line. */
+export const STDIN_STREAM_REQUEST = 'stdin-stream\n';
+
+/**
+ * The first message of a connection: one JSON line. Later client lines are `{"stdin": "<text>"}` (all of stdin), or
+ * after a stdin stream request `{"chunk": "<text>"}` per chunk as it comes and `{"end": true}` at its end.
+ */
 export interface BrokerRequest {
   argv: string[];
   cwd: string;
   key: string;
 }
 
-/** A broker line: a chunk of stdout or stderr, a request for stdin, or the exit code, which ends the connection. */
+/**
+ * A broker line: a chunk of stdout or stderr, a request for all of stdin or for stdin as it comes, or the exit code,
+ * which ends the connection.
+ */
 export interface BrokerMessage {
   stdout?: string;
   stderr?: string;
   stdin?: true;
+  stdinStream?: true;
   exit?: number;
 }
 
@@ -38,6 +48,8 @@ export interface BrokerIo {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdin: () => Promise<string>;
+  /** stdin in chunks as it comes; without it, `stdin` read as one chunk. */
+  stdinChunks?: () => AsyncIterable<string>;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
 }
@@ -90,6 +102,7 @@ export function forwardToBroker(socket: string, argv: readonly string[], io: Bro
         if (message.stdin === true) {
           void io.stdin().then((stdin) => connection.write(`${JSON.stringify({ stdin })}\n`));
         }
+        if (message.stdinStream === true) void streamStdin(io, connection);
         if (typeof message.exit === 'number') end(message.exit);
       }),
     );
@@ -100,4 +113,18 @@ export function forwardToBroker(socket: string, argv: readonly string[], io: Bro
       end(1, 'the ogw broker closed the connection before the command ended');
     });
   });
+}
+
+/** Sends stdin to the broker as it comes, chunk by chunk, then its end. */
+async function streamStdin(io: BrokerIo, connection: Socket): Promise<void> {
+  const send = (line: unknown): void => {
+    if (!connection.destroyed) connection.write(`${JSON.stringify(line)}\n`);
+  };
+  try {
+    if (io.stdinChunks) for await (const chunk of io.stdinChunks()) send({ chunk });
+    else send({ chunk: await io.stdin() });
+  } catch {
+    // stdin that cannot be read ends here
+  }
+  send({ end: true });
 }

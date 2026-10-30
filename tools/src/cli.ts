@@ -11,6 +11,7 @@ const io = {
   cwd: process.cwd(),
   env: process.env,
   stdin: () => readAll(process.stdin),
+  stdinChunks: (): AsyncIterable<string> => process.stdin.setEncoding('utf8'),
   stdout: (text: string) => process.stdout.write(text),
   stderr: (text: string) => process.stderr.write(text),
   terminal: () => process.stdin.isTTY && process.stdout.isTTY,

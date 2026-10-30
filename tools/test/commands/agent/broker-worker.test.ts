@@ -164,4 +164,46 @@ describe('broker worker', () => {
       await kept.broker.close();
     }
   });
+
+  it('passes stdin to a command that reads it as it comes, chunk by chunk, on a process of its own and on the worker', async () => {
+    const real = (argv: readonly string[]): { cmd: string; args: string[] } => ({ cmd: process.execPath, args: [cliEntry(), BROKER_RUN, ...argv] });
+    const own = await brokerWith(undefined, real);
+    const kept = await brokerWith({ cmd: process.execPath, args: [cliEntry(), BROKER_WORKER] }, real);
+    try {
+      for (const socket of [own.socket, kept.socket]) {
+        let stdout = '';
+        const lines = (): number => stdout.split('\n').filter((line) => line !== '').length;
+        const until = async (n: number): Promise<void> => {
+          for (let i = 0; i < 200 && lines() < n; i++) await wait(25);
+        };
+        // each line is sent only after the answer of the line before came back: a broker that waited for the end of
+        // stdin would never answer
+        async function* chunks(): AsyncIterable<string> {
+          yield 'step\n';
+          await until(1);
+          yield 'input tap 1 2\n';
+          await until(2);
+        }
+        const io: BrokerIo = {
+          cwd: process.cwd(),
+          env: { OGW_AGENT_KEY: KEY },
+          stdin: () => Promise.reject(new Error('stdin read all at once')),
+          stdinChunks: chunks,
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => undefined,
+        };
+        const code = await forwardToBroker(socket, ['step', 'no-such-instance', '50', '--stream'], io);
+        expect(code).toBe(1);
+        expect(stdout.trimEnd().split('\n').map((line) => JSON.parse(line) as unknown)).toEqual([
+          { exit: 1, error: 'instance no-such-instance is not running' },
+          { exit: 1, error: 'instance no-such-instance is not running' },
+        ]);
+      }
+    } finally {
+      await own.broker.close();
+      await kept.broker.close();
+    }
+  });
 });

@@ -1,8 +1,9 @@
 // The process a play or judge broker keeps in the broker sandbox for its frequent commands (`broker.ts`
 // `WORKER_COMMANDS`): it runs one forwarded command at a time in itself, so a call does not start node and load the
-// CLI again. Requests come on stdin as JSON lines `{"argv": [...], "cwd": "<absolute path>"}`, and the answer to a
-// stdin request of the running command as `{"stdin": "<text>"}`. Every message of a command goes to fd 3 as a
-// `BrokerMessage` line; `{"exit": <code>}` ends it.
+// CLI again. Requests come on stdin as JSON lines `{"argv": [...], "cwd": "<absolute path>"}`; the answer to a
+// stdin request of the running command as `{"stdin": "<text>"}`, and to a stdin stream request as `{"chunk": "<text>"}`
+// lines and `{"end": true}`. Every message of a command goes to fd 3 as a `BrokerMessage` line; `{"exit": <code>}`
+// ends it.
 import { writeSync } from 'node:fs';
 import { lineReader, type BrokerMessage } from '../../../lib/broker-client.ts';
 import type { CliIo } from '../../../lib/cli.ts';
@@ -16,11 +17,49 @@ function send(message: BrokerMessage): void {
   writeSync(3, `${JSON.stringify(message)}\n`);
 }
 
+/** The stdin of a call as it comes: `{"chunk": ...}` lines pushed in, ended by `{"end": true}` or the call's end. */
+class ChunkStream {
+  private readonly chunks: string[] = [];
+  private closed = false;
+  private wake: (() => void) | null = null;
+
+  push(text: string): void {
+    this.chunks.push(text);
+    this.notify();
+  }
+
+  close(): void {
+    this.closed = true;
+    this.notify();
+  }
+
+  private notify(): void {
+    const wake = this.wake;
+    this.wake = null;
+    wake?.();
+  }
+
+  async *read(): AsyncIterable<string> {
+    for (;;) {
+      const next = this.chunks.shift();
+      if (next !== undefined) {
+        yield next;
+        continue;
+      }
+      if (this.closed) return;
+      await new Promise<void>((resolvePromise) => {
+        this.wake = resolvePromise;
+      });
+    }
+  }
+}
+
 /** Runs the forwarded commands one after another until stdin ends. */
 export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
   const [{ commandsFor }, { runCli }] = await Promise.all([import('../../lazy.ts'), import('../../../lib/cli.ts')]);
   const queue: WorkerCall[] = [];
   let answer: ((text: string) => void) | null = null;
+  let stream: ChunkStream | null = null;
   let running = false;
   let ended = false;
   let done: () => void = () => undefined;
@@ -40,6 +79,12 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
           answer = resolvePromise;
         });
       },
+      stdinChunks: () => {
+        send({ stdinStream: true });
+        const chunks = new ChunkStream();
+        stream = chunks;
+        return chunks.read();
+      },
       stdout: (text) => {
         send({ stdout: text });
       },
@@ -56,6 +101,8 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
       code = 1;
     }
     answer = null;
+    stream?.close();
+    stream = null;
     send({ exit: code });
   };
 
@@ -68,7 +115,7 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
   };
 
   const read = lineReader((text) => {
-    let message: { argv?: unknown; cwd?: unknown; stdin?: unknown };
+    let message: { argv?: unknown; cwd?: unknown; stdin?: unknown; chunk?: unknown; end?: unknown };
     try {
       message = JSON.parse(text) as typeof message;
     } catch {
@@ -81,12 +128,14 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
       const give = answer;
       answer = null;
       give(message.stdin);
-    }
+    } else if (typeof message.chunk === 'string') stream?.push(message.chunk);
+    else if (message.end === true) stream?.close();
   });
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', read);
   process.stdin.on('end', () => {
     ended = true;
+    stream?.close();
     if (!running) done();
   });
   await finished;

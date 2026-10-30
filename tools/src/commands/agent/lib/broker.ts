@@ -7,7 +7,7 @@ import { createServer, type Socket } from 'node:net';
 import { dirname, isAbsolute } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { lineReader, STDIN_REQUEST, type BrokerMessage, type BrokerRequest } from '../../../lib/broker-client.ts';
+import { lineReader, STDIN_REQUEST, STDIN_STREAM_REQUEST, type BrokerMessage, type BrokerRequest } from '../../../lib/broker-client.ts';
 import { createContext } from '../../../lib/command.ts';
 import { killTree, spawnTracked } from '../../../lib/proc.ts';
 import type { CliCommand } from './cli-command.ts';
@@ -110,12 +110,22 @@ function parseRequest(text: string): BrokerRequest | null {
   }
 }
 
+/** What a call takes from its caller after the request: all of stdin, or stdin chunk by chunk and its end. */
+interface CallInput {
+  stdin: (text: string) => void;
+  chunk: (text: string) => void;
+  end: () => void;
+}
+
+/** How the command of a call asked for stdin: all of it, as it comes, or not yet. */
+type Asked = 'all' | 'stream' | null;
+
 /** Runs one verified call and streams its output back; the command is killed when the caller goes away. */
-function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions, children: Set<ChildProcess>): { stdin: (text: string) => void } {
+function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions, children: Set<ChildProcess>): CallInput {
   const command = options.command(request.argv);
   const child = spawnTracked(command.cmd, command.args, { cwd: request.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
   children.add(child);
-  let asked = false;
+  let asked: Asked = null;
   child.stdin?.on('error', () => undefined);
   child.stdout?.setEncoding('utf8');
   child.stderr?.setEncoding('utf8');
@@ -126,12 +136,20 @@ function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions,
     send(socket, { stderr: chunk });
   });
   const requests = child.stdio[3] as Readable | null | undefined;
-  requests?.on('data', (chunk: Buffer) => {
-    if (!asked && chunk.toString('utf8').includes(STDIN_REQUEST.trim())) {
-      asked = true;
-      send(socket, { stdin: true });
-    }
-  });
+  requests?.setEncoding('utf8');
+  requests?.on(
+    'data',
+    lineReader((line) => {
+      if (asked !== null) return;
+      if (line === STDIN_REQUEST.trim()) {
+        asked = 'all';
+        send(socket, { stdin: true });
+      } else if (line === STDIN_STREAM_REQUEST.trim()) {
+        asked = 'stream';
+        send(socket, { stdinStream: true });
+      }
+    }),
+  );
   requests?.on('error', () => undefined);
   let ended = false;
   const end = (code: number, reason?: string): void => {
@@ -170,14 +188,20 @@ function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions,
   });
   return {
     stdin: (text) => {
-      if (asked) child.stdin?.end(text);
+      if (asked === 'all') child.stdin?.end(text);
+    },
+    chunk: (text) => {
+      if (asked === 'stream') child.stdin?.write(text);
+    },
+    end: () => {
+      if (asked === 'stream') child.stdin?.end();
     },
   };
 }
 
 interface WorkerCall {
   socket: Socket;
-  asked: boolean;
+  asked: Asked;
   end: (code: number, reason?: string) => void;
 }
 
@@ -232,9 +256,12 @@ class BrokerWorker {
         }
         if (typeof message.stdout === 'string') send(call.socket, { stdout: message.stdout });
         else if (typeof message.stderr === 'string') send(call.socket, { stderr: message.stderr });
-        else if (message.stdin === true) {
-          call.asked = true;
+        else if (message.stdin === true && call.asked === null) {
+          call.asked = 'all';
           send(call.socket, { stdin: true });
+        } else if (message.stdinStream === true && call.asked === null) {
+          call.asked = 'stream';
+          send(call.socket, { stdinStream: true });
         } else if (typeof message.exit === 'number') call.end(message.exit);
       }),
     );
@@ -264,11 +291,11 @@ class BrokerWorker {
   }
 
   /** Runs one verified call and streams its output back. */
-  run(socket: Socket, request: BrokerRequest): { stdin: (text: string) => void } {
+  run(socket: Socket, request: BrokerRequest): CallInput {
     const child = this.child ?? this.start(request.cwd);
     const call: WorkerCall = {
       socket,
-      asked: false,
+      asked: null,
       end: (code, reason) => {
         if (this.call !== call) return;
         this.call = null;
@@ -284,9 +311,18 @@ class BrokerWorker {
       this.kill();
     });
     child.stdin?.write(`${JSON.stringify({ argv: request.argv, cwd: request.cwd })}\n`);
+    const pass = (asked: Asked, line: unknown): void => {
+      if (call.asked === asked && this.call === call) child.stdin?.write(`${JSON.stringify(line)}\n`);
+    };
     return {
       stdin: (text) => {
-        if (call.asked && this.call === call) child.stdin?.write(`${JSON.stringify({ stdin: text })}\n`);
+        pass('all', { stdin: text });
+      },
+      chunk: (text) => {
+        pass('stream', { chunk: text });
+      },
+      end: () => {
+        pass('stream', { end: true });
       },
     };
   }
@@ -295,7 +331,7 @@ class BrokerWorker {
 function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProcess>, worker: BrokerWorker | null): void {
   socket.setEncoding('utf8');
   socket.on('error', () => undefined);
-  let call: { stdin: (text: string) => void } | null = null;
+  let call: CallInput | null = null;
   // set once the request line is read: a later line before the command runs is not a request
   let requested = false;
   let size = 0;
@@ -331,8 +367,10 @@ function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProces
       return;
     }
     try {
-      const { stdin } = JSON.parse(text) as { stdin?: unknown };
+      const { stdin, chunk, end } = JSON.parse(text) as { stdin?: unknown; chunk?: unknown; end?: unknown };
       if (typeof stdin === 'string') call.stdin(stdin);
+      else if (typeof chunk === 'string') call.chunk(chunk);
+      else if (end === true) call.end();
     } catch {
       socket.destroy();
     }

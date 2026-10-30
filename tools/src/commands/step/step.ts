@@ -1,7 +1,8 @@
-import { expectPositionals, flag, nonNegativeInt, positional, type CommandDef, type Context } from '../../lib/command.ts';
+import { expectPositionals, flag, nonNegativeInt, positional, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { checkPlayBudget } from '../agent/lib/play-budget.ts';
 import { captureScreen } from '../capture/capture.ts';
+import { singleInput } from '../input/input.ts';
 import { automationRequest, botControl, type ClientRef } from '../instance/automation.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
 import { deviceMs, readTelemetry } from '../telemetry/api.ts';
@@ -209,15 +210,63 @@ function outcomeLines(count: number, outcome: Outcome): string[] {
   return lines;
 }
 
+/** The result line of one action of `--stream`: the exit code and `--json` output the single command gives, or its error. */
+type StreamLine = { exit: number; data: unknown } | { exit: number; error: string };
+
+/** One stdin line of `--stream`: `step [<n>]` or `input <input command> <argument...>`. */
+async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: string): Promise<StreamLine> {
+  const words = line.trim().split(/\s+/);
+  try {
+    if (words[0] === 'step' && words.length <= 2) {
+      const count = words[1] === undefined ? 1 : /^[0-9]+$/.test(words[1]) ? Number(words[1]) : 0;
+      if (count < 1) throw new OgwError(`invalid step count: ${words[1] ?? ''}`);
+      await checkPlayBudget(ctx);
+      const outcome = await runSteps(ctx, { ...plan, count });
+      return { exit: outcome.failed ? 1 : 0, data: outcome };
+    }
+    if (words[0] === 'input' && words[1] !== undefined) {
+      const args = words.slice(2);
+      await checkPlayBudget(ctx, [words[1], ...args]);
+      const result = await singleInput(ctx, plan.id, words[1], args);
+      return { exit: result.exitCode ?? 0, data: result.data };
+    }
+    throw new OgwError(`not a stream line: ${line.trim()} (step [<n>] or input <input command> <argument...>)`);
+  } catch (error) {
+    if (!(error instanceof OgwError)) throw error;
+    return { exit: error.exitCode, error: error.message };
+  }
+}
+
+/**
+ * `--stream`: runs the stdin lines one at a time as they come, and writes one JSON line per line as it ends, so a
+ * script drives many steps and inputs with one `ogw` call. Exit code 0, or 1 when a line failed.
+ */
+async function streamSteps(ctx: Context, plan: Omit<Plan, 'count'>): Promise<CommandResult> {
+  let lines = 0;
+  let failed = 0;
+  for await (const line of ctx.stdinLines()) {
+    if (line.trim() === '') continue;
+    const result = await streamAction(ctx, plan, line);
+    lines++;
+    if (result.exit !== 0) failed++;
+    ctx.out(`${JSON.stringify(result)}\n`);
+  }
+  return { exitCode: failed > 0 ? 1 : 0, data: { lines, failed } };
+}
+
 export const step: CommandDef = {
   name: ['step'],
-  usage: 'ogw step <instance> <ms> [--count <n>] [--capture] [--state]',
-  options: { count: { type: 'string' }, capture: { type: 'boolean' }, state: { type: 'boolean' } },
+  usage: 'ogw step <instance> <ms> [--count <n>] [--capture] [--state] | ogw step <instance> <ms> --stream [--capture] [--state]',
+  options: { count: { type: 'string' }, capture: { type: 'boolean' }, state: { type: 'boolean' }, stream: { type: 'boolean' } },
   async run(ctx, args) {
     expectPositionals(args, 2, 2, this.usage);
     const id = positional(args, 0, 'instance');
     const ms = positional(args, 1, 'ms');
     if (!/^[0-9]+$/.test(ms) || Number(ms) < 1) throw new OgwError(`invalid ms: ${ms}`);
+    if (flag(args, 'stream')) {
+      if (args.values.count !== undefined) throw new OgwError('--count does not go with --stream; a stream line gives it: step <n>');
+      return streamSteps(ctx, { id, ms, capture: flag(args, 'capture'), state: flag(args, 'state') });
+    }
     const count = nonNegativeInt(args, 'count') ?? 1;
     if (count < 1) throw new OgwError(`invalid --count: ${String(count)}`);
     await checkPlayBudget(ctx);
