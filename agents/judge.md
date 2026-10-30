@@ -43,7 +43,7 @@ The input file is the JSON `{"A": <game>, "B": <game>, "fixtures": [<fixture>, .
 | `progression` | Growth or reward shows at short intervals | `reward_interval_ms` | none | `first reward` |
 | `one more run` | When it ends, the player wants to play again. Failure is fair, so it feels like the player's own fault | `restart_delay_ms` | whether the cause of failure is visible on screen | `restart` |
 | `no friction` | There is no boring wait, unneeded click or meaningless repetition | `idle_span_ms`, `goal_input_count` | none | `first 30000ms` |
-| `presentation` | Screens and sound are made at the level of a commercial game. The background, border and decoration of the UI elements visible on screen (e.g. panel, popup, button, card and item frame, HUD, icon) are drawn with art resources, and each screen keeps one style | none | UI elements that look like the engine default shape or a single-color box made in code; the counts of `### presentation counts` | `lobby`, `hud`, `reward popup`, `result`; `first 30000ms` when all four are `none` |
+| `presentation` | Screens and sound are made at the level of a commercial game. The background, border and decoration of the UI elements visible on screen (e.g. panel, popup, button, card and item frame, HUD, icon) are drawn with art resources, and each screen keeps one style | none | UI elements that look like the engine default shape or a single-color box made in code; the counts of `### presentation counts`; the answers of `### presentation checks` | `lobby`, `hud`, `reward popup`, `result`; `first 30000ms` when all four are `none` |
 
 - When `## failure` of that game's `play-guide.md` is `none`, `tension and release` and `one more run` of that game are `n/a` and are not judged
 - An element that is not in `elements` is not judged and is not in the judge result
@@ -68,11 +68,19 @@ Judge `tension and release` and `no friction` by LLM opinion through the questio
 
 For each screen of the moments of `presentation` (the lobby, the play screen with its HUD, a reward popup, the result screen), count in the game and in a frame of that moment of the gameplay video:
 
-- panel layers: the drawn layers of the largest panel or plate of the screen. Frame, header band, inner inset, divider and ornament count one each
 - idle motion: the elements that move or animate while there is no input for 2000 ms
 - press feedback: whether pressing a button changes its art, its scale or plays a sound (1 or 0)
 
-`presentation` of a game is `fail` in `vs reference` when a count of one of its screens is lower than that of the same screen in the video. Write the counts of both in the reason. A defect of `presentation` has the severity `major` or `blocker`
+### presentation checks
+
+For each of those screens of the game, answer yes or no, and name the element and where it is:
+
+- effects: a button, frame, panel, band, tag or icon has a bevel or emboss, a glossy or plastic highlight, or a thick dark outline that the world art of the game does not have
+- detail: UI or icon detail is denser than the size it is shown at can carry (texture, cracks, filigree, sparkles that turn to noise), or the UI is drawn with more detail than the world behind it
+- generated look: melted or mushy forms, meaningless glyphs or runes, or line weight or rendering that changes within one object or one set
+- ornament spread: ornament is on more than two places of the screen (e.g. every panel, plate and button framed)
+
+`presentation` of a game is `fail` in `vs reference` when a count of one of its screens is lower than that of the same screen in the video, or when a check of one of its screens is yes. Write the counts of both and the yes answers with their elements in the reason. A defect of `presentation` has the severity `major` or `blocker`
 
 - A placeholder resource (an image with the last word of the resource key written on a single-color background, a temporary sound put in place of a sound) is a place that a final resource will replace. `presentation` does not look at those places
 
