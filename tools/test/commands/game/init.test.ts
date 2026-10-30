@@ -57,33 +57,6 @@ describe('ogw game init', () => {
     expect(hookScript("it's")).toContain(`'it'\\''s'`);
   });
 
-  it('writes a 10 s time limit of one client test when the core release here has a longer default, and nothing otherwise', async () => {
-    const release = (defaultMs: number, schemaHasKey = true): void => {
-      const dir = join(ws.coreReleases, '1.10.0');
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'manifest.json'), '{}');
-      writeFileSync(join(dir, 'core-settings.json'), JSON.stringify({ 'UnitTestCore.testTimeLimitMs': defaultMs }));
-      writeFileSync(join(dir, 'core-settings.schema.json'), JSON.stringify({ properties: schemaHasKey ? { 'UnitTestCore.testTimeLimitMs': { type: 'integer' } } : {} }));
-      vi.mocked(coreRelease).mockResolvedValue({ version: '1.10.0', dir, local: false });
-    };
-    const settingsOf = async (name: string): Promise<Record<string, unknown>> => {
-      expect((await ogw(ws, ['game', 'init', name])).code).toBe(0);
-      return JSON.parse(readFileSync(join(ws.games, name, 'settings.json'), 'utf8')) as Record<string, unknown>;
-    };
-    release(60000);
-    expect((await settingsOf('limited')).core).toEqual({ 'UnitTestCore.testTimeLimitMs': 10000 });
-    release(5000);
-    expect((await settingsOf('shorter')).core).toBeUndefined();
-    release(60000, false);
-    expect((await settingsOf('unknown')).core).toBeUndefined();
-    // a release that is not here is not fetched
-    rmSync(join(ws.coreReleases, '1.10.0'), { recursive: true, force: true });
-    vi.mocked(coreRelease).mockClear();
-    expect((await settingsOf('absent')).core).toBeUndefined();
-    expect(coreRelease).not.toHaveBeenCalled();
-  });
-
   it('starts the game on the core of the harness when the harness has a core-v tag', async () => {
     sh(ws.harness, 'git', ['tag', 'core-v1.9.0']);
     const run = await ogw(ws, ['game', 'init', 'mygame']);

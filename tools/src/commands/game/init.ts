@@ -2,11 +2,10 @@ import { mkdir, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { expectPositionals, positional, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, readJson, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
+import { exists, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
 import { git, gitLine } from '../../lib/git.ts';
 import { gameSettingsPath, schemaPath } from '../../lib/settings.ts';
-import { coreRelease, remoteReleaseVersions } from '../core/api.ts';
-import { isPlainObject } from '../settings/lib/json-path.ts';
+import { remoteReleaseVersions } from '../core/api.ts';
 import { deriveSettings } from './lib/derive.ts';
 import { installHook } from './lib/pre-commit.ts';
 import { harnessCoreVersion } from '../core/lib/harness-core.ts';
@@ -36,31 +35,6 @@ async function createIdRegistry(root: string, env: NodeJS.ProcessEnv): Promise<v
   await git(root, ['update-ref', 'refs/heads/id-registry', commit], { env });
 }
 
-/**
- * The time limit of one client test that `ogw game init` writes (core settings `UnitTestCore.testTimeLimitMs`): a test
- * that waits on what never comes fails after it instead of after the core default of 1 min. The longest passing
- * client test of the measured loops took 0.5 s.
- */
-export const TEST_TIME_LIMIT: readonly [string, number] = ['UnitTestCore.testTimeLimitMs', 10_000];
-
-/**
- * `core` of the draft: the test time limit, when the core release is here (none is fetched) and its core settings have
- * that key with a longer default; nothing otherwise.
- */
-async function draftCore(ctx: Context, version: string): Promise<Record<string, unknown>> {
-  const [key, limit] = TEST_TIME_LIMIT;
-  try {
-    if (!(await ctx.settings()).useLocalCore && !exists(join((await ctx.workspace()).coreReleases, version, 'manifest.json'))) return {};
-    const { dir } = await coreRelease(ctx, version);
-    const [defaults, schema] = await Promise.all([readJson(join(dir, 'core-settings.json')), readJson(join(dir, 'core-settings.schema.json'))]);
-    const known = isPlainObject(schema) && isPlainObject(schema.properties) && key in schema.properties;
-    const current = isPlainObject(defaults) ? defaults[key] : undefined;
-    return known && typeof current === 'number' && current > limit ? { core: { [key]: limit } } : {};
-  } catch {
-    return {};
-  }
-}
-
 async function draftSettings(ctx: Context, root: string): Promise<Record<string, unknown>> {
   // remoteReleaseVersions gives the `v<major>.<minor>.<patch>` release versions in ascending order.
   // the core whose specs this harness holds; the highest release for a harness before its first core release
@@ -71,7 +45,6 @@ async function draftSettings(ctx: Context, root: string): Promise<Record<string,
     $schema: relative(root, schemaPath('game-settings', ctx.env)),
     coreVersion,
     postgresqlMajor,
-    ...(await draftCore(ctx, coreVersion)),
   });
 }
 
