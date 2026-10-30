@@ -226,7 +226,7 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
     }
     if (words[0] === 'input' && words[1] !== undefined) {
       // `text` takes the rest of the line as its one argument, spaces included
-      const text = /^\s*input\s+text\s(.*)$/.exec(line);
+      const text = /^\s*input\s+text\s([\s\S]*)$/.exec(line);
       const args = text ? [text[1] as string] : words.slice(2);
       await checkPlayBudget(ctx, [words[1], ...args]);
       const result = await singleInput(ctx, plan.id, words[1], args);
