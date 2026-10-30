@@ -7,6 +7,7 @@ import { coreFiles, type CoreFiles } from '../../settings/lib/core-files.ts';
 import { addedLeaves, display, getAt, isPlainObject, type JsonObject } from '../../settings/lib/json-path.ts';
 import { child, infoOf, type SchemaNode } from '../../settings/lib/schema-nav.ts';
 import { coreSettingMeanings } from './setting-meanings.ts';
+import { TEST_TIME_LIMIT } from '../init.ts';
 
 /** Group of the values that a human reads first (`game-setup` 10). */
 export const TO_KNOW_GROUP = 'values to know';
@@ -17,10 +18,10 @@ export interface DefaultValue {
   path: string;
   value: unknown;
   /**
-   * `schema default` (game settings schema), `core settings` (core release `core-settings.json`) or `ogw game derive`
-   * (a value `ogw game derive` wrote, not a human).
+   * `schema default` (game settings schema), `core settings` (core release `core-settings.json`), `ogw game derive`
+   * (a value `ogw game derive` wrote, not a human) or `ogw game init` (the value `ogw game init` wrote, not a human).
    */
-  source: 'schema default' | 'core settings' | 'ogw game derive';
+  source: 'schema default' | 'core settings' | 'ogw game derive' | 'ogw game init';
   /** `values to know`, `game settings`, or the core module the key belongs to. */
   group: string;
   /** The value for a human: a duration with its unit, a minute of the day as hh:mm, the day boundary as a time zone. */
@@ -52,6 +53,7 @@ export const TO_KNOW: readonly string[] = [
   'uiQuality.*',
   'loopIterationLimit',
   'buildRetryLimit',
+  'core.UnitTestCore.testTimeLimitMs',
   'core.routing.userRateLimitPerMinute',
   'core.routing.ipRateLimitPerMinute',
   'core.NativeUiCore.reviewMinIntervalMs',
@@ -169,6 +171,9 @@ export async function defaultValues(ctx: Context, game: string, settings: JsonOb
     if (value !== undefined) add(segments, value, 'ogw game derive', GAME_GROUP, schemaMeaning(schema, segments));
   }
   const written = isPlainObject(settings.core) ? settings.core : {};
+  // the value `ogw game init` wrote, while no human changed it
+  const [limitKey, limit] = TEST_TIME_LIMIT;
+  if (written[limitKey] === limit) add(['core', limitKey], limit, 'ogw game init', moduleOf(limitKey), meanings.get(limitKey) ?? null);
   for (const [key, value] of Object.entries(core.settings)) {
     if (!used.has(moduleOf(key))) continue;
     const meaning = meanings.get(key) ?? null;
