@@ -10,6 +10,12 @@ export const BROKER_ENV = 'OGW_BROKER_SOCKET';
 /** First argument of the process the broker starts for a forwarded command: asks for stdin through fd 3. */
 export const BROKER_RUN = '__broker-run';
 
+/**
+ * Only argument of the process a broker keeps for its frequent commands (`broker-worker.ts`): it runs one forwarded
+ * command at a time in itself.
+ */
+export const BROKER_WORKER = '__broker-worker';
+
 /** The broker's request for stdin, written to fd 3 by the process that runs the forwarded command. */
 export const STDIN_REQUEST = 'stdin\n';
 
