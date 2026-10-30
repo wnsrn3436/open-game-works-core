@@ -43,7 +43,7 @@ The input file is the JSON `{"A": <game>, "B": <game>, "fixtures": [<fixture>, .
 | `progression` | Growth or reward shows at short intervals | `reward_interval_ms` | none | `first reward` |
 | `one more run` | When it ends, the player wants to play again. Failure is fair, so it feels like the player's own fault | `restart_delay_ms` | whether the cause of failure is visible on screen | `restart` |
 | `no friction` | There is no boring wait, unneeded click or meaningless repetition | `idle_span_ms`, `goal_input_count` | none | `first 30000ms` |
-| `presentation` | Screens and sound are made at the level of a commercial game. The background, border and decoration of the UI elements visible on screen (e.g. panel, popup, button, card and item frame, HUD, icon) are drawn with art resources, and each screen keeps one style | none | UI elements that look like the engine default shape or a single-color box made in code; the counts of `### presentation counts`; the answers of `### presentation checks` | `lobby`, `hud`, `reward popup`, `result`; `first 30000ms` when all four are `none` |
+| `presentation` | Screens and sound are made at the level of a commercial game. The UI elements visible on screen (e.g. panel, popup, button, card and item frame, HUD, icon) are drawn in the UI style of `## art direction` of `design.md`, restrained against the world art, and each screen keeps one style | none | UI elements in the engine's default look (its default button, panel, slider and font); the counts of `### presentation counts`; the answers of `### presentation checks` | `lobby`, `hud`, `reward popup`, `result`; `first 30000ms` when all four are `none` |
 
 - When `## failure` of that game's `play-guide.md` is `none`, `tension and release` and `one more run` of that game are `n/a` and are not judged
 - An element that is not in `elements` is not judged and is not in the judge result
@@ -73,14 +73,16 @@ For each screen of the moments of `presentation` (the lobby, the play screen wit
 
 ### presentation checks
 
-For each of those screens of the game, answer yes or no, and name the element and where it is:
+For each of those screens of the game, answer yes or no for the final resources on it, and name the element and where it is. Ornament is a carved, filigree, metal, gem or glowing trim or a decorative motif; a plain fill, a soft gradient, a thin line and a plain plate are not ornament. A place is one element, except that the cards, items or portraits that are the content of the screen count as one place together:
 
-- effects: a button, frame, panel, band, tag or icon has a bevel or emboss, a glossy or plastic highlight, or a thick dark outline that the world art of the game does not have
-- detail: UI or icon detail is denser than the size it is shown at can carry (texture, cracks, filigree, sparkles that turn to noise), or the UI is drawn with more detail than the world behind it
-- generated look: melted or mushy forms, meaningless glyphs or runes, or line weight or rendering that changes within one object or one set
-- ornament spread: ornament is on more than two places of the screen (e.g. every panel, plate and button framed)
+- effects: a button, frame, panel, band, tag or icon has a bevel or emboss, a glossy or plastic highlight, or a thick dark outline, and the world art of the game is not drawn that way
+- detail: an icon or a UI part (a panel, plate, band or button, not the cards, items, portraits or logo it holds) carries detail that turns to noise at the size it is shown at (fine texture, cracks, filigree, sparkles), or is drawn with more detail than the world art of the game
+- generated look: melted or mushy forms, meaningless glyphs or runes, or line weight or rendering that changes within one object or among the icons of the game
+- ornament spread: ornament is on more than two places of the screen
 
-`presentation` of a game is `fail` in `vs reference` when a count of one of its screens is lower than that of the same screen in the video, or when a check of one of its screens is yes. Write the counts of both and the yes answers with their elements in the reason. A defect of `presentation` has the severity `major` or `blocker`
+Each yes is a row of `## defects` with the severity `major`, `where` the screen and the element, and `what` the check and what was seen. Write the answers as lists, not as a table: the first table under `## vs reference` with an `instance` column is read as the `vs reference` result.
+
+`presentation` of a game is `fail` in `vs reference` when a count of one of its screens is lower than that of the same screen in the video. Write the counts of both in the reason. A defect of `presentation` has the severity `major` or `blocker`
 
 - A placeholder resource (an image with the last word of the resource key written on a single-color background, a temporary sound put in place of a sound) is a place that a final resource will replace. `presentation` does not look at those places
 

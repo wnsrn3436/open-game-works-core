@@ -41,7 +41,7 @@ How the resource sub-agent makes final resources, and their post-processing. Res
 | `trellis2` | An empty file | Exactly 1. A source illustration with a transparent background | `model.glb` |
 - With the method `blender`, the agent makes the resource by writing a Blender script. Only the Blender version of harness settings `tools.blender` is used
 - A `catalog` method picks from the files that `ogw generation install` fetched. `ogw generation list <method>` gives, per file, the path, license, source URL, author credit and the character set it holds
-- For a font, pick a file that holds the character set of the language of the `language` rows that use that font as `font`. Among those, pick the face whose character fits `## art direction` (e.g. a serif or a hand-lettered face for a dark fantasy world, a rounded face for a toy world) over a neutral UI sans, and prefer one with a `wght` axis, because titles and body text are told apart by weight
+- For a font, pick a file that holds the character set of the language of the `language` rows that use that font as `font`. The same face draws body text, system popups and captions (`LocalizationCore` applies one font chain to the body and heading text styles), so pick a text face that stays readable at the smallest body size, and among those the one whose character fits `## art direction` (e.g. a serif for a dark fantasy world, a rounded sans for a toy world) over a neutral UI sans. Prefer one with a `wght` axis, because titles and body text are told apart by weight. Decorative lettering (a logo, a title card) is an image resource
 
 ## model
 
@@ -154,7 +154,7 @@ The three commands are deterministic. An opaque pixel is a pixel whose alpha is 
 - A character, enemy, pickup or hazard reads by its big shapes and by the hue family of its kind. Its detail is grouped into a few large shapes rather than spread as surface texture, and its outline is none or a thin darker shade of its fill unless the art direction says otherwise
 - Texture is painted at the scale of the surface it is on: a small sprite or an icon carries no fine texture
 - An effect is a few simple shapes in one or two colors and does not cover the unit it comes from
-- An icon shown small (a few percent of the screen width) is one silhouette with little detail inside it. Painted detail is kept for icons shown at card or portrait size, and those sit in a plain socket with a thin rim. All icons of a game share one render, outline and plate
+- An icon is drawn to read at the smallest size it is shown at: one silhouette with little detail inside it. Painted detail belongs to images shown at card or portrait size (card art, portraits), not to icons. All icons of a game share one render and one outline, and the icons of one kind share one plate when the UI style gives them one
 - Post-processing that needs judgement is done by the agent before `ogw resource finalize`: background removal, palette matching, tile seam matching, compositing
 - UI images hold no text. Text is kept as UI elements
 - The sound of a text voice reads, in the source language, the `source` of the row of the translation key `text_key` of that row in the translation file of the source language (`data/translations/<language>.csv`). When `ogw resource first-final <game> --speaker <speaker>` gives a resource, make it with the same voice as that resource. `<speaker>` is the `speaker` of that row
