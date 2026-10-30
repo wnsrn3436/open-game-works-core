@@ -68,8 +68,6 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
   });
 
   const runOne = async (call: WorkerCall): Promise<void> => {
-    // a command that resolves a path without a base resolves it against the cwd of its call
-    process.chdir(call.cwd);
     const io: CliIo = {
       cwd: call.cwd,
       env,
@@ -95,6 +93,8 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
     };
     let code: number;
     try {
+      // a command that resolves a path without a base resolves it against the cwd of its call
+      process.chdir(call.cwd);
       code = await runCli(await commandsFor(call.argv[0]), call.argv, io);
     } catch (error) {
       io.stderr(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);

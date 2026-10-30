@@ -252,6 +252,17 @@ describe('ogw step --stream', () => {
     expect(sent.filter((r) => r.command === 'tap').map((r) => r.args)).toEqual([['10', '20']]);
   });
 
+  it('gives text the rest of its line as one argument, and writes only JSON lines also with --json', async () => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    const sentBefore = runner.requests('main').length;
+    const run = await ogw(runner.ws, ['step', id, '50', '--stream', '--json'], { stdin: 'input text hello  world \nstep\n' });
+    expect(run.code).toBe(0);
+    const lines = run.stdout.trimEnd().split('\n');
+    expect(lines.map((line) => JSON.parse(line) as unknown)).toHaveLength(3);
+    expect(lines.at(-1)).toBe('{}');
+    expect(runner.requests('main').slice(sentBefore).filter((r) => r.command === 'text').map((r) => r.args)).toEqual([['hello  world ']]);
+  });
+
   it('exits 0 when every line passed, and does not take --count', async () => {
     runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
     expect(await ogw(runner.ws, ['step', id, '50', '--stream'], { stdin: 'step\nstep 3\n' })).toMatchObject({ code: 0, stderr: '' });

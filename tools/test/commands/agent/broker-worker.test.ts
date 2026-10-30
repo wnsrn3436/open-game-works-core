@@ -165,6 +165,30 @@ describe('broker worker', () => {
     }
   });
 
+  it('fails a call whose cwd cannot be entered without ending the worker', async () => {
+    const real = (argv: readonly string[]): { cmd: string; args: string[] } => ({ cmd: process.execPath, args: [cliEntry(), BROKER_RUN, ...argv] });
+    const kept = await brokerWith({ cmd: process.execPath, args: [cliEntry(), BROKER_WORKER] }, real);
+    let errors = '';
+    const io = (cwd: string): BrokerIo => ({
+      cwd,
+      env: { OGW_AGENT_KEY: KEY },
+      stdin: () => Promise.resolve(''),
+      stdout: () => undefined,
+      stderr: (text) => {
+        errors += text;
+      },
+    });
+    try {
+      expect(await forwardToBroker(kept.socket, ['step', '--help'], io(process.cwd()))).toBe(0);
+      expect(await forwardToBroker(kept.socket, ['capture', 'x'], io(join(process.cwd(), 'no-such-dir')))).toBe(1);
+      expect(errors).toContain('no-such-dir');
+      expect(errors).not.toContain('the broker worker ended');
+      expect(await forwardToBroker(kept.socket, ['step', '--help'], io(process.cwd()))).toBe(0);
+    } finally {
+      await kept.broker.close();
+    }
+  });
+
   it('passes stdin to a command that reads it as it comes, chunk by chunk, on a process of its own and on the worker', async () => {
     const real = (argv: readonly string[]): { cmd: string; args: string[] } => ({ cmd: process.execPath, args: [cliEntry(), BROKER_RUN, ...argv] });
     const own = await brokerWith(undefined, real);
@@ -175,6 +199,7 @@ describe('broker worker', () => {
         const lines = (): number => stdout.split('\n').filter((line) => line !== '').length;
         const until = async (n: number): Promise<void> => {
           for (let i = 0; i < 200 && lines() < n; i++) await wait(25);
+          if (lines() < n) throw new Error('no answer before the next line');
         };
         // each line is sent only after the answer of the line before came back: a broker that waited for the end of
         // stdin would never answer

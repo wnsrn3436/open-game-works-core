@@ -225,7 +225,9 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
       return { exit: outcome.failed ? 1 : 0, data: outcome };
     }
     if (words[0] === 'input' && words[1] !== undefined) {
-      const args = words.slice(2);
+      // `text` takes the rest of the line as its one argument, spaces included
+      const text = /^\s*input\s+text\s(.*)$/.exec(line);
+      const args = text ? [text[1] as string] : words.slice(2);
       await checkPlayBudget(ctx, [words[1], ...args]);
       const result = await singleInput(ctx, plan.id, words[1], args);
       return { exit: result.exitCode ?? 0, data: result.data };
@@ -242,16 +244,15 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
  * script drives many steps and inputs with one `ogw` call. Exit code 0, or 1 when a line failed.
  */
 async function streamSteps(ctx: Context, plan: Omit<Plan, 'count'>): Promise<CommandResult> {
-  let lines = 0;
   let failed = 0;
   for await (const line of ctx.stdinLines()) {
     if (line.trim() === '') continue;
     const result = await streamAction(ctx, plan, line);
-    lines++;
     if (result.exit !== 0) failed++;
     ctx.out(`${JSON.stringify(result)}\n`);
   }
-  return { exitCode: failed > 0 ? 1 : 0, data: { lines, failed } };
+  // nothing more on stdout, also with --json (`{}`): every line a reader gets is JSON
+  return { exitCode: failed > 0 ? 1 : 0, data: {} };
 }
 
 export const step: CommandDef = {

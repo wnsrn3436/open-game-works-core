@@ -234,11 +234,12 @@ class BrokerWorker {
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     // output the commands write past their io goes to the call that runs
+    // output of a worker that was killed, still in its pipes, belongs to no call
     child.stdout?.on('data', (chunk: string) => {
-      if (this.call !== null) send(this.call.socket, { stdout: chunk });
+      if (this.child === child && this.call !== null) send(this.call.socket, { stdout: chunk });
     });
     child.stderr?.on('data', (chunk: string) => {
-      if (this.call !== null) send(this.call.socket, { stderr: chunk });
+      if (this.child === child && this.call !== null) send(this.call.socket, { stderr: chunk });
     });
     const messages = child.stdio[3] as Readable | null | undefined;
     messages?.setEncoding('utf8');
@@ -247,7 +248,7 @@ class BrokerWorker {
       'data',
       lineReader((text) => {
         const call = this.call;
-        if (call === null) return;
+        if (this.child !== child || call === null) return;
         let message: BrokerMessage;
         try {
           message = JSON.parse(text) as BrokerMessage;
