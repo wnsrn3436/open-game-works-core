@@ -72,6 +72,16 @@ Seen in all four studied games (The Binding of Isaac, Hearthstone, Vampire Survi
 - Simple drawings stay alive through squash, stretch, inertia and secondary motion; idle scenes are calm but not dead, and surfaces meant for reading stay still
 - The world keeps a record of play and shows progress (stains, debris, a changing tower or castle), not only a number
 
+## sound
+
+Measured in the gameplay audio of The Binding of Isaac and in our own sounds that a human rated; an agent cannot hear, so it measures these, and a human's ears decide what the numbers cannot.
+
+- Heard where it is played: an effect carries its weight in the band that laptop and phone speakers play and the music leaves free, not in a sub-bass rumble or a thin high tick (Isaac's hits add 70% of their power between 250 Hz and 4 kHz, over music that is 78% below 250 Hz; our hits rated cheap had 0 to 3% there and up to 89% at 20 to 60 Hz)
+- The sound of a thing: an effect is the game's own source and material struck, broken or moved, with an attack, a body and a decay, not a test tone or a blip (a pickup made as one 371 Hz tone was rated a toy). A short routine sound still has weight: soft, light or quiet is its level, not its sound (short sounds described that way were rated 1 or 2 of 5)
+- Same thing, same sound: the variants of a repeated effect are takes of one sound (one source, material and action), so that repetition reads as one thing
+- Budgeted by consequence: routine effects are short and moderate (Isaac's routine hits peak within 20 ms and stand about 10 LU over the music for 70 to 80 ms, about 3 a second); kills, rewards and harm to the player get more, and the loudest sounds are kept for rare events
+- The music is a bed in the game's mood that does not drop out during play and leaves room above its bass for the effects
+
 ## what comes from the game, not from this definition
 
-Whether windows have frames at all; which material or object the UI is made of; frame weight and ornament; corner shapes; opaque, flat or translucent panels; fonts and case; the palette and its accent; where the menu and the HUD pieces sit; screen density; diegetic or overlay UI; outlines or none; proportions; camera and projection; whether the grid shows; the value key; rendering technique; amount of atmosphere; how pickups are signalled; color meanings; motion timing and curves; how much glow. Each is taken from the game's theme and its reference games.
+Whether windows have frames at all; which material or object the UI is made of; frame weight and ornament; corner shapes; opaque, flat or translucent panels; fonts and case; the palette and its accent; where the menu and the HUD pieces sit; screen density; diegetic or overlay UI; outlines or none; proportions; camera and projection; whether the grid shows; the value key; rendering technique; amount of atmosphere; how pickups are signalled; color meanings; motion timing and curves; how much glow; the instruments, genre and tempo of the music and the sources of the effects. Each is taken from the game's theme and its reference games.
