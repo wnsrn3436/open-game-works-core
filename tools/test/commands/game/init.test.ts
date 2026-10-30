@@ -65,7 +65,6 @@ describe('ogw game init', () => {
       writeFileSync(join(dir, 'manifest.json'), '{}');
       writeFileSync(join(dir, 'core-settings.json'), JSON.stringify({ 'UnitTestCore.testTimeLimitMs': defaultMs }));
       writeFileSync(join(dir, 'core-settings.schema.json'), JSON.stringify({ properties: schemaHasKey ? { 'UnitTestCore.testTimeLimitMs': { type: 'integer' } } : {} }));
-      vi.mocked(coreRelease).mockResolvedValue({ version: '1.10.0', dir, local: false });
     };
     const settingsOf = async (name: string): Promise<Record<string, unknown>> => {
       expect((await ogw(ws, ['game', 'init', name])).code).toBe(0);
@@ -77,10 +76,18 @@ describe('ogw game init', () => {
     expect((await settingsOf('shorter')).core).toBeUndefined();
     release(60000, false);
     expect((await settingsOf('unknown')).core).toBeUndefined();
-    // a release that is not here is not fetched
+    // a release that is not here is not fetched or built
     rmSync(join(ws.coreReleases, '1.10.0'), { recursive: true, force: true });
     vi.mocked(coreRelease).mockClear();
     expect((await settingsOf('absent')).core).toBeUndefined();
+    expect(coreRelease).not.toHaveBeenCalled();
+    // with useLocalCore, the core settings of the core implementation repo
+    const settings = JSON.parse(readFileSync(join(ws.harness, 'settings.json'), 'utf8')) as Record<string, unknown>;
+    writeFileSync(join(ws.harness, 'settings.json'), JSON.stringify({ ...settings, useLocalCore: true }));
+    mkdirSync(join(ws.coreImpl, 'settings'), { recursive: true });
+    writeFileSync(join(ws.coreImpl, 'settings', 'core-settings.json'), JSON.stringify({ 'UnitTestCore.testTimeLimitMs': 60000 }));
+    writeFileSync(join(ws.coreImpl, 'settings', 'core-settings.schema.json'), JSON.stringify({ properties: { 'UnitTestCore.testTimeLimitMs': { type: 'integer' } } }));
+    expect((await settingsOf('local')).core).toEqual({ 'UnitTestCore.testTimeLimitMs': 10000 });
     expect(coreRelease).not.toHaveBeenCalled();
   });
 
