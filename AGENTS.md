@@ -7,6 +7,7 @@ A harness for making server and client games of commercial quality, in which AI 
 - The goal is fun and completeness of commercial quality. The judge agent judges fun by playing, and automated checks judge completeness
 - A game is developed in a loop. The loop runs until it reaches fun and completeness of commercial quality
 - Features that would be written again the same way in many games are built in advance as core. Core holds only features outside the gameplay loop: infra, live ops, store policy, meta system. The gameplay loop is written as content code. The content agent focuses only on content
+- A defect is fixed where it was produced: the rule, input, default or code that made it. A check is added only for what cannot be prevented there (e.g. a mark of image generation), not for a defect whose cause can be changed
 - What automated checks can verify must be verified by automated checks. Problems are caught at the time the code is written
 - No approximate check is built for a property that a tool cannot judge exactly (e.g. which value a piece of wording states). That rule goes in the document read by the agent that does the work, and into the check targets of the judging agents (hardening agent, review agent)
 - The harness tool does the work that needs no judgement: reading and writing structured files (settings, record, JSON, CSV), counting, calculation, comparison, transcription, random, managing schedules and the number of concurrent runs, state transitions. Agents do only the work that needs judgement
