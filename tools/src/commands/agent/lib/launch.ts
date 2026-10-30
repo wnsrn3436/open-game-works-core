@@ -276,6 +276,19 @@ function loginTokenEnv(ctx: Context, agent: AgentSettings): NodeJS.ProcessEnv {
   return token === null ? {} : { CLAUDE_CODE_OAUTH_TOKEN: token };
 }
 
+/** How long Claude Code in print mode waits for its background tasks after the last turn (`tools/ogw.md` `## agent`). */
+export const CLAUDE_BACKGROUND_WAIT_MS = 60 * 60_000;
+
+/**
+ * Claude Code of the roles other than play and judge: `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` with
+ * `CLAUDE_BACKGROUND_WAIT_MS`. With its default of 10 minutes the CLI stopped a content sub-agent of the `Agent` tool
+ * that was still writing, and the stopped sub-agent sent no completion notice. Play and judge keep the default, so that
+ * a background task left running ends before their time limit.
+ */
+function backgroundWaitEnv(agent: AgentSettings): NodeJS.ProcessEnv {
+  return agentCli(agent) === 'claude-code' ? { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(CLAUDE_BACKGROUND_WAIT_MS) } : {};
+}
+
 /** The environment with the harness `tools/bin` first on `PATH`, so the agent's shell finds `ogw` by name. */
 export function withOgwOnPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const bin = resolve(dirname(cliEntry()), '..', 'bin');
@@ -313,7 +326,7 @@ export async function cliToRun(
   folder: string | null = null,
 ): Promise<CliToRun> {
   const command = agentCliCommand(agent);
-  if (!SANDBOXED_ROLES.includes(role)) return { command, env: withOgwOnPath(ctx.env), profileFolder: null, brokerCommand: null };
+  if (!SANDBOXED_ROLES.includes(role)) return { command, env: { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) }, profileFolder: null, brokerCommand: null };
   const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
   try {
     const writes = allowedWrites(ctx.env, folder);

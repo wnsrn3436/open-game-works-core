@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { rm } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cliToRun } from '../../src/commands/agent/lib/launch.ts';
+import { CLAUDE_BACKGROUND_WAIT_MS, cliToRun } from '../../src/commands/agent/lib/launch.ts';
 import { openSsh } from '../../src/commands/deploy/lib/ssh.ts';
 import { createContext } from '../../src/lib/command.ts';
 import { commonDir } from '../../src/lib/git.ts';
@@ -54,8 +54,10 @@ describe('secret files and temp folders', () => {
     }
   });
 
-  it.runIf(process.platform === 'darwin' || process.platform === 'linux')('gives the play and judge Claude Code the stored login token, and nothing to other CLIs or roles', async () => {
+  it.runIf(process.platform === 'darwin' || process.platform === 'linux')('gives the play and judge Claude Code the stored login token, and nothing to other CLIs or roles, and Claude Code of the other roles the background wait', async () => {
     const ws = makeWorkspace();
+    // the shell of an agent that runs this test has the variable already
+    delete ws.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS;
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const claude = { cli: 'claude-code' as const, model: 'm', effort: 'high' };
     const without = await cliToRun(ctx, 'judge', claude, ws, null, join(ws.root, 'b', 's'));
@@ -69,6 +71,14 @@ describe('secret files and temp folders', () => {
       expect(judge.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('long-lived-token');
       expect(codex.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
       expect((await cliToRun(stored, 'content', claude, ws, null)).env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      // Claude Code in print mode waits an hour, not its default 10 minutes, for its background tasks (e.g. sub-agents);
+      // play and judge keep the default
+      const wait = String(CLAUDE_BACKGROUND_WAIT_MS);
+      expect((await cliToRun(stored, 'content', claude, ws, null)).env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe(wait);
+      expect((await cliToRun(stored, 'resource', claude, ws, null)).env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe(wait);
+      expect(judge.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBeUndefined();
+      expect(codex.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBeUndefined();
+      expect((await cliToRun(stored, 'content', { cli: 'codex', model: 'm', effort: 'high' }, ws, null)).env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBeUndefined();
       // every agent's shell finds `ogw` by name: the harness tools/bin comes first on PATH
       const bin = resolve(dirname(cliEntry()), '..', 'bin');
       for (const env of [judge.env, codex.env, (await cliToRun(stored, 'content', claude, ws, null)).env]) expect(env.PATH?.split(delimiter)[0]).toBe(bin);
