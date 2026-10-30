@@ -4,7 +4,7 @@ import { metricValue, type FreeScenes, type Telemetry } from './metrics.ts';
 
 /** Elements of judge `## fun judgement criteria` and the metrics of their `telemetry` column. */
 export const ELEMENTS: readonly { element: string; metrics: readonly string[]; failureOnly: boolean }[] = [
-  { element: 'game feel', metrics: ['input_latency_ms', 'feedback_per_input'], failureOnly: false },
+  { element: 'game feel', metrics: ['input_latency_ms', 'feedback_share'], failureOnly: false },
   { element: 'tension and release', metrics: [], failureOnly: true },
   { element: 'progression', metrics: ['reward_interval_ms'], failureOnly: false },
   { element: 'one more run', metrics: ['restart_delay_ms'], failureOnly: true },
@@ -36,18 +36,12 @@ export function distance(a: number, b: number): number {
 }
 
 /**
- * The value a metric is compared by. One feedback kind on every input is enough: more kinds on every input are not
- * better, because commercial games budget feedback by consequence (`commercial-quality.md` `## motion and feedback`),
- * so `feedback_per_input` above 1 counts as 1.
+ * `feedback_share` is higher-is-better: every input answers. The number of feedback kinds per input is not compared,
+ * because commercial games budget feedback by consequence (`commercial-quality.md` `## motion and feedback`).
  */
-function compared(metric: string, value: number): number {
-  return metric === 'feedback_per_input' ? Math.min(value, 1) : value;
-}
-
 function better(metric: string, a: number, b: number): 'A' | 'B' {
-  const higherIsBetter = metric === 'feedback_per_input';
-  const [ca, cb] = [compared(metric, a), compared(metric, b)];
-  return (higherIsBetter ? ca > cb : ca < cb) ? 'A' : 'B';
+  const higherIsBetter = metric === 'feedback_share';
+  return (higherIsBetter ? a > b : a < b) ? 'A' : 'B';
 }
 
 /** An `input_latency_ms` difference of at most one frame at 60 fps is not a difference. */
@@ -55,7 +49,7 @@ const FRAME_MS = 17;
 
 function metricDistance(metric: string, a: number, b: number): number {
   if (metric === 'input_latency_ms' && Math.abs(a - b) <= FRAME_MS) return 0;
-  return distance(compared(metric, a), compared(metric, b));
+  return distance(a, b);
 }
 
 function margin(d: number): ElementComparison['margin'] {

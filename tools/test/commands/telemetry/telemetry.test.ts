@@ -67,6 +67,9 @@ describe('metrics', () => {
     expect(metricValue('input_latency_ms', s)).toBe(50);
     expect(metricValue('no_response_permille', s)).toBe(250);
     expect(metricValue('feedback_per_input', s)).toBe(0.75);
+    // the share of inputs that answer with any feedback, however many kinds
+    expect(metricValue('feedback_share', s)).toBe(0.5);
+    expect(metricValue('feedback_share', [{ telemetry: telemetry({ inputs: [input(1, 1, { Sound: 1, Tween: 2, CameraShake: 1 }), input(2, 1, { Sound: 1 }), input(3, 1)] }), state: {} }])).toBe(0.67);
     expect(metricValue('feedback_per_input', [{ telemetry: telemetry({ inputs: [input(1, 1, { Sound: 1, Tween: 2 }), input(2, 1, { Sound: 1 }), input(3, 1)] }), state: {} }])).toBe(1);
     // the kinds of feedback, not how many events: more sounds per input is not more feel; at most the 5 kinds
     expect(metricValue('feedback_per_input', [{ telemetry: telemetry({ inputs: [input(1, 1, { Sound: 3 }), input(2, 1, { Sound: 7, Tween: 0 })] }), state: {} }])).toBe(1);
@@ -206,12 +209,12 @@ describe('compare', () => {
     expect(result[0]?.metrics).toEqual([
       // a latency difference of one frame (17 ms) or less is no difference
       { metric: 'input_latency_ms', a: 100, b: 103, d: 0 },
-      // one feedback kind on every input is enough: more kinds on every input are not better
-      { metric: 'feedback_per_input', a: 1, b: 2, d: 0 },
+      // every input answers on both sides: more feedback kinds per input are not better
+      { metric: 'feedback_share', a: 1, b: 1, d: 0 },
     ]);
-    // an input without feedback still loses: 0.5 against 1 (3 kinds on every input counts as 1)
-    const dead = compareTelemetry(telemetry({ inputs: [input(1, 100, { Sound: 1 }), input(2, 100)] }), telemetry({ inputs: [input(1, 100, { Sound: 1, Tween: 1, CameraShake: 1 })] }), false)[0];
-    expect([dead?.metrics[1], dead?.winner, dead?.margin]).toEqual([{ metric: 'feedback_per_input', a: 0.5, b: 3, d: 0.5 }, 'B', 'decisive']);
+    // a shake on a routine hit does not make up for an input without feedback
+    const dead = compareTelemetry(telemetry({ inputs: [input(1, 100, { Sound: 1, Tween: 1, CameraShake: 1 }), input(2, 100)] }), telemetry({ inputs: [input(1, 100, { Tween: 1 }), input(2, 100, { Tween: 1 })] }), false)[0];
+    expect([dead?.metrics[1], dead?.winner, dead?.margin]).toEqual([{ metric: 'feedback_share', a: 0.5, b: 1, d: 0.5 }, 'B', 'decisive']);
     const near = compareTelemetry(telemetry({ inputs: [input(1, 100)] }), telemetry({ inputs: [input(1, 104)] }), true);
     expect(near.map((e) => e.winner)).toEqual(['indistinguishable', 'n/a', 'no telemetry', 'n/a', 'indistinguishable', 'no telemetry']);
     const frame = [117, 118].map((b) => compareTelemetry(telemetry({ inputs: [input(1, 100)] }), telemetry({ inputs: [input(1, b)] }), false)[0]);
@@ -230,7 +233,7 @@ describe('compare', () => {
       [0.3, 'B', 'decisive'],
     ]);
     expect(formatComparison(near.slice(0, 2))).toBe(
-      'game feel: winner indistinguishable\n  input_latency_ms: A 100, B 104, d 0\n  feedback_per_input: A 0, B 0, d 0\ntension and release: winner n/a',
+      'game feel: winner indistinguishable\n  input_latency_ms: A 100, B 104, d 0\n  feedback_share: A 0, B 0, d 0\ntension and release: winner n/a',
     );
     expect(formatComparison([{ element: 'x', metrics: [{ metric: 'm', a: null, b: 2, d: null }], winner: 'A', margin: 'clear' }])).toBe(
       'x: winner A, margin clear\n  m: A none, B 2, d none',
