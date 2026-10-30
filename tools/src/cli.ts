@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { enableCompileCache } from 'node:module';
-import { BROKER_ENV, BROKER_RUN, forwardToBroker } from './lib/broker-client.ts';
+import { BROKER_ENV, BROKER_RUN, BROKER_WORKER, forwardToBroker } from './lib/broker-client.ts';
 import { readAll } from './lib/stdin.ts';
 
 // later runs reuse the compiled code of the modules a run loads
@@ -11,6 +11,7 @@ const io = {
   cwd: process.cwd(),
   env: process.env,
   stdin: () => readAll(process.stdin),
+  stdinChunks: (): AsyncIterable<string> => process.stdin.setEncoding('utf8'),
   stdout: (text: string) => process.stdout.write(text),
   stderr: (text: string) => process.stderr.write(text),
   terminal: () => process.stdin.isTTY && process.stdout.isTTY,
@@ -24,7 +25,14 @@ async function runHere(): Promise<number> {
   return runCli(await commandsFor(word), argv, io);
 }
 
+/** The process a broker keeps for its frequent commands, which runs them one at a time in itself. */
+async function runWorker(): Promise<number> {
+  const { runBrokerWorker } = await import('./commands/agent/lib/broker-worker.ts');
+  return runBrokerWorker(process.env);
+}
+
 // inside a play or judge sandbox every command goes to the agent's broker (ogw.md `## agent`)
 const broker = process.env[BROKER_ENV];
-const code = broker !== undefined && broker !== '' ? await forwardToBroker(broker, argv, io) : await runHere();
+const code =
+  broker !== undefined && broker !== '' ? await forwardToBroker(broker, argv, io) : argv[0] === BROKER_WORKER && argv.length === 1 ? await runWorker() : await runHere();
 process.stdout.write('', () => process.exit(code));

@@ -226,6 +226,50 @@ describe('ogw step --count --capture', () => {
   });
 });
 
+describe('ogw step --stream', () => {
+  it('runs each stdin line as the single step or input command would, and writes one JSON line per line with its exit code and data', async () => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    const sentBefore = runner.requests('main').length;
+    const stdin = 'step\n\nstep 2\r\ninput tap 10 20\ninput no_such_input\njump\nstep 0\nstep';
+    const run = await ogw(runner.ws, ['step', id, '50', '--stream', '--state'], { stdin });
+    const lines = run.stdout.trimEnd().split('\n').map((line) => JSON.parse(line) as { exit: number; data?: { steps?: { index: number; advancedMs: number; content?: unknown }[] }; error?: string });
+    expect(lines).toHaveLength(7);
+    expect(lines[0]).toMatchObject({ exit: 0, data: { steps: [{ index: 1, advancedMs: 50 }] } });
+    expect(lines[0]?.data?.steps?.[0]).toHaveProperty('content');
+    expect(lines[1]?.data?.steps?.map((s) => [s.index, s.advancedMs])).toEqual([
+      [1, 50],
+      [2, 100],
+    ]);
+    expect(lines[2]).toMatchObject({ exit: 0, data: { ok: true } });
+    expect(lines[3]).toEqual({ exit: 1, error: 'no_such_input is not an input command; see ogw input --help' });
+    expect(lines[4]?.error).toContain('not a stream line: jump');
+    expect(lines[5]).toMatchObject({ exit: 1, error: 'invalid step count: 0' });
+    expect(lines[6]).toMatchObject({ exit: 0, data: { steps: [{ index: 1 }] } });
+    // a failed line fails the call; the lines after it still run
+    expect(run.code).toBe(1);
+    const sent = runner.requests('main').slice(sentBefore);
+    expect(sent.filter((r) => r.command === 'step').map((r) => r.args)).toEqual([['50'], ['50'], ['50'], ['50']]);
+    expect(sent.filter((r) => r.command === 'tap').map((r) => r.args)).toEqual([['10', '20']]);
+  });
+
+  it('gives text the rest of its line as one argument, and writes only JSON lines also with --json', async () => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    const sentBefore = runner.requests('main').length;
+    const run = await ogw(runner.ws, ['step', id, '50', '--stream', '--json'], { stdin: 'input text hello  world \nstep\n' });
+    expect(run.code).toBe(0);
+    const lines = run.stdout.trimEnd().split('\n');
+    expect(lines.map((line) => JSON.parse(line) as unknown)).toHaveLength(3);
+    expect(lines.at(-1)).toBe('{}');
+    expect(runner.requests('main').slice(sentBefore).filter((r) => r.command === 'text').map((r) => r.args)).toEqual([['hello  world ']]);
+  });
+
+  it('exits 0 when every line passed, and does not take --count', async () => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    expect(await ogw(runner.ws, ['step', id, '50', '--stream'], { stdin: 'step\nstep 3\n' })).toMatchObject({ code: 0, stderr: '' });
+    expect((await ogw(runner.ws, ['step', id, '50', '--stream', '--count', '2'], { stdin: 'step\n' })).stderr).toContain('--count does not go with --stream');
+  });
+});
+
 describe('newMarks', () => {
   const mark = (at: number, kind = 'Goal') => ({ at, play_at: at, kind });
 

@@ -1,6 +1,6 @@
 import { writeSync } from 'node:fs';
 import { agentContext, appendRunLog, finishRunLog, type AgentContext } from './agentctx.ts';
-import { BROKER_RUN, STDIN_REQUEST } from './broker-client.ts';
+import { BROKER_RUN, STDIN_REQUEST, STDIN_STREAM_REQUEST } from './broker-client.ts';
 import {
   createContext,
   parseTokens,
@@ -16,6 +16,8 @@ export interface CliIo {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdin: () => Promise<string>;
+  /** stdin in chunks as it comes; without it, `stdin` read as one chunk. */
+  stdinChunks?: () => AsyncIterable<string>;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   /** True when stdin and stdout are both a terminal; without it, never. */
@@ -163,7 +165,9 @@ export async function runCli(commands: readonly CommandDef[], argv: readonly str
     return 0;
   }
   // a command a play or judge agent's broker runs: stdin comes from the broker, asked for through fd 3
-  if (argv[0] === BROKER_RUN) return runCommand(commands, argv.slice(1), { ...io, stdin: () => brokerStdin(io), terminal: undefined });
+  if (argv[0] === BROKER_RUN) {
+    return runCommand(commands, argv.slice(1), { ...io, stdin: () => brokerStdin(io), stdinChunks: () => brokerStdinChunks(io), terminal: undefined });
+  }
   return runCommand(commands, argv, io);
 }
 
@@ -176,11 +180,30 @@ function brokerStdin(io: CliIo): Promise<string> {
   return io.stdin();
 }
 
+/** stdin as it comes, asked for through fd 3: the broker then passes each chunk the caller sends at once. */
+async function* brokerStdinChunks(io: CliIo): AsyncIterable<string> {
+  try {
+    writeSync(3, STDIN_STREAM_REQUEST);
+  } catch {
+    // no broker on fd 3: stdin as it is
+  }
+  if (io.stdinChunks) yield* io.stdinChunks();
+  else yield await io.stdin();
+}
+
 async function runCommand(commands: readonly CommandDef[], argv: readonly string[], io: CliIo): Promise<number> {
   const prepared = prepare(commands, argv, io);
   if (typeof prepared === 'number') return prepared;
   const { def, tokens, verbatim, json, background } = prepared;
-  const ctx = createContext({ cwd: io.cwd, env: io.env, stdin: io.stdin, stderr: io.stderr, terminal: io.terminal });
+  const ctx = createContext({
+    cwd: io.cwd,
+    env: io.env,
+    stdin: io.stdin,
+    ...(io.stdinChunks ? { stdinChunks: io.stdinChunks } : {}),
+    stdout: io.stdout,
+    stderr: io.stderr,
+    terminal: io.terminal,
+  });
   let agent: AgentContext | null = null;
   let logIndex = -1;
   try {

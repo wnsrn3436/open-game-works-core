@@ -309,6 +309,8 @@ const ogw = (args, env = process.env) => {
 results.help = ogw(['input', '--help']);
 results.jobStatus = ogw(['job', 'status', id]);
 results.jobWait = ogw(['job', 'wait', id, '--timeout', '0']);
+const streamed = spawnSync(process.execPath, [${JSON.stringify(cliEntry())}, 'step', 'no-such-instance', '50', '--stream'], { encoding: 'utf8', env: process.env, input: 'step\\nstep 2\\n' });
+results.stream = { code: streamed.status, out: streamed.stdout, err: streamed.stderr };
 results.forged = ogw(['job', 'status', id], { ...process.env, OGW_AGENT_KEY: id + '.forged' });
 results.refused = Object.fromEntries([
   ['secret', 'set', '--harness', 'huggingface'],
@@ -349,6 +351,9 @@ fs.writeFileSync(output, JSON.stringify(results));
     expect(results.help).toEqual({ code: 0, out: outside.stdout, err: '' });
     expect(results.jobStatus).toEqual({ code: 0, out: 'running\n', err: '' });
     expect(results.jobWait).toEqual({ code: 75, out: 'running\n', err: '' });
+    // a stream through the broker: one JSON line per stdin line
+    const notRunning = `${JSON.stringify({ exit: 1, error: 'instance no-such-instance is not running' })}\n`;
+    expect(results.stream).toEqual({ code: 1, out: notRunning.repeat(2), err: '' });
     expect(results.forged).toMatchObject({ code: 1, out: '' });
     expect((results.forged as { err: string }).err).toContain('is not the key of this agent');
     // commands that are not broker commands do not run
@@ -366,7 +371,7 @@ fs.writeFileSync(output, JSON.stringify(results));
     expect(results.remote).not.toBe('EPERM');
     // the broker wrote the run log as for any agent, and is gone with the agent
     const runLog = JSON.parse(sh(root, 'git', ['show', 'loop/r1:records/loops/r1/play-1-1-runs.json'])) as { runs: { command: string; job?: string }[] };
-    expect(runLog.runs.map((entry) => entry.command)).toEqual(['ogw input --help', `ogw job status ${id}`, `ogw job wait ${id} --timeout 0`]);
+    expect(runLog.runs.map((entry) => entry.command)).toEqual(['ogw input --help', `ogw job status ${id}`, `ogw job wait ${id} --timeout 0`, 'ogw step no-such-instance 50 --stream']);
     expect(existsSync(join(jobs, 'brokers', id))).toBe(false);
   }, 120_000);
 });

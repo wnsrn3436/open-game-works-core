@@ -25,6 +25,8 @@ export function fakeContext(logs: string[] = []): Context {
     cwd: '/tmp',
     env: {},
     stdin: () => Promise.resolve(''),
+    stdinLines: async function* () {},
+    out: () => undefined,
     log: (line) => logs.push(line),
     settings: () => Promise.reject(new Error('no settings in this test')),
     workspace: () => Promise.reject(new Error('no workspace in this test')),

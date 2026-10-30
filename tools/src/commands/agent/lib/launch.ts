@@ -6,7 +6,7 @@ import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey, runLogPa
 import type { CommandResult, Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
-import { BROKER_ENV, BROKER_RUN } from '../../../lib/broker-client.ts';
+import { BROKER_ENV, BROKER_RUN, BROKER_WORKER } from '../../../lib/broker-client.ts';
 import { commitPaths, commonDir, gitDir, gitIdentity, gitLine, head, withGitConfig, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { AGENT_KEY_ENV, endJobsOfAgent, jobsDir } from '../../../lib/jobs.ts';
 import { withLock } from '../../../lib/lock.ts';
@@ -307,6 +307,8 @@ export interface CliToRun {
   profileFolder: string | null;
   /** play, judge with a broker: the command that runs a forwarded argv in the broker sandbox. */
   brokerCommand: ((argv: readonly string[]) => CliCommand) | null;
+  /** play, judge with a broker: the broker worker in the broker sandbox, which runs the frequent commands. */
+  brokerWorker: CliCommand | null;
 }
 
 /**
@@ -326,7 +328,9 @@ export async function cliToRun(
   folder: string | null = null,
 ): Promise<CliToRun> {
   const command = agentCliCommand(agent);
-  if (!SANDBOXED_ROLES.includes(role)) return { command, env: { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) }, profileFolder: null, brokerCommand: null };
+  if (!SANDBOXED_ROLES.includes(role)) {
+    return { command, env: { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) }, profileFolder: null, brokerCommand: null, brokerWorker: null };
+  }
   const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
   try {
     const writes = allowedWrites(ctx.env, folder);
@@ -336,22 +340,26 @@ export async function cliToRun(
     const profileFile = join(profileFolder, 'sandbox.sb');
     await writeFile(profileFile, macosProfile(blocked));
     let brokerCommand: CliToRun['brokerCommand'] = null;
+    let brokerWorker: CliToRun['brokerWorker'] = null;
     if (socket !== null) {
       const forBroker = await brokerBlocked(ws, ctx.env, writes, agentFolders);
       makeBlocked(forBroker);
       const brokerProfile = join(profileFolder, 'broker.sb');
       await writeFile(brokerProfile, macosProfile(forBroker));
-      brokerCommand = (argv) =>
-        sandboxed({ cmd: process.execPath, args: [...process.execArgv, cliEntry(), BROKER_RUN, ...argv] }, forBroker, {
+      const inBroker = (args: readonly string[]): CliCommand =>
+        sandboxed({ cmd: process.execPath, args: [...process.execArgv, cliEntry(), ...args] }, forBroker, {
           macosProfileFile: brokerProfile,
           pidNamespace: false,
         });
+      brokerCommand = (argv) => inBroker([BROKER_RUN, ...argv]);
+      brokerWorker = inBroker([BROKER_WORKER]);
     }
     return {
       command: sandboxed(withoutSessionFiles(agentCli(agent), command), blocked, { macosProfileFile: profileFile }),
       env: { ...withOgwOnPath(agentEnv(ctx.env, folder)), ...loginTokenEnv(ctx, agent), ...(socket === null ? {} : { [BROKER_ENV]: socket }) },
       profileFolder,
       brokerCommand,
+      brokerWorker,
     };
   } catch (error) {
     await rm(profileFolder, { recursive: true, force: true });
@@ -556,7 +564,7 @@ async function runWithBroker(
   try {
     if (run.socket !== null && toRun.brokerCommand !== null) {
       // the forwarded commands run as this agent: its environment outside the sandbox, with its key
-      broker = await startBroker({ socket: run.socket, key: key.value, command: toRun.brokerCommand, env: childEnv(agentEnv(ctx.env, meta.folder), key.value) });
+      broker = await startBroker({ socket: run.socket, key: key.value, command: toRun.brokerCommand, worker: toRun.brokerWorker ?? undefined, env: childEnv(agentEnv(ctx.env, meta.folder), key.value) });
     }
     return await runCli(id, ctx, meta, toRun, run.prompt, run.logPath, key.value);
   } finally {

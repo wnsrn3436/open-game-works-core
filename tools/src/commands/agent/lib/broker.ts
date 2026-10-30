@@ -7,7 +7,7 @@ import { createServer, type Socket } from 'node:net';
 import { dirname, isAbsolute } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { lineReader, STDIN_REQUEST, type BrokerMessage, type BrokerRequest } from '../../../lib/broker-client.ts';
+import { lineReader, STDIN_REQUEST, STDIN_STREAM_REQUEST, type BrokerMessage, type BrokerRequest } from '../../../lib/broker-client.ts';
 import { createContext } from '../../../lib/command.ts';
 import { killTree, spawnTracked } from '../../../lib/proc.ts';
 import type { CliCommand } from './cli-command.ts';
@@ -42,6 +42,18 @@ export function brokerCommand(argv: readonly string[]): readonly string[] | null
   return best;
 }
 
+/**
+ * The broker commands the broker worker runs (ogw.md `## agent`): the ones play and judge agents call many times in
+ * a row, which end soon after they start. The others start a process each.
+ */
+export const WORKER_COMMANDS: readonly (readonly string[])[] = [['input'], ['capture'], ['log'], ['telemetry'], ['step-mode'], ['step'], ['frames']];
+
+/** True when the broker worker runs argv: a `WORKER_COMMANDS` command that does not start a background job. */
+export function workerRuns(argv: readonly string[]): boolean {
+  const name = brokerCommand(argv);
+  return name !== null && WORKER_COMMANDS.some((worker) => worker.join(' ') === name.join(' ')) && !argv.includes('--background');
+}
+
 /** The command words of argv for an error: the tokens before the first option, at most two. */
 function commandWords(argv: readonly string[]): string {
   const end = argv.findIndex((arg) => arg.startsWith('-'));
@@ -58,7 +70,12 @@ export interface BrokerOptions {
   key: string;
   /** The command that runs a forwarded argv: `ogw __broker-run <argv>` in the broker sandbox. */
   command: (argv: readonly string[]) => CliCommand;
-  /** The environment of that command: the agent's, with its agent key. */
+  /**
+   * The broker worker: `ogw __broker-worker` in the broker sandbox, started at the first call it runs and kept. Without
+   * it every call starts `command`.
+   */
+  worker?: CliCommand;
+  /** The environment of those commands: the agent's, with its agent key. */
   env: NodeJS.ProcessEnv;
 }
 
@@ -93,12 +110,22 @@ function parseRequest(text: string): BrokerRequest | null {
   }
 }
 
+/** What a call takes from its caller after the request: all of stdin, or stdin chunk by chunk and its end. */
+interface CallInput {
+  stdin: (text: string) => void;
+  chunk: (text: string) => void;
+  end: () => void;
+}
+
+/** How the command of a call asked for stdin: all of it, as it comes, or not yet. */
+type Asked = 'all' | 'stream' | null;
+
 /** Runs one verified call and streams its output back; the command is killed when the caller goes away. */
-function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions, children: Set<ChildProcess>): { stdin: (text: string) => void } {
+function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions, children: Set<ChildProcess>): CallInput {
   const command = options.command(request.argv);
   const child = spawnTracked(command.cmd, command.args, { cwd: request.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
   children.add(child);
-  let asked = false;
+  let asked: Asked = null;
   child.stdin?.on('error', () => undefined);
   child.stdout?.setEncoding('utf8');
   child.stderr?.setEncoding('utf8');
@@ -109,12 +136,20 @@ function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions,
     send(socket, { stderr: chunk });
   });
   const requests = child.stdio[3] as Readable | null | undefined;
-  requests?.on('data', (chunk: Buffer) => {
-    if (!asked && chunk.toString('utf8').includes(STDIN_REQUEST.trim())) {
-      asked = true;
-      send(socket, { stdin: true });
-    }
-  });
+  requests?.setEncoding('utf8');
+  requests?.on(
+    'data',
+    lineReader((line) => {
+      if (asked !== null) return;
+      if (line === STDIN_REQUEST.trim()) {
+        asked = 'all';
+        send(socket, { stdin: true });
+      } else if (line === STDIN_STREAM_REQUEST.trim()) {
+        asked = 'stream';
+        send(socket, { stdinStream: true });
+      }
+    }),
+  );
   requests?.on('error', () => undefined);
   let ended = false;
   const end = (code: number, reason?: string): void => {
@@ -153,15 +188,151 @@ function runCall(socket: Socket, request: BrokerRequest, options: BrokerOptions,
   });
   return {
     stdin: (text) => {
-      if (asked) child.stdin?.end(text);
+      if (asked === 'all') child.stdin?.end(text);
+    },
+    chunk: (text) => {
+      if (asked === 'stream') child.stdin?.write(text);
+    },
+    end: () => {
+      if (asked === 'stream') child.stdin?.end();
     },
   };
 }
 
-function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProcess>): void {
+interface WorkerCall {
+  socket: Socket;
+  asked: Asked;
+  end: (code: number, reason?: string) => void;
+}
+
+/**
+ * The broker worker process (`broker-worker.ts`): started at the first call it runs, it runs one call at a time. A
+ * call whose caller goes away kills it, as its command cannot be stopped alone; the next call starts a new one.
+ */
+class BrokerWorker {
+  private readonly command: CliCommand;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly children: Set<ChildProcess>;
+  private child: ChildProcess | null = null;
+  private call: WorkerCall | null = null;
+
+  constructor(command: CliCommand, env: NodeJS.ProcessEnv, children: Set<ChildProcess>) {
+    this.command = command;
+    this.env = env;
+    this.children = children;
+  }
+
+  /** True while a call runs; a call that comes meanwhile starts a process of its own. */
+  get busy(): boolean {
+    return this.call !== null;
+  }
+
+  private start(cwd: string): ChildProcess {
+    const child = spawnTracked(this.command.cmd, this.command.args, { cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+    this.children.add(child);
+    child.stdin?.on('error', () => undefined);
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    // output the commands write past their io goes to the call that runs
+    // output of a worker that was killed, still in its pipes, belongs to no call
+    child.stdout?.on('data', (chunk: string) => {
+      if (this.child === child && this.call !== null) send(this.call.socket, { stdout: chunk });
+    });
+    child.stderr?.on('data', (chunk: string) => {
+      if (this.child === child && this.call !== null) send(this.call.socket, { stderr: chunk });
+    });
+    const messages = child.stdio[3] as Readable | null | undefined;
+    messages?.setEncoding('utf8');
+    messages?.on('error', () => undefined);
+    messages?.on(
+      'data',
+      lineReader((text) => {
+        const call = this.call;
+        if (this.child !== child || call === null) return;
+        let message: BrokerMessage;
+        try {
+          message = JSON.parse(text) as BrokerMessage;
+        } catch {
+          return;
+        }
+        if (typeof message.stdout === 'string') send(call.socket, { stdout: message.stdout });
+        else if (typeof message.stderr === 'string') send(call.socket, { stderr: message.stderr });
+        else if (message.stdin === true && call.asked === null) {
+          call.asked = 'all';
+          send(call.socket, { stdin: true });
+        } else if (message.stdinStream === true && call.asked === null) {
+          call.asked = 'stream';
+          send(call.socket, { stdinStream: true });
+        } else if (typeof message.exit === 'number') call.end(message.exit);
+      }),
+    );
+    const gone = (reason: string): void => {
+      if (this.child !== child) return;
+      this.child = null;
+      this.children.delete(child);
+      this.call?.end(1, reason);
+    };
+    child.on('error', (error) => {
+      gone(`cannot run the broker worker: ${error.message}`);
+    });
+    child.on('exit', () => {
+      killTree(child, 'SIGKILL');
+      gone('the broker worker ended');
+    });
+    this.child = child;
+    return child;
+  }
+
+  private kill(): void {
+    const child = this.child;
+    if (child === null) return;
+    this.child = null;
+    this.children.delete(child);
+    killTree(child, 'SIGKILL');
+  }
+
+  /** Runs one verified call and streams its output back. */
+  run(socket: Socket, request: BrokerRequest): CallInput {
+    const child = this.child ?? this.start(request.cwd);
+    const call: WorkerCall = {
+      socket,
+      asked: null,
+      end: (code, reason) => {
+        if (this.call !== call) return;
+        this.call = null;
+        if (reason !== undefined) send(socket, { stderr: `ogw broker: ${reason}\n` });
+        send(socket, { exit: code });
+        socket.end();
+      },
+    };
+    this.call = call;
+    socket.on('close', () => {
+      if (this.call !== call) return;
+      this.call = null;
+      this.kill();
+    });
+    child.stdin?.write(`${JSON.stringify({ argv: request.argv, cwd: request.cwd })}\n`);
+    const pass = (asked: Asked, line: unknown): void => {
+      if (call.asked === asked && this.call === call) child.stdin?.write(`${JSON.stringify(line)}\n`);
+    };
+    return {
+      stdin: (text) => {
+        pass('all', { stdin: text });
+      },
+      chunk: (text) => {
+        pass('stream', { chunk: text });
+      },
+      end: () => {
+        pass('stream', { end: true });
+      },
+    };
+  }
+}
+
+function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProcess>, worker: BrokerWorker | null): void {
   socket.setEncoding('utf8');
   socket.on('error', () => undefined);
-  let call: { stdin: (text: string) => void } | null = null;
+  let call: CallInput | null = null;
   // set once the request line is read: a later line before the command runs is not a request
   let requested = false;
   let size = 0;
@@ -185,8 +356,9 @@ function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProces
           (refusal) => {
             // a client gone during the check gets no command, which nothing would end
             if (socket.destroyed) return;
-            if (refusal === null) call = runCall(socket, request, options, children);
-            else refuse(socket, refusal);
+            if (refusal !== null) refuse(socket, refusal);
+            else if (worker !== null && !worker.busy && workerRuns(request.argv)) call = worker.run(socket, request);
+            else call = runCall(socket, request, options, children);
           },
           (error: unknown) => {
             refuse(socket, `the play budget could not be read: ${error instanceof Error ? error.message : String(error)}`);
@@ -196,8 +368,10 @@ function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProces
       return;
     }
     try {
-      const { stdin } = JSON.parse(text) as { stdin?: unknown };
+      const { stdin, chunk, end } = JSON.parse(text) as { stdin?: unknown; chunk?: unknown; end?: unknown };
       if (typeof stdin === 'string') call.stdin(stdin);
+      else if (typeof chunk === 'string') call.chunk(chunk);
+      else if (end === true) call.end();
     } catch {
       socket.destroy();
     }
@@ -220,10 +394,11 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
   await chmod(folder, 0o700);
   const children = new Set<ChildProcess>();
   const sockets = new Set<Socket>();
+  const worker = options.worker === undefined ? null : new BrokerWorker(options.worker, options.env, children);
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
-    serve(socket, options, children);
+    serve(socket, options, children, worker);
   });
   await new Promise<void>((resolvePromise, reject) => {
     server.once('error', reject);
