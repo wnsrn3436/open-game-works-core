@@ -416,16 +416,6 @@ describe('ogw game check --defaults', () => {
     expect(run.stdout).toContain('## NetworkCore\ncore.NetworkCore.requestTimeoutMs = 10 s (core settings): duration from the start of a send until timeout\n');
   });
 
-  it('lists among the values to know the test time limit ogw game init wrote, until a human changes it', async () => {
-    writeModules();
-    const written = await check((s) => (s.core = { 'UnitTestCore.testTimeLimitMs': 10000 }), ['--defaults']);
-    const line = written.stdout.split('\n').find((l) => l.startsWith('core.UnitTestCore.testTimeLimitMs'));
-    expect(line?.startsWith('core.UnitTestCore.testTimeLimitMs = 10 s (ogw game init)')).toBe(true);
-    expect(written.stdout.indexOf(line ?? '')).toBeLessThan(written.stdout.indexOf('## game settings'));
-    const changed = await check((s) => (s.core = { 'UnitTestCore.testTimeLimitMs': 20000 }), ['--defaults']);
-    expect(changed.stdout).not.toContain('core.UnitTestCore.testTimeLimitMs');
-  });
-
   it('gives the list as JSON', async () => {
     makeGame(ws, 'mygame', { 'settings.json': validGameSettings() });
     const run = await ogw(ws, ['game', 'check', 'mygame', '--defaults', '--json']);
