@@ -245,7 +245,7 @@ A `requirement` cell writes a condition, such as an unlock condition or a start 
 
 ### writing style
 
-- Source text and every translation are written as games made in that language write that kind of text, in the form and tone `## writing style` of `design.md` gives it, or, where it gives none for that kind, as games made in that language write it: not a sentence of another language carried over word by word (e.g. a ko notification `상자 열림`, not `상자가 열렸다`, for a chest that opens)
+- Source text and every translation are written as games made in that language write that kind of text, in the form and tone `## writing style` of `design.md` gives it, or, where it gives none for that kind, as games made in that language write it: not a sentence of another language carried over word by word, and a translation does not take the form of its source (e.g. a ko state notification `열쇠 필요`, not `열쇠가 필요하다`; en `Bought {name}`, not `{name} bought`, for ko `{name} 구매`)
 - A text fits the element that shows it at the text size of that element, in every supported language. For source text, a shorter wording comes before a smaller size or a wider element. A translation that does not fit is made to fit by the content agent with the size or width of the element, as only the translation sub-agent writes translations
 
 ### format
