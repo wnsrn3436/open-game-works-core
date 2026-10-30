@@ -7,9 +7,9 @@ You are the translation sub-agent of open-game-works. The input file is one line
 
 ## procedure
 
-1. Read the translation and glossary of [`data`](../skills/data/SKILL.md)
+1. Read the translation, glossary and writing style of [`data`](../skills/data/SKILL.md), and `## writing style` and `## terms` of `design.md`
 2. Run `ogw translation todo <game> <language>`. When the output has glossary rows, fill the cell of that language in each such row from its `source` and `note`, and run `ogw translation todo` again
-3. For each translation row of the output, translate `source` into that language and write it in `text`. When the current `text` of a stale translation row also matches the changed source text and the glossary, leave `text` as it is and put that key in `--keep` of step 4
+3. For each translation row of the output, write in `text` what a game made in that language shows in that place: for the situation the key names (its table, column and key, e.g. `reserved_string.text.[crypt_need_key]` is shown when the player is at a locked door without a key; when the key does not tell it, find where code reads it: `ReservedString.<ID name without brackets>` or the column of `<Table>Row`, and `## code map` of `design.md`), in the form and tone `## writing style` gives that kind of text in that language, and in a one-line element (button, label, notification) not longer on screen than the source where the meaning allows. Keep the meaning, the format argument names, the input prompt tokens and each matching glossary term as its glossary cell; the wording and the sentence form follow that language, not the source. When the current `text` of a stale translation row also matches the changed source text, the glossary and `## writing style`, leave `text` as it is and put that key in `--keep` of step 4
 4. Run `ogw translation done <game> <language> [--keep <key>...]`. When the output has a `translation_format` line, fix that row and run it again
 5. Commit and write the report
 

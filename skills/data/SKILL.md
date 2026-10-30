@@ -243,6 +243,11 @@ A `requirement` cell writes a condition, such as an unlock condition or a start 
   - stale translation rows of the keys written in `--keep`
 - A text to which core gives values uses only the format arguments that `## data` of the core spec sets. The texts to which core gives values are reserved strings that a core spec sets, `mail_template` rows that a reserved ID a core spec sets or a `ref<mail_template.id>`, `ref<mail_template.id>?` column of a table that core defines points to, and `tstring` columns of tables that core defines for which `## data` of the core spec writes format arguments or `none`. A text for which no format argument is written or `none` is written has no arguments. The core spec writes the value kind of each format argument in the form `{<name>}` (`<kind>`). `<kind>` is one of `integer`, `real`, `string`. e.g. format argument `{count}` (`integer`). In every language, the formatter of that argument accepts that value kind in the format table. A violation is `translation_format`
 
+### writing style
+
+- Source text and every translation are written as games made in that language write that kind of text, in the form and tone `## writing style` of `design.md` gives it, or, where it gives none for that kind, as games made in that language write it: not a sentence of another language carried over word by word, and a translation does not take the form of its source (e.g. a ko state notification `열쇠 필요`, not `열쇠가 필요하다`; en `Bought {name}`, not `{name} bought`, for ko `{name} 구매`)
+- A text fits the element that shows it at the text size of that element, in every supported language. For source text, a shorter wording comes before a smaller size or a wider element. A translation that does not fit is made to fit by the content agent with the size or width of the element, as only the translation sub-agent writes translations
+
 ### format
 
 - Source text does not write values that data, server, or code sets. Such a value is received as a format argument, and the code that shows that text passes it. e.g. `points` in `{points}점을 먼저 내면 승리` is the value of `[points_to_win]`
