@@ -28,7 +28,7 @@ export async function takesFormat(ctx: Context, instanceId: string): Promise<boo
 
 /** The new folder `<stem>-video/` of `captures/` a `capture_video` of the instance writes its frames to. */
 export async function videoDir(ctx: Context, instanceId: string): Promise<string> {
-  return join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, Date.now())}-video`);
+  return join(await capturesDir(ctx, { instanceId }), `${captureStem(instanceId, Date.now())}-video`);
 }
 
 /**
@@ -60,7 +60,7 @@ export async function captureScreen(ctx: Context, instanceId: string): Promise<s
   if (!response.ok) throw new OgwError(`capture_screen failed: ${JSON.stringify(response.result)}`);
   // two captures of one process in the same ms get different names
   lastCaptureAt = Math.max(Date.now(), lastCaptureAt + 1);
-  const path = join(await capturesDir(ctx, instanceId), `${captureStem(instanceId, lastCaptureAt)}${imageExtension(response.bytes)}`);
+  const path = join(await capturesDir(ctx, { instanceId }), `${captureStem(instanceId, lastCaptureAt)}${imageExtension(response.bytes)}`);
   await writeFileAtomic(path, response.bytes);
   return path;
 }
