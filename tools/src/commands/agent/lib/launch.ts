@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { closeSync, lstatSync, openSync, realpathSync } from 'node:fs';
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey, runLogPath } from '../../../lib/agentctx.ts';
 import type { CommandResult, Context } from '../../../lib/command.ts';
@@ -18,6 +18,7 @@ import { moveOldSecrets } from '../../secret/lib/move.ts';
 import { storedLoginToken } from '../../secret/lib/login-token.ts';
 import type { AgentSettings, Workspace } from '../../../lib/settings.ts';
 import { killTree, processStartedAt, spawnTracked } from '../../../lib/proc.ts';
+import { REFERENCE_DIR } from '../../game/reference.ts';
 import { startBroker, type Broker } from './broker.ts';
 import {
   agentCli,
@@ -66,6 +67,21 @@ export async function ensurePreCommitHook(repo: string): Promise<void> {
   await chmod(hook, 0o755);
 }
 
+/**
+ * Links into a game worktree the files of the checkout's `records/setup/reference/` that git does not hold: the
+ * reference videos, third-party works kept out of git (`ogw game init`), so that an agent in the worktree can look at
+ * them with `ogw frames` like one in the checkout.
+ */
+async function linkReferenceVideos(checkout: string, worktree: string): Promise<void> {
+  const from = join(checkout, REFERENCE_DIR);
+  if (!exists(from)) return;
+  const to = join(worktree, REFERENCE_DIR);
+  await mkdir(to, { recursive: true });
+  for (const name of await readdir(from)) {
+    if (!exists(join(to, name))) await symlink(join(from, name), join(to, name));
+  }
+}
+
 /** Makes the agent's worktree and sets the folder and result file path in the job meta. */
 async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<AgentMeta> {
   const place = meta.place;
@@ -73,6 +89,7 @@ async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<Age
   if (place.kind === 'game-worktree') {
     worktree = join(place.worktrees, meta.game as string, `agent-${id}`);
     await worktreeAdd(place.checkout, worktree, place.baseCommit, `agent/${id}`, { env: ctx.env });
+    await linkReferenceVideos(place.checkout, worktree);
   } else if (place.kind === 'core-worktree') {
     await ensurePreCommitHook(place.coreImpl);
     worktree = join(place.worktrees, '_core', `agent-${id}`);

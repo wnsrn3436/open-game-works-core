@@ -196,7 +196,7 @@ describe('compare', () => {
     const slow = telemetry({ inputs: [input(1100, 103, { Sound: 2, Tween: 1 })], rewards: [{ at: 1, play_at: 1, kind: 'Item', id: 1, amount: 1 }, { at: 161, play_at: 161, kind: 'Item', id: 1, amount: 1 }] });
     const result = compareTelemetry(fast, slow, false);
     expect(result.map((e) => [e.element, e.winner, e.margin])).toEqual([
-      ['game feel', 'B', 'decisive'],
+      ['game feel', 'indistinguishable', ''],
       ['tension and release', 'no telemetry', ''],
       ['progression', 'A', 'decisive'],
       ['one more run', 'no telemetry', ''],
@@ -206,8 +206,12 @@ describe('compare', () => {
     expect(result[0]?.metrics).toEqual([
       // a latency difference of one frame (17 ms) or less is no difference
       { metric: 'input_latency_ms', a: 100, b: 103, d: 0 },
-      { metric: 'feedback_per_input', a: 1, b: 2, d: 0.5 },
+      // one feedback kind on every input is enough: more kinds on every input are not better
+      { metric: 'feedback_per_input', a: 1, b: 2, d: 0 },
     ]);
+    // an input without feedback still loses: 0.5 against 1 (3 kinds on every input counts as 1)
+    const dead = compareTelemetry(telemetry({ inputs: [input(1, 100, { Sound: 1 }), input(2, 100)] }), telemetry({ inputs: [input(1, 100, { Sound: 1, Tween: 1, CameraShake: 1 })] }), false)[0];
+    expect([dead?.metrics[1], dead?.winner, dead?.margin]).toEqual([{ metric: 'feedback_per_input', a: 0.5, b: 3, d: 0.5 }, 'B', 'decisive']);
     const near = compareTelemetry(telemetry({ inputs: [input(1, 100)] }), telemetry({ inputs: [input(1, 104)] }), true);
     expect(near.map((e) => e.winner)).toEqual(['indistinguishable', 'n/a', 'no telemetry', 'n/a', 'indistinguishable', 'no telemetry']);
     const frame = [117, 118].map((b) => compareTelemetry(telemetry({ inputs: [input(1, 100)] }), telemetry({ inputs: [input(1, b)] }), false)[0]);

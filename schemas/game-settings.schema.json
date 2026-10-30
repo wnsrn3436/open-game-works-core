@@ -229,13 +229,6 @@
           "minimum": 1,
           "default": 3
         },
-        "maxFlatShare": {
-          "description": "The share of a panel body background in its most common color at which the panel counts as one flat color",
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 1,
-          "default": 0.85
-        },
         "maxEmptyShare": {
           "description": "The share of a panel body that nothing covers at which the panel counts as empty",
           "type": "number",

@@ -35,7 +35,6 @@ export interface UiQualityLimits {
   maxFontSizes: number;
   minFontPx: number;
   minContrast: number;
-  maxFlatShare: number;
   maxEmptyShare: number;
 }
 
@@ -194,33 +193,9 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
   return mask;
 }
 
-/** Share of the uncovered pixels of `area` that lie within 8 (each of R, G, B) of their most common color; null with none uncovered. */
-function flatShare(image: Rgba, area: [number, number, number, number], mask: Uint8Array): number | null {
-  const [x0, y0, x1, y1] = area;
-  const w = x1 - x0;
-  const counts = new Map<number, number>();
-  const pixels: number[] = [];
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      if (mask[(y - y0) * w + (x - x0)] === 1) continue;
-      const i = (y * image.width + x) * 4;
-      const color = ((image.data[i] as number) << 16) | ((image.data[i + 1] as number) << 8) | (image.data[i + 2] as number);
-      pixels.push(color);
-      counts.set(color, (counts.get(color) ?? 0) + 1);
-    }
-  }
-  if (pixels.length === 0) return null;
-  let mode = 0;
-  let best = -1;
-  for (const [color, n] of counts) if (n > best) [mode, best] = [color, n];
-  const near = (c: number): boolean =>
-    Math.abs(((c >> 16) & 255) - ((mode >> 16) & 255)) <= 8 && Math.abs(((c >> 8) & 255) - ((mode >> 8) & 255)) <= 8 && Math.abs((c & 255) - (mode & 255)) <= 8;
-  return pixels.filter(near).length / pixels.length;
-}
-
 /**
- * The presentation conditions of one capture (`qa-core` UI quality check): text sizes, small text, contrast, flat
- * panels and empty panels, each with the `owner` of the problem.
+ * The presentation conditions of one capture (`qa-core` UI quality check): text sizes, small text, contrast and empty
+ * panels, each with the `owner` of the problem.
  */
 export function presentationProblems(
   elements: readonly UiElement[],
@@ -242,9 +217,6 @@ export function presentationProblems(
   for (const body of panelBodies(elements, sceneKey, image)) {
     const area = bounds(body.rect, image);
     if (area === null) continue;
-    const textRects = texts.map((e) => e.rect);
-    const flat = flatShare(image, area, covered(area, textRects));
-    if (flat !== null && flat >= limits.maxFlatShare) problems.push({ owner: body.owner, message: `flat panel ${body.path}: ${(flat * 100).toFixed(0)}% one color` });
     const size = body.rect.w * body.rect.h;
     const parts = elements.filter((e) => isAncestor(body.path, e.path) && e.rect.w * e.rect.h < 0.9 * size).map((e) => e.rect);
     const mask = covered(area, parts);

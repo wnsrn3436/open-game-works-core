@@ -35,9 +35,19 @@ export function distance(a: number, b: number): number {
   return scale === 0 ? 0 : Math.abs(a - b) / scale;
 }
 
+/**
+ * The value a metric is compared by. One feedback kind on every input is enough: more kinds on every input are not
+ * better, because commercial games budget feedback by consequence (`commercial-quality.md` `## motion and feedback`),
+ * so `feedback_per_input` above 1 counts as 1.
+ */
+function compared(metric: string, value: number): number {
+  return metric === 'feedback_per_input' ? Math.min(value, 1) : value;
+}
+
 function better(metric: string, a: number, b: number): 'A' | 'B' {
   const higherIsBetter = metric === 'feedback_per_input';
-  return (higherIsBetter ? a > b : a < b) ? 'A' : 'B';
+  const [ca, cb] = [compared(metric, a), compared(metric, b)];
+  return (higherIsBetter ? ca > cb : ca < cb) ? 'A' : 'B';
 }
 
 /** An `input_latency_ms` difference of at most one frame at 60 fps is not a difference. */
@@ -45,7 +55,7 @@ const FRAME_MS = 17;
 
 function metricDistance(metric: string, a: number, b: number): number {
   if (metric === 'input_latency_ms' && Math.abs(a - b) <= FRAME_MS) return 0;
-  return distance(a, b);
+  return distance(compared(metric, a), compared(metric, b));
 }
 
 function margin(d: number): ElementComparison['margin'] {
