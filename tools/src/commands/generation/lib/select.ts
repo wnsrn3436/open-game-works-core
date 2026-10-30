@@ -64,13 +64,17 @@ const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2']);
 /** Image types: the image method of a game makes them (`production.md` `## method`). */
 export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 'background', 'nine_slice', 'texture', 'skybox', 'app_icon', 'splash'];
 
+/** The method of the logo keys `image/logo/<language>`: lettering with a font file (`ogw resource logotype`). */
+export const LOGOTYPE_METHOD = 'logotype';
+export const LOGO_PREFIX = 'image/logo/';
+
 /**
  * The image method of a game: the method of the first `final` row of an image type made by a method of the image types,
  * else harness settings `imageMethod`. The attached row `sprite_sheet/<name>` of a `sprite_animation/<name>` in the list
- * (the sheet `ogw resource finalize` writes for that sprite animation) does not count.
+ * (the sheet `ogw resource finalize` writes for that sprite animation) and a logo lettered with a font do not count.
  */
 export function gameImageMethod(settings: HarnessSettings, rows: readonly ResourceRow[]): string {
-  const imageMethods = new Set(settings.resourceGeneration.filter((m) => m.resourceTypes.includes('image')).map((m) => m.name));
+  const imageMethods = new Set(settings.resourceGeneration.filter((m) => m.resourceTypes.includes('image') && m.name !== LOGOTYPE_METHOD).map((m) => m.name));
   const keys = rows.map((r) => parseKey(r.key));
   const animations = new Set(keys.flatMap((k) => (k?.type === 'sprite_animation' ? [k.name] : [])));
   const first = rows.find((r, i) => {
@@ -94,9 +98,16 @@ export async function keySpec(game: GameRepo, key: string): Promise<{ type: stri
   return { type, spec: parseSpec(key, type, row.spec), rows };
 }
 
-/** Methods a resource key can use and the stage of each (`production.md` `## method`). */
+/**
+ * Methods a resource key can use and the stage of each (`production.md` `## method`). A logo key `image/logo/<language>`
+ * takes only the logotype method, as image generation does not letter text reliably.
+ */
 export async function chooseMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<MethodChoice[]> {
   const { type, spec, rows } = await keySpec(game, key);
+  if (key.startsWith(LOGO_PREFIX)) {
+    const logotype = settings.resourceGeneration.find((m) => m.name === LOGOTYPE_METHOD);
+    return logotype && usable(logotype) ? [await choiceOf(ctx, logotype, spec, undefined)] : [];
+  }
   return methodChoices(ctx, settings, type, spec, gameImageMethod(settings, rows));
 }
 

@@ -350,6 +350,15 @@
       "license": "LicenseRef-game-owned"
     },
     {
+      "name": "logotype",
+      "kind": "procedural",
+      "resourceTypes": [
+        "image"
+      ],
+      "safetyTimeoutMs": 60000,
+      "license": "LicenseRef-game-owned"
+    },
+    {
       "name": "font-catalog",
       "kind": "catalog",
       "resourceTypes": [
@@ -361,7 +370,7 @@
           "kind": "git",
           "source": "https://github.com/google/fonts.git",
           "revision": "b38c5c93af322c45f633e17ac440ec1e6c94d489",
-          "files": "ofl/notosans,ofl/notoserif,ofl/notosanskr,ofl/notoserifkr,ofl/notosansjp,ofl/notoserifjp,ofl/notosanssc,ofl/notosanstc,ofl/notosansthai,ofl/notosansarabic,ofl/pressstart2p,ofl/dotgothic16,ofl/blackhansans,ofl/jua"
+          "files": "ofl/notosans,ofl/notoserif,ofl/notosanskr,ofl/notoserifkr,ofl/notosansjp,ofl/notoserifjp,ofl/notosanssc,ofl/notosanstc,ofl/notosansthai,ofl/notosansarabic,ofl/pressstart2p,ofl/dotgothic16,ofl/blackhansans,ofl/jua,ofl/dohyeon,ofl/gugi,ofl/songmyung,ofl/nanumbrushscript,ofl/nanumpenscript,ofl/eastseadokdo,ofl/dokdo,ofl/gaegu,ofl/yeonsung,ofl/gowunbatang,ofl/gowundodum,ofl/hahmlet,ofl/orbit,ofl/bagelfatone,ofl/dongle,ofl/diphylleia,ofl/grandifloraone,ofl/blackandwhitepicture,ofl/stylish,ofl/himelody,ofl/gamjaflower,ofl/kiranghaerang,ofl/singleday,ofl/sunflower,ofl/nanummyeongjo,ofl/cinzel,ofl/cinzeldecorative,ofl/uncialantiqua,ofl/medievalsharp,ofl/pirataone,ofl/imfellenglish,ofl/metamorphous,ofl/almendra,ofl/eaglelake,ofl/grenzegotisch,ofl/unifrakturmaguntia,ofl/creepster,ofl/bangers,ofl/lilitaone,ofl/fredoka,ofl/titanone,ofl/bungee,ofl/righteous,ofl/russoone,ofl/orbitron,ofl/audiowide,ofl/silkscreen,ofl/vt323,ofl/pixelifysans,ofl/playfairdisplay,ofl/cormorant,ofl/rye,ofl/blackopsone,ofl/oswald,ofl/anton"
         }
       ]
     }

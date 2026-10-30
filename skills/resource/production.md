@@ -10,6 +10,7 @@ How the resource sub-agent makes final resources, and their post-processing. Res
 - skeleton spec
 - rig tools
 - making
+- logo
 - first final
 - finalize
 
@@ -163,6 +164,16 @@ The three commands are deterministic. An opaque pixel is a pixel whose alpha is 
 - A haptic is a JSON file (`.json`) in the haptic pattern format of `SoundCore` ([`client-core`](../client-core/SKILL.md))
 - For a 3D model, check UV overlap, weight normalization, applied transforms and origin position
 - Generation originals are kept outside the game repo. The game repo holds only the files that the engine uses
+
+## logo
+
+A logo key `image/logo/<language>` is made only with the method `logotype`, which `ogw generation methods` gives it in place of the image method, because image generation does not letter text reliably.
+
+1. Read the game name of that language in `records/setup/name.md`
+2. From `ogw generation list font-catalog`, take the display faces whose `charset` holds that language, and render the name with three or more of them whose character fits `## art direction` (e.g. a blackletter or engraved serif for a dark fantasy world, a rounded heavy face for a toy world) with `ogw resource logotype --font <file> --text <name> --out <file>`. The command fails, naming them, when the font has no glyph for some characters, and draws only TrueType (`glyf`) outlines
+3. Look at each at the size it is seen at over the key art, and keep the one that reads at a glance and fits the art direction. Give it `--fill` (one color, or a top and a bottom color), `--outline`, `--shadow` and `--glow` from the palette, so that it stands out from the key art without a plate behind it
+4. An emblem made with the image method of the game (no letters) may be composited behind or beside the lettering, as post-processing. The letters stay those of the font
+5. Put it in with `## finalize` and the method `logotype`. `spec` of a logo row has `alpha=true`
 
 ## first final
 

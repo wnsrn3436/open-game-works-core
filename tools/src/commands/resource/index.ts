@@ -1,6 +1,7 @@
 import type { CommandDef } from '../../lib/command.ts';
 import { finalize } from './finalize.ts';
 import { firstFinalCommand } from './first-final.ts';
+import { logotypeCommand } from './logotype.ts';
 import { placeholder } from './placeholder.ts';
 import { request } from './request.ts';
 import { rigCheckCommand } from './rig-check.ts';
@@ -9,4 +10,4 @@ import { rigSplitCommand } from './rig-split.ts';
 import { spriteSheetCommand } from './sprite-sheet.ts';
 import { sync } from './sync.ts';
 
-export const commands: CommandDef[] = [placeholder, sync, request, finalize, rigSplitCommand, rigCheckCommand, rigMeshCommand, firstFinalCommand, spriteSheetCommand];
+export const commands: CommandDef[] = [placeholder, sync, request, finalize, rigSplitCommand, rigCheckCommand, rigMeshCommand, firstFinalCommand, spriteSheetCommand, logotypeCommand];

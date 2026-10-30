@@ -153,6 +153,23 @@ describe('ogw generation methods', () => {
     expect(await given('sub', `${RESOURCES}${row('image/a', 'final', '')}\n`, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
   });
 
+  it('gives a logo key only the logotype method, and a logotype logo does not fix the image method of the game', async () => {
+    const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const logotype = { name: 'logotype', kind: 'procedural', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const ws = makeWorkspace({ resourceGeneration: [...methods(), sub, logotype], imageMethod: 'sub' });
+    installLocal(ws.root, [...methods(), sub, logotype]);
+    const list = `${RESOURCES}${row('image/logo/ko', 'final', 'logotype')}\n${row('image/logo/en', 'placeholder', '')}\n`;
+    makeGame(ws, 'g', { 'resource/resources.csv': list });
+    const names = async (key: string): Promise<string[]> => {
+      const out = await ogw(ws, ['generation', 'methods', 'g', key, '--json']);
+      if (out.code !== 0) throw new Error(out.stderr);
+      return (JSON.parse(out.stdout) as { methods: { name: string; temporary?: boolean }[] }).methods.map((m) => `${m.name}${m.temporary ? ' temporary' : ''}`);
+    };
+    expect(await names('image/logo/en')).toEqual(['logotype']);
+    // the final logo comes first in the list but the image method of the game stays the host's
+    expect(await names('image/hero')).toEqual(['sub', 'flux2-klein temporary']);
+  });
+
   it('gives the temporary method only when flux2-klein is usable, and for an image type only when flux2-klein lists it', async () => {
     const failed = [{ resolution: 512, result: 'failed' }];
     expect(await given('sub', RESOURCES, 'image/hero', failed)).toEqual(['sub']);
