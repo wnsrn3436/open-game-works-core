@@ -74,10 +74,9 @@ Seen in all four studied games (The Binding of Isaac, Hearthstone, Vampire Survi
 
 ## sound
 
-Measured in the gameplay audio of The Binding of Isaac and in our own sounds that a human rated; an agent cannot hear, so it measures these, and a human's ears decide what the numbers cannot.
+Measured in the gameplay audio of The Binding of Isaac and in a human's blind listening to our sounds; an agent cannot hear, so it measures what it can, and a human's ears decide.
 
-- Heard where it is played: an effect carries its weight in the band that laptop and phone speakers play and the music leaves free, not in a sub-bass rumble or a thin high tick (Isaac's hits add 70% of their power between 250 Hz and 4 kHz, over music that is 78% below 250 Hz; our hits rated cheap had 0 to 3% there and up to 89% at 20 to 60 Hz)
-- The sound of a thing: an effect is the game's own source and material struck, broken or moved, with an attack, a body and a decay, not a test tone or a blip (a pickup made as one 371 Hz tone was rated a toy). A short routine sound still has weight: soft, light or quiet is its level, not its sound (short sounds described that way were rated 1 or 2 of 5)
+- The sound of this game's thing: an effect is the sound of what the thing is in this game's fiction and mood (the spirit's bolt of light, a shadow scattering, a coin picked up), not a stand-in from another fiction that is heavier or more real. In blind listening, versions that swapped the source (a crossbow for the spirit's light bolt, a sack of ash for a scattering shadow, a bronze coin slapped on a table for a coin pickup, a key dropped in a pouch for every pickup) lost to the originals in 4 of 4, though they had more weight, more power between 250 Hz and 4 kHz and no single tone; neither the weight nor the band predicted which version the human chose
 - Same thing, same sound: the variants of a repeated effect are takes of one sound (one source, material and action), so that repetition reads as one thing
 - Budgeted by consequence: routine effects are short and moderate (Isaac's routine hits peak within 20 ms and stand about 10 LU over the music for 70 to 80 ms, about 3 a second); kills, rewards and harm to the player get more, and the loudest sounds are kept for rare events
 - The music is a bed in the game's mood that does not drop out during play and leaves room above its bass for the effects
