@@ -295,6 +295,9 @@ describe('judgeAgent', () => {
 describe('ogw loop evaluate', () => {
   it('plays, judges, confirms success, measures, writes and commits evaluate-<n>.json', async () => {
     const { g, head, base } = await loop();
+    // the checkout of instance i1 has the game's names, which the judge reads its logo against
+    mkdirSync(join(g.root, '..', 'instances', 'i1', 'records', 'setup'), { recursive: true });
+    writeFileSync(join(g.root, '..', 'instances', 'i1', 'records', 'setup', 'name.md'), 'ko: 등불 지하실\nen: Lantern Crypt\n');
     const plays = new Map<string, number>();
     fake.respond = (agent) => {
       if (agent.role === 'play') {
@@ -343,13 +346,14 @@ describe('ogw loop evaluate', () => {
     ]);
     expect(file.plays[3]).toEqual({ result: '', instance: '', platform: 'android', moment: 'broken', status: 'failed' });
     // main judge: this commit, baseline, boss pair; broken fixtures are null
-    const mainInput = fake.agents[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string }; fixtures: unknown[]; reference: unknown; elements: string[]; telemetry: unknown };
+    const mainInput = fake.agents[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string; names: unknown }; fixtures: unknown[]; reference: unknown; elements: string[]; telemetry: unknown };
     expect(mainInput.elements).toEqual(file.elements);
     expect(mainInput.telemetry).toBeNull();
     // the second step 4 judge: the other side
     expect((fake.agents[1]?.input as { A: { instance: string } }).A.instance).toBe('i5');
     expect(fake.instances.find((i) => i.id === 'i5')?.commit).toBe(base);
-    expect(mainInput.A).toEqual({ instance: 'i1', playGuide: join(g.root, '..', 'instances', 'i1', 'play-guide.md') });
+    expect(mainInput.A).toEqual({ instance: 'i1', playGuide: join(g.root, '..', 'instances', 'i1', 'play-guide.md'), names: { ko: '등불 지하실', en: 'Lantern Crypt' } });
+    expect(mainInput.B.names).toBeNull();
     expect(mainInput.B.instance).toBe('i2');
     expect(mainInput.fixtures).toEqual([
       { moment: { name: 'boss', description: 'reach the boss' }, A: 'i3', B: 'i4' },

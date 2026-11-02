@@ -36,7 +36,7 @@ import { botRun, comparisonText, scenarioAtHead, withInputLatency, type BotRun }
 import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import { combinedVsBaseline, combinedVsReference, countVotes } from './votes.ts';
-import { MEMORABLE_MOMENT, type Moment, type Reference } from './setup.ts';
+import { MEMORABLE_MOMENT, readGameNamesAt, type Moment, type Reference } from './setup.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
@@ -403,8 +403,11 @@ async function stop(state: State, instance: InstanceInfo | null): Promise<void> 
   await stopInstance(state.ctx, instance.id);
 }
 
-function guide(instance: InstanceInfo | null): { instance: string; playGuide: string } | null {
-  return instance ? { instance: instance.id, playGuide: join(instance.root, 'play-guide.md') } : null;
+/** The `<game>` of the judge input: the instance, its play guide and the game's name per language, which its logo reads. */
+async function guide(instance: InstanceInfo | null): Promise<{ instance: string; playGuide: string; names: Record<string, string> | null } | null> {
+  if (!instance) return null;
+  const names = await readGameNamesAt(instance.root);
+  return { instance: instance.id, playGuide: join(instance.root, 'play-guide.md'), names: names ? Object.fromEntries(names) : null };
 }
 
 async function launchPlay(state: State, slot: PlaySlot): Promise<void> {
@@ -486,7 +489,7 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
   }
   const b = specs[1]?.moment === null ? (started[1] ?? null) : null;
   const reference = plan.kind === 'fun' || plan.reference === null ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
-  const input = await inputFile(state, 'judge', { A: guide(started[0] ?? null), B: guide(b), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
+  const input = await inputFile(state, 'judge', { A: await guide(started[0] ?? null), B: await guide(b), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
   await startJob(state, slot, input);
 }
 

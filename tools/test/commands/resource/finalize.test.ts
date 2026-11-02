@@ -616,21 +616,27 @@ describe('ogw resource finalize', () => {
     expect(kit.stderr).toBe('');
   });
 
-  it('takes a logo only from the logotype method and only with alpha=true in its spec', async () => {
+  it('takes a logo from the image method of the game or the logotype method, and only with alpha=true in its spec', async () => {
     const f = setup([
       { key: 'image/logo/ko', spec: 'size=4x4', status: 'requested' },
       { key: 'image/logo/en', spec: 'size=4x4;alpha=true', status: 'requested' },
+      { key: 'image/logo/ja', spec: 'size=4x4;alpha=true', status: 'requested' },
     ]);
     await sync(f);
     const clear = work(f, 'logo.png');
     await png(clear, 4, 4, [250, 200, 120, 255], 1);
     const opaqueSpec = await finalize(f, ['image/logo/ko', '--method', 'logotype', '--file', clear]);
     expect(opaqueSpec.stderr).toContain('image/logo/ko: a logo has alpha=true in spec, so that it is fitted whole and not cropped');
-    const generated = await finalize(f, ['image/logo/en', '--method', 'flux2-klein', '--file', clear]);
-    expect(generated.code).toBe(1);
-    const lettered = await finalize(f, ['image/logo/en', '--method', 'logotype', '--file', clear]);
+    // another image method than the game's draws no logo
+    const other = await finalize(f, ['image/logo/en', '--method', 'sprite-gen-grok', '--file', clear]);
+    expect(other.code).toBe(1);
+    // flux2-klein is the image method of this game
+    const drawn = await finalize(f, ['image/logo/en', '--method', 'flux2-klein', '--file', clear]);
+    expect(drawn.stderr).toBe('');
+    expect(rowOf(f.game, 'image/logo/en')).toMatchObject({ status: 'final', method: 'flux2-klein' });
+    const lettered = await finalize(f, ['image/logo/ja', '--method', 'logotype', '--file', clear]);
     expect(lettered.stderr).toBe('');
-    expect(rowOf(f.game, 'image/logo/en')).toMatchObject({ status: 'final', method: 'logotype' });
+    expect(rowOf(f.game, 'image/logo/ja')).toMatchObject({ status: 'final', method: 'logotype' });
   });
 
   describe('a final row asked again', () => {

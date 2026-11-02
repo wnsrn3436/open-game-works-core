@@ -64,7 +64,7 @@ const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2']);
 /** Image types: the image method of a game makes them (`production.md` `## method`). */
 export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 'background', 'nine_slice', 'texture', 'skybox', 'app_icon', 'splash'];
 
-/** The method of the logo keys `image/logo/<language>`: lettering with a font file (`ogw resource logotype`). */
+/** The method that letters the logo keys `image/logo/<language>` with a font file (`ogw resource logotype`), whose lettering the image method of the game draws again. */
 export const LOGOTYPE_METHOD = 'logotype';
 export const LOGO_PREFIX = 'image/logo/';
 /** The catalog of the fonts that the logotype method letters with. */
@@ -102,7 +102,9 @@ export async function keySpec(game: GameRepo, key: string): Promise<{ type: stri
 
 /**
  * Methods a resource key can use and the stage of each (`production.md` `## method`). A logo key `image/logo/<language>`
- * takes only the logotype method, as image generation does not letter text reliably.
+ * takes the image method of the game, which draws the lettering of the logotype method again in the world's hand, and
+ * the logotype method, whose lettering is kept when no drawing keeps every character (`production.md` `## logo`); both
+ * need the logotype method, as image generation does not letter text reliably without its lettering to follow.
  */
 export async function chooseMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<MethodChoice[]> {
   return keyChoices(ctx, settings, key, await keySpec(game, key));
@@ -113,7 +115,11 @@ export async function keyChoices(ctx: Context, settings: HarnessSettings, key: s
   if (key.startsWith(LOGO_PREFIX)) {
     const logotype = settings.resourceGeneration.find((m) => m.name === LOGOTYPE_METHOD);
     const fonts = settings.resourceGeneration.find((m) => m.name === FONT_CATALOG);
-    return logotype && usable(logotype) && usable(fonts) ? [await choiceOf(ctx, logotype, keyed.spec, undefined)] : [];
+    if (!logotype || !usable(logotype) || !usable(fonts)) return [];
+    const imageMethod = gameImageMethod(settings, keyed.rows);
+    const image = settings.resourceGeneration.find((m) => m.name === imageMethod);
+    const drawn = image && usable(image) ? [await choiceOf(ctx, image, keyed.spec, undefined)] : [];
+    return [...drawn, await choiceOf(ctx, logotype, keyed.spec, undefined)];
   }
   return methodChoices(ctx, settings, keyed.type, keyed.spec, gameImageMethod(settings, keyed.rows));
 }
@@ -154,18 +160,20 @@ export async function installedOnHost(ctx: Context, method: GenerationMethod): P
  * installed (`installedOnHost`, and for `rig-2d` and `trellis2` `flux2-klein` too, which they call, and for `logotype`
  * `font-catalog`, whose fonts it letters with), the methods of
  * those that are not installed, and the temporary method when it is not installed either, as the key is then made only
- * with the temporary method or with none (`production.md` `## method`). Empty for a key with an installed method or with
- * no method other than the temporary method.
+ * with the temporary method or with none (`production.md` `## method`). A logo key drawn with an image method needs
+ * that method and `font-catalog`, whose lettering it draws, and its `logotype` counts only when it has no image method
+ * (`production.md` `## logo`). Empty for a key with an installed method or with no method other than the temporary
+ * method.
  */
 export async function uninstalledMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<string[]> {
   const choices = await chooseMethods(ctx, settings, game, key);
   const names = choices.filter((c) => c.temporary !== true).map((c) => c.name);
-  const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
   const missing: string[] = [];
-  const fonts = settings.resourceGeneration.find((m) => m.name === FONT_CATALOG);
+  const drawn = key.startsWith(LOGO_PREFIX) && names.some((name) => name !== LOGOTYPE_METHOD);
   for (const method of settings.resourceGeneration.filter((m) => names.includes(m.name))) {
-    const calls = NEEDS_IMAGE_METHOD.has(method.name) ? image : method.name === LOGOTYPE_METHOD ? fonts : undefined;
-    const needs = calls !== undefined ? [method, calls] : [method];
+    // the lettering alone is the logo only on a host whose image method cannot draw it
+    if (drawn && method.name === LOGOTYPE_METHOD) continue;
+    const needs = methodNeeds(settings, method, key);
     const lacking: string[] = [];
     for (const m of needs) if (!(await installedOnHost(ctx, m))) lacking.push(m.name);
     if (lacking.length === 0) return [];
@@ -174,6 +182,16 @@ export async function uninstalledMethods(ctx: Context, settings: HarnessSettings
   const temporary = choices.find((c) => c.temporary === true);
   if (missing.length > 0 && temporary?.notInstalled === true && !missing.includes(temporary.name)) missing.push(temporary.name);
   return missing;
+}
+
+/**
+ * What a method of a key needs installed: the method, with `flux2-klein` for `rig-2d` and `trellis2`, which call it, and
+ * `font-catalog` for `logotype` and for an image method drawing a logo, which letter with its fonts.
+ */
+function methodNeeds(settings: HarnessSettings, method: GenerationMethod, key: string): GenerationMethod[] {
+  const calls = NEEDS_IMAGE_METHOD.has(method.name) ? IMAGE_METHOD : method.name === LOGOTYPE_METHOD || key.startsWith(LOGO_PREFIX) ? FONT_CATALOG : null;
+  const called = calls === null ? undefined : settings.resourceGeneration.find((m) => m.name === calls);
+  return called !== undefined ? [method, called] : [method];
 }
 
 async function choiceOf(ctx: Context, method: GenerationMethod, spec: Spec, image: GenerationMethod | undefined): Promise<MethodChoice> {

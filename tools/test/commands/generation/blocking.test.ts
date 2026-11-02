@@ -91,6 +91,33 @@ describe('blockingMethods', () => {
     expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['sprite']);
   });
 
+  it('needs the image method and font-catalog for a logo, and font-catalog alone only where no image method draws it', async () => {
+    const LOGOTYPE = { name: 'logotype', kind: 'procedural', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const FONTS = { name: 'font-catalog', kind: 'catalog', resourceTypes: ['font'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ result: 'ok' }] };
+    const logoGame = async (methods: Record<string, unknown>[]): Promise<{ ws: TestWorkspace; ctx: Context; game: GameRepo }> => {
+      const ws = makeWorkspace({ resourceGeneration: methods, imageMethod: 'sprite' });
+      makeGame(ws, 'g', { 'resource/resources.csv': `${RESOURCES}image/logo/ko,logo,size=1024x512;alpha=true,placeholder,,,,,,,,\n` });
+      const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+      return { ws, ctx, game: await ctx.game('g') };
+    };
+    const drawn = await logoGame([IMAGE, SPRITE, LOGOTYPE, FONTS]);
+    expect(await blockingMethods(drawn.ctx, drawn.game, 'image/logo/ko')).toEqual(['sprite', 'font-catalog']);
+    // the fonts alone letter it, but the image method draws the logo
+    install(drawn.ws, 'font-catalog');
+    expect(await blockingMethods(drawn.ctx, drawn.game, 'image/logo/ko')).toEqual(['sprite']);
+    install(drawn.ws, 'sprite');
+    expect(await blockingMethods(drawn.ctx, drawn.game, 'image/logo/ko')).toEqual([]);
+    // the image method alone has no lettering to draw
+    const unlettered = await logoGame([IMAGE, SPRITE, LOGOTYPE, FONTS]);
+    install(unlettered.ws, 'sprite');
+    expect(await blockingMethods(unlettered.ctx, unlettered.game, 'image/logo/ko')).toEqual(['font-catalog']);
+    // a host whose image method cannot be used letters the logo with the fonts
+    const lettered = await logoGame([IMAGE, { ...SPRITE, measured: [{ result: 'failed' }] }, LOGOTYPE, FONTS]);
+    expect(await blockingMethods(lettered.ctx, lettered.game, 'image/logo/ko')).toEqual(['font-catalog']);
+    install(lettered.ws, 'font-catalog');
+    expect(await blockingMethods(lettered.ctx, lettered.game, 'image/logo/ko')).toEqual([]);
+  });
+
   it('treats a marker installed from other pins as not installed', async () => {
     const { ws, ctx, game } = await open();
     const dir = join(ws.root, '.ogw', 'generation', 'audio');

@@ -25,7 +25,12 @@ export async function artDirectionGaps(game: GameRepo): Promise<string[] | null>
 
 /** Names of `records/setup/name.md` by language tag; null when the file does not exist. */
 export async function readGameNames(game: GameRepo): Promise<Map<string, string> | null> {
-  const path = join(game.root, NAME_FILE);
+  return readGameNamesAt(game.root);
+}
+
+/** `readGameNames` of the checkout at `root`, such as the checkout of an instance. */
+export async function readGameNamesAt(root: string): Promise<Map<string, string> | null> {
+  const path = join(root, NAME_FILE);
   if (!exists(path)) return null;
   const names = new Map<string, string>();
   for (const line of (await readFile(path, 'utf8')).split(/\r?\n/)) {
