@@ -277,6 +277,11 @@
           "revision": "611813b3f9d2069073cca8587e99647f8f184707"
         },
         {
+          "kind": "patch",
+          "source": "tools/patches/sprite-gen-codex-ignore-user-config.patch",
+          "sha256": "6ad699ce56d144a2e170328859c79f633242dd85389ba1028468c71f1e882c2a"
+        },
+        {
           "kind": "pip",
           "source": "pillow==12.3.0,numpy==2.5.4"
         }
