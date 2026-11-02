@@ -102,7 +102,7 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
 
 ## resource request
 
-The content agent requests, and in `game-loop` and `build`, `ogw loop dispatch` run by the lead agent requests with `--pending`. The request command is `ogw resource request <game> (<key>... | --pending) [--see <key>...] [--base <key>]`. The tool changes the `status` of the requested rows to `requested`, writes the request file and commits. A `temporary` row keeps its `status` and its file until `ogw resource finalize` replaces them. The request file is `records/loops/<run>/resource-requests/<unix ms>.md` in the loop, and in build the path that `build` defines.
+The content agent requests, and in `game-loop` and `build`, `ogw loop dispatch` run by the lead agent requests with `--pending`. The request command is `ogw resource request <game> (<key>... | --pending) [--see <key>...] [--base <key>]`. The tool changes the `status` of the requested rows to `requested`, writes the request file and commits. A `temporary` row keeps its `status` and its file until `ogw resource finalize` replaces them. A `final` row requested again becomes `requested` but keeps its files, while they fit its `spec`, until `ogw resource finalize` replaces them, so a remake that fails leaves the game as it was; `ogw resource sync` makes the placeholder only of a `requested` row with no `method`, or whose files no longer fit its `spec`. The request file is `records/loops/<run>/resource-requests/<unix ms>.md` in the loop, and in build the path that `build` defines.
 
 - `--pending`: requests all of the rows below
   - rows whose `status` is `placeholder`
