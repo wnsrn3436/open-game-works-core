@@ -153,7 +153,7 @@ describe('ogw generation methods', () => {
     expect(await given('sub', `${RESOURCES}${row('image/a', 'final', '')}\n`, 'image/hero')).toEqual(['sub', 'flux2-klein temporary']);
   });
 
-  it('gives a logo key only the logotype method, and a logotype logo does not fix the image method of the game', async () => {
+  it('gives a logo key the image method of the game and the logotype method, and a logotype logo does not fix the image method of the game', async () => {
     const sub = { name: 'sub', kind: 'external-service', provider: 'codex', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
     const logotype = { name: 'logotype', kind: 'procedural', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
     const fonts = { name: 'font-catalog', kind: 'catalog', resourceTypes: ['font'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
@@ -166,7 +166,8 @@ describe('ogw generation methods', () => {
       if (out.code !== 0) throw new Error(out.stderr);
       return (JSON.parse(out.stdout) as { methods: { name: string; temporary?: boolean }[] }).methods.map((m) => `${m.name}${m.temporary ? ' temporary' : ''}`);
     };
-    expect(await names('image/logo/en')).toEqual(['logotype']);
+    // the image method draws the lettering of the logotype method again; the logotype lettering is kept when no drawing keeps every character
+    expect(await names('image/logo/en')).toEqual(['sub', 'logotype']);
     // the final logo comes first in the list but the image method of the game stays the host's
     expect(await names('image/hero')).toEqual(['sub', 'flux2-klein temporary']);
     // the logotype method letters with the fonts of font-catalog, so it is not usable without it
@@ -174,6 +175,12 @@ describe('ogw generation methods', () => {
     makeGame(unmeasured, 'g', { 'resource/resources.csv': list });
     const none = await ogw(unmeasured, ['generation', 'methods', 'g', 'image/logo/en', '--json']);
     expect((JSON.parse(none.stdout) as { methods: unknown[] }).methods).toEqual([]);
+    // without a usable image method the lettering of the logotype method is the logo
+    const unusableImage = makeWorkspace({ resourceGeneration: [...methods(), { ...sub, measured: [{ result: 'failed' }] }, logotype, fonts], imageMethod: 'sub' });
+    installLocal(unusableImage.root, [...methods(), sub, logotype, fonts]);
+    makeGame(unusableImage, 'g', { 'resource/resources.csv': list });
+    const lettered = await ogw(unusableImage, ['generation', 'methods', 'g', 'image/logo/en', '--json']);
+    expect((JSON.parse(lettered.stdout) as { methods: { name: string }[] }).methods.map((m) => m.name)).toEqual(['logotype']);
   });
 
   it('gives the temporary method only when flux2-klein is usable, and for an image type only when flux2-klein lists it', async () => {

@@ -102,7 +102,9 @@ export async function keySpec(game: GameRepo, key: string): Promise<{ type: stri
 
 /**
  * Methods a resource key can use and the stage of each (`production.md` `## method`). A logo key `image/logo/<language>`
- * takes only the logotype method, as image generation does not letter text reliably.
+ * takes the image method of the game, which draws the lettering of the logotype method again in the world's hand, and
+ * the logotype method, whose lettering is kept when no drawing keeps every character (`production.md` `## logo`); both
+ * need the logotype method, as image generation does not letter text reliably without its lettering to follow.
  */
 export async function chooseMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<MethodChoice[]> {
   return keyChoices(ctx, settings, key, await keySpec(game, key));
@@ -113,7 +115,11 @@ export async function keyChoices(ctx: Context, settings: HarnessSettings, key: s
   if (key.startsWith(LOGO_PREFIX)) {
     const logotype = settings.resourceGeneration.find((m) => m.name === LOGOTYPE_METHOD);
     const fonts = settings.resourceGeneration.find((m) => m.name === FONT_CATALOG);
-    return logotype && usable(logotype) && usable(fonts) ? [await choiceOf(ctx, logotype, keyed.spec, undefined)] : [];
+    if (!logotype || !usable(logotype) || !usable(fonts)) return [];
+    const imageMethod = gameImageMethod(settings, keyed.rows);
+    const image = settings.resourceGeneration.find((m) => m.name === imageMethod);
+    const drawn = image && usable(image) ? [await choiceOf(ctx, image, keyed.spec, undefined)] : [];
+    return [...drawn, await choiceOf(ctx, logotype, keyed.spec, undefined)];
   }
   return methodChoices(ctx, settings, keyed.type, keyed.spec, gameImageMethod(settings, keyed.rows));
 }
