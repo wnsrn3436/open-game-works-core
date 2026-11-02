@@ -278,7 +278,7 @@ describe('theme only', () => {
       'resource/rig_animation_2d/hero.tscn': '[gd_scene format=3]\ntheme_override_constants/x = 1\n',
     });
     expect(lines(await themeOnly.run(sc))).toEqual([
-      'resource/scene/lobby/main.tscn:2 | theme only: StyleBoxFlat; panel and button styles are StyleBoxTexture of the theme',
+      'resource/scene/lobby/main.tscn:2 | theme only: StyleBoxFlat; panel and button styles are StyleBoxTexture or StyleBoxEmpty of the theme',
       'resource/scene/lobby/main.tscn:4 | theme only: theme property; the theme of the game applies to every node',
       'resource/scene/lobby/main.tscn:7 | theme only: theme_override_font_sizes/font_size sets a style of its own; give the node a theme_type_variation of the theme',
       'resource/scene/lobby/main.tscn:8 | theme only: theme_override_styles/panel sets a style of its own; give the node a theme_type_variation of the theme',

@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, isNotFound } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
-import { commitPaths, gitRaw } from '../../../lib/git.ts';
+import { commitPaths, git, gitRaw, showFile } from '../../../lib/git.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { openRun } from '../../../lib/runstate.ts';
 import { FileChanges } from './files.ts';
-import { ALWAYS_FINAL, findRow, formatList, LIST_PATH, parseKey, readList, type ResourceRow } from './list.ts';
+import { ALWAYS_FINAL, findRow, formatList, keyFiles, LIST_PATH, parseKey, parseList, readList, type ResourceRow } from './list.ts';
 import { MIN_NINE_SLICE_SIDE, smallNineSlice } from './spec.ts';
 
 export interface RequestOptions {
@@ -116,6 +116,30 @@ function requestPath(root: string, place: { dir: string; prefix: string }): stri
   return `${place.dir}/${place.prefix}${String(ms)}.md`;
 }
 
+/**
+ * The `spec` that the key's files were made for: its `spec` in the last commit that changed them. Null when no commit holds
+ * them or that commit's list cannot be read.
+ */
+async function madeSpec(root: string, key: string): Promise<string | null> {
+  const files = await keyFiles(root, key);
+  if (files.length === 0) return null;
+  const commit = (await git(root, ['log', '-1', '--format=%H', '--', ...files.map((f) => f.path)])).trim();
+  const text = commit === '' ? null : await showFile(root, commit, LIST_PATH);
+  if (text === null) return null;
+  try {
+    return findRow(parseList(text.toString('utf8'), `${commit}:${LIST_PATH}`), key)?.spec ?? null;
+  } catch (error) {
+    if (error instanceof OgwError) return null;
+    throw error;
+  }
+}
+
+/** Keys that a request file of the open run holds; none when no run is open. */
+export async function requestedInOpenRun(game: GameRepo): Promise<Set<string>> {
+  const run = await openRun(game);
+  return run ? new Set((await writtenKeys(game.root, requestPlace(run))).keys()) : new Set();
+}
+
 /** `ogw resource request` (`resource` skill `## resource request`). */
 export async function requestResources(game: GameRepo, options: RequestOptions, env: NodeJS.ProcessEnv): Promise<RequestResult> {
   const run = await openRun(game);
@@ -144,8 +168,10 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
   if (keys.length === 0) return { path: null, keys, leftOut };
   for (const key of keys) {
     const row = findRow(rows, key) as ResourceRow;
-    // a temporary row keeps its file until finalize replaces it
-    if (row.status !== 'temporary') row.status = 'requested';
+    // a temporary row, and a final row asked again for the spec its files were made for, keep their files until finalize
+    // replaces them, so a remake that fails leaves the game as it was
+    if (row.status === 'temporary' || (row.status === 'final' && (await madeSpec(game.root, key)) === row.spec)) continue;
+    row.status = 'requested';
   }
   const path = requestPath(game.root, place);
   const changes = new FileChanges();

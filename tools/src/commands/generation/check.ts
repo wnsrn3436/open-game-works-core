@@ -9,7 +9,7 @@ import { exists } from '../../lib/fsx.ts';
 import { providerCliChecks } from '../env/lib/hostcheck.ts';
 import { LIST_PATH, readList } from '../resource/lib/list.ts';
 import { emptySpec } from '../resource/lib/spec.ts';
-import { gameImageMethod, IMAGE_METHOD, IMAGE_TYPES, methodChoices, takesTemporary } from './lib/select.ts';
+import { gameImageMethod, IMAGE_METHOD, IMAGE_TYPES, LOGOTYPE_METHOD, methodChoices, takesTemporary } from './lib/select.ts';
 
 export type TypeStatus = 'ok' | 'unmeasured' | 'missing';
 
@@ -40,7 +40,7 @@ function lastOk(method: GenerationMethod): MeasuredStep | null {
  * `ogw generation methods` gives it), the status and the duration come only from the methods of the type named there.
  */
 export function typeRow(type: string, methods: readonly GenerationMethod[], count: number | null, makers?: readonly string[]): TypeRow {
-  const own = methods.filter((m) => m.resourceTypes.includes(type));
+  const own = methods.filter((m) => m.resourceTypes.includes(type) && m.name !== LOGOTYPE_METHOD);
   const withOk = own.flatMap((m) => {
     const step = lastOk(m);
     return step ? [{ name: m.name, step }] : [];

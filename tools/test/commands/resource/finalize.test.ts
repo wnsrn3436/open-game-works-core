@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogEntries } from '../../../src/commands/generation/api.ts';
 import { combinedAttribution, combinedLicense, soundShape } from '../../../src/commands/resource/lib/finalize.ts';
 import { parseSpec } from '../../../src/commands/resource/lib/spec.ts';
+import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { ogw, commitAll } from '../../helpers/workspace.ts';
 import { listCsv, makeFixture, measuredMethods, pcmWav, pixels, png, readList, realFfmpegs, rowOf, silence, sine, translationCsv, wavLengthMs, type Fixture, type Row } from './fixture.ts';
 
@@ -528,8 +529,8 @@ describe('ogw resource finalize', () => {
     await sync(f);
     const file = touch(f, 'Body.ttf');
     vi.mocked(catalogEntries).mockResolvedValueOnce([
-      { path: `${file}.other`, license: 'X', source: 'x', attribution: 'x', charset: [] },
-      { path: file, license: 'OFL-1.1', source: 'https://github.com/google/fonts/blob/abc/ofl/body/Body.ttf', attribution: 'Copyright Body', charset: ['latin'] },
+      { path: `${file}.other`, license: 'X', source: 'x', attribution: 'x', charset: [], style: [] },
+      { path: file, license: 'OFL-1.1', source: 'https://github.com/google/fonts/blob/abc/ofl/body/Body.ttf', attribution: 'Copyright Body', charset: ['latin'], style: [] },
     ]);
     const run = await finalize(f, ['font/body', '--method', 'font-catalog', '--file', file, '--inputs', 'icon/a']);
     expect(run.stderr).toBe('');
@@ -551,14 +552,14 @@ describe('ogw resource finalize', () => {
     const one = touch(f, 'one.wav');
     const two = touch(f, 'two.wav');
     const argv = ['sfx/hit', '--method', 'sfx-catalog', '--file', one, two, '--bus', 'Sfx'];
-    vi.mocked(catalogEntries).mockResolvedValueOnce([{ path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [] }]);
+    vi.mocked(catalogEntries).mockResolvedValueOnce([{ path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [], style: [] }]);
     const before = snapshot(f);
     const bad = await finalize(f, argv);
     expect(bad.stderr).toContain(`--file ${two} is not a path ogw generation list sfx-catalog gives`);
     expect(snapshot(f)).toBe(before);
     vi.mocked(catalogEntries).mockResolvedValueOnce([
-      { path: two, license: 'CC-BY-4.0', source: 'https://s/2', attribution: 'Bea', charset: [] },
-      { path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [] },
+      { path: two, license: 'CC-BY-4.0', source: 'https://s/2', attribution: 'Bea', charset: [], style: [] },
+      { path: one, license: 'CC0-1.0', source: 'https://s/1', attribution: '', charset: [], style: [] },
     ]);
     const run = await finalize(f, argv);
     expect(run.stderr).toBe('');
@@ -613,6 +614,71 @@ describe('ogw resource finalize', () => {
     expect(bare.stderr).toContain('--inputs needs image/ui_kit: icon keys are made from the UI kit sheet');
     const kit = await finalize(f, await okPng(f, ['icon/coin', '--method', 'flux2-klein', '--inputs', 'image/ui_kit']));
     expect(kit.stderr).toBe('');
+  });
+
+  it('takes a logo only from the logotype method and only with alpha=true in its spec', async () => {
+    const f = setup([
+      { key: 'image/logo/ko', spec: 'size=4x4', status: 'requested' },
+      { key: 'image/logo/en', spec: 'size=4x4;alpha=true', status: 'requested' },
+    ]);
+    await sync(f);
+    const clear = work(f, 'logo.png');
+    await png(clear, 4, 4, [250, 200, 120, 255], 1);
+    const opaqueSpec = await finalize(f, ['image/logo/ko', '--method', 'logotype', '--file', clear]);
+    expect(opaqueSpec.stderr).toContain('image/logo/ko: a logo has alpha=true in spec, so that it is fitted whole and not cropped');
+    const generated = await finalize(f, ['image/logo/en', '--method', 'flux2-klein', '--file', clear]);
+    expect(generated.code).toBe(1);
+    const lettered = await finalize(f, ['image/logo/en', '--method', 'logotype', '--file', clear]);
+    expect(lettered.stderr).toBe('');
+    expect(rowOf(f.game, 'image/logo/en')).toMatchObject({ status: 'final', method: 'logotype' });
+  });
+
+  describe('a final row asked again', () => {
+    const made = (key: string, method = 'flux2-klein'): Row => ({ key, spec: 'size=4x4', status: 'final', method, source: 'generated', license: 'Apache-2.0' });
+    const firstPixel = async (f: Fixture, key: string): Promise<number[]> => [...(await pixels(join(f.game, `resource/${key}.png`))).data.subarray(0, 4)];
+
+    async function madeGame(rows: Row[], settingsPatch: Record<string, unknown> = {}): Promise<Fixture> {
+      const f = setup(rows, {}, settingsPatch);
+      for (const row of rows) if (row.status === 'final') await png(join(f.game, `resource/${String(row.key)}.png`), 4, 4, [9, 9, 9, 255]);
+      await sync(f);
+      await changeRuns({ name: 'g', root: f.game, mainRoot: f.game, commonDir: join(f.game, '.git'), inWorktree: false }, (runs) => {
+        runs.push(newRunState({ name: 'loop-1', kind: 'loop', branch: 'loop/loop-1', baseCommit: 'x' }));
+      });
+      return f;
+    }
+
+    it('stays in the game through sync until finalize replaces it, and a final row no request holds is refused', async () => {
+      const f = await madeGame([made('icon/a'), made('icon/b')]);
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'icon/a'])).stderr).toBe('');
+      await sync(f);
+      expect(rowOf(f.game, 'icon/a').status).toBe('final');
+      expect(await firstPixel(f, 'icon/a')).toEqual([9, 9, 9, 255]);
+      const run = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
+      expect(run.stderr).toBe('');
+      expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'flux2-klein' });
+      expect(await firstPixel(f, 'icon/a')).toEqual([1, 2, 3, 255]);
+      const refused = await finalize(f, await okPng(f, ['icon/b', '--method', 'flux2-klein']));
+      expect(refused.stderr).toContain('icon/b status is final, not requested');
+      expect(await firstPixel(f, 'icon/b')).toEqual([9, 9, 9, 255]);
+    });
+
+    it('is not replaced with the temporary method', async () => {
+      const f = await madeGame([made('icon/a', 'sprite-gen-codex')], { imageMethod: 'sprite-gen-codex' });
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'icon/a'])).stderr).toBe('');
+      const run = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
+      expect(run.stderr).toContain('icon/a is final: the temporary method flux2-klein does not replace it');
+      expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'sprite-gen-codex' });
+      expect(await firstPixel(f, 'icon/a')).toEqual([9, 9, 9, 255]);
+    });
+
+    it('is finalized when sync turned it back to placeholder, as a text voice whose line changed', async () => {
+      const f = await madeGame([{ key: 'icon/p', spec: 'size=4x4', status: 'placeholder' }]);
+      mkdirSync(join(f.game, 'records/loops/loop-1/resource-requests'), { recursive: true });
+      writeFileSync(join(f.game, 'records/loops/loop-1/resource-requests/100.md'), '## keys\n\nicon/p\n\n## see\n\nnone\n\n## base\n\nnone\n');
+      const run = await finalize(f, await okPng(f, ['icon/p', '--method', 'flux2-klein']));
+      expect(run.stderr).toBe('');
+      expect(rowOf(f.game, 'icon/p').status).toBe('final');
+    });
   });
 
   it('removes the other files of the key', async () => {

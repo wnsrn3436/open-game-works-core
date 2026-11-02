@@ -21,7 +21,7 @@ The commands below handle the client that is not a bot client through the `QACor
 
 | command | work |
 |---|---|
-| `ogw input <instance> <command> <argument...>` | Puts in one real input. It enters by the same path as human input. It accepts only the `QACore` built-in commands marked as input. See `ogw input --help` for the commands, arguments and timed input script format |
+| `ogw input <instance> <command> <argument...>` | Puts in one real input. It enters by the same path as human input. It accepts the `QACore` built-in commands marked as input, and `click_anchor`, a left mouse click at the center of a visible anchor (the mouse form of `tap_anchor`). See `ogw input --help` for the commands, arguments and timed input script format |
 | `ogw input <instance> --script <file> [--video]` | Puts in the inputs of a timed input script at their written times at real speed, and returns the time and result of each input. With `--video`, it also returns the video of that period in the same format as `ogw capture --video` |
 | `ogw capture <instance> [--video <ms>]` | Captures one screen as a JPEG (`captures/<instance id>-<unix ms>.jpg`; `.png` from a core before 0.3.1). With `--video`, it keeps a video of that duration. A video is a `captures/<instance id>-<unix ms>-video/` folder that holds images numbered with 5 digits from `frame-00000.jpg`, in capture order |
 | `ogw log <instance>` | Shows the error log |
@@ -38,6 +38,7 @@ The commands below handle the client that is not a bot client through the `QACor
 The play agent and the judge agent play an instance as below.
 
 - Inputs go in only through `ogw input`
+- Inputs are those of the devices `## controls` of `play-guide.md` names. On a game played with keys and the mouse, the agent puts in no touch input (`tap`, `tap_anchor`, `drag`, `touch_*`), as the game would show it the touch input prompts, which its players never see: it presses a UI element with a key or `ogw input <instance> click_anchor <anchor> [<anchor key>]`, and drags with `mouse_down left`, `mouse_move` and `mouse_up left` in a timed input script, or in `input` lines of `ogw step --stream` in a `step` scene
 - For inputs pressed at the same time, the agent holds one down with a `_down` command, puts in the other input, and releases it with an `_up` command. e.g. attacking while moving, joystick and button
 - For each scene, the agent plays in the mode that `## play mode` of that instance's `play-guide.md` (in the input file) sets
   - `free`: puts in inputs as it goes

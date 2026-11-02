@@ -105,7 +105,7 @@ describe('finding sources', () => {
           failures: [
             ui('low contrast UICore/Panel/A/Label: 1.83:1 in prefab/match/hud_panel (ko, macbook_air_13, match.open_match, text scale 1000)'),
             ui('low contrast UICore/Panel/B/Score: 2.56:1 in prefab/match/hud_panel (en, display_16_9, match.open_pause, text scale 1300)'),
-            ui('flat panel UICore/Panel/MenuPanel/Button: 97% one color in prefab/menu/menu_panel (ko, display_16_9, first screen, text scale 1000)'),
+            ui('empty panel UICore/Panel/MenuPanel/Button: 97% empty in prefab/menu/menu_panel (ko, display_16_9, first screen, text scale 1000)'),
             ui('5 text sizes (12, 14, 18, 24, 40 px), more than 4 in scene/result/result (ko, display_16_9, first screen, text scale 1000)'),
             ui('gamepad focus does not reach A B after menu.open in prefab/menu/menu_panel (ko, display_16_9, gamepad)'),
             ui('menu.open failed: no such command (ko, display_16_9, first screen, text scale 1000)'),
@@ -118,7 +118,7 @@ describe('finding sources', () => {
     expect(out.map((f) => [f.id, f.severity, f.owner])).toEqual([
       ['low-contrast-prefab-match-hud-panel', 'major', 'client content'],
       ['low-contrast-prefab-match-hud-panel', 'major', 'client content'],
-      ['flat-panel-prefab-menu-menu-panel', 'major', 'client content'],
+      ['empty-panel-prefab-menu-menu-panel', 'major', 'client content'],
       ['text-sizes-scene-result-result', 'major', 'client content'],
       ['gamepad-focus-prefab-menu-menu-panel', 'major', 'client content'],
       // a failure that names no kind or no prefab or scene, and another check, are the lead agent's to fill

@@ -45,11 +45,43 @@ describe('ogw resource request', () => {
     expect(path).toMatch(/^records\/loops\/loop-1\/resource-requests\/[0-9]+\.md$/);
     expect(readFileSync(join(f.game, path), 'utf8')).toBe('## keys\n\nicon/a\nicon/c\n\n## see\n\nicon/c\n\n## base\n\nicon/c\n');
     expect(rowOf(f.game, 'icon/a').status).toBe('requested');
+    // a final row with no committed file: nothing tells the spec it was made for
     expect(rowOf(f.game, 'icon/c').status).toBe('requested');
     expect(log(f)).toBe('resource request: icon/a icon/c');
     // The commit is made with the command's env, not process.env.
     expect(sh(f.game, 'git', ['log', '-1', '--format=%an %ae'])).toBe('ogw-test ogw-test@example.com\n');
     expect(sh(f.game, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('keeps a final row asked again for the spec its files were made for, and makes it requested when its spec changed', async () => {
+    const made = (key: string, spec: string): Record<string, string> => ({ key, spec, status: 'final', method: 'flux2-klein', source: 'generated', license: 'Apache-2.0' });
+    const f = makeFixture({
+      'resource/icon/c.png': 'MADE',
+      'resource/icon/e.png': 'MADE',
+      'resource/resources.csv': listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=8x8')]),
+    });
+    await openRun(f, {});
+    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=16x16')]));
+    const run = await ogw(f.ws, ['resource', 'request', 'g', 'icon/c', 'icon/e']);
+    expect(run.stderr).toBe('');
+    expect(rowOf(f.game, 'icon/c')).toMatchObject({ status: 'final', method: 'flux2-klein', license: 'Apache-2.0' });
+    expect(rowOf(f.game, 'icon/e')).toMatchObject({ status: 'requested', spec: 'size=16x16' });
+    expect(requestFileKeys(readFileSync(join(f.game, run.stdout.trim()), 'utf8'))).toEqual(['icon/c', 'icon/e']);
+  });
+
+  it('makes a final row requested when its spec changed in a commit after its files, such as an earlier request of another key', async () => {
+    const made = (key: string, spec: string): Record<string, string> => ({ key, spec, status: 'final', method: 'moss-sfx', source: 'generated', license: 'Apache-2.0' });
+    const f = makeFixture({
+      'resource/sfx/hit.wav': 'MADE',
+      'resource/resources.csv': listCsv([made('sfx/hit', 'length=200'), { key: 'icon/f', spec: 'size=8x8', status: 'placeholder' }]),
+    });
+    await openRun(f, {});
+    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('sfx/hit', 'length=200;variants=3'), { key: 'icon/f', spec: 'size=8x8', status: 'placeholder' }]));
+    expect((await ogw(f.ws, ['resource', 'request', 'g', 'icon/f'])).stderr).toBe('');
+    // that request committed the whole list, the changed spec of sfx/hit with it
+    expect(rowOf(f.game, 'sfx/hit')).toMatchObject({ status: 'final', spec: 'length=200;variants=3' });
+    expect((await ogw(f.ws, ['resource', 'request', 'g', 'sfx/hit'])).stderr).toBe('');
+    expect(rowOf(f.game, 'sfx/hit').status).toBe('requested');
   });
 
   it('requests pending rows: placeholder rows and requested rows not in a request file of this run', async () => {

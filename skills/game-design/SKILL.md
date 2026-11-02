@@ -41,13 +41,16 @@ It has the headings below in this order. Under a heading not decided yet, write 
 | `## new user` | The initial state of a new user and the server request that makes it |
 | `## feel targets` | The target table of presentation and response |
 | `## tuning targets` | The target table of balance and pacing |
-| `## art direction` | Style, hex palette with a role per color (background, panel, accent, danger, reward, text), outline, proportions, light direction, camera view, screen density, representative resource keys, and the style block: one English paragraph that every image prompt starts with. Style, palette, mood and character models follow `records/setup/art-direction.md` |
+| `## art direction` | Style, hex palette with a role per color (background, accent, danger, reward, text, and what UI text sits on, if anything), outline, proportions, light direction, camera view, screen density, representative resource keys, the play layer (how the player, enemies, pickups and hazards stand out from the play surface in this game), the UI style (what the HUD, buttons, panels, popups and icons are and how they are drawn: the parts and staging of the UI of the presentation game of `records/setup/reference/reference.md` seen with `ogw frames`, drawn in the hand of this game's world), and the style block: one English paragraph that every image prompt starts with. Style, palette, mood and character models follow `records/setup/art-direction.md` |
 | `## audio direction` | Mood of BGM and sound effects, BGM per scene, list of events that make sound |
 | `## terms` | The core nouns the game uses and the words it does not use. Terms to put in the glossary |
 | `## writing style` | Per kind of text the game shows (e.g. notification, system message, button and label, stat and item description, dialogue), the form and tone in each language of game settings `supportedLanguages`, as games made in that language write it, with one example of this game per kind and language. Kinds that read differently get rows of their own (e.g. a state or refusal notification, an event banner, a stat line, a flavor sentence of a description). e.g. ko: a state or refusal notification as a noun phrase (`열쇠 필요`, `동전 부족`), an event banner as an exclamation (`방을 밝혔다!`, `보스 처치!`), a stat change as `행운 +1`, a system message ending in `-습니다`; en: a notification as a short phrase with its verb (`Key needed`, `Bought {name}`), a stat change as `Luck up` |
 | `## core usage` | Registered hooks. The core modules used are kept in game settings `coreModules` |
 | `## code map` | A table with columns `feature`, `files`, `entry point`: per feature of content code, the client and server files and data tables that hold it and the function or scene where it starts |
 
+- `## art direction` and `## audio direction` give this game's look and sound. [commercial quality](commercial-quality.md) says what any look and sound must meet, whatever the theme
+
+- When `## art direction` has no play layer or no UI style, the content agent writes them before it requests art
 - `## feel targets` and `## tuning targets` are tables with the columns `metric`, `min`, `max`, `data`. `metric` is one metric name below, `min` and `max` are integers, and `data` is the data table and column that change that value, or an empty cell when there is none. e.g. `reward_interval_ms` | 30000 | 60000 | `stage.reward_every`
 - A goal that cannot be measured by a metric is not written as a target. When editing, bring the value of `ogw measure` into the range
 - Metrics are calculated from the telemetry and `QAState` of the play instances that `ogw measure` started without a save fixture. When there is no value, the metric is `unknown`. When the number of values is even, the median is the smaller of the two middle values
@@ -58,6 +61,7 @@ It has the headings below in this order. Under a heading not decided yet, write 
 | `input_latency_ms` | The median of the input `latency_ms` values that are not `null` |
 | `no_response_permille` | The number of inputs whose `latency_ms` is `null` × 1000 ÷ the number of inputs. The remainder is dropped |
 | `feedback_per_input` | The mean, to two decimals, of the per-input numbers of feedback kinds whose count in `feedback` is greater than 0 (at most 5) |
+| `feedback_share` | The share, to two decimals, of the inputs that have a feedback kind whose count in `feedback` is greater than 0 |
 | `first_reward_ms` | Per instance, the `play_at` of the first `rewards` (ms elapsed since the telemetry start) minus the free scene time from the telemetry start to the `at` of that reward, and 0 when that is below 0. The median of those values |
 | `reward_interval_ms` | Per instance, the `play_at` difference of each two consecutive `rewards`. The median of all those values |
 | `goal_interval_ms` | The median of `duration_ms` of `goal_intervals` minus the free scene time from its `start_at` to its `end_at`, and 0 when that is below 0 |
@@ -101,6 +105,7 @@ It has all the headings below in this order. Under a heading with no content, wr
 - Do not write evaluative sentences (fun, quality, difficulty assessment, whether it can be cleared)
 - A fact that was not checked gets `unconfirmed`
 - `## play mode`: a scene where input needs a response within a set time (real-time action, realtime match) is `step`, a scene where the time gaps between inputs decide the result (rhythm, combo input) is `script`, and any other scene is `free`
+- The inputs are those of the devices the players use on the first platform of game settings `buildPlatforms`, which the judges' instances run (keys, the mouse and a gamepad on macos, windows and linux; touch on android and ios; on web, the devices the brief names), and `## controls` names those devices. The game shows each device its own input prompts, so an input of another device shows the play agent and the judges screens the players never see. When that platform is a desktop platform, a press of a UI element is a key or `click_anchor <anchor>`, and a drag is `mouse_down left`, `mouse_move` and `mouse_up left` in a timed input script or in `input` lines of `ogw step --stream`; static check `play guide input` blocks a touch input command in `play-guide.md` (`tap_anchor` or a `touch_` command anywhere, and `tap` or `drag` with its positions in a code span or code block or as the command of a timed input script)
 
 ## records
 

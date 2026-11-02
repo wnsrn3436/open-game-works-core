@@ -250,6 +250,10 @@ const STUBS: Record<string, string> = {
     '        return self',
     '    def numpy(self):',
     '        return self',
+    '    def tolist(self):',
+    '        # every sample at STUB_AMPLITUDE (0.5 when not set)',
+    '        value = float(os.environ.get("STUB_AMPLITUDE", "0.5"))',
+    '        return [[value] * self.shape[-1] for _ in range(self.shape[0])]',
     '    def unsqueeze(self, dim):',
     '        return Tensor((1,) + self.shape)',
     '    def __getitem__(self, index):',
@@ -468,6 +472,15 @@ describe.runIf(python !== null)('drivers against stub libraries', () => {
     expect(readFileSync(join(run.dir, 'out', 'ogw-error.txt'), 'utf8')).toMatch(/^FileNotFoundError: /);
     expect(readFileSync(join(run.dir, 'record.json.loads'), 'utf8')).toBe('load\n');
     expect(run.record).toMatchObject({ call: { seed: 2 } });
+  });
+
+  it('moss-sfx fails a sound that came back near silent, with the reason, and writes no sound', () => {
+    // 0.005 is -46 dBFS; 0.02 is -34 dBFS
+    const quiet = moss(500, '42', { STUB_AMPLITUDE: '0.005' });
+    expect(quiet.code).toBe(1);
+    expect(readdirSync(join(quiet.dir, 'out'))).toEqual(['ogw-error.txt']);
+    expect(readFileSync(join(quiet.dir, 'out', 'ogw-error.txt'), 'utf8')).toBe('RuntimeError: near silent: its loudest 20 ms is -46.0 dBFS, under -40 dBFS; make it again with another seed\n');
+    expect(moss(500, '42', { STUB_AMPLITUDE: '0.02' })).toMatchObject({ code: 0, stderr: '' });
   });
 
   it('moss-sfx tells at least 0.1 s, uses a random seed for -1, and keeps torch.compile on CUDA', () => {

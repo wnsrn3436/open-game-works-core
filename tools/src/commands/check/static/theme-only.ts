@@ -14,7 +14,7 @@ function problem(line: string): string | null {
   const trimmed = line.trim();
   if (trimmed.startsWith('theme_override_')) return `${trimmed.split(' ')[0] ?? trimmed} sets a style of its own; give the node a theme_type_variation of the theme`;
   if (/^theme\s*=/.test(trimmed)) return 'theme property; the theme of the game applies to every node';
-  if (/^\[sub_resource type="StyleBoxFlat"/.test(trimmed)) return 'StyleBoxFlat; panel and button styles are StyleBoxTexture of the theme';
+  if (/^\[sub_resource type="StyleBoxFlat"/.test(trimmed)) return 'StyleBoxFlat; panel and button styles are StyleBoxTexture or StyleBoxEmpty of the theme';
   return null;
 }
 

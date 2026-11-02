@@ -4,7 +4,7 @@ import { metricValue, type FreeScenes, type Telemetry } from './metrics.ts';
 
 /** Elements of judge `## fun judgement criteria` and the metrics of their `telemetry` column. */
 export const ELEMENTS: readonly { element: string; metrics: readonly string[]; failureOnly: boolean }[] = [
-  { element: 'game feel', metrics: ['input_latency_ms', 'feedback_per_input'], failureOnly: false },
+  { element: 'game feel', metrics: ['input_latency_ms', 'feedback_share'], failureOnly: false },
   { element: 'tension and release', metrics: [], failureOnly: true },
   { element: 'progression', metrics: ['reward_interval_ms'], failureOnly: false },
   { element: 'one more run', metrics: ['restart_delay_ms'], failureOnly: true },
@@ -35,8 +35,12 @@ export function distance(a: number, b: number): number {
   return scale === 0 ? 0 : Math.abs(a - b) / scale;
 }
 
+/**
+ * `feedback_share` is higher-is-better: every input answers. The number of feedback kinds per input is not compared,
+ * because commercial games budget feedback by consequence (`commercial-quality.md` `## motion and feedback`).
+ */
 function better(metric: string, a: number, b: number): 'A' | 'B' {
-  const higherIsBetter = metric === 'feedback_per_input';
+  const higherIsBetter = metric === 'feedback_share';
   return (higherIsBetter ? a > b : a < b) ? 'A' : 'B';
 }
 

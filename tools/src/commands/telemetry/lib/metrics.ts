@@ -190,6 +190,7 @@ const CALCS: Record<string, Calc> = {
     median(s.flatMap((x) => x.telemetry.inputs.map((i) => i.latency_ms)).filter((v): v is number => v !== null)),
   no_response_permille: noResponsePermille,
   feedback_per_input: (s) => mean(s.flatMap((x) => x.telemetry.inputs.map((i) => feedbackKinds(i.feedback)))),
+  feedback_share: (s) => mean(s.flatMap((x) => x.telemetry.inputs.map((i) => (feedbackKinds(i.feedback) > 0 ? 1 : 0)))),
   first_reward_ms: (s, free) => median(s.map((x) => firstReward(x.telemetry, free)).filter((v): v is number => v !== null)),
   reward_interval_ms: (s) => median(s.flatMap((x) => rewardIntervals(x.telemetry))),
   goal_interval_ms: (s, free) => median(s.flatMap((x) => goalIntervals(x.telemetry, free))),

@@ -35,6 +35,8 @@ function fontRepo(ws: TestWorkspace): { dir: string; commit: string } {
     [
       'name: "Noto Sans"',
       'license: "OFL"',
+      'category: "SANS_SERIF"',
+      'classifications: "DISPLAY"',
       'fonts {',
       '  name: "Noto Sans"',
       '  filename: "NotoSans[wght].ttf"',
@@ -606,18 +608,19 @@ describe('ogw generation list', () => {
     const list = await ogw(ws, ['generation', 'list', 'cat', '--json'], { env });
     expect(list.code).toBe(0);
     const blob = `https://github.com/google/fonts/blob/${REV}`;
-    const plain = { license: 'CC0-1.0', attribution: 'by someone', charset: [] };
+    const plain = { license: 'CC0-1.0', attribution: 'by someone', charset: [], style: [] };
     expect((JSON.parse(list.stdout) as { files: unknown[] }).files).toEqual([
       { path: join(git, 'README.md'), source: `${blob}/README.md`, ...plain },
-      { path: join(git, 'apache', 'x', 'X.ttf'), license: 'Apache-2.0', source: `${blob}/apache/x/X.ttf`, attribution: '', charset: [] },
+      { path: join(git, 'apache', 'x', 'X.ttf'), license: 'Apache-2.0', source: `${blob}/apache/x/X.ttf`, attribution: '', charset: [], style: [] },
       {
         path: join(git, 'ofl', 'notosans', 'NotoSans[wght].ttf'),
         license: 'OFL-1.1',
         source: `${blob}/ofl/notosans/NotoSans%5Bwght%5D.ttf`,
         attribution: 'Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)',
         charset: ['latin', 'menu'],
+        style: ['SANS_SERIF', 'DISPLAY'],
       },
-      { path: join(git, 'ofl', 'notosans', 'Plain.otf'), license: 'OFL-1.1', source: `${blob}/ofl/notosans/Plain.otf`, attribution: '', charset: ['latin', 'menu'] },
+      { path: join(git, 'ofl', 'notosans', 'Plain.otf'), license: 'OFL-1.1', source: `${blob}/ofl/notosans/Plain.otf`, attribution: '', charset: ['latin', 'menu'], style: ['SANS_SERIF', 'DISPLAY'] },
       { path: join(git, 'ofl', 'other', 'Other.ttf'), source: `${blob}/ofl/other/Other.ttf`, ...plain },
       { path: join(dir, 'hf', '1', 'boom', 'a b.wav'), source: `https://huggingface.co/org/sfx/blob/${REV}/boom/a%20b.wav`, ...plain },
       { path: join(dir, 'files', 'pack.zip'), source: 'https://dl/pack.zip', ...plain },

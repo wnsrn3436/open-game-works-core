@@ -70,6 +70,21 @@ export function isInputCommand(name: string): boolean {
   return inputNames.has(name);
 }
 
+/** Inputs that `ogw input` makes of built-in commands, and their arguments (`game-loop` instance.md `## play`). */
+export const TOOL_INPUTS: readonly { name: string; args: string }[] = [
+  {
+    name: 'click_anchor',
+    args: 'anchor name, anchor key (ID name; omit to find without a key): a left mouse click at the center of the visible anchor, the mouse form of tap_anchor',
+  },
+];
+
+const toolInputNames = new Set(TOOL_INPUTS.map((c) => c.name));
+
+/** Whether `ogw input` and a timed input script take the command: an input command or a tool input. */
+export function isPlayInput(name: string): boolean {
+  return inputNames.has(name) || toolInputNames.has(name);
+}
+
 /** Built-in commands `ogw command` does not send. */
 export function isRefusedByCommand(name: string): boolean {
   return (STEP_COMMANDS as readonly string[]).includes(name) || name === 'capture_screen' || name === 'capture_video';
@@ -83,6 +98,8 @@ const PLAY_MAIN_COMMANDS: ReadonlySet<string> = new Set([
   'extract_logs',
   'get_telemetry',
   'get_state',
+  // the anchor rect of `click_anchor`
+  'get_anchor',
   'set_step_mode',
   'step',
 ]);
@@ -116,6 +133,9 @@ export function inputHelp(): string {
     '',
     'input commands (QACore built-in commands with the input mark):',
     ...INPUT_COMMANDS.map((c) => `  ${c.name}: ${c.args}`),
+    '',
+    'tool inputs (made of get_anchor, mouse_down and mouse_up):',
+    ...TOOL_INPUTS.map((c) => `  ${c.name}: ${c.args}`),
     '',
     'coordinates are window pixels; the origin is the top left of the window, as in a capture.',
     '',

@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { agentContext } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
@@ -15,13 +15,16 @@ export async function playAgentFolder(ctx: Context): Promise<string | null> {
 
 /**
  * `captures/` of `ogw capture`, `ogw input --video` and `ogw frames`: in the folder of the play or
- * judge agent, else in the game repo or worktree the instance runs from.
+ * judge agent, else in the game repo or worktree the instance runs from or, for `ogw frames`, the one whose
+ * `records/` holds the video (e.g. the content agent viewing `records/setup/reference/`).
  */
-export async function capturesDir(ctx: Context, instanceId: string | null): Promise<string> {
+export async function capturesDir(ctx: Context, source: { instanceId: string } | { video: string }): Promise<string> {
   const folder = await playAgentFolder(ctx);
   if (folder !== null) return join(folder, 'captures');
-  if (instanceId === null) throw new OgwError('not defined: the captures folder of ogw frames outside a play or judge agent');
-  return join((await readRecord(instanceId, ctx.env)).root, 'captures');
+  if ('instanceId' in source) return join((await readRecord(source.instanceId, ctx.env)).root, 'captures');
+  const at = source.video.lastIndexOf(`${sep}records${sep}`);
+  if (at < 0) throw new OgwError('not defined: the captures folder of ogw frames for a video outside the records/ of a game repo, outside a play or judge agent');
+  return join(source.video.slice(0, at), 'captures');
 }
 
 /**

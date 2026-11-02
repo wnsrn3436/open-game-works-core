@@ -6,10 +6,12 @@ import type { GameRepo } from '../../lib/game.ts';
 import { listJobs } from '../../lib/jobs.ts';
 import { toolProgram } from '../env/api.ts';
 import { installCommand } from './install.ts';
-import { chooseMethods, uninstalledMethods, type MethodChoice } from './lib/select.ts';
+import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice } from './lib/select.ts';
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
 
 export type { CatalogFile, MethodChoice };
+/** The logotype method and the prefix of the logo keys it alone makes (`production.md` `## logo`). */
+export { LOGO_PREFIX, LOGOTYPE_METHOD };
 
 /** Methods a resource key can use and the stage of each, as `ogw generation methods <game> <key>` gives them. */
 export async function generationMethods(ctx: Context, game: GameRepo, resourceKey: string): Promise<MethodChoice[]> {

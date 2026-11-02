@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hardeningRecords } from '../../../src/commands/loop/lib/findings.ts';
@@ -283,6 +283,24 @@ describe('ogw agent: worktree roles', () => {
     expect(sh(worktree, 'git', ['branch', '--show-current']).trim()).toBe(`agent/${id}`);
     expect(log(worktree, `agent/${id}`, 'records/loops/r1/resource-requests/hero-result-runs.json')).toBe('{\n  "runs": []\n}\n');
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('links the reference videos of the checkout, which git does not hold, into the worktree', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, {
+      '.gitignore': '/records/setup/reference/*\n!/records/setup/reference/reference.md\n',
+      'records/setup/reference/reference.md': '## game\nx\n',
+      'records/loops/r1/resource-requests/hero.md': '## keys\n',
+    });
+    writeFileSync(join(root, 'records/setup/reference/clip.mp4'), 'video');
+    const fake = fakeAgentCli(ws, WRITE_OUTPUT);
+    const { id } = await runAgent(ws, ['resource', '--game', 'g', '--input', join(root, 'records/loops/r1/resource-requests/hero.md')], fake.env, root);
+    const reference = join(ws.worktrees, 'g', `agent-${id}`, 'records/setup/reference');
+    expect(lstatSync(join(reference, 'clip.mp4')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(reference, 'clip.mp4'), 'utf8')).toBe('video');
+    expect(lstatSync(join(reference, 'reference.md')).isSymbolicLink()).toBe(false);
+    // git ignores the links as it ignores the videos
+    expect(sh(join(ws.worktrees, 'g', `agent-${id}`), 'git', ['status', '--porcelain', '--untracked-files=all'])).not.toContain('records/setup/reference');
   });
 
   it('fails for a resource request outside the game repo', async () => {

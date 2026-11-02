@@ -6,7 +6,7 @@ import { readText } from '../../lib/fsx.ts';
 import { checkPlayBudget } from '../agent/lib/play-budget.ts';
 import { recordVideo, takesFormat, type VideoCapture, videoDir } from '../capture/capture.ts';
 import { automationRequest } from '../instance/automation.ts';
-import { inputHelp, inputHoldMs, isInputCommand } from '../instance/lib/qa.ts';
+import { inputHelp, inputHoldMs, isPlayInput } from '../instance/lib/qa.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
 
 /** The play commands send with the play token (ogw.md `## runner`). */
@@ -37,7 +37,7 @@ function readScriptStep(value: unknown, index: number, previous: number): Script
   if (typeof at !== 'number' || !Number.isInteger(at) || at < previous) {
     throw scriptError(`${where} atMs is not an integer of at least ${String(previous)}`);
   }
-  if (typeof step.command !== 'string' || !isInputCommand(step.command)) {
+  if (typeof step.command !== 'string' || !isPlayInput(step.command)) {
     throw scriptError(`${where} command is not an input command: ${String(step.command)}`);
   }
   const args = step.args ?? [];
@@ -72,6 +72,35 @@ export function videoSpanMs(steps: readonly ScriptStep[], feedbackWindowMs: numb
   const first = steps[0] as ScriptStep;
   const last = steps[steps.length - 1] as ScriptStep;
   return Math.max(1, last.atMs - first.atMs + inputHoldMs(last.command, last.args, targetFps) + feedbackWindowMs);
+}
+
+/**
+ * `click_anchor`: a left mouse click at the center of the anchor, the mouse form of `tap_anchor` for a game played with
+ * keys and the mouse (`game-loop` instance.md `## play`). `get_anchor`, then `mouse_down` and `mouse_up` of `left` back
+ * to back; it fails as `tap_anchor` does when the anchor is not there or not visible (modal covered included).
+ */
+export async function clickAnchor(ctx: Context, instanceId: string, args: readonly string[]): Promise<{ ok: boolean; result: unknown }> {
+  if (args.length < 1 || args.length > 2) return { ok: false, result: 'click_anchor takes an anchor name and an optional anchor key' };
+  const found = await automationRequest(ctx, instanceId, 'get_anchor', [...args], 'main', PLAY);
+  if (!found.ok) return { ok: false, result: found.result };
+  const anchor = found.result as { found?: unknown; visible?: unknown; rect?: unknown } | null;
+  const rect: unknown[] = Array.isArray(anchor?.rect) ? anchor.rect : [];
+  if (anchor?.found !== true || anchor.visible !== true || rect.length !== 4 || !rect.every((v) => typeof v === 'number')) {
+    return { ok: false, result: 'the anchor is not there or not visible' };
+  }
+  const [x, y, w, h] = rect as [number, number, number, number];
+  const at = [String(x + w / 2), String(y + h / 2)];
+  const down = await automationRequest(ctx, instanceId, 'mouse_down', ['left', ...at], 'main', PLAY);
+  if (!down.ok) return { ok: false, result: down.result };
+  const up = await automationRequest(ctx, instanceId, 'mouse_up', ['left', ...at], 'main', PLAY);
+  return { ok: up.ok, result: up.result };
+}
+
+/** Puts one input of `ogw input` in: a tool input, or an input command sent as it is. */
+async function sendInput(ctx: Context, instanceId: string, command: string, args: readonly string[]): Promise<{ ok: boolean; result: unknown }> {
+  if (command === 'click_anchor') return clickAnchor(ctx, instanceId, args);
+  const response = await automationRequest(ctx, instanceId, command, [...args], 'main', PLAY);
+  return { ok: response.ok, result: response.result };
 }
 
 async function mainStepMode(ctx: Context, instanceId: string): Promise<boolean> {
@@ -129,7 +158,7 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
     }
     const sentAt = Date.now();
     try {
-      const response = await automationRequest(ctx, instanceId, step.command, step.args, 'main', PLAY);
+      const response = await sendInput(ctx, instanceId, step.command, step.args);
       results.push({ ...step, sentAt, ok: response.ok, result: response.result });
     } catch (error) {
       // the client or the control channel is gone (a crash): this step is the last one put in
@@ -147,13 +176,10 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
 
 /** One input command on the main client, as `ogw input <instance> <command> <argument...>` puts it in. */
 export function singleInput(ctx: Context, instanceId: string, command: string, args: string[]): Promise<CommandResult> {
-  if (!isInputCommand(command)) {
+  if (!isPlayInput(command)) {
     return Promise.reject(new OgwError(`${command} is not an input command; see ogw input --help`));
   }
-  return automationRequest(ctx, instanceId, command, args, 'main', PLAY).then((response) => {
-    const data = { ok: response.ok, result: response.result };
-    return { exitCode: response.ok ? 0 : 1, text: JSON.stringify(data), data };
-  });
+  return sendInput(ctx, instanceId, command, args).then((data) => ({ exitCode: data.ok ? 0 : 1, text: JSON.stringify(data), data }));
 }
 
 export const input: CommandDef = {

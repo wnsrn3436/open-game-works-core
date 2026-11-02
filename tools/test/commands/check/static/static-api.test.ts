@@ -70,7 +70,7 @@ describe('staticCheck', () => {
       'frame polling', 'haptic format', 'embedded script', 'theme only', 'font weight', 'scene links', 'tween preset', 'system clock', 'game state lock', 'shared formula', 'bot scenario', 'option entry',
       'game settings owner', 'design target', 'simulation target', 'feature boundary', 'forbidden GDScript API', 'settings access',
       'resource load', 'engine random', 'data mutation', 'frame code', 'literal timing', 'object destroy', 'determinism',
-      'virtual pad layout', 'format args', 'action reference', 'anchor reference',
+      'virtual pad layout', 'format args', 'action reference', 'anchor reference', 'play guide input',
     ]);
   });
 

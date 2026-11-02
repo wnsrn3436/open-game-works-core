@@ -38,12 +38,12 @@ The input file is the JSON `{"A": <game>, "B": <game>, "fixtures": [<fixture>, .
 
 | element | looks at | telemetry | observed | reference moment |
 |---|---|---|---|---|
-| `game feel` | It responds to input, and every action has feedback. e.g. sound, effect, camera shake | `input_latency_ms`, `feedback_per_input` | none | `core action` |
+| `game feel` | It responds to input, and every action has feedback, sized by its consequence. e.g. a sound and a tint on a routine hit, more for a kill, a shake only for a rare, big event | `input_latency_ms`, `feedback_share` | none | `core action` |
 | `tension and release` | There are challenges that can fail, and on success the reward is certain | none | number of failure points, whether a reward presentation follows right after success | `first failure` |
 | `progression` | Growth or reward shows at short intervals | `reward_interval_ms` | none | `first reward` |
 | `one more run` | When it ends, the player wants to play again. Failure is fair, so it feels like the player's own fault | `restart_delay_ms` | whether the cause of failure is visible on screen | `restart` |
 | `no friction` | There is no boring wait, unneeded click or meaningless repetition | `idle_span_ms`, `goal_input_count` | none | `first 30000ms` |
-| `presentation` | Screens and sound are made at the level of a commercial game. The background, border and decoration of the UI elements visible on screen (e.g. panel, popup, button, card and item frame, HUD, icon) are drawn with art resources, and each screen keeps one style | none | UI elements that look like the engine default shape or a single-color box made in code; the counts of `### presentation counts` | `lobby`, `hud`, `reward popup`, `result`; `first 30000ms` when all four are `none` |
+| `presentation` | Screens and sound meet commercial quality: every resource is made in the hand of the game's own world, for how it is seen, with directed attention, identity from the theme, finish, and staged moments | none | UI elements in the engine's default look (its default button, panel, slider and font); the counts of `### presentation counts`; the answers of `### presentation checks` | `lobby`, `hud`, `reward popup`, `result`; `first 30000ms` when all four are `none` |
 
 - When `## failure` of that game's `play-guide.md` is `none`, `tension and release` and `one more run` of that game are `n/a` and are not judged
 - An element that is not in `elements` is not judged and is not in the judge result
@@ -68,9 +68,14 @@ Judge `tension and release` and `no friction` by LLM opinion through the questio
 
 For each screen of the moments of `presentation` (the lobby, the play screen with its HUD, a reward popup, the result screen), count in the game and in a frame of that moment of the gameplay video:
 
-- panel layers: the drawn layers of the largest panel or plate of the screen. Frame, header band, inner inset, divider and ornament count one each
 - idle motion: the elements that move or animate while there is no input for 2000 ms
 - press feedback: whether pressing a button changes its art, its scale or plays a sound (1 or 0)
+
+### presentation checks
+
+For each of those screens of the game, answer the `Check:` questions of [commercial quality](../skills/game-design/commercial-quality.md) that apply to what the screen shows: `## qualities of every resource` and `## UI screens` for every screen, and `## characters`, `## environment` and `## props, pickups, effects and icons` where those are visible. Answer yes when the screen meets the check and no when it does not, for the final resources on it, and name the element and where it is. A check that says `across the play captures` is answered once for the game, from all of its captures. Judge what is seen at play size in the capture, not an asset alone.
+
+Each no is a row of `## defects` with the severity `major`, `where` the screen and the element, and `what` the check and what was seen. Write the answers as a list right after the table of `## vs reference`, not as a table: the first table under `## vs reference` with an `instance` column is read as the `vs reference` result.
 
 `presentation` of a game is `fail` in `vs reference` when a count of one of its screens is lower than that of the same screen in the video. Write the counts of both in the reason. A defect of `presentation` has the severity `major` or `blocker`
 
@@ -83,6 +88,7 @@ For each screen of the moments of `presentation` (the lobby, the play screen wit
 - When `telemetry` is `null`, for an element for which `ogw telemetry compare` gave a winner and margin, use those values. Read them from the comparison of the intervals in which the `reference moment` of that element was played in each game. When the two instances were played one after the other, do not use the comparison without intervals
 - For an element for which `ogw telemetry compare` reported no telemetry values, choose the winner by LLM opinion, and the margin is `slight`
 - An element of `### checklists` that is judged by LLM opinion counts only the questions answered `yes` or `no` on both sides. It is won by the side with more `yes` answers among them, and is `indistinguishable` when both sides have the same number. Write the answers of both sides in the evidence
+- `presentation` is won by the side with fewer `no` answers of `### presentation checks` over the same questions of its screens, with the margin `slight` for a difference of 1, `clear` for 2 or 3 and `decisive` for 4 or more. Only when both sides have the same number is it judged by LLM opinion, with the margin `slight`. Write the answers of both sides in the evidence
 - `vs reference`: written only when `reference` is not `null`. For each game of the input (`A`, `B`) and each element, `pass` when the result of playing the `reference moment` of that element in that game is at or above the level of that moment's interval in the gameplay video, otherwise `fail`, and `unknown` when it could not be checked. An element that is `n/a` in that game, and an element whose `reference moment` has a `startMs` of `null` in `moments` of `reference`, are `n/a`. The reference game is seen as video, so this comparison is not blind
 - When there is `B`, what the losing side did better must be written
 - Write at least two and at most four things that went well

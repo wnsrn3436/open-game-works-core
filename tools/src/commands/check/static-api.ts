@@ -34,6 +34,7 @@ import * as nineSliceSize from './static/nine-slice-size.ts';
 import * as literalTiming from './static/literal-timing.ts';
 import * as objectDestroy from './static/object-destroy.ts';
 import * as optionEntry from './static/option-entry.ts';
+import * as playGuideInput from './static/play-guide-input.ts';
 import * as resourceHash from './static/resource-hash.ts';
 import * as resourceLoad from './static/resource-load.ts';
 import * as settingsAccess from './static/settings-access.ts';
@@ -55,7 +56,7 @@ export const STATIC_CHECKS: readonly StaticCheckModule[] = [
   coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, framePolling,
   hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
-  literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference,
+  literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference, playGuideInput,
 ];
 
 function toFailure(f: Finding): CheckFailure {

@@ -26,7 +26,6 @@ function rowSimulationOwner(message: string): string {
 const UI_KINDS: readonly [RegExp, string][] = [
   [/^low contrast /, 'low contrast'],
   [/^small text /, 'small text'],
-  [/^flat panel /, 'flat panel'],
   [/^empty panel /, 'empty panel'],
   [/^clipped /, 'clipped'],
   [/^overlap /, 'overlap'],

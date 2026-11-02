@@ -23,7 +23,7 @@ import { runLogPath } from '../../../../src/lib/agentctx.ts';
 import { extensionOf, withoutExtension } from '../../../../src/lib/paths.ts';
 import { mergeOrder, topologicalOrder } from '../../../../src/commands/agent/lib/order.ts';
 import { preparePlayInput } from '../../../../src/commands/agent/lib/play-input.ts';
-import { absoluteLinks, buildPrompt, markdownSection, paramsBlock } from '../../../../src/commands/agent/lib/prompt.ts';
+import { absoluteLinks, buildPrompt, harnessLinks, markdownSection, paramsBlock } from '../../../../src/commands/agent/lib/prompt.ts';
 import { coreCommand } from '../../../../src/commands/agent/lib/prepare.ts';
 import type { HarnessSettings } from '../../../../src/lib/settings.ts';
 import { makeGame, makeWorkspace, sh } from '../../../helpers/workspace.ts';
@@ -45,6 +45,10 @@ describe('prompt', () => {
     expect(absoluteLinks('[x](../skills/a.md) [y](b.md) [z](../AGENTS.md)', '/h')).toBe('[x](/h/skills/a.md) [y](b.md) [z](/h/AGENTS.md)');
   });
 
+  it('makes the harness-relative link targets of AGENTS.md absolute, leaving URLs, absolute paths and anchors', () => {
+    expect(harnessLinks('[x](skills/a.md) [u](https://e.com/a) [p](/abs/b.md) [h](#terms)', '/h')).toBe('[x](/h/skills/a.md) [u](https://e.com/a) [p](/abs/b.md) [h](#terms)');
+  });
+
   it('writes the values block, leaving out run and iteration when null', () => {
     expect(paramsBlock({ input: '/i', output: '/o', run: 'r1', iteration: 2 })).toBe('## ogw agent\n\n- input: /i\n- output: /o\n- run: r1\n- iteration: 2\n');
     expect(paramsBlock({ input: '/i', output: '/o', run: null, iteration: null })).toBe('## ogw agent\n\n- input: /i\n- output: /o\n');
@@ -55,10 +59,11 @@ describe('prompt', () => {
     const params = { input: '/i', output: '/o', run: null, iteration: null };
     const content = await buildPrompt(ws.harness, 'content', params);
     const agentsMd = readFileSync(join(ws.harness, 'AGENTS.md'), 'utf8');
-    const sections = ['purpose', 'terms', 'repo', 'layer', 'environment', 'rules'].map((name) => markdownSection(agentsMd, name) as string);
+    const sections = ['purpose', 'terms', 'repo', 'layer', 'environment', 'rules'].map((name) => harnessLinks(markdownSection(agentsMd, name) as string, ws.harness));
     const definition = absoluteLinks(readFileSync(join(ws.harness, 'agents', 'content.md'), 'utf8'), ws.harness);
     expect(content).toBe([...sections, definition, paramsBlock(params)].join('\n'));
     expect(content).not.toContain('](../');
+    expect(content).toContain(`](${ws.harness}/skills/game-design/commercial-quality.md)`);
     const play = await buildPrompt(ws.harness, 'play', params);
     expect(play.startsWith('---\nname: play')).toBe(true);
     expect(play).not.toContain('## purpose');

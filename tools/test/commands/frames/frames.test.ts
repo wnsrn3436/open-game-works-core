@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -177,6 +177,21 @@ describe('ogw frames', () => {
     }
   });
 
+  it('writes frames of a reference video into captures/ of its game repo outside a play or judge agent', async () => {
+    resetMocks();
+    const ws = makeWorkspace();
+    mockState.ffmpeg = fakeFfmpeg(mkdtempSync(join(tmpdir(), 'ogw-ff-')));
+    const game = join(ws.root, 'games', 'demo');
+    mkdirSync(join(game, 'records', 'setup', 'reference'), { recursive: true });
+    const video = join(game, 'records', 'setup', 'reference', 'ref.mp4');
+    writeFileSync(video, 'video');
+    const run = await ogw(ws, ['frames', video, '--every', '500', '--json']);
+    expect(run.code).toBe(0);
+    const frames = (JSON.parse(run.stdout) as { frames: { ms: number; path: string }[] }).frames;
+    expect(frames.map((f) => f.ms)).toEqual([0, 500, 1000]);
+    expect(frames[0]?.path).toMatch(new RegExp(`^${join(game, 'captures', 'frames-')}[A-Za-z0-9]+/000000000\\.png$`));
+  });
+
   it('checks its arguments, ffmpeg and the captures folder', async () => {
     resetMocks();
     const ws = makeWorkspace();
@@ -189,7 +204,7 @@ describe('ogw frames', () => {
     expect((await ogw(ws, ['frames', 'v.mp4', '--every', '10'])).stderr).toContain('ffmpeg');
     mockState.ffmpeg = fakeFfmpeg(mkdtempSync(join(tmpdir(), 'ogw-ff-')));
     expect((await ogw(ws, ['frames', 'v.mp4', '--every', '10'])).stderr).toContain(
-      'not defined: the captures folder of ogw frames outside a play or judge agent',
+      'not defined: the captures folder of ogw frames for a video outside the records/ of a game repo, outside a play or judge agent',
     );
     const folder = mkdtempSync(join(tmpdir(), 'ogw-play-'));
     mockState.ffmpeg = fakeFfmpeg(mkdtempSync(join(tmpdir(), 'ogw-ff-')), 1);

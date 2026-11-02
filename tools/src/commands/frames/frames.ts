@@ -73,7 +73,7 @@ export const frames: CommandDef = {
     if (!exists(video)) throw new OgwError(`video not found: ${video}`);
     const ffmpeg = await toolProgram(ctx, 'ffmpeg');
     if (ffmpeg === null) throw new OgwError('ffmpeg (harness settings tools.ffmpeg) is not on this host: run update env');
-    const captures = await capturesDir(ctx, null);
+    const captures = await capturesDir(ctx, { video });
     await mkdir(captures, { recursive: true });
     const dir = await mkdtemp(join(captures, 'frames-'));
     try {

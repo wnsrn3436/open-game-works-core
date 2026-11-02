@@ -29,7 +29,7 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.f
 const ctx = fakeContext();
 
 /** Limits no capture breaks, for the tests of the other conditions. */
-const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxFlatShare: 2, maxEmptyShare: 2 };
+const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxEmptyShare: 2 };
 /** A 1 × 1 white PNG, as capture_screen gives it. */
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
 
@@ -51,7 +51,7 @@ function canvas(width: number, height: number, color: [number, number, number], 
   return { width, height, data };
 }
 
-const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxFlatShare: 0.85, maxEmptyShare: 0.6 };
+const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxEmptyShare: 0.6 };
 
 describe('UI quality presentation conditions', () => {
   it('counts text sizes, finds small text and low contrast', () => {
@@ -95,14 +95,14 @@ describe('UI quality presentation conditions', () => {
     expect(panelBodies(bars, 'run', { width: 1920, height: 1080 }).map((e) => e.path)).toEqual(['hud/plate']);
   });
 
-  it('finds a flat panel and an empty panel, and passes a textured, filled one', () => {
+  it('finds an empty panel, and passes a filled one whether flat or textured', () => {
     const big = { ...LIMITS, maxFontSizes: 10, minFontPx: 0, minContrast: 1 };
     const flat = canvas(100, 100, [0, 0, 0], [[10, 10, 80, 80, [30, 30, 60]]]);
     const list = elements([
       el('p', { owner: 'pop', rect: [10, 10, 80, 80] }),
       el('p/label', { owner: 'pop', text: 'Hi', font_size: 20, rect: [20, 20, 20, 10] }),
     ]);
-    expect(presentationProblems(list, flat, 'scene', big).map((p) => p.message)).toEqual(['flat panel p: 100% one color', 'empty panel p: 97% empty']);
+    expect(presentationProblems(list, flat, 'scene', big).map((p) => p.message)).toEqual(['empty panel p: 97% empty']);
     // stripes every other row in two colors 40 apart, and children covering most of it
     const stripes: [number, number, number, number, [number, number, number]][] = [];
     for (let y = 10; y < 90; y += 2) stripes.push([10, y, 80, 1, [70, 70, 100]]);
@@ -113,6 +113,8 @@ describe('UI quality presentation conditions', () => {
       el('p/b', { owner: 'pop', rect: [10, 50, 80, 30] }),
     ]);
     expect(presentationProblems(filled, textured, 'scene', big)).toEqual([]);
+    // a flat panel is a form of the game's UI style (commercial quality), not a defect
+    expect(presentationProblems(filled, flat, 'scene', big)).toEqual([]);
   });
 });
 

@@ -150,7 +150,6 @@ A command marked setup is not real input. Bot playtest records that step as setu
     - small text: no element whose `text` is not an empty string has `font_size` × 1080 ÷ window height under `minFontPx`
     - contrast: for each element whose `text` is not an empty string and whose `rect` is fully in the window, out of the relative luminances (sRGB) of the capture pixels in its `rect`, the background is the median and the text is the luminance whose distance from the median is at the 99.9th percentile of those distances. Their contrast ratio (lighter + 0.05) ÷ (darker + 0.05) is at least `minContrast`
     - panel body: an element whose `owner` is a popup, panel or system popup key, whose `text` is an empty string, whose `button` and `text_input` are `false`, whose `rect` is at most 90% of the window area and has a shorter side of at least 64 × window height ÷ 1080, that has a descendant element, and none of whose ancestors is such an element of the same `owner`
-    - flat panel: in the `rect` of each panel body, out of the capture pixels outside the `rect`s of the elements whose `text` is not an empty string, less than `maxFlatShare` lie within 8 (each of R, G, B) of the most common color of those pixels
     - empty panel: in the `rect` of each panel body, less than `maxEmptyShare` of its area is outside the `rect`s of its descendant elements whose `rect` is smaller than 90% of the panel body `rect`
 
 ### QAState
@@ -317,7 +316,7 @@ none
 | `baseResolution` | array<integer> | game | none | base resolution that `set_test_screen` passes to `ResolutionCore.set_test_screen` |
 | `uiCheckScreens` | array<object> | game | none | list of screens UI quality check captures. An item is `name` (snake_case), `window` (window width, height in pixels), `fillMode` (`Crop`, `Letterbox`), `notch` (left, top, right, bottom in integer window pixels), `keyboard` (on-screen keyboard height for keyboard capture, in window pixels. 0 means no keyboard capture) |
 | `gamepadSupported` | boolean | game | none | When `true`, UI quality check runs gamepad focus check |
-| `uiQuality` | object | game | none | the numbers of UI quality check: `settleLimitMs` and the presentation conditions `maxFontSizes`, `minFontPx`, `minContrast`, `maxFlatShare`, `maxEmptyShare`. The defaults are in the game settings schema |
+| `uiQuality` | object | game | none | the numbers of UI quality check: `settleLimitMs` and the presentation conditions `maxFontSizes`, `minFontPx`, `minContrast`, `maxEmptyShare`. The defaults are in the game settings schema |
 | `supportedLanguages` | array<string> | game | none | list of languages UI quality check runs through |
 
 ## data

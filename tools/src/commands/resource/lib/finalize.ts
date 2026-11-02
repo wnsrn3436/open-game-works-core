@@ -5,7 +5,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJson } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { mergedCoreSettings } from '../../generate/api.ts';
-import { catalogEntries, generationMethods } from '../../generation/api.ts';
+import { catalogEntries, generationMethods, LOGO_PREFIX } from '../../generation/api.ts';
 import { processSound, type SoundShape } from './audio.ts';
 import { FileChanges } from './files.ts';
 import { engineOf, gameSettings, lineVoices, sourceLanguageOf, sourceTranslations } from './gamedata.ts';
@@ -13,6 +13,7 @@ import { engineType, rigSceneNames, sceneNodes, spriteFramesFromSheet } from './
 import { alphaBox, coverCropped, crop, decodeRgba, encodePng, fitCentered, type Rgba } from './image.ts';
 import { COLUMNS, emptyRow, findRow, formatList, keyFiles, keyPath, LIST_PATH, readList, requireKey, SOUND_TYPES, type ParsedKey, type ResourceRow } from './list.ts';
 import { hostTools, type Tools } from './placeholder.ts';
+import { requestedInOpenRun } from './request.ts';
 import { readSplit, rigCheck, type RigSplit } from './rig.ts';
 import { readSkeleton, type Point, type Skeleton, type SkeletonBone } from './skeleton.ts';
 import { parseSpec, requireAnimations, requireLength, requireSize, type SfxLevel, type Spec } from './spec.ts';
@@ -66,6 +67,11 @@ interface Job {
   split: RigSplit | null;
   /** `final`, or `temporary` when `ogw generation methods` gives the method as the temporary method of the key. */
   status: 'final' | 'temporary';
+  /**
+   * A `final` or `placeholder` row whose key a request file of the open run holds: a final row asked again keeps its status
+   * until it is replaced, and a text voice whose line changed goes back to placeholder.
+   */
+  requestedAgain: boolean;
 }
 
 const IMAGE_POST = ['image', 'icon', 'background', 'texture', 'app_icon', 'splash'];
@@ -108,10 +114,16 @@ function optionProblems(job: Job): string[] {
   return problems;
 }
 
-function rowProblems(job: Job, methods: readonly string[]): string[] {
-  // a temporary row was requested again: its new resource replaces the temporary one
+function statusProblems(job: Job): string[] {
+  // a temporary row, and a final or placeholder row requested again in this run, are replaced by the new resource
   const problems: string[] = [];
-  if (job.row.status !== 'requested' && job.row.status !== 'temporary') problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  if (job.row.status !== 'requested' && job.row.status !== 'temporary' && !job.requestedAgain) problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  if (job.row.status === 'final' && job.status === 'temporary') problems.push(`${job.row.key} is final: the temporary method ${job.options.method} does not replace it`);
+  return problems;
+}
+
+function rowProblems(job: Job, methods: readonly string[]): string[] {
+  const problems = statusProblems(job);
   const kit = findRow(job.rows, UI_KIT);
   if ((job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') && kit?.status === 'final' && !job.options.inputs.includes(UI_KIT)) {
     problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
@@ -215,8 +227,13 @@ async function rigProblems(job: Job): Promise<string[]> {
   return [...problems, ...rigCanvasProblems(job, scene)];
 }
 
-/** An image of a type with `alpha` in `spec` (every such type is an image type) whose `alpha` is `true` has a pixel with alpha under 255; a fully opaque file has its background baked in. */
+/**
+ * An image of a type with `alpha` in `spec` (every such type is an image type) whose `alpha` is `true` has a pixel with
+ * alpha under 255; a fully opaque file has its background baked in. A logo `image/logo/<language>` has `alpha=true`, as
+ * it is fitted whole over the key art, not cropped to cover its size.
+ */
 async function alphaProblems(job: Job): Promise<string[]> {
+  if (job.row.key.startsWith(LOGO_PREFIX) && !job.spec.alpha) return [`${job.row.key}: a logo has alpha=true in spec, so that it is fitted whole and not cropped`];
   if (!job.spec.alpha) return [];
   const file = job.options.files[0] as string;
   return hasTransparency(await decodeRgba(file, file)) ? [] : [`${file}: every pixel is opaque; the background is baked in`];
@@ -440,7 +457,8 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
   const row = findRow(rows, options.key);
   if (!row) throw new OgwError(`${options.key} is not in ${LIST_PATH}`);
   const parsed = requireKey(options.key);
-  const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final' };
+  const requestedAgain = (row.status === 'final' || row.status === 'placeholder') && (await requestedInOpenRun(game)).has(row.key);
+  const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final', requestedAgain };
   const choices = await generationMethods(ctx, game, options.key);
   const methods = choices.map((m) => m.name);
   if (choices.find((m) => m.name === options.method)?.temporary === true) job.status = 'temporary';

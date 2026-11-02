@@ -78,7 +78,7 @@ describe('ogw judge label', () => {
     expect(fake.stopped).toEqual(['i1', 'i2']);
     expect(asked[0]).toContain('Play A');
     expect(asked[1]).toContain('Play B');
-    expect(asked[2]).toBe('game feel: It responds to input, and every action has feedback. e.g. sound, effect, camera shake\nWhich is better? a (A), b (B) or s (same): ');
+    expect(asked[2]).toBe('game feel: It responds to input, and every action has feedback, sized by its consequence. e.g. a sound and a tint on a routine hit, more for a kill, a shake only for a rare, big event\nWhich is better? a (A), b (B) or s (same): ');
     expect(asked[3]).toBe(asked[2]);
     expect(asked[9]).toContain('Note');
     const labels = JSON.parse(read(g.root, 'records/calibration/labels.json')) as unknown[];

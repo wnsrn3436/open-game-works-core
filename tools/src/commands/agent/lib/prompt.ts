@@ -27,6 +27,11 @@ export function absoluteLinks(text: string, harness: string): string {
   return text.replace(/\]\(\.\.\//g, `](${harness}/`);
 }
 
+/** Makes the link targets of `AGENTS.md`, which are relative to the harness repo, absolute: the harness repo path and `/`. */
+export function harnessLinks(text: string, harness: string): string {
+  return text.replace(/\]\((?![a-z][a-z0-9+.-]*:|\/|#)/gi, `](${harness}/`);
+}
+
 export interface PromptParams {
   input: string;
   output: string;
@@ -51,7 +56,7 @@ export async function buildPrompt(harness: string, role: Role, params: PromptPar
     for (const name of AGENTS_SECTIONS) {
       const section = markdownSection(agentsMd, name);
       if (section === null) throw new OgwError(`AGENTS.md has no section ## ${name}`);
-      parts.push(section);
+      parts.push(harnessLinks(section, harness));
     }
   }
   parts.push(definition.endsWith('\n') ? definition : `${definition}\n`);
