@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogEntries } from '../../../src/commands/generation/api.ts';
 import { combinedAttribution, combinedLicense, soundShape } from '../../../src/commands/resource/lib/finalize.ts';
 import { parseSpec } from '../../../src/commands/resource/lib/spec.ts';
+import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { ogw, commitAll } from '../../helpers/workspace.ts';
 import { listCsv, makeFixture, measuredMethods, pcmWav, pixels, png, readList, realFfmpegs, rowOf, silence, sine, translationCsv, wavLengthMs, type Fixture, type Row } from './fixture.ts';
 
@@ -630,6 +631,24 @@ describe('ogw resource finalize', () => {
     const lettered = await finalize(f, ['image/logo/en', '--method', 'logotype', '--file', clear]);
     expect(lettered.stderr).toBe('');
     expect(rowOf(f.game, 'image/logo/en')).toMatchObject({ status: 'final', method: 'logotype' });
+  });
+
+  it('replaces a final row that a request of the open run holds, and refuses one that none holds', async () => {
+    const made = (key: string): Row => ({ key, spec: 'size=4x4', status: 'final', method: 'flux2-klein', source: 'generated', license: 'Apache-2.0' });
+    const f = setup([made('icon/a'), made('icon/b')], { 'records/loops/loop-1/resource-requests/100.md': '## keys\n\nicon/a\n\n## see\n\nnone\n\n## base\n\nnone\n' });
+    await png(join(f.game, 'resource/icon/a.png'), 4, 4, [9, 9, 9, 255]);
+    await png(join(f.game, 'resource/icon/b.png'), 4, 4, [9, 9, 9, 255]);
+    await sync(f);
+    await changeRuns({ name: 'g', root: f.game, mainRoot: f.game, commonDir: join(f.game, '.git'), inWorktree: false }, (runs) => {
+      runs.push(newRunState({ name: 'loop-1', kind: 'loop', branch: 'loop/loop-1', baseCommit: 'x' }));
+    });
+    const run = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
+    expect(run.stderr).toBe('');
+    expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'flux2-klein' });
+    expect([...(await pixels(join(f.game, 'resource/icon/a.png'))).data.subarray(0, 4)]).toEqual([1, 2, 3, 255]);
+    const refused = await finalize(f, await okPng(f, ['icon/b', '--method', 'flux2-klein']));
+    expect(refused.stderr).toContain('icon/b status is final, not requested');
+    expect([...(await pixels(join(f.game, 'resource/icon/b.png'))).data.subarray(0, 4)]).toEqual([9, 9, 9, 255]);
   });
 
   it('removes the other files of the key', async () => {

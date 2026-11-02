@@ -264,31 +264,6 @@ describe('ogw resource placeholder and sync', () => {
     expect(rowOf(f.game, 'sfx/hit').status).toBe('requested');
   });
 
-  it('keeps the files of a resource requested again until its remake replaces them', async () => {
-    const f = setup({
-      'resource/icon/a.png': 'MADE',
-      'resource/resources.csv': listCsv([{ key: 'icon/a', spec: 'size=8x8', status: 'requested', method: 'flux2-klein', source: 'generated', license: 'Apache-2.0' }]),
-    });
-    const out = await ogw(f.ws, ['resource', 'sync', 'g']);
-    expect(out.stderr).toBe('');
-    expect(out.code).toBe(0);
-    expect(file(f, 'resource/icon/a.png').toString()).toBe('MADE');
-    expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'requested', method: 'flux2-klein', sha256: sha('MADE') });
-  });
-
-  it('makes the placeholder files of a resource requested again whose files no longer fit its spec', async () => {
-    const f = setup({
-      'resource/sfx/hit.wav': 'MADE',
-      'resource/resources.csv': listCsv([{ key: 'sfx/hit', spec: 'length=200;variants=3', status: 'requested', method: 'moss-sfx' }]),
-    });
-    const out = await ogw(f.ws, ['resource', 'sync', 'g']);
-    expect(out.stderr).toBe('');
-    expect(out.code).toBe(0);
-    expect(existsSync(join(f.game, 'resource/sfx/hit.wav'))).toBe(false);
-    for (const n of [1, 2, 3]) expect(silent(file(f, `resource/sfx/hit.${String(n)}.wav`))).toBe(true);
-    expect(rowOf(f.game, 'sfx/hit').status).toBe('requested');
-  });
-
   it('replaces the stale files of a placeholder row', async () => {
     const f = setup({
       'resource/sfx/hit.wav': 'OLD',

@@ -133,17 +133,6 @@ async function existingFiles(c: RowContext, row: ResourceRow, parsed: ParsedKey,
   return data;
 }
 
-/** Whether a `requested` row made before (its `method` is kept) still holds files that fit its spec. */
-async function keepsMadeFiles(c: RowContext, row: ResourceRow, parsed: ParsedKey, spec: Spec, files: readonly KeyFile[]): Promise<boolean> {
-  if (row.status !== 'requested' || row.method === '') return false;
-  const entry = engineType(c.engine, parsed.type);
-  if (fileProblem(row.key, entry, spec, files) !== null) return false;
-  for (const file of files) {
-    if (classProblem(entry, spec, file.extension, (await readFile(join(c.root, file.path))).toString('utf8')) !== null) return false;
-  }
-  return true;
-}
-
 async function syncRow(c: RowContext, row: ResourceRow): Promise<void> {
   const parsed = parseKey(row.key);
   if (!parsed) {
@@ -166,15 +155,14 @@ async function syncRow(c: RowContext, row: ResourceRow): Promise<void> {
   const spec = parseSpec(row.key, parsed.type, row.spec);
   const files = await keyFiles(c.root, row.key);
   let data: Buffer[] | null;
-  // until `ogw resource finalize` writes the final file and `final` together, the files are the tool's placeholder,
-  // except that a resource requested again stays in the game until its remake replaces it, so a failed remake breaks nothing
-  if (MADE.includes(row.status) || (await keepsMadeFiles(c, row, parsed, spec, files))) {
-    data = await existingFiles(c, row, parsed, spec, files);
-  } else {
+  // until `ogw resource finalize` writes the final file and `final` together, the files are the tool's placeholder
+  if (!MADE.includes(row.status)) {
     const made = await placeholderFiles(c.engine, row.key, parsed, spec, c.tools);
     for (const file of files) if (!made.some((m) => m.path === file.path)) c.changes.delete(file.path);
     for (const file of made) c.changes.write(file.path, file.data);
     data = made.map((m) => m.data);
+  } else {
+    data = await existingFiles(c, row, parsed, spec, files);
   }
   if (data) row.sha256 = listSha(data);
 }

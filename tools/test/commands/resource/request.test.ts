@@ -45,11 +45,29 @@ describe('ogw resource request', () => {
     expect(path).toMatch(/^records\/loops\/loop-1\/resource-requests\/[0-9]+\.md$/);
     expect(readFileSync(join(f.game, path), 'utf8')).toBe('## keys\n\nicon/a\nicon/c\n\n## see\n\nicon/c\n\n## base\n\nicon/c\n');
     expect(rowOf(f.game, 'icon/a').status).toBe('requested');
-    expect(rowOf(f.game, 'icon/c').status).toBe('requested');
+    // a final row asked again for the spec it has in the last commit stays final until finalize replaces it
+    expect(rowOf(f.game, 'icon/c').status).toBe('final');
     expect(log(f)).toBe('resource request: icon/a icon/c');
     // The commit is made with the command's env, not process.env.
     expect(sh(f.game, 'git', ['log', '-1', '--format=%an %ae'])).toBe('ogw-test ogw-test@example.com\n');
     expect(sh(f.game, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('keeps a final row asked again for its committed spec, with its file, and makes it requested when its spec changed', async () => {
+    const made = (key: string, spec: string): Record<string, string> => ({ key, spec, status: 'final', method: 'flux2-klein', source: 'generated', license: 'Apache-2.0' });
+    const f = makeFixture({
+      'resource/icon/c.png': 'MADE',
+      'resource/icon/e.png': 'MADE',
+      'resource/resources.csv': listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=8x8')]),
+    });
+    await openRun(f, {});
+    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=16x16')]));
+    const run = await ogw(f.ws, ['resource', 'request', 'g', 'icon/c', 'icon/e']);
+    expect(run.stderr).toBe('');
+    expect(rowOf(f.game, 'icon/c')).toMatchObject({ status: 'final', method: 'flux2-klein', license: 'Apache-2.0' });
+    expect(rowOf(f.game, 'icon/e')).toMatchObject({ status: 'requested', spec: 'size=16x16' });
+    expect(readFileSync(join(f.game, 'resource/icon/c.png'), 'utf8')).toBe('MADE');
+    expect(requestFileKeys(readFileSync(join(f.game, run.stdout.trim()), 'utf8'))).toEqual(['icon/c', 'icon/e']);
   });
 
   it('requests pending rows: placeholder rows and requested rows not in a request file of this run', async () => {

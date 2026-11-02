@@ -13,6 +13,7 @@ import { engineType, rigSceneNames, sceneNodes, spriteFramesFromSheet } from './
 import { alphaBox, coverCropped, crop, decodeRgba, encodePng, fitCentered, type Rgba } from './image.ts';
 import { COLUMNS, emptyRow, findRow, formatList, keyFiles, keyPath, LIST_PATH, readList, requireKey, SOUND_TYPES, type ParsedKey, type ResourceRow } from './list.ts';
 import { hostTools, type Tools } from './placeholder.ts';
+import { requestedInOpenRun } from './request.ts';
 import { readSplit, rigCheck, type RigSplit } from './rig.ts';
 import { readSkeleton, type Point, type Skeleton, type SkeletonBone } from './skeleton.ts';
 import { parseSpec, requireAnimations, requireLength, requireSize, type SfxLevel, type Spec } from './spec.ts';
@@ -66,6 +67,8 @@ interface Job {
   split: RigSplit | null;
   /** `final`, or `temporary` when `ogw generation methods` gives the method as the temporary method of the key. */
   status: 'final' | 'temporary';
+  /** A request file of the open run holds the key (a `final` row asked again keeps its status until it is replaced). */
+  requestedAgain: boolean;
 }
 
 const IMAGE_POST = ['image', 'icon', 'background', 'texture', 'app_icon', 'splash'];
@@ -109,9 +112,10 @@ function optionProblems(job: Job): string[] {
 }
 
 function rowProblems(job: Job, methods: readonly string[]): string[] {
-  // a temporary row was requested again: its new resource replaces the temporary one
+  // a temporary row, or a final row requested again in this run, is replaced by its new resource
   const problems: string[] = [];
-  if (job.row.status !== 'requested' && job.row.status !== 'temporary') problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  const replaced = job.row.status === 'temporary' || (job.row.status === 'final' && job.requestedAgain);
+  if (job.row.status !== 'requested' && !replaced) problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
   const kit = findRow(job.rows, UI_KIT);
   if ((job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') && kit?.status === 'final' && !job.options.inputs.includes(UI_KIT)) {
     problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
@@ -445,7 +449,8 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
   const row = findRow(rows, options.key);
   if (!row) throw new OgwError(`${options.key} is not in ${LIST_PATH}`);
   const parsed = requireKey(options.key);
-  const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final' };
+  const requestedAgain = row.status === 'final' && (await requestedInOpenRun(game)).has(row.key);
+  const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final', requestedAgain };
   const choices = await generationMethods(ctx, game, options.key);
   const methods = choices.map((m) => m.name);
   if (choices.find((m) => m.name === options.method)?.temporary === true) job.status = 'temporary';
