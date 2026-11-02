@@ -17,6 +17,7 @@ const GUIDE = [
   'step 3',
   '```',
   '4. the hint reads `drag a card onto a lane`, the action `drag` moves it, `mouse_drag` is no command, and `click_anchor menu_start` is a click',
+  '5. menu: tap anchor `menu_start` (or press `Enter`), then Tap the anchor `match_pause`; tap Space to serve',
   '',
 ].join('\n');
 
@@ -36,6 +37,8 @@ describe('play guide input', () => {
       at(5, 'touch_down'),
       at(8, 'drag'),
       at(11, 'tap'),
+      at(15, 'tap anchor'),
+      at(15, 'Tap the anchor'),
     ]);
   });
 

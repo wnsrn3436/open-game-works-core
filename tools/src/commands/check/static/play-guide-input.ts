@@ -4,16 +4,17 @@ import { at, finding, type Finding, type StaticContext } from './lib/context.ts'
  * play guide input: when the first platform of game settings `buildPlatforms`, which the judges' instances run, is a
  * desktop platform, `play-guide.md` names no `QACore` touch input command, since the game shows each device its own input
  * prompts and a touch shows the play agent and the judges prompts its players never see (`game-design` `## play guide`).
- * `tap_anchor` and the `touch_` commands, which are no words of prose, count anywhere; `tap` and `drag` count only as a
- * command with its position arguments (a code span or a code block line such as `tap 640 360`, after `ogw input
- * <instance>` or `input` of `ogw step --stream` or not) and as a `"command"` value of a timed input script in a code
- * block, so a quoted hint such as `drag a card onto a lane` or an action named `drag` does not count.
+ * `tap_anchor` and the `touch_` commands, which are no words of prose, count anywhere, and so does `tap_anchor` written
+ * as words ("tap anchor `menu_start`", "tap the anchor"); `tap` and `drag` count only as a command with its position
+ * arguments (a code span or a code block line such as `tap 640 360`, after `ogw input <instance>` or `input` of `ogw step
+ * --stream` or not) and as a `"command"` value of a timed input script in a code block, so a quoted hint such as `drag a
+ * card onto a lane`, an action named `drag` or "tap Space" does not count.
  */
 export const NAME = 'play guide input';
 
 const PATH = 'play-guide.md';
 const DESKTOP = new Set(['macos', 'windows', 'linux']);
-const NAMED = /\b(tap_anchor|touch_down|touch_move|touch_up)\b/g;
+const NAMED = /\b(tap_anchor|touch_down|touch_move|touch_up|tap (?:the )?anchor)\b/gi;
 const SPAN = /`([^`]*)`/g;
 /** `tap` or `drag` with only numbers or `<placeholders>` after it. */
 const COMMAND = /^\s*(?:(?:ogw input \S+|input)\s+)?(tap|drag)(?:\s+(?:-?[0-9.]+|<[^>]+>))+\s*$/;
