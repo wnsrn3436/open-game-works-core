@@ -51,6 +51,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 | `get_block_pass_list` | none | `BlockPassList` of `InputBlockCore`. `elements` is the system popup root alone, and `actions` is `back` alone. Returns the one UICore holds, and the caller does not change it | none | core, content code |
 | `get_anchor_rect` | anchor name, anchor key(optional. default none) | `AnchorResult` | `found` and `visible` are `false` | `TutorialCore`, `QACore`, `UnitTestCore`, content code |
 | `is_modal_covered` | UI element | whether modal covered | `false` | `QACore` |
+| `is_dimmed` | UI element | whether dimmed | `false` | `QACore` |
 | `set_view_focus` | `FocusView`, focus element list, initial focus element, accept callback(the clicked element. can be none) | none | none | `CutsceneCore`, `TutorialCore` |
 | `set_back_override` | callback or none | none | none | `CutsceneCore` |
 | `open_licenses` | none | async operation. success flag | `false` | content code |
@@ -128,6 +129,7 @@ A row further down the table is drawn above the rows before it. The scene's worl
 - While a panel or popup with modal on is visible, the UI and world below it do not receive pointer input. A modal blocker is placed directly below it. On the `Popup` layer, only one is placed, below the topmost modal popup
 - modal covered: a visible modal panel or modal popup (system popups included) is drawn above the UI element. The instance containing that element, instances being prepared, and instances whose destruction has started are not counted. The drawing order is the order of the UI layer table and the stacking order of popups
 - A dim is placed directly below a panel or popup with dim on. On the `Popup` layer, only one is placed, below the topmost popup with dim on. Below the same popup the order is modal blocker, dim, popup. The dim does not receive pointer input
+- dimmed: a visible dim is drawn above the UI element. The drawing order is the order of the UI layer table and the stacking order of popups
 - Open and close tweens play on the prefab root with `TweenCore.play_preset`
 - UICore creates a resource scope per panel and popup instance and releases that scope after destroying the instance. An instance whose destruction has started is not visible and does not receive input
 - Params and caches do not reference engine objects or resources. Callbacks are the exception. UICore and panel classes do not change a received param
@@ -495,6 +497,7 @@ none
 - When `UICore.dimResource` is a key that does not exist and the root of the `UICore.loadingIconResource` prefab is not a UI element, `UICore.prepare` ends with `false` after loading the system popup prefab and `[ui_button_click]`, UICore has two error logs, and the dim and loading icon built in code and the loaded system popup are shown
 - After `release` there are no panels, popups, dims, modal blockers, loading icon, or UI layers, and there is no `on_closed`, hidden callback, button callback, or event
 - For a `UIButton` element of a panel under an open modal popup, `is_modal_covered` is `true`, and for an element inside that popup and an element of a panel with only popups with modal off above it, it is `false`. After that modal popup closes, the panel element gives `false`
+- For an element of a panel under an open popup with dim on and modal off, `is_dimmed` is `true` and `is_modal_covered` is `false`, and after that popup closes, `is_dimmed` gives `false`. An element inside that popup and an element of a panel with only popups with dim off above it give `false`. With two popups with dim on open, an element of the lower popup gives `true`. While a panel with dim on is shown, an element of `SceneUI` gives `true` and an element of that panel gives `false`
 - A `UIButton` with an action receives one click callback and one `[ui_button_click]` in the frame that action is pressed. When the button is modal covered or not visible, or there is a block that does not pass that action, there is no click. When the accept input of focus and an action click both match in the same frame, there is one click
 - A `UIButton` whose action is `back` or not in the action list leaves an error log and is not clicked by the input of that name
 - `set_test_focus` sets focus on a `UIButton` element of the focus target instance and returns `true` when the input device is `Gamepad`, and returns `false` with focus unchanged for an element outside that instance, an element without `UIButton`, or when the input device is not `Gamepad`
