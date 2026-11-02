@@ -1,0 +1,26 @@
+diff --git a/sprite_gen/gen/codex_provider.py b/sprite_gen/gen/codex_provider.py
+index d5ac4b3..dcfdc50 100644
+--- a/sprite_gen/gen/codex_provider.py
++++ b/sprite_gen/gen/codex_provider.py
+@@ -324,6 +324,8 @@ class CodexProvider:
+         cmd = [
+             provider_binary("codex"),
+             "exec",
++            # the user's own config.toml (hooks, MCP servers, plugins) does not run in a generation call; the login still does
++            "--ignore-user-config",
+             "--json",
+             "--sandbox",
+             "workspace-write",
+diff --git a/sprite_gen/gen/facing_vision.py b/sprite_gen/gen/facing_vision.py
+index 7b6eed6..f01378c 100644
+--- a/sprite_gen/gen/facing_vision.py
++++ b/sprite_gen/gen/facing_vision.py
+@@ -45,7 +45,7 @@ def codex_inspect(path: Path, workdir: Path) -> tuple[str, dict]:
+     # output reuse and no persistent vision rollouts. Uses the existing login.
+     with tempfile.TemporaryDirectory(prefix="facing-", dir=workdir) as directory:
+         output = Path(directory) / "answer.txt"
+-        command = [provider_binary("codex"), "exec", "--sandbox", "read-only",
++        command = [provider_binary("codex"), "exec", "--ignore-user-config", "--sandbox", "read-only",
+                    "--skip-git-repo-check", "--ephemeral", "--color", "never",
+                    "-C", directory, "-i", str(path.resolve()), "-o", str(output), "-"]
+         completed = subprocess.run(command, input=INSPECTION_PROMPT, capture_output=True,
