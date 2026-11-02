@@ -105,6 +105,7 @@ It has all the headings below in this order. Under a heading with no content, wr
 - Do not write evaluative sentences (fun, quality, difficulty assessment, whether it can be cleared)
 - A fact that was not checked gets `unconfirmed`
 - `## play mode`: a scene where input needs a response within a set time (real-time action, realtime match) is `step`, a scene where the time gaps between inputs decide the result (rhythm, combo input) is `script`, and any other scene is `free`
+- The inputs are those of the devices the players use on the first platform of game settings `buildPlatforms`, which the judges' instances run (keys, the mouse and a gamepad on macos, windows and linux; touch on android and ios; on web, the devices the brief names), and `## controls` names those devices. The game shows each device its own input prompts, so an input of another device shows the play agent and the judges screens the players never see. When that platform is a desktop platform, a press of a UI element is a key or `click_anchor <anchor>`, and a drag is `mouse_down left`, `mouse_move` and `mouse_up left` in a timed input script or in `input` lines of `ogw step --stream`; static check `play guide input` blocks a touch input command in `play-guide.md` (`tap_anchor` or a `touch_` command anywhere, and `tap` or `drag` with its positions in a code span or code block or as the command of a timed input script)
 
 ## records
 

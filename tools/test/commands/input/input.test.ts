@@ -35,6 +35,7 @@ describe('ogw input', () => {
     expect(run.code).toBe(0);
     expect(run.stdout).toContain('input commands (QACore built-in commands with the input mark):');
     expect(run.stdout).toContain('  pad_axis: gamepad axis name, value (real)');
+    expect(run.stdout).toContain('tool inputs (made of get_anchor, mouse_down and mouse_up):\n  click_anchor: anchor name, anchor key');
     expect(run.stdout).toContain('key names by engine:\n  godot: the names OS.get_keycode_string() gives, for example A, Space, Escape');
   });
 
@@ -166,6 +167,37 @@ describe('ogw input', () => {
       expect(data.videoError).toBe('capture_video failed: "a capture_video is running"');
       const text = await ogw(runner.ws, ['input', id, '--script', script, '--video']);
       expect(text.stdout).toContain('video failed: capture_video failed: "a capture_video is running"');
+    } finally {
+      runner.config({ clients: { main: { fail: { tap_anchor: 'anchor not found' } } } });
+    }
+  });
+
+  it('clicks the center of a visible anchor with the left mouse button, alone and in a script', async () => {
+    const anchor = (visible: boolean): Record<string, unknown> => ({ ok: true, result: { found: true, visible, rect: [100, 200, 41, 20] } });
+    runner.config({ clients: { main: { results: { get_anchor: anchor(true) } } } });
+    try {
+      let before = runner.requests('main').length;
+      expect(await ogw(runner.ws, ['input', id, 'click_anchor', 'menu_start'])).toMatchObject({ code: 0, stdout: '{"ok":true,"result":null}\n' });
+      expect(runner.requests('main').slice(before).map((r) => [r.command, ...r.args])).toEqual([
+        ['get_anchor', 'menu_start'],
+        ['mouse_down', 'left', '120.5', '210'],
+        ['mouse_up', 'left', '120.5', '210'],
+      ]);
+      const script = join(runner.ws.root, 'click.json');
+      writeFileSync(script, JSON.stringify({ steps: [{ atMs: 0, command: 'click_anchor', args: ['shop_item', 'item_bow'] }] }));
+      before = runner.requests('main').length;
+      expect((await ogw(runner.ws, ['input', id, '--script', script])).code).toBe(0);
+      expect(runner.requests('main').slice(before).map((r) => [r.command, ...r.args])).toEqual([
+        ['get_state'],
+        ['get_anchor', 'shop_item', 'item_bow'],
+        ['mouse_down', 'left', '120.5', '210'],
+        ['mouse_up', 'left', '120.5', '210'],
+      ]);
+      // an anchor that is hidden or covered is not clicked, as tap_anchor does not tap it
+      runner.config({ clients: { main: { results: { get_anchor: anchor(false) } } } });
+      before = runner.requests('main').length;
+      expect(await ogw(runner.ws, ['input', id, 'click_anchor', 'menu_start'])).toMatchObject({ code: 1, stdout: '{"ok":false,"result":"the anchor is not there or not visible"}\n' });
+      expect(runner.requests('main').slice(before).map((r) => r.command)).toEqual(['get_anchor']);
     } finally {
       runner.config({ clients: { main: { fail: { tap_anchor: 'anchor not found' } } } });
     }

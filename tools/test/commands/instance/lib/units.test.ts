@@ -402,7 +402,7 @@ describe('prepare and qa', () => {
 describe('playAccessRefusal', () => {
   it('takes input, capture, observation and step mode, and refuses setup, restart, stop and framesDir', () => {
     const req = (client: string, command: string): Record<string, unknown> => ({ client, command, args: [] });
-    for (const command of [...INPUT_COMMANDS.map((c) => c.name), 'capture_screen', 'capture_video', 'extract_logs', 'get_telemetry', 'get_state', 'set_step_mode', 'step']) {
+    for (const command of [...INPUT_COMMANDS.map((c) => c.name), 'capture_screen', 'capture_video', 'extract_logs', 'get_telemetry', 'get_state', 'get_anchor', 'set_step_mode', 'step']) {
       expect(playAccessRefusal('/request', req('main', command))).toBeNull();
     }
     for (const command of ['get_state', 'set_step_mode', 'leave_match', 'step']) expect(playAccessRefusal('/request', req('opponent_1', command))).toBeNull();
