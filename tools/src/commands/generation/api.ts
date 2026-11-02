@@ -10,7 +10,7 @@ import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type M
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
 
 export type { CatalogFile, MethodChoice };
-/** The logotype method and the prefix of the logo keys it alone makes (`production.md` `## logo`). */
+/** The logotype method and the prefix of the logo keys it letters (`production.md` `## logo`). */
 export { LOGO_PREFIX, LOGOTYPE_METHOD };
 
 /** Methods a resource key can use and the stage of each, as `ogw generation methods <game> <key>` gives them. */
