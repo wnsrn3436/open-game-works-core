@@ -56,6 +56,7 @@ export interface UiElement {
   button: boolean;
   padAction: boolean;
   modalCovered: boolean;
+  dimmed: boolean;
   textInput: boolean;
   focused: boolean;
 }
@@ -82,6 +83,7 @@ export function toElements(result: unknown): UiElement[] {
     button: e.button === true,
     padAction: e.pad_action === true,
     modalCovered: e.modal_covered === true,
+    dimmed: e.dimmed === true,
     textInput: e.text_input === true,
     focused: e.focused === true,
   }));
@@ -194,8 +196,8 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
 }
 
 /**
- * The presentation conditions of one capture (`qa-core` UI quality check): text sizes, small text, contrast and empty
- * panels, each with the `owner` of the problem.
+ * The presentation conditions of one capture (`qa-core` UI quality check): text sizes, small text, the contrast of text
+ * that is not dimmed and empty panels, each with the `owner` of the problem.
  */
 export function presentationProblems(
   elements: readonly UiElement[],
@@ -210,7 +212,7 @@ export function presentationProblems(
   for (const e of texts) {
     const at1080 = (e.fontSize * 1080) / image.height;
     if (at1080 < limits.minFontPx) problems.push({ owner: e.owner, message: `small text ${e.path}: ${at1080.toFixed(1)} px at 1080 high` });
-    if (!inside(e.rect, image.width, image.height)) continue;
+    if (e.dimmed || !inside(e.rect, image.width, image.height)) continue;
     const contrast = rectContrast(image, e.rect);
     if (contrast !== null && contrast < limits.minContrast) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1` });
   }

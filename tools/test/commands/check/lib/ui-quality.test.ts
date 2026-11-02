@@ -34,7 +34,7 @@ const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContr
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
 
 function el(path: string, extra: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
-  return { path, rect: [0, 0, 10, 10], text: '', clipped: false, owner: 'lobby', button: false, pad_action: false, modal_covered: false, text_input: false, focused: false, ...extra };
+  return { path, rect: [0, 0, 10, 10], text: '', clipped: false, owner: 'lobby', button: false, pad_action: false, modal_covered: false, dimmed: false, text_input: false, focused: false, ...extra };
 }
 
 function elements(list: Record<string, unknown>[]): UiElement[] {
@@ -63,6 +63,8 @@ describe('UI quality presentation conditions', () => {
       el('hud/tiny', { text: 'x', font_size: 12, rect: [0, 200, 10, 10], owner: 'run' }),
       // one color where it is inside the image, but partly outside it: its contrast is not judged
       el('hud/edge', { text: 'E', font_size: 20, rect: [190, 100, 20, 40], owner: 'run' }),
+      // one color too, but a dim is drawn above it, which darkens it on purpose: its contrast is not judged
+      el('pause/under', { text: 'U', font_size: 20, rect: [100, 100, 100, 40], owner: 'run', dimmed: true }),
     ]);
     expect(presentationProblems(list, image, 'run', LIMITS).map((p) => p.message)).toEqual([
       '3 text sizes (12, 20, 40 px), more than 2',
@@ -121,10 +123,10 @@ describe('UI quality presentation conditions', () => {
 describe('UI quality rules', () => {
   it('toElements reads [x, y, w, h] rects and defaults', () => {
     expect(toElements([{ path: 'a', rect: [1, 2, 3, 4], text: 5, owner: 'o' }])).toEqual([
-      { path: 'a', rect: { x: 1, y: 2, w: 3, h: 4 }, text: '', fontSize: 0, clipped: false, owner: 'o', button: false, padAction: false, modalCovered: false, textInput: false, focused: false },
+      { path: 'a', rect: { x: 1, y: 2, w: 3, h: 4 }, text: '', fontSize: 0, clipped: false, owner: 'o', button: false, padAction: false, modalCovered: false, dimmed: false, textInput: false, focused: false },
     ]);
-    expect(toElements([el('b', { rect: [1, 2, 'x'], button: true, pad_action: true, modal_covered: true, text_input: true, focused: true, clipped: true })])[0]).toMatchObject({
-      rect: { x: 1, y: 2, w: 0, h: 0 }, button: true, padAction: true, modalCovered: true, textInput: true, focused: true, clipped: true,
+    expect(toElements([el('b', { rect: [1, 2, 'x'], button: true, pad_action: true, modal_covered: true, dimmed: true, text_input: true, focused: true, clipped: true })])[0]).toMatchObject({
+      rect: { x: 1, y: 2, w: 0, h: 0 }, button: true, padAction: true, modalCovered: true, dimmed: true, textInput: true, focused: true, clipped: true,
     });
     expect(toElements([{ path: 'c', rect: null }])[0]?.rect).toEqual({ x: 0, y: 0, w: 0, h: 0 });
     expect(toElements([{ path: 'd', rect: { x: 1, y: 2, w: 3, h: 4 } }])[0]?.rect).toEqual({ x: 0, y: 0, w: 0, h: 0 });
