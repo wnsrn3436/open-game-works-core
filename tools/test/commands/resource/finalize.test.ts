@@ -633,22 +633,52 @@ describe('ogw resource finalize', () => {
     expect(rowOf(f.game, 'image/logo/en')).toMatchObject({ status: 'final', method: 'logotype' });
   });
 
-  it('replaces a final row that a request of the open run holds, and refuses one that none holds', async () => {
-    const made = (key: string): Row => ({ key, spec: 'size=4x4', status: 'final', method: 'flux2-klein', source: 'generated', license: 'Apache-2.0' });
-    const f = setup([made('icon/a'), made('icon/b')], { 'records/loops/loop-1/resource-requests/100.md': '## keys\n\nicon/a\n\n## see\n\nnone\n\n## base\n\nnone\n' });
-    await png(join(f.game, 'resource/icon/a.png'), 4, 4, [9, 9, 9, 255]);
-    await png(join(f.game, 'resource/icon/b.png'), 4, 4, [9, 9, 9, 255]);
-    await sync(f);
-    await changeRuns({ name: 'g', root: f.game, mainRoot: f.game, commonDir: join(f.game, '.git'), inWorktree: false }, (runs) => {
-      runs.push(newRunState({ name: 'loop-1', kind: 'loop', branch: 'loop/loop-1', baseCommit: 'x' }));
+  describe('a final row asked again', () => {
+    const made = (key: string, method = 'flux2-klein'): Row => ({ key, spec: 'size=4x4', status: 'final', method, source: 'generated', license: 'Apache-2.0' });
+    const firstPixel = async (f: Fixture, key: string): Promise<number[]> => [...(await pixels(join(f.game, `resource/${key}.png`))).data.subarray(0, 4)];
+
+    async function madeGame(rows: Row[], settingsPatch: Record<string, unknown> = {}): Promise<Fixture> {
+      const f = setup(rows, {}, settingsPatch);
+      for (const row of rows) if (row.status === 'final') await png(join(f.game, `resource/${row.key}.png`), 4, 4, [9, 9, 9, 255]);
+      await sync(f);
+      await changeRuns({ name: 'g', root: f.game, mainRoot: f.game, commonDir: join(f.game, '.git'), inWorktree: false }, (runs) => {
+        runs.push(newRunState({ name: 'loop-1', kind: 'loop', branch: 'loop/loop-1', baseCommit: 'x' }));
+      });
+      return f;
+    }
+
+    it('stays in the game through sync until finalize replaces it, and a final row no request holds is refused', async () => {
+      const f = await madeGame([made('icon/a'), made('icon/b')]);
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'icon/a'])).stderr).toBe('');
+      await sync(f);
+      expect(rowOf(f.game, 'icon/a').status).toBe('final');
+      expect(await firstPixel(f, 'icon/a')).toEqual([9, 9, 9, 255]);
+      const run = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
+      expect(run.stderr).toBe('');
+      expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'flux2-klein' });
+      expect(await firstPixel(f, 'icon/a')).toEqual([1, 2, 3, 255]);
+      const refused = await finalize(f, await okPng(f, ['icon/b', '--method', 'flux2-klein']));
+      expect(refused.stderr).toContain('icon/b status is final, not requested');
+      expect(await firstPixel(f, 'icon/b')).toEqual([9, 9, 9, 255]);
     });
-    const run = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
-    expect(run.stderr).toBe('');
-    expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'flux2-klein' });
-    expect([...(await pixels(join(f.game, 'resource/icon/a.png'))).data.subarray(0, 4)]).toEqual([1, 2, 3, 255]);
-    const refused = await finalize(f, await okPng(f, ['icon/b', '--method', 'flux2-klein']));
-    expect(refused.stderr).toContain('icon/b status is final, not requested');
-    expect([...(await pixels(join(f.game, 'resource/icon/b.png'))).data.subarray(0, 4)]).toEqual([9, 9, 9, 255]);
+
+    it('is not replaced with the temporary method', async () => {
+      const f = await madeGame([made('icon/a', 'sprite-gen-codex')], { imageMethod: 'sprite-gen-codex' });
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'icon/a'])).stderr).toBe('');
+      const run = await finalize(f, await okPng(f, ['icon/a', '--method', 'flux2-klein']));
+      expect(run.stderr).toContain('icon/a is final: the temporary method flux2-klein does not replace it');
+      expect(rowOf(f.game, 'icon/a')).toMatchObject({ status: 'final', method: 'sprite-gen-codex' });
+      expect(await firstPixel(f, 'icon/a')).toEqual([9, 9, 9, 255]);
+    });
+
+    it('is finalized when sync turned it back to placeholder, as a text voice whose line changed', async () => {
+      const f = await madeGame([{ key: 'icon/p', spec: 'size=4x4', status: 'placeholder' }]);
+      mkdirSync(join(f.game, 'records/loops/loop-1/resource-requests'), { recursive: true });
+      writeFileSync(join(f.game, 'records/loops/loop-1/resource-requests/100.md'), '## keys\n\nicon/p\n\n## see\n\nnone\n\n## base\n\nnone\n');
+      const run = await finalize(f, await okPng(f, ['icon/p', '--method', 'flux2-klein']));
+      expect(run.stderr).toBe('');
+      expect(rowOf(f.game, 'icon/p').status).toBe('final');
+    });
   });
 
   it('removes the other files of the key', async () => {

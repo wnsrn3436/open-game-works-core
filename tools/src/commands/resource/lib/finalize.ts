@@ -67,7 +67,10 @@ interface Job {
   split: RigSplit | null;
   /** `final`, or `temporary` when `ogw generation methods` gives the method as the temporary method of the key. */
   status: 'final' | 'temporary';
-  /** A request file of the open run holds the key (a `final` row asked again keeps its status until it is replaced). */
+  /**
+   * A `final` or `placeholder` row whose key a request file of the open run holds: a final row asked again keeps its status
+   * until it is replaced, and a text voice whose line changed goes back to placeholder.
+   */
   requestedAgain: boolean;
 }
 
@@ -112,10 +115,10 @@ function optionProblems(job: Job): string[] {
 }
 
 function rowProblems(job: Job, methods: readonly string[]): string[] {
-  // a temporary row, or a final row requested again in this run, is replaced by its new resource
+  // a temporary row, and a final or placeholder row requested again in this run, are replaced by the new resource
   const problems: string[] = [];
-  const replaced = job.row.status === 'temporary' || (job.row.status === 'final' && job.requestedAgain);
-  if (job.row.status !== 'requested' && !replaced) problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  if (job.row.status !== 'requested' && job.row.status !== 'temporary' && !job.requestedAgain) problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
+  if (job.row.status === 'final' && job.status === 'temporary') problems.push(`${job.row.key} is final: the temporary method ${job.options.method} does not replace it`);
   const kit = findRow(job.rows, UI_KIT);
   if ((job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') && kit?.status === 'final' && !job.options.inputs.includes(UI_KIT)) {
     problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
@@ -449,7 +452,7 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
   const row = findRow(rows, options.key);
   if (!row) throw new OgwError(`${options.key} is not in ${LIST_PATH}`);
   const parsed = requireKey(options.key);
-  const requestedAgain = row.status === 'final' && (await requestedInOpenRun(game)).has(row.key);
+  const requestedAgain = (row.status === 'final' || row.status === 'placeholder') && (await requestedInOpenRun(game)).has(row.key);
   const job: Job = { ctx, game, options, parsed, spec: parseSpec(row.key, parsed.type, row.spec), row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final', requestedAgain };
   const choices = await generationMethods(ctx, game, options.key);
   const methods = choices.map((m) => m.name);
