@@ -639,7 +639,7 @@ describe('ogw resource finalize', () => {
 
     async function madeGame(rows: Row[], settingsPatch: Record<string, unknown> = {}): Promise<Fixture> {
       const f = setup(rows, {}, settingsPatch);
-      for (const row of rows) if (row.status === 'final') await png(join(f.game, `resource/${row.key}.png`), 4, 4, [9, 9, 9, 255]);
+      for (const row of rows) if (row.status === 'final') await png(join(f.game, `resource/${String(row.key)}.png`), 4, 4, [9, 9, 9, 255]);
       await sync(f);
       await changeRuns({ name: 'g', root: f.game, mainRoot: f.game, commonDir: join(f.game, '.git'), inWorktree: false }, (runs) => {
         runs.push(newRunState({ name: 'loop-1', kind: 'loop', branch: 'loop/loop-1', baseCommit: 'x' }));

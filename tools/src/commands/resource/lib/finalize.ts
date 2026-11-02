@@ -114,11 +114,16 @@ function optionProblems(job: Job): string[] {
   return problems;
 }
 
-function rowProblems(job: Job, methods: readonly string[]): string[] {
+function statusProblems(job: Job): string[] {
   // a temporary row, and a final or placeholder row requested again in this run, are replaced by the new resource
   const problems: string[] = [];
   if (job.row.status !== 'requested' && job.row.status !== 'temporary' && !job.requestedAgain) problems.push(`${job.row.key} status is ${job.row.status}, not requested`);
   if (job.row.status === 'final' && job.status === 'temporary') problems.push(`${job.row.key} is final: the temporary method ${job.options.method} does not replace it`);
+  return problems;
+}
+
+function rowProblems(job: Job, methods: readonly string[]): string[] {
+  const problems = statusProblems(job);
   const kit = findRow(job.rows, UI_KIT);
   if ((job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') && kit?.status === 'final' && !job.options.inputs.includes(UI_KIT)) {
     problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
