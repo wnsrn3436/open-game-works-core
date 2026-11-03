@@ -112,7 +112,7 @@ Each frame, it sets the camera position in the order below.
 
 ### shake
 
-- The trauma holds a value of at least 0 and at most 1. `shake` adds the received amount to trauma, clamps it to 1, then emits `CameraShakeStartedEvent`
+- The trauma holds a value of at least 0 and at most 1. `shake` adds the received amount to trauma, clamps it to 1, then publishes `CameraShakeStartedEvent`
 - Each frame, it reduces trauma by `CameraCore.shakeDecayPerSecond` × elapsed seconds and stops at 0
 - The shake intensity is trauma². Each offset axis is `CameraCore.shakeMaxOffset` × intensity × noise, and the 2D rotation is `CameraCore.shakeMaxRotationDeg` × intensity × noise. A 3D camera adds no rotation
 - The noise holds a value of at least -1 and at most 1 made with the random of `UtilCore`; per axis it draws the next value at the frequency of `CameraCore.shakeFrequencyHz` and interpolates linearly between values
@@ -132,7 +132,7 @@ none
 
 | event | when | payload |
 |---|---|---|
-| `CameraShakeStartedEvent` | After `shake` adds trauma. `QACore` counts it as feedback | none |
+| `CameraShakeStartedEvent` | After `shake` adds trauma | none |
 
 ## error
 
@@ -151,7 +151,7 @@ none
 | in `screen_to_world` of a 3D camera, the ray has no intersection with the horizontal plane | origin | error |
 | in `world_to_screen` of a 3D camera, the depth of the world position along the view direction is less than the near plane distance | origin | error |
 | in bounds fitting of a 3D camera, a corner has no intersection with the horizontal plane | does no bounds fitting in that frame | error, the first time while the camera is attached |
-| a real number input is NaN or infinity | failure value of the operation above | error |
+| a real number input is NaN or infinity | failure value of that operation | error |
 
 ## settings
 
@@ -202,9 +202,9 @@ none
 - For a 3D perspective camera tilted down with bounds, for any follow goal and zoom, the `screen_to_world` points of the four corners of the visible game area are inside the range of the two horizontal axes of the bounds (tolerance 0.01 world units) and the height of the base position stays as it is. A camera looking above the horizon has no bounds fitting and one error log
 - In the frame after `GameAreaChangedEvent`, bounds fitting uses the changed view range
 - For both a 2D camera and a 3D camera, `get_view_center` is the base position after bounds fitting and does not add the shake offset even during a shake. For a 3D camera it equals the camera position
-- Two `shake(0.5)` calls emit `CameraShakeStartedEvent` twice and make trauma 1, and without `shake` it is 0 after 1 / `CameraCore.shakeDecayPerSecond` seconds. When trauma is 0, offset and rotation are 0
+- Two `shake(0.5)` calls publish `CameraShakeStartedEvent` twice and make trauma 1, and without `shake` it is 0 after 1 / `CameraCore.shakeDecayPerSecond` seconds. When trauma is 0, offset and rotation are 0
 - In every frame, the absolute value of each axis of the shake offset is at most `CameraCore.shakeMaxOffset` × trauma²
-- With the same seed and the same `shake`, the offset with `set_shake_scale`(500) is half that at 1000, and at 0 the offset is 0 and `CameraShakeStartedEvent` is still emitted
+- With the same seed and the same `shake`, the offset with `set_shake_scale`(500) is half that at 1000, and at 0 the offset is 0 and `CameraShakeStartedEvent` is still published
 - With the same `set_shake_seed` and the same order of `shake` calls, the offset of each frame is the same
 - For a 2D camera, `screen_to_world(world_to_screen(p))` equals p (tolerance 0.01 world units). It is the same during zoom and shake. For a 3D camera, the same holds for a point p at height 0
 - For a 3D camera, `world_to_screen` of a world position behind the camera and of a world position between the camera and the near plane is the origin, with one error log each

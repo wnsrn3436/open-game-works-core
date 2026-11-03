@@ -63,18 +63,17 @@ Manages the displays (red dot, count) that announce new items and rewards to rec
 - An evaluator is a handler hook that reads UserState and data and returns the own count of a badge. e.g. the number of attendance rewards that can be received, the number of equipment items that can be upgraded
 - A badge with a registered evaluator does not accept `set_count`
 - Several evaluator call triggers within one frame are merged into one at the end of that frame. The call every `BadgeCore.refreshIntervalMs` catches rewards that become receivable as time passes
-- An evaluator does not wait
 
 ### recalculation and event
 
 - When an own count or an item count changes, the total counts of that badge and its ancestor badges are recalculated at the end of the frame
-- `BadgeChangedEvent` is emitted for each badge whose total count changed. Children are emitted before parents. It is not emitted for a badge that did not change
-- When an item count changes, `BadgeChangedEvent` is emitted for that item
+- `BadgeChangedEvent` is published for each badge whose total count changed. Children are published before parents. It is not published for a badge that did not change
+- When an item count changes, `BadgeChangedEvent` is published for that item
 
 ### save
 
 - Item badges under a data badge whose `persist` is `true` are saved in the `user` file of `LocalDataCore`, key `BadgeCore.items`. An element is `<badge ID>:<item key>=<count>` per item badge; all three are decimal integers, and the count is 1 or more. They are saved at the end of the frame in which they changed. Nothing is saved before `load_saved`
-- `load_saved` is called after `LocalDataCore.load_user_file`. Of the saved item badges, it adds only those whose badge and item key are not in memory. An item in memory uses the memory value. Saved values of badges whose `persist` became `false` and of badges not in data are discarded. Elements with a wrong format are discarded with a warn log. After that, when the save targets in memory differ from the saved values, it saves at the end of that frame
+- Of the saved item badges, `load_saved` adds only those whose badge and item key are not in memory. An item in memory uses the memory value. Saved values of badges whose `persist` became `false` and of badges not in data are discarded. Elements with a wrong format are discarded with a warn log. After that, when the save targets in memory differ from the saved values, it saves at the end of that frame
 - Item badges of a badge whose `persist` is `false` disappear on `release` and restart
 
 ### display

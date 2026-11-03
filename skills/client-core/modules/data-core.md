@@ -72,7 +72,7 @@ Picks the built client data from downloaded data or built-in data, validates it 
 ### derived container
 
 - derived container: a container made from the values of generated containers and accessors. e.g. list of rows per column value, cumulative value per level
-- `BootstrapCore` calls `build_derived_containers` once, after a successful `load` and after `content_init` of the content entry registers hooks. It calls the registered `build_derived` hooks and locks the derived containers when the hooks finish
+- `BootstrapCore` calls `build_derived_containers` once, after a successful `load` and after `content_init` of the content entry registers hooks. It calls the registered `build_derived` hook and locks the derived containers when the hook finishes
 - Content code makes derived containers only inside the `build_derived` hook. It does not make them at lookup
 - `make_index` makes a `DataIndex` that holds one row per combination of key column values. When the same key has two or more rows, it puts in none of those rows and leaves an `error` log per key, and `build_derived_containers` returns `false`
 - `make_group` makes a `DataGroup` that holds a list of rows per combination of key column values. The list of rows follows the row order of the table
@@ -110,7 +110,7 @@ none
 | second `load` | `false`. The containers and data version stay as they are | `error` |
 | `get_data_version` before `load` or after a failed `load` | empty string | `error` |
 | `get_builtin_data_version` that has kept a read failure | empty string | `error` per call |
-| `build_derived_containers`·`make_index`·`make_group` before a successful `load`, a second time, or outside the hook | `false`, empty container | `error` |
+| `build_derived_containers`, `make_index`, `make_group` before a successful `load`, a second time, or outside the hook | `false`, empty container | `error` |
 | the number of key columns is outside 1 to 3, the table or column does not exist, or the type is not a key column type | empty container | `error` |
 | duplicate key in a `DataIndex` | does not put in the duplicate rows. `build_derived_containers` is `false` | `error` per key |
 | missing data of `get_row`, `get_rows` | empty row, empty list | one `error` per (container, key) until `release` |

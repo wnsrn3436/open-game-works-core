@@ -95,7 +95,7 @@ The app version check compares with the platform entry of `app`. Versions compar
 | other save failure | `[game_update_save_failed]` |
 
 - stall timeout: the received bytes do not grow for `GameUpdateCore.stallTimeoutMs` after the download starts or after the received bytes last grew. It cancels that download and discards a result that arrives after that
-- For each failure, it writes the reserved string name, the URL and the HTTP status (0 when there is no response) to the error log
+- For each failure, it leaves an error log with the reserved string name, the URL and the HTTP status (0 when there is no response)
 - On a failure, it opens the fetch failure popup. `[game_update_retry]` retries from the failed download. Saved files are not downloaded again. There is no limit on the number of retries
 
 ### update error

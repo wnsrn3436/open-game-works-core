@@ -45,9 +45,9 @@ Saves the user options for text size scale, color vision correction, voice subti
 
 ### save and apply
 
-- The option values are kept in the `device` file of `LocalDataCore` under the keys `AccessibilityCore.text_scale`, `AccessibilityCore.color_mode`, `AccessibilityCore.subtitles`, `AccessibilityCore.reduce_shake`, `AccessibilityCore.reduce_flash`
-- `apply_saved_settings` is called after `LocalDataCore.load_device_file`. It reads the saved values and applies them all. When a key is missing, the type of a saved value differs from the type in `## data`, or a value is outside the allowed values, it uses the default. AccessibilityCore then leaves no log. Before it is called, the settings are the default and are not applied
-- `set_*` applies the value at once and saves it. When the value changes, it emits `AccessibilityChangedEvent`. With the same value it does nothing
+- The option values are kept in the `device` file of `LocalDataCore`
+- `apply_saved_settings` reads the saved values and applies them all. When a key is missing, the type of a saved value differs from the type in `## data`, or a value is outside the allowed values, it uses the default. AccessibilityCore then leaves no log. Before it is called, the settings are the default and are not applied
+- `set_*` applies the value at once and saves it. When the value changes, it publishes `AccessibilityChangedEvent`. With the same value it does nothing
 
 | option | applies to |
 |---|---|
@@ -64,7 +64,7 @@ Saves the user options for text size scale, color vision correction, voice subti
 
 ### color mode
 
-- When `AccessibilityCore.colorFilterEnabled` is `true` and the color mode is not `None`, it applies that mode's color vision correction color matrix to the whole visible game area except the `Fatal` layer and the debug layer. The matrix values are that mode's item in core settings `AccessibilityCore.colorMatrices` (3x3, row-major). The filter is a shader made in code and is drawn in `UICore.get_layer(LoadingIcon)` above the other elements of that layer. It is also above elements added to that layer after the filter. How each engine does this is in the per-engine implementation rules
+- When `AccessibilityCore.colorFilterEnabled` is `true` and the color mode is not `None`, it applies that mode's color vision correction color matrix to the whole visible game area except the `Fatal` layer and the debug layer. The matrix values are that mode's item in core settings `AccessibilityCore.colorMatrices` (3x3, row-major). The filter is a shader made in code and is drawn in `UICore.get_layer(LoadingIcon)` above the other elements of that layer. It is also above elements added to that layer after the filter. How each engine does this is in the engine-specific implementation rules
 - When `AccessibilityCore.colorFilterEnabled` is `false`, it applies no filter. Content code then changes its palette from `AccessibilityChangedEvent` and the `color_mode` of `get_settings`
 
 ### subtitles
@@ -100,26 +100,26 @@ none
 | value outside `ColorMode` passed to `set_color_mode` | `false`. Value unchanged | error |
 | value less than 1000 passed to `set_test_text_scale` | ignored. Text scale unchanged | error |
 | subtitle translation key of `play_voice` is empty | plays, and shows no subtitle | error |
-| `AccessibilityCore.textScales` has no 1000, or has an element less than 1 or duplicate elements; `colorMatrices` has no item for one of `Protanopia`, `Deuteranopia`, `Tritanopia`, or an item's elements are not 9 real numbers; `reducedShakePermille` is not from 0 to 1000; `subtitleWidthPermille` is not from 1 to 1000; `reducedFlashMaxOpacity` or `subtitleBoxOpacity` is not from 0 to 1; `subtitleFontSize` is less than 1; `subtitlePadding` or `subtitleBottomMargin` is less than 0 | `init` fails | error |
+| `AccessibilityCore.textScales` or `subtitleWidthPermille` is outside the range in its `meaning`; `colorMatrices` has no item for one of `Protanopia`, `Deuteranopia`, `Tritanopia`, or an item's elements are not 9 real numbers; `reducedShakePermille` is not from 0 to 1000; `reducedFlashMaxOpacity` or `subtitleBoxOpacity` is not from 0 to 1; `subtitleFontSize` is less than 1; `subtitlePadding` or `subtitleBottomMargin` is less than 0 | `init` fails | error |
 | engine does not support a full-screen shader | applies no filter | warn once per `init` |
 
 ## settings
 
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
-| `AccessibilityCore.textScales` | array<integer> | core | human | list of allowed text scale permille values |
+| `AccessibilityCore.textScales` | array<integer> | core | human | list of allowed text scale permille values. It holds 1000, each element is 1 or more, and no element repeats |
 | `AccessibilityCore.subtitlesDefault` | boolean | core | content | subtitles when there is no saved value |
 | `AccessibilityCore.colorFilterEnabled` | boolean | core | content | whether to use the color filter of core |
 | `AccessibilityCore.colorMatrices` | object | core | content | 3x3 color matrix (9 real numbers, row-major) for each of `Protanopia`, `Deuteranopia`, `Tritanopia` |
 | `AccessibilityCore.reducedShakePermille` | integer | core | content | camera shake scale permille when reduce shake is on |
 | `AccessibilityCore.reducedFlashMaxOpacity` | number | core | content | maximum opacity of a flash when reduce flash is on |
-| `AccessibilityCore.subtitleWidthPermille` | integer | core | content | subtitle box width as permille of the safe area width |
+| `AccessibilityCore.subtitleWidthPermille` | integer | core | content | subtitle box width as permille of the safe area width. From 1 to 1000 |
 | `AccessibilityCore.subtitleBoxOpacity` | number | core | content | opacity of the black rectangle of the subtitle box |
 | `AccessibilityCore.subtitleFontSize` | integer | core | content | size set on the subtitle text element. Value before multiplying by the text scale. game coordinates |
 | `AccessibilityCore.subtitlePadding` | number | core | content | inner padding of the subtitle box. game coordinates |
 | `AccessibilityCore.subtitleBottomMargin` | number | core | content | distance between the bottom edge of the safe area and the bottom edge of the subtitle box. game coordinates |
 
-- The core settings schema checks the value ranges in the error table
+- The core settings schema checks the value ranges in `meaning` and in the error table
 
 ## data
 
@@ -153,7 +153,7 @@ none
 - With subtitles on, calling `play_voice` shows a subtitle, which hides in the frame where playback ends. With subtitles off there is no subtitle and playback happens. The subtitle of a second `play_voice` replaces the previous subtitle
 - The horizontal center of the subtitle box is the horizontal center of the safe area, and its bottom edge is `AccessibilityCore.subtitleBottomMargin` above the bottom edge of the safe area
 - The font size of the subtitle text, both for a subtitle shown after `set_test_text_scale`(1500) and for a subtitle that is visible when `set_test_text_scale`(1500) is called (after that call), is `subtitleFontSize` × 1500 ÷ 1000 rounded down
-- Each `set_*` that changes a value emits `AccessibilityChangedEvent` once, and the same value emits none
+- Each `set_*` that changes a value publishes `AccessibilityChangedEvent` once, and the same value publishes none
 - After `set_test_text_scale`, the device file is unchanged
 - `set_test_text_scale`(999) leaves an error log, and `LocalizationCore.get_text_scale` is unchanged
 - After `release`, there is no color filter and no subtitle box

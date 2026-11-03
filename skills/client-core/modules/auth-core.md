@@ -115,7 +115,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
   1. Writes the new login token and `linked_providers` of the response as the storage item
   2. Keeps the access token, `access_token_expires_at`, the session signing key, the login token of the response, the user ID, the public code, the linked provider list, `consent` and `remote_config` in the session in memory, and does consent apply. Calls `UserStateCore.set_user_created_at` with `user_created_at` of the response
   3. Passes its own `SessionProvider` to `NetworkCore.set_session_provider`
-  4. Emits `LoginCompletedEvent`
+  4. Publishes `LoginCompletedEvent`
 - When 1 fails, `login` returns `Failed` and keeps the previous session and storage item. `switch_account` follows the `switch_account` rules. Auto login does 2 to 4 and returns `Success`. It then keeps the new token in memory as a pending token, together with the login token that the `AutoLogin` sent, and writes it again on `AppBackgroundEnteredEvent`, `AppForegroundReturnedEvent`, `AppQuitEvent`, `release` and token refresh success until a write succeeds. When the write succeeds, it deletes the login token kept with the pending token. In the other cases that delete the pending token, it also deletes the login token kept with it
 - `NetworkCore` passes the UserState delta of the response to `UserStateCore`
 - The user ID, public code, ban end time and deletion page address of `Banned` are `user_id`, `public_code`, `until_at`, `deletion_url` of the ban detail of `RequestFailure`. When there is no ban detail, they are 0, an empty string, 0 and an empty string
@@ -160,9 +160,9 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
 - A refresh sends `RefreshToken` with the login token that the `AutoLogin` sent, kept with the pending token, when there is a pending token; otherwise with the login token in the session in memory. It does not read the storage item. This is because sending with the pending token makes the server invalidate the token in the storage item, so the account is lost when the app ends before the save. On success, it replaces the access token and the expiry time with `access_token` and `access_token_expires_at` of the response. When a refresh is in progress, it does not send a new one and uses that result
 - Each frame, when there is a session and the remaining time is `AuthCore.tokenRefreshMarginMs` or less, it refreshes. When this refresh fails, it does no frame refresh until the next `AppForegroundReturnedEvent` or the next refresh success
 - On `AppForegroundReturnedEvent`, it refreshes when there is a session
-- When a refresh gets `UNAUTHORIZED` or `TOKEN_EXPIRED`, it deletes the session in memory and the pending token, passes none to `NetworkCore.set_session_provider`, emits `SessionEndedEvent(Rejected)`, and emits `EventCore.RestartRequestedEvent`. It does not delete the storage item
-- When a refresh gets `SESSION_REPLACED`, or `SessionProvider.notify_session_replaced` is called while there is a session, it deletes the session in memory, passes none to `NetworkCore.set_session_provider`, emits `SessionEndedEvent(Replaced)`, and opens the session replaced popup. It does not delete the pending token and the storage item
-- session replaced popup: `UICore.open_system_popup`, body `[auth_session_replaced]`, one button `[auth_go_to_title]`, back button none. The button emits `RestartRequestedEvent`. While it is open, it is not opened again. When it cannot be opened, it leaves an error log and emits `RestartRequestedEvent`
+- When a refresh gets `UNAUTHORIZED` or `TOKEN_EXPIRED`, it deletes the session in memory and the pending token, passes none to `NetworkCore.set_session_provider`, publishes `SessionEndedEvent(Rejected)`, and publishes `EventCore.RestartRequestedEvent`. It does not delete the storage item
+- When a refresh gets `SESSION_REPLACED`, or `SessionProvider.notify_session_replaced` is called while there is a session, it deletes the session in memory, passes none to `NetworkCore.set_session_provider`, publishes `SessionEndedEvent(Replaced)`, and opens the session replaced popup. It does not delete the pending token and the storage item
+- session replaced popup: `UICore.open_system_popup`, body `[auth_session_replaced]`, one button `[auth_go_to_title]`, back button none. The button publishes `RestartRequestedEvent`. While it is open, it is not opened again. When it cannot be opened, it leaves an error log and publishes `RestartRequestedEvent`
 
 ### age and privacy choices
 
@@ -170,7 +170,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
 - The age block marker is the file `auth/age_blocked` under the app storage root of `LocalDataCore`. A write writes the 1 byte `1` with `LocalDataCore.write_file`, and a read is `LocalDataCore.read_file`(`auth/age_blocked`, 1). AuthCore does not delete this file. It is deleted with the app
 - `prepare_consent`. Without a session, `Failed`. It does the following in order, and when a sent request fails, it ends with `Failed`
   1. When game settings `consent.ageConfirmation` is `true` and `age_confirmed_at` is 0, it opens the age popup. It sends `ConfirmAge` with the birth year and month received on confirm
-  2. When `below_minimum_age` is `true`, server `auth` has deleted that account. It deletes the session in memory, the pending token and the storage item, writes the age block marker, passes none to `NetworkCore.set_session_provider`, emits `SessionEndedEvent(AgeBlocked)`, and ends with `AgeBlocked`. A failure to delete the storage item or to write the age block marker only leaves an error log
+  2. When `below_minimum_age` is `true`, server `auth` has deleted that account. It deletes the session in memory, the pending token and the storage item, writes the age block marker, passes none to `NetworkCore.set_session_provider`, publishes `SessionEndedEvent(AgeBlocked)`, and ends with `AgeBlocked`. A failure to delete the storage item or to write the age block marker only leaves an error log
   3. When game settings `consent.privacyChoices` is `true` and `privacy_version` of `ConsentUserState` differs from game settings `consent.version`, it opens the privacy popup and sends `UpdateConsent` with the received choices and the device tracking state
   4. When game settings `pushConsent.adPush` is `true` and `push_ad_at` is 0, it opens the push consent popup and calls `update_push_consent` with the received choices
   5. When the platform is `ios`, game settings `consent.trackingRequest` is `true`, `ad_personalization_allowed` is `true` and the device tracking state is `NOT_DETERMINED`, it shows the OS tracking permission request (iOS App Tracking Transparency) and waits for the answer
@@ -191,18 +191,18 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
   - A toggle that is on is `GRANTED`, and off is `DENIED`. The popup opens with both off
   - When the popup closes in a way other than confirm, both are sent as `DENIED`
 - The three popups are opened with `UICore.open_popup`. When one cannot be opened or an element is missing, error log and failure value
-- How each engine maps the elements that `TermsPopup`, `AgePopup`, `PrivacyChoicesPopup`, `PushConsentPopup` point to and the elements each text is bound to is in the per-engine implementation rules
+- How each engine maps the elements that `TermsPopup`, `AgePopup`, `PrivacyChoicesPopup`, `PushConsentPopup` point to and the elements each text is bound to is in the engine-specific implementation rules
 - `ConfirmAge`, `UpdateConsent`, `UpdatePushConsent` are sent with `NetworkCore.send`. On success, it replaces `ConsentUserState` in memory with `consent` of the response and does consent apply
-- consent apply: passes `analytics_allowed` of `ConsentInfo` to `LogCore.set_analytics_allowed`, and emits `ConsentChangedEvent` when the value changed
+- consent apply: passes `analytics_allowed` of `ConsentInfo` to `LogCore.set_analytics_allowed`, and publishes `ConsentChangedEvent` when the value changed
 - `get_consent`: without a session, the failure value. `ad_personalization_allowed` is `true` only when the value in `ConsentUserState` is `true` and the device tracking state is `AUTHORIZED` or `NOT_APPLICABLE`. `age_confirmed` and `tracking` are as in the type table, and the other fields are the values of the fields with the same name in `ConsentUserState`
 - When the session ends or on `release`, it deletes `consent` in memory and calls `LogCore.set_analytics_allowed(false)`
 
 ### account
 
 - `link_account`: after the sign-in of the social adapter, sends `LinkAccount` with `NetworkCore.send`. `ALREADY_LINKED` is `AlreadyLinked`; a cancelled sign-in is `Cancelled`. On success, it replaces the linked provider list with `linked_providers` of the response and writes the storage item again. A failure of this write only leaves an error log
-- `switch_account`: sends `Login` with the social provider. When `Login` succeeds, it does 1 of the login success order and, regardless of the result of 1, emits `SessionEndedEvent(Switch)` and `RestartRequestedEvent`. This is because the UserState delta of the response already belongs to another account. When 1 succeeds, it returns `Success` with the user ID of the response after emitting the two events. When 1 fails, it returns `Failed`, and the storage item stays that of the previous account, so auto login after restart goes to the previous account. A sign-in failure or cancel and a `Login` failure or rejection keep the current session and storage item
-- `logout`: sends `Logout` with `send` and, regardless of the result, deletes the storage item, the pending token and the memory session. Then it emits `SessionEndedEvent(Logout)`, `RestartRequestedEvent`
-- `withdraw`: sends `Withdraw` with `send`. On success, it deletes the same things as logout, deletes the `LocalDataCore` `device` keys `AuthCore.terms_version`, `AuthCore.privacy_terms_version` with `remove_value`, and then emits `SessionEndedEvent(Withdraw)`, `RestartRequestedEvent`. On failure, it deletes nothing
+- `switch_account`: sends `Login` with the social provider. When `Login` succeeds, it does 1 of the login success order and, regardless of the result of 1, publishes `SessionEndedEvent(Switch)` and `RestartRequestedEvent`. This is because the UserState delta of the response already belongs to another account. When 1 succeeds, it returns `Success` with the user ID of the response after emitting the two events. When 1 fails, it returns `Failed`, and the storage item stays that of the previous account, so auto login after restart goes to the previous account. A sign-in failure or cancel and a `Login` failure or rejection keep the current session and storage item
+- `logout`: sends `Logout` with `send` and, regardless of the result, deletes the storage item, the pending token and the memory session. Then it publishes `SessionEndedEvent(Logout)`, `RestartRequestedEvent`
+- `withdraw`: sends `Withdraw` with `send`. On success, it deletes the same things as logout, deletes the `LocalDataCore` `device` keys `AuthCore.terms_version`, `AuthCore.privacy_terms_version` with `remove_value`, and then publishes `SessionEndedEvent(Withdraw)`, `RestartRequestedEvent`. On failure, it deletes nothing
 - `issue_deletion_code`: when there is a session, it sends `IssueDeletionCode` with `NetworkCore.send`. When there is no session and there is a ban session, it sends it with `NetworkCore.send_auth`, with `AuthSendOptions` whose `authorization` is the access token of the ban session, `sign` is `true`, and `signing_key` is the session signing key of the ban session. When there is neither, it fails without a request. On success, it returns `code`, `expires_at`, `url` of the response. The user enters the public code (`get_public_code`, the public code of `LoginResult`) and `code` on the server `auth` web account deletion page at that `url`
 - The failure callbacks of `link_account`, `logout`, `withdraw`, `issue_deletion_code` return `true`. The caller displays the failure
 - Passing `GUEST` to `link_account` or `switch_account` gives `Failed` without a request
@@ -294,9 +294,9 @@ none
 |---|---|---|---|---|
 | `AuthCore.tokenRefreshMarginMs` | integer | core | content | the access token is refreshed when the remaining time is this value or less |
 | `AuthCore.webLinkPromptLogins` | integer | core | content | interval, in `boot_login` successes, at which the link prompt popup opens for a web guest |
-| `AuthCore.storageCallTimeoutMs` | integer | core | content | time limit of a login token storage operation. When it is exceeded, that operation ends with `Failed`, the adapter is told to discard that operation, and the next operation starts. 1 or more |
+| `AuthCore.storageCallTimeoutMs` | integer | core | content | time limit of a login token storage operation. When it is exceeded, that operation ends with `Failed`, the login token storage is told to discard that operation, and the next operation starts. 1 or more |
 | `AuthCore.desktopSignInTimeoutMs` | integer | core | content | time limit for which `login-google` sign-in on `windows`, `macos`, `linux` waits for the browser redirect |
-| `auth.maxAgeYears` | integer | core | content | maximum age the age popup accepts. The same key as server `auth.ConfirmAge` |
+| `auth.maxAgeYears` | integer | core | content | maximum age the age popup accepts. Server `auth` reads the same key in `ConfirmAge` |
 | `termsPopup` | string | game | none | resource key of the terms popup prefab |
 | `agePopup` | string | game | none | resource key of the age popup prefab |
 | `privacyPopup` | string | game | none | resource key of the privacy popup prefab |
@@ -324,7 +324,6 @@ format argument
 | `[auth_push_night_denied]` | `{date}`(`integer`) |
 
 - The build uses `[auth_tracking_usage]` as the text of the iOS tracking permission request (`NSUserTrackingUsageDescription`). Core does not show it at run time
-- The `{date}` value of `[auth_push_ad_granted]`, `[auth_push_ad_denied]`, `[auth_push_night_granted]`, `[auth_push_night_denied]` is the time of the change
 
 `LocalDataCore` key
 
@@ -343,11 +342,11 @@ format argument
 | `set_fake_social_account` | fake account name | none | none | core test, `QACore` |
 | `expire_access_token` | none | none | none | core test, `QACore` |
 | `set_fake_tracking_status` | `TrackingStatus` | none. The device tracking state and the answer to the tracking permission request become this value | none | core test |
-| `use_dev_token_storage` | none | none. After that, in a run that the per-engine implementation rules define as one that uses DEV token storage, it uses DEV token storage instead of login token storage | none | `BootstrapCore`(`InitModules`), core test |
+| `use_dev_token_storage` | none | none. After that, in a run that the engine-specific implementation rules define as one that uses DEV token storage, it uses DEV token storage instead of login token storage | none | `BootstrapCore`(`InitModules`), core test |
 
 - `dev_login` sends `DevLogin` with `NetworkCore.send_auth_cheat`. It does not do the terms check and the install marker check. After success, it does 2 to 4 of the login success order. It does not read or write the storage item and the pending token
 - `expire_access_token` sets the expiry time in memory to the current server time
-- DEV token storage is the storage that keeps the token in a run that contains DEV code and cannot use the login token storage of the engine. The storage location and when it is used are in the per-engine implementation rules
+- DEV token storage is the storage that keeps the token in a run that contains DEV code and cannot use the login token storage of the engine. The storage location and when it is used are in the engine-specific implementation rules
 
 ## test
 
@@ -376,7 +375,7 @@ format argument
 - On `SESSION_REPLACED` of a refresh, there is `SessionEndedEvent(Replaced)` and one session replaced popup, `RestartRequestedEvent` occurs once after the button is pressed, and the pending token and storage item are unchanged
 - Calling `SessionProvider.notify_session_replaced` twice in a row gives one `SessionEndedEvent(Replaced)` and one session replaced popup
 - When a refresh gets `MAINTENANCE`, `get_access_token` fails with a `ServerError` `RequestFailure` of that error code, and the session and storage item are unchanged
-- `logout` deletes the storage item regardless of the request result and emits `RestartRequestedEvent` once. A `withdraw` success and a `switch_account` whose `Login` succeeded also emit `RestartRequestedEvent` once. A `withdraw` failure, and a cancel or `Login` failure of `switch_account`, do not change the user ID and storage item, and there is no `RestartRequestedEvent`
+- `logout` deletes the storage item regardless of the request result and publishes `RestartRequestedEvent` once. A `withdraw` success and a `switch_account` whose `Login` succeeded also publish `RestartRequestedEvent` once. A `withdraw` failure, and a cancel or `Login` failure of `switch_account`, do not change the user ID and storage item, and there is no `RestartRequestedEvent`
 - `ALREADY_LINKED` of `link_account` is `AlreadyLinked`, and the linked provider list is unchanged
 - After a `withdraw` success, `AuthCore.terms_version` and `AuthCore.privacy_terms_version` are absent, and after restart `prepare_terms` opens the terms popup. A `withdraw` failure and `logout` do not change the two values
 - `login` with the same fake account name of the fake adapter, then `release`, `init` and `login` again gives the same user ID. `login` while there is a session is `Failed` without a request, and the user ID and storage item are unchanged
@@ -396,7 +395,7 @@ format argument
 - `dev_login` does not read or write the storage item
 - After `dev_login`, calling `expire_access_token` and then `get_access_token` sends `RefreshToken` with the login token of the `DevLogin` response, which succeeds, and there is no storage item read
 - A refresh after a `switch_account` success and before restart sends `RefreshToken` with the login token of the previous session
-- A `switch_account` whose `Login` and token save succeed emits `SessionEndedEvent(Switch)` and `RestartRequestedEvent` and then returns `Success` and the user ID and public code of the response, and at that time `get_user_id` is the user ID of the previous account
+- A `switch_account` whose `Login` and token save succeed publishes `SessionEndedEvent(Switch)` and `RestartRequestedEvent` and then returns `Success` and the user ID and public code of the response, and at that time `get_user_id` is the user ID of the previous account
 - A confirm in the age popup with year `199`, month 13, a future year and month, or a year and month whose age is more than `auth.maxAgeYears` leaves the popup open without a request and shows `[auth_age_invalid]`
 - When `privacy_version` of `ConsentUserState` differs from `consent.version`, the privacy popup opens with both toggles off, and closing it other than by confirm sends `UpdateConsent` with both `DENIED`. When they are the same, it does not open
 - On `ios`, the tracking permission request shows once, only when `consent.trackingRequest`, `ad_personalization_allowed` and `NOT_DETERMINED` all hold, and when the answer differs from `tracking` of `ConsentUserState`, `UpdateConsent` goes

@@ -61,8 +61,8 @@ Receives and caches the channel list and messages of server core `chat`, and sen
 - channel list polling: sends core `rpc` `GetChatChannels` with `NetworkCore.send`. It waits, in real elapsed time, `poll_after_ms` of the response on success or `ChatCore.failureRetryMs` on failure, then sends again. There is always at most one `GetChatChannels` being sent
 - `refresh_channels` ends the wait, sends at once and returns that result. When one is being sent, it does not send a new one and waits for that result together. Before `start`, it is `false`
 - On `AppForegroundReturnedEvent`, it ends the waits of the channel list and of the watched channels and sends at once. During background, real elapsed time does not increase, so it does not send
-- On success it replaces the whole channel list with `channels` of the response. When it differs from the previous list (item count, or any field of the item at the same index differs), it emits `ChatChannelsChangedEvent`
-- When `GetChatChannels` fails with `ServerError` `CHILD_RESTRICTED`, it stops channel list polling and all message polling and does not send again until `release`. The channel count is 0. When the list changed, it emits `ChatChannelsChangedEvent`; it does not change read seqs. After that, `refresh_channels`, `watch_channel`, `load_older` send nothing and are `false`, and `send_message` sends nothing and is a failed `ChatSendResult` with error code `CHILD_RESTRICTED`. These calls leave no log
+- On success it replaces the whole channel list with `channels` of the response. When it differs from the previous list (item count, or any field of the item at the same index differs), it publishes `ChatChannelsChangedEvent`
+- When `GetChatChannels` fails with `ServerError` `CHILD_RESTRICTED`, it stops channel list polling and all message polling and does not send again until `release`. The channel count is 0. When the list changed, it publishes `ChatChannelsChangedEvent`; it does not change read seqs. After that, `refresh_channels`, `watch_channel`, `load_older` send nothing and are `false`, and `send_message` sends nothing and is a failed `ChatSendResult` with error code `CHILD_RESTRICTED`. These calls leave no log
 
 ### read seq and badge
 
@@ -77,27 +77,27 @@ Receives and caches the channel list and messages of server core `chat`, and sen
   - `send_message` success: to the seq of the sent message
 - unread count = max(0, `last_visible_seq` of the list item − read seq). It is 0 for a channel not in the list and for a `World` channel
 - badge: under the badge of reserved ID `[chat_badge]`, for each item with an unread count of 1 or more, it sets `BadgeCore.set_item`(badge, item key, unread count). It deletes other items with `BadgeCore.clear_item`. The item key is the other user's ID for `Direct` and −1 for `Guild`. It updates them at the end of a frame in which a read seq or the channel list changed
-- At the end of a frame in which a read seq changed, it saves `ChatCore.read_seqs`. The element per channel is `<ChatChannelKind element name>:<channel key>=<read seq>`, with channel key and read seq as decimal integers. When reading, it leaves a warn log for an element with a wrong format and discards it
+- At the end of a frame in which a read seq changed, it saves `ChatCore.read_seqs`. The element per channel is `<ChatChannelKind element name>:<channel ID>=<read seq>`, with channel ID and read seq as decimal integers. When reading, it leaves a warn log for an element with a wrong format and discards it
 
 ### watch
 
 - `watch_channel` puts that channel in the watch list and sends the first request at once. When it is already watched, it does nothing and is `true`. When the number of watched channels is `ChatCore.maxWatchedChannels`, it is `false`. Content code watches only channels shown on screen
 - Each channel has a new message cursor, an old message cursor and a deleted message cursor. All are 0 at first. A `Guild` channel also keeps the last received guild ID
-- first request: `GetChatMessages`(`after_seq` 0, `before_seq` 0, `after_delete_seq` 0). On success it replaces the cache with `messages`, sets the new message cursor to `last_seq`, the old message cursor to `first_seq`, the deleted message cursor to `last_delete_seq` and the guild ID of a `Guild` channel to `channel_key`, and emits `ChatMessagesChangedEvent`(`Reset`, message count)
+- first request: `GetChatMessages`(`after_seq` 0, `before_seq` 0, `after_delete_seq` 0). On success it replaces the cache with `messages`, sets the new message cursor to `last_seq`, the old message cursor to `first_seq`, the deleted message cursor to `last_delete_seq` and the guild ID of a `Guild` channel to `channel_key`, and publishes `ChatMessagesChangedEvent`(`Reset`, message count)
 - poll: the next `GetChatMessages` of a watched channel. It waits, in real elapsed time, `poll_after_ms` when the previous request succeeded or `ChatCore.failureRetryMs` when it failed, then sends. When the first request has not succeeded, it sends the first request again; otherwise it sends `GetChatMessages`(`after_seq` = new message cursor, `before_seq` 0, `after_delete_seq` = deleted message cursor)
 - poll success processing order
-  1. For a `Guild` channel whose response `channel_key` differs from the kept guild ID, discard the response, return the cache and cursors to their initial state, emit `ChatMessagesChangedEvent`(`Reset`, 0), then send the first request at once
+  1. For a `Guild` channel whose response `channel_key` differs from the kept guild ID, discard the response, return the cache and cursors to their initial state, publish `ChatMessagesChangedEvent`(`Reset`, 0), then send the first request at once
   2. Delete the seqs of `deleted_seqs` from the cache. When the deleted count is 1 or more, `ChatMessagesChangedEvent`(`Removed`, deleted count)
   3. Append, in ascending seq order, the messages of `messages` whose seq is larger than the largest seq of the cache. When the added count is 1 or more, `ChatMessagesChangedEvent`(`Appended`, added count)
   4. When the new message cursor was 0, set the old message cursor to `first_seq`. Set the new message cursor to `last_seq` and the deleted message cursor to `last_delete_seq`
-- When a request of a `Guild` channel ends with `GUILD_NOT_MEMBER`, it returns the cache and cursors to their initial state. When the cache had messages, it emits `ChatMessagesChangedEvent`(`Reset`, 0)
-- `unwatch_channel` removes that channel from the watch list and deletes its cache and cursors. It discards the result of a request in progress and emits no event
+- When a request of a `Guild` channel ends with `GUILD_NOT_MEMBER`, it returns the cache and cursors to their initial state. When the cache had messages, it publishes `ChatMessagesChangedEvent`(`Reset`, 0)
+- `unwatch_channel` removes that channel from the watch list and deletes its cache and cursors. It discards the result of a request in progress and publishes no event
 
 ### older messages
 
 - `has_older` is `true` when the channel is watched and the old message cursor is more than 1
 - `load_older`: `false` when the channel is not watched. When `has_older` is `false`, it sends nothing and is `true`. Otherwise it sends `GetChatMessages`(`after_seq` 0, `before_seq` = old message cursor, `after_delete_seq` 0). When a `load_older` is in progress, it does not send a new one and waits for that result together
-- On success it prepends, in ascending seq order, the messages of `messages` whose seq is smaller than the smallest seq of the cache, and sets the old message cursor to `first_seq`. When the added count is 1 or more, it emits `ChatMessagesChangedEvent`(`Prepended`, added count). When `channel_key` of a `Guild` channel differs from the kept guild ID, it discards the response and is `false`
+- On success it prepends, in ascending seq order, the messages of `messages` whose seq is smaller than the smallest seq of the cache, and sets the old message cursor to `first_seq`. When the added count is 1 or more, it publishes `ChatMessagesChangedEvent`(`Prepended`, added count). When `channel_key` of a `Guild` channel differs from the kept guild ID, it discards the response and is `false`
 - On failure it leaves the cache and cursors as they are and is `false`
 
 ### send
@@ -175,10 +175,10 @@ none
 - After `watch_channel`, the messages of the first request are in the cache in ascending seq order and there is one `Reset` event. The next poll is sent with `after_seq` = previous `last_seq` and `after_delete_seq` = previous `last_delete_seq`, and adds only new messages with `Appended`. When a seq that is in the cache comes again, it is in the cache only once
 - When a message appears after the first request of an empty channel, the next poll is sent with `after_seq` 0 and adds the received messages with `Appended`, and the old message cursor is that `first_seq`
 - The messages of `deleted_seqs` are removed from the cache and the count of the `Removed` event is the deleted count
-- `load_older` is sent with `before_seq` = old message cursor, prepends only smaller seqs and emits a `Prepended` event. When the old message cursor is 1 or 0, `has_older` is `false` and a `load_older` after that is `true` without a request. Two concurrent `load_older` calls make one request
+- `load_older` is sent with `before_seq` = old message cursor, prepends only smaller seqs and publishes a `Prepended` event. When the old message cursor is 1 or 0, `has_older` is `false` and a `load_older` after that is `true` without a request. Two concurrent `load_older` calls make one request
 - When a watched channel receives messages, the unread of that channel becomes 0
 - After `send_message` succeeds, the poll of that channel is sent without waiting, and the sent message enters the cache once through the poll. When it ends with `CHAT_TOO_FAST`, the error code of `ChatSendResult` is that value
 - When the response `channel_key` of a `Guild` channel changes, the first request is sent after `Reset`(0), and on `GUILD_NOT_MEMBER` the cache becomes empty
-- After `unwatch_channel`, no request of that channel is sent and a response that was in progress emits no event. A `watch_channel` beyond `ChatCore.maxWatchedChannels` is `false`
+- After `unwatch_channel`, no request of that channel is sent and a response that was in progress publishes no event. A `watch_channel` beyond `ChatCore.maxWatchedChannels` is `false`
 - When `GetChatChannels` ends with `CHILD_RESTRICTED`, the channel count is 0, and after that no request is sent even when the polling wait passes or through `AppForegroundReturnedEvent`, `refresh_channels`, `watch_channel`, `load_older`, `send_message`. `refresh_channels`, `watch_channel`, `load_older` are `false` and the error code of `send_message` is `CHILD_RESTRICTED`. After `release`, `init`, `start`, `GetChatChannels` is sent again
 - `load_older`, `send_message`, `refresh_channels` during `release` end as failures, and there is no request after that
