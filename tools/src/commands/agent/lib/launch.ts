@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, lstatSync, openSync, realpathSync } from 'node:fs';
 import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
-import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey, runLogPath } from '../../../lib/agentctx.ts';
+import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey } from '../../../lib/agentctx.ts';
 import type { CommandResult, Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
@@ -111,7 +111,6 @@ async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<Age
         if (place.kind !== 'tool-worktree') m.branch = `agent/${id}`;
       }
       if (m.outputRel !== null && worktree !== null) m.output = join(worktree, m.outputRel);
-      if (m.output !== undefined) m.runLog = runLogPath(m.output);
     });
   } catch (error) {
     if (place.kind === 'tool-worktree' && toolWorktree !== null) await removeToolWorktree(place.harness, toolWorktree, ctx.env);
@@ -459,31 +458,26 @@ function notRegularFile(path: string): boolean {
 }
 
 /**
- * play, judge: moves the result file, `captures/` and the run log out of the agent folder, then removes the folder.
- * A result file or run log that is not a regular file stays behind and fails the agent (`problem`).
+ * play, judge: moves the result file and `captures/` out of the agent folder, then removes the folder. A result file
+ * that is not a regular file stays behind and fails the agent (`problem`).
  */
 async function finishTemp(id: string, ctx: Context, meta: AgentMeta): Promise<{ meta: AgentMeta; problem: string | null }> {
   if (meta.place.kind !== 'temp' || meta.output === undefined || meta.finalOutput === null || meta.evidence === null) return { meta, problem: null };
   const folder = meta.place.dir;
   const captures = join(folder, 'captures');
-  const problems: string[] = [];
-  if (notRegularFile(meta.output)) problems.push('the result file is not a regular file');
-  else if (exists(meta.output)) {
+  const problem = notRegularFile(meta.output) ? 'the result file is not a regular file' : null;
+  if (problem === null && exists(meta.output)) {
     const text = await readFile(meta.output, 'utf8');
     const rewritten = text.replace(new RegExp(escapeRegExp(captures), 'g'), meta.evidence);
     await writeFileAtomic(meta.finalOutput, rewritten);
   }
   if (exists(captures)) await move(captures, meta.evidence);
-  const finalRunLog = runLogPath(meta.finalOutput);
-  if (meta.runLog !== undefined && notRegularFile(meta.runLog)) problems.push('the run log is not a regular file');
-  else if (meta.runLog !== undefined && exists(meta.runLog)) await move(meta.runLog, finalRunLog);
   await rm(folder, { recursive: true, force: true });
   const finalOutput = meta.finalOutput;
   await changeAgentMeta(id, ctx.env, (m) => {
     m.output = finalOutput;
-    m.runLog = finalRunLog;
   });
-  return { meta: { ...meta, output: finalOutput, runLog: finalRunLog }, problem: problems.length === 0 ? null : problems.join('; ') };
+  return { meta: { ...meta, output: finalOutput }, problem };
 }
 
 async function addTranslationCounts(meta: AgentMeta, env: NodeJS.ProcessEnv): Promise<void> {
@@ -502,16 +496,12 @@ async function finish(id: string, ctx: Context, meta: AgentMeta): Promise<{ meta
   const moved = await finishTemp(id, ctx, meta);
   let current = moved.meta;
   await addTranslationCounts(current, ctx.env);
-  const output = current.output as string;
-  const runLog = current.runLog as string;
-  // records only: the pre-commit hook of core worktrees is for the agent's own commits
-  const records = { env: ctx.env, noVerify: true };
   // In a core worktree the result file (core report, core review file) is committed so that it is on main after
-  // `ogw agent merge` removes the worktree.
+  // `ogw agent merge` removes the worktree. The pre-commit hook of core worktrees is for the agent's own commits.
   if (current.place.kind === 'core-worktree') {
-    await commitInCheckout(dirname(output), [output], `ogw agent ${id}: result file`, records);
+    const output = current.output as string;
+    await commitInCheckout(dirname(output), [output], `ogw agent ${id}: result file`, { env: ctx.env, noVerify: true });
   }
-  await commitInCheckout(dirname(runLog), [runLog], `ogw agent ${id}: run log`, records);
   if (current.place.kind === 'tool-worktree' && current.worktree !== null) {
     await removeToolWorktree(current.place.harness, current.worktree, ctx.env);
     await changeAgentMeta(id, ctx.env, (m) => {
@@ -614,6 +604,8 @@ export async function runAgentJob(ctx: Context): Promise<CommandResult> {
 async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promise<CommandResult> {
   if (meta.output === undefined || meta.runLog === undefined) throw new OgwError('agent result file path is not set');
   if (!exists(meta.runLog)) await writeJsonAtomic(meta.runLog, { runs: [] });
+  // the folder of the result file is there before the agent writes the file
+  await mkdir(dirname(meta.output), { recursive: true });
   const settings = await ctx.settings();
   const ws = await ctx.workspace();
   const prompt = await buildPrompt(ws.harness, meta.role, { input: meta.agentInput, output: meta.output, run: meta.run, iteration: meta.iteration });

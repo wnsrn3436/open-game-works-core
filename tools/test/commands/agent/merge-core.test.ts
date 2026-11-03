@@ -159,7 +159,7 @@ describe('ogw agent merge: core worktrees', () => {
     commitAll(ws.coreImpl, 'settings');
     const settingsJob = async (module: string, values: Record<string, number>): Promise<string> => {
       writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
-      const fake = fakeAgentCli(ws, `fs.writeFileSync('settings/core-settings.json', JSON.stringify(${JSON.stringify({ 'routing.a': 1, ...values })}, null, 2) + '\\n'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+      const fake = fakeAgentCli(ws, `fs.writeFileSync('settings/core-settings.json', JSON.stringify(${JSON.stringify({ 'routing.a': 1, ...values })}, null, 2) + '\\n'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
       expect(waited.code).toBe(0);
       return id;
@@ -188,7 +188,7 @@ describe('ogw agent merge: core worktrees', () => {
     const job = async (module: string, files: Record<string, string>): Promise<string> => {
       writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
       const writes = Object.entries(files).map(([f, t]) => `fs.writeFileSync(${JSON.stringify(f)}, ${JSON.stringify(t)});`).join(' ');
-      const fake = fakeAgentCli(ws, `${writes} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+      const fake = fakeAgentCli(ws, `${writes} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
       expect(waited.code).toBe(0);
       return id;
@@ -221,7 +221,7 @@ describe('ogw agent merge: core worktrees', () => {
     const job = async (module: string, key: string): Promise<string> => {
       writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
       const values = JSON.stringify({ 'routing.a': 1, [key]: 2 });
-      const fake = fakeAgentCli(ws, `for (const f of ['settings/core-settings.json', 'client/godot/generated/core_settings.json']) fs.writeFileSync(f, JSON.stringify(${values}, null, 2) + '\\n'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+      const fake = fakeAgentCli(ws, `for (const f of ['settings/core-settings.json', 'client/godot/generated/core_settings.json']) fs.writeFileSync(f, JSON.stringify(${values}, null, 2) + '\\n'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
       expect(waited.code).toBe(0);
       return id;
@@ -246,7 +246,7 @@ describe('ogw agent merge: core worktrees', () => {
     writeFileSync(join(ws.coreImpl, 'client', 'godot', 'generated', 'core_modules.gd'), 'old\n');
     commitAll(ws.coreImpl, 'generated');
     writeFileSync(join(ws.root, 'in-storage.md'), 'command: create server core\n');
-    const fake = fakeAgentCli(ws, `fs.writeFileSync('client/godot/generated/core_modules.gd', 'new\\n'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'storage', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+    const fake = fakeAgentCli(ws, `fs.writeFileSync('client/godot/generated/core_modules.gd', 'new\\n'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'storage', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
     const { id, waited } = await runAgent(ws, ['core', '--module', 'storage', '--input', join(ws.root, 'in-storage.md')], fake.env);
     expect(waited.code).toBe(0);
     sh(ws.coreImpl, 'git', ['rm', '-q', 'client/godot/generated/core_modules.gd']);
@@ -269,7 +269,7 @@ describe('ogw agent merge: core worktrees', () => {
     const job = async (module: string, files: Record<string, string>): Promise<string> => {
       writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
       const writes = Object.entries(files).map(([f, t]) => `fs.writeFileSync(${JSON.stringify(f)}, ${JSON.stringify(t)});`).join(' ');
-      const fake = fakeAgentCli(ws, `${writes} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+      const fake = fakeAgentCli(ws, `${writes} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
       expect(waited.code).toBe(0);
       return id;
@@ -293,7 +293,7 @@ describe('ogw agent merge: core worktrees', () => {
     commitAll(ws.coreImpl, 'test data');
     const rowJob = async (module: string, row: string): Promise<string> => {
       writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
-      const fake = fakeAgentCli(ws, `fs.appendFileSync('test-data/data/translations/en.csv', ${JSON.stringify(`${row}\n`)}); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+      const fake = fakeAgentCli(ws, `fs.appendFileSync('test-data/data/translations/en.csv', ${JSON.stringify(`${row}\n`)}); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
       expect(waited.code).toBe(0);
       return id;
@@ -316,7 +316,7 @@ describe('ogw agent merge: core worktrees', () => {
     commitAll(ws.coreImpl, 'table');
     const rowJob = async (module: string, row: string): Promise<string> => {
       writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
-      const fake = fakeAgentCli(ws, `fs.appendFileSync('test-data/data/tables/x.csv', ${JSON.stringify(`${row}\n`)}); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+      const fake = fakeAgentCli(ws, `fs.appendFileSync('test-data/data/tables/x.csv', ${JSON.stringify(`${row}\n`)}); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
       expect(waited.code).toBe(0);
       return id;

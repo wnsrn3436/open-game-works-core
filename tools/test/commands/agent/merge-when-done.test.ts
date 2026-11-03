@@ -20,7 +20,7 @@ const AGENT_SCRIPT = [
       'if (o.fail) process.exit(1);',
       "fs.mkdirSync('server', { recursive: true }); fs.writeFileSync('server/' + o.module + '.ts', 'export {};\\n');",
       "execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', o.module, '--no-verify']);",
-      "fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: o.runs }));",
+      "fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: o.runs }));",
 ].join('\n');
 
 /**

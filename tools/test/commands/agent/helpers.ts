@@ -4,6 +4,7 @@ import { gameSecretService } from '../../../src/lib/secrets.ts';
 import { newRunState, changeRuns, type RunState } from '../../../src/lib/runstate.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { commonDir } from '../../../src/lib/git.ts';
+import { RUN_LOG_FOLDER, runLogPath } from '../../../src/lib/agentctx.ts';
 import { ogw, makeGame, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 
 export { gameSecretService };
@@ -17,7 +18,8 @@ export interface FakeCall {
 
 /**
  * Fake `claude` and `codex` on PATH. Each call records argv, cwd and prompt, then runs `behavior`, JavaScript
- * with `prompt`, `output`, `input` (from the prompt's `## ogw agent` lines) and `fs` in scope.
+ * with `prompt`, `output`, `input` (from the prompt's `## ogw agent` lines), `runLog` (the run log of the agent job,
+ * from its `OGW_AGENT_KEY`) and `fs` in scope.
  */
 export function fakeAgentCli(ws: TestWorkspace, behavior: string): { env: NodeJS.ProcessEnv; calls: () => FakeCall[] } {
   const bin = join(ws.root, 'fake-bin');
@@ -32,8 +34,9 @@ export function fakeAgentCli(ws: TestWorkspace, behavior: string): { env: NodeJS
       "const prompt = fs.readFileSync(0, 'utf8');",
       "const field = (n) => (new RegExp('^- ' + n + ': (.*)$', 'm').exec(prompt) || [])[1];",
       "const output = field('output'); const input = field('input');",
+      `const runLog = ${JSON.stringify(join(ws.harness, '.git', 'ogw-jobs', RUN_LOG_FOLDER))} + '/' + String(process.env.OGW_AGENT_KEY).split('.')[0] + '.json';`,
       `fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), prompt, pid: process.pid }) + '\\n');`,
-      'void execFileSync;',
+      'void execFileSync; void runLog;',
       behavior,
     ].join('\n'),
   );
@@ -82,4 +85,9 @@ export async function runAgent(ws: TestWorkspace, argv: string[], env: NodeJS.Pr
 
 /** Fake agent CLI behavior: writes a run log whose last `ogw core test` passed, which `ogw agent merge` needs. */
 export const CORE_TEST_PASSED =
-  "fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [{ command: 'ogw core test server', startedAt: 1, exitCode: 0, summary: { tests: 1, passed: 1 } }] }));";
+  "fs.writeFileSync(runLog, JSON.stringify({ runs: [{ command: 'ogw core test server', startedAt: 1, exitCode: 0, summary: { tests: 1, passed: 1 } }] }));";
+
+/** The run log of agent job `id`. */
+export async function readRunLog(ws: TestWorkspace, id: string): Promise<unknown> {
+  return JSON.parse(readFileSync(await runLogPath(id, ws.env), 'utf8')) as unknown;
+}

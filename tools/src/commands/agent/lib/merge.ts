@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { formatJson, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
-import { runLogPath, type RunLog } from '../../../lib/agentctx.ts';
+import type { RunLog } from '../../../lib/agentctx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commonDir, currentBranch, deleteBranch, git, gitRaw, head, revParse, showFile, statusLines, worktreeRemove } from '../../../lib/git.ts';
 import { harnessRoot } from '../../../lib/paths.ts';
@@ -156,7 +156,7 @@ async function gameRepoAt(ctx: Context, name: string, root: string): Promise<Gam
   return { name, root, mainRoot: join(ws.games, name), commonDir: await commonDir(root, { env: ctx.env }), inWorktree: false };
 }
 
-/** The folders (ending in `/`) and files each game worktree role may change besides its result file and run log (ogw.md `## agent merge`). */
+/** The folders (ending in `/`) and files each game worktree role may change besides its result file (ogw.md `## agent merge`). */
 const EDIT_SCOPE: Partial<Record<Role, readonly string[]>> = {
   'server-hardening': ['server/'],
   'client-hardening': ['client/'],
@@ -171,8 +171,7 @@ const REFUSED_OUTSIDE_SCOPE: readonly Role[] = ['server-hardening', 'client-hard
 async function outsideScope(ctx: Context, checkout: string, baseCommit: string, id: string, meta: AgentMeta): Promise<string[]> {
   const scope = EDIT_SCOPE[meta.role];
   if (scope === undefined) return [];
-  const own = meta.outputRel === null ? [] : [meta.outputRel, runLogPath(meta.outputRel)];
-  const inScope = (path: string): boolean => own.includes(path) || scope.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
+  const inScope = (path: string): boolean => path === meta.outputRel || scope.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
   // a rename out of the scope is a deletion there and an addition elsewhere
   const changed = await git(checkout, ['diff', '--name-only', '--no-renames', '-z', baseCommit, `agent/${id}`], { env: ctx.env });
   return changed.split('\0').filter((path) => path !== '' && !inScope(path));

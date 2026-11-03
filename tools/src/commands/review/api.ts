@@ -43,7 +43,7 @@ export async function changedSinceDone(ctx: Context, side: 'core' | 'tool'): Pro
 /**
  * Removes what `ogw review spec` left (core command.md `## spec review`): its input folders `ogw-review-spec-*` of
  * `ogw-temp/`, and the review file of each spec review agent job, which `ogw agent` writes alone in a
- * `ogw-review-file-*` folder of `ogw-temp/` with its run log (the folder goes), or the file alone when it is elsewhere.
+ * `ogw-review-file-*` folder of `ogw-temp/` (the folder goes), or the file alone when it is elsewhere.
  */
 async function removeSpecReviews(ctx: Context): Promise<void> {
   const temp = await privateTempDir(ctx.env);
