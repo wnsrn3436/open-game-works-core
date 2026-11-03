@@ -14,7 +14,7 @@
 
 ## purpose
 
-Lets a user enter a coupon code an operator made and receive the reward. Handles the use count limit, once per user, the active window, the redeem attempt limit and use records, and grants rewards with `item-ledger`.
+Lets a user enter a coupon code an operator made and receive the reward. Handles the use count limit, once per user, the active window, the redeem attempt limit and use records, and grants rewards with `mailbox`.
 
 ## dependency
 
@@ -50,7 +50,7 @@ internal operation
 |---|---|---|---|---|
 | `count_redeem_attempt` | user ID, `RedeemCouponRequest`, client IP, request ID | async operation. `pass` | `RATE_LIMITED`, `UNAUTHORIZED`, `INTERNAL` | `routing` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -75,7 +75,7 @@ admin operation. `routing` collects them and passes them to `admin-api`; process
 
 code
 
-- code normalization: deletes leading and trailing spaces, `-` and whitespace characters (Unicode `White_Space`), and changes ASCII lowercase letters to uppercase. Saving, comparison and input all use the normalized value
+- code normalization: deletes every `-` and every whitespace character (Unicode `White_Space`) wherever it is in the input, and changes ASCII lowercase letters to uppercase. Saving, comparison and input all use the normalized value
 - A normalized code uses only characters of `coupon.codeAlphabet` and has a length of at least `coupon.minCodeLength` and at most `coupon.maxCodeLength`. On a violation, admin operations are `bad_request` and `RedeemCoupon` is `COUPON_INVALID`
 - A `unique` code picks `coupon.generatedCodeLength` characters from `coupon.codeAlphabet` with secure random. It does not use ctx random. When it collides with an existing code or a code picked earlier in the same `create_coupon`, it picks again. When one code still collides after 100 picks, `create_coupon` writes nothing and returns `conflict`
 - The codes of all coupons differ from each other. When the `code` of a `shared` coupon already exists, `create_coupon` is `conflict`
@@ -110,7 +110,7 @@ table
 
 - The code of a `shared` coupon is also kept as one row in `coupon_code`. `redeemed_by` is not used
 - `coupon_redemption` is registered with snapshot flag `true`, and `coupon_attempt` with `false`
-- `coupon_id` is an integer that increases from 1. In the game tx that `admin-api` opens, `create_coupon` first locks the `coupon_id` 0 key of `coupon_coupon` with `storage.lock_game_row`, so `create_coupon` calls are handled one after another. The judgement of duplicate codes and `unique` code generation happen after this lock. The new `coupon_id` is the largest `coupon_id` + 1, or 1 when there is no row. No row with `coupon_id` 0 is kept
+- `coupon_id` is an integer that increases from 1. In the game transaction that `admin-api` opens, `create_coupon` first locks the `coupon_id` 0 key of `coupon_coupon` with `storage.lock_game_row`, so `create_coupon` calls are handled one after another. The judgement of duplicate codes and `unique` code generation happen after this lock. The new `coupon_id` is the largest `coupon_id` + 1, or 1 when there is no row. No row with `coupon_id` 0 is kept
 - `disable_coupon` is not reverted. Rewards already granted are not taken back
 - `once_key` prefix: `coupon:`
 

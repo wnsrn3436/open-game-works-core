@@ -14,7 +14,7 @@
 
 ## purpose
 
-Takes the cost on a banner defined in data, draws with `loot-table` and grants with `item-ledger`. Handles pity, the rate-up guarantee, the `MULTI` guarantee, disclosed rates calculated from the data that decides the draw, and draw records.
+Takes the cost on a banner defined in data, draws with `loot-table` and grants with `mailbox`. Handles pity, the rate-up guarantee, the `MULTI` guarantee, disclosed rates calculated from the data that decides the draw, and draw records.
 
 ## dependency
 
@@ -68,7 +68,7 @@ core `rpc` response field
 | `GetGachaRatesResponse` | `multi_count` | `int32` |
 | `ListGachaHistoryResponse` | `entries` | `repeated GachaHistoryEntry` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -82,7 +82,6 @@ admin operation. `routing` collects them and passes them to `admin-api`; process
 
 - The pity state is saved in core UserState kind `GachaPityUserState`(list kind) of base proto. Only this module writes it, with `storage.put_core_state`. field: `int64 id`(pity owner banner ID value), `int32 count`(number of draws since the last time a pity tier was reached), `bool rate_up_guaranteed`(whether the next time a pity tier is reached is a guaranteed rate-up). When there is no row, it is `(0, false)`
 - pity owner: the banner itself when the banner's `pity_banner` is `null`, otherwise the banner of `pity_banner`. Banners with the same owner share the pity state
-- Reason it is UserState: the number of draws left until pity and whether a guarantee is set are public information shown to the user, and they are values decided from the user's own records, so they are not judgement values to hide. The client shows the remaining count with these values
 - pity tier P: `pity_table` and every table reached from `pity_table` through `table`. `MULTI` tier G: `multi_guaranteed_table` and every table reached from it. A round reached a tier when the `tables` of that round's `LootResult` has a table of the tier
 
 ### draw order

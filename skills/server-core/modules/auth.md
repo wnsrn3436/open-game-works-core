@@ -110,7 +110,7 @@ core `rpc` response field
 | `TermsDocument` | `version` | `int32` |
 | `TermsDocument` | `url` | `string` |
 
-admin operation. `routing` collects them and passes them to `admin-api`, and the processing order, authentication, `operation_id` rules and `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -271,11 +271,13 @@ admin operation. `routing` collects them and passes them to `admin-api`, and the
 
 ### find by social account
 
-- `find_user_by_social_account` has no `user_target`, and its role is `read`. In the game tx that `admin-api` opened, reads the row of key `(provider, provider_account_id)` of `auth_social_link` and returns its `user_id` and `linked_at`. When there is no row, `not_found`. Rows of withdrawn users do not appear because `storage.delete_user` deleted them
+- `find_user_by_social_account`: in the game transaction that `admin-api` opened, reads the row of key `(provider, provider_account_id)` of `auth_social_link` and returns its `user_id` and `linked_at`. When there is no row, `not_found`. Rows of withdrawn users do not appear because `storage.delete_user` deleted them
 - When `provider_account_id` is the empty string, `bad_request`
 - Used when an operator finds a user ID by a provider account ID that a player gave
 
-- `find_user_by_public_code` has no `user_target`, and its role is `read`. In the game tx that `admin-api` opened, finds the user with `storage.find_user_by_public_code`. When `storage.is_public_code_input` of the input is `false`, `bad_request`; when no user is found, `not_found`. Otherwise outputs that `user_id` and `withdrawn_at` of `storage.get_user_record` (null when none)
+### find by public code
+
+- `find_user_by_public_code`: in the game transaction that `admin-api` opened, finds the user with `storage.find_user_by_public_code`. When `storage.is_public_code_input` of the input is `false`, `bad_request`; when no user is found, `not_found`. Otherwise outputs that `user_id` and `withdrawn_at` of `storage.get_user_record` (null when none)
 
 ### web account deletion
 
@@ -468,7 +470,7 @@ core cheat response field
 - `RefreshToken` with a wrong signature is `UNAUTHORIZED`
 - After `Withdraw`, that user is not in ranking query results
 - After `Withdraw`, the friend link rows and guild member rows of that user and the chat messages that user sent are gone
-- When `guild.remove_user` is `FAILED` because the lock wait time was exceeded while another transaction locked that user's guild row, `Withdraw` and `ConfirmAge` under the minimum age are `INTERNAL`, `withdraw_user` is 500 `internal`, `POST /account/deletion` is 500 and `[auth_deletion_retry]`, and job `auth_guest_sweep` does not delete that guest. In all cases the rows of that user have their values from before the handling, there is no `withdrawn_at`, and `revoke` is not called
+- When `guild.remove_user` is `FAILED` because of exceeding the lock wait while another transaction locked that user's guild row, `Withdraw` and `ConfirmAge` under the minimum age are `INTERNAL`, `withdraw_user` is 500 `internal`, `POST /account/deletion` is 500 and `[auth_deletion_retry]`, and job `auth_guest_sweep` does not delete that guest. In all cases the rows of that user have their values from before the handling, there is no `withdrawn_at`, and `revoke` is not called
 - On STG·PROD, `DevLogin` is `UNAUTHORIZED`
 - Two concurrent `DevLogin`s with the same new dev account name receive the same user ID, and there is one new user that is not a withdrawn user. The user made by the side that could not insert the `auth_dev_account` row has `withdrawn_at` and no user-scope rows
 - After `ConfirmAge`, `age_from`, `age_to`, `child`, `below_consent_age` of `ConsentUserState` equal the calculation rules at each boundary of `consent.ageBandBoundaries`, at the boundary age and at one year below it, and the birth year and month is not in UserState or logs

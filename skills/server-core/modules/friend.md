@@ -64,7 +64,7 @@ internal operation
 |---|---|---|---|---|
 | `are_friends` | ctx, two user IDs | `true` when they are friends | `false` | content handler, hook, `chat` |
 | `list_friend_ids` | ctx, user ID | list of the friend user IDs of that user. Ascending order | empty list | content handler, hook, `chat` |
-| `remove_user` | ctx | none | `FAILED` | `auth`(`Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age, job `auth_guest_sweep`) |
+| `remove_user` | ctx | none | `FAILED` | `auth` |
 
 - `FriendState`(base proto enum): `Friend`, `Sent`(request the caller sent), `Received`(request the caller received)
 - `FriendEntry`(base proto message): `PublicProfileEntry profile`, `FriendState state`, `int64 updated_at`
@@ -108,7 +108,7 @@ internal operation
 - `DeclineFriendRequest`: locks the two count rows; `FRIEND_REQUEST_NOT_FOUND` when `(caller, target)` is not `Received`. Deletes the two rows and decreases the caller's `received_count` and the target's `sent_count` by 1
 - `CancelFriendRequest`: locks the two count rows; `FRIEND_REQUEST_NOT_FOUND` when `(caller, target)` is not `Sent`. Deletes the two rows and decreases the caller's `sent_count` and the target's `received_count` by 1
 - `RemoveFriend`: locks the two count rows; `FRIEND_NOT_FOUND` when `(caller, target)` is not `Friend`. Deletes the two rows and decreases both `friend_count` by 1
-- block: at server start, registers a function with `block-report.register_block_listener`. The function locks the two count rows, deletes the link rows of the two users, and decreases the counts according to the deleted state. On a lock wait timeout on a count row, the function throws
+- block: at server start, registers a function with `block-report.register_block_listener`. The function locks the two count rows, deletes the link rows of the two users, and decreases the counts according to the deleted state. On exceeding the lock wait on a count row, the function throws
 - `remove_user` deletes the rows of an other user who is a withdrawn user. So `AcceptFriendRequest`, `DeclineFriendRequest`, `CancelFriendRequest` and `RemoveFriend` do not judge the target user. The caller's own `user_id` also has no link row, so it is `FRIEND_REQUEST_NOT_FOUND` or `FRIEND_NOT_FOUND`
 
 ### list and search
@@ -125,7 +125,7 @@ internal operation
 
 ### withdrawal
 
-- `remove_user` runs in the order below. `FAILED` on a lock wait timeout
+- `remove_user` runs in the order below. `FAILED` on exceeding the lock wait
   1. Reads the user's link rows to get the list of other users
   2. Locks the `friend_count` rows of the user and of all the other users in ascending order of user ID
   3. Reads the user's link rows again. When there is an other user not locked in step 2, changes nothing and returns `FAILED`. The caller rolls back the transaction
@@ -160,9 +160,9 @@ none
 | the target's friend count or received request count limit | `FRIEND_TARGET_LIMIT` | `FRIEND_TARGET_LIMIT` | none |
 | the caller's sent request count limit | `FRIEND_REQUEST_LIMIT` | `FRIEND_REQUEST_LIMIT` | none |
 | `SearchUsers` of a child user when `chat.allowChild` is `false` | `CHILD_RESTRICTED` | `CHILD_RESTRICTED` | none |
-| lock wait timeout on a count row in a core rpc | `FAILED` | `INTERNAL` | `routing` writes an `error` log |
-| lock wait timeout on a count row in `remove_user`, a link row that `remove_user` read again has an other user that was not locked | `FAILED` | the caller decides | none |
-| lock wait timeout on a count row in the block listener function | throw | `INTERNAL` | `routing` writes an `error` log |
+| exceeding the lock wait on a count row in a core rpc | `FAILED` | `INTERNAL` | `routing` leaves an `error` log |
+| exceeding the lock wait on a count row in `remove_user`, a link row that `remove_user` read again has an other user that was not locked | `FAILED` | the caller decides | none |
+| exceeding the lock wait on a count row in the block listener function | throw | `INTERNAL` | `routing` leaves an `error` log |
 
 Added `CoreError`: `FRIEND_ALREADY`, `FRIEND_REQUEST_NOT_FOUND`, `FRIEND_NOT_FOUND`, `FRIEND_LIMIT`, `FRIEND_TARGET_LIMIT`, `FRIEND_REQUEST_LIMIT`
 
@@ -205,4 +205,4 @@ none
 - When the target user's `Withdraw` and a `SendFriendRequest` to that user arrive concurrently, after both end there is no link row that contains the withdrawn user, and the sender's `sent_count` equals the number of the sender's `Sent` link rows
 - For each request, accept, decline, cancel and remove, `on_friend_changed` is called once with that `FriendChange`, and for a `SendFriendRequest` to another user from whom a request was received, it is called once with `Accepted`. It is not called for a `SendFriendRequest` to a user already in `Sent`, for `BlockUser` or for `Withdraw`
 - When `on_friend_changed` throws, the result is `INTERNAL`, and the link rows and counts are the values before handling
-- When a lock wait timeout happens while another transaction holds the lock on the other user's `friend_count` row, the `Withdraw` of a user who is friends with that other user is `INTERNAL`, and that user's link rows, counts and `withdrawn_at` are the values before handling. At the same time, `BlockUser` targeting that other user is `INTERNAL`, and the block row and link rows are the values before handling
+- On exceeding the lock wait while another transaction holds the lock on the other user's `friend_count` row, the `Withdraw` of a user who is friends with that other user is `INTERNAL`, and that user's link rows, counts and `withdrawn_at` are the values before handling. At the same time, `BlockUser` targeting that other user is `INTERNAL`, and the block row and link rows are the values before handling

@@ -32,7 +32,7 @@ Keeps one signed deploy list per environment and serves the data, translation an
 | `GET /update/files/<sha256>` (route) | none | file bytes | HTTP 404 | `routing`. client `GameUpdateCore` sends it |
 | `is_data_update_ready` | app version | `true` or `false` | `false` | `routing`, `matchmaker` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -92,19 +92,19 @@ Checks in the order below. On a failure, the current deploy list stays as it is.
 3. `conflict` when the `data_version` of a `patches` entry differs from both `client_data_version` and `compat_client_data_version` that the server read at start. The server answers apps outside the two protocol hashes with `APP_UPDATE_REQUIRED`, so no patch is kept for them
 4. `conflict` when the serialized deploy list is more than `game-update.maxDeployListBytes`
 5. When there is a `cdn` adapter, uploads the referenced files not uploaded yet. When one file does not finish within `game-update.cdnTimeoutMs` or fails, `external_failed`
-6. In the game tx that `admin-api` opened, the handler function first locks the `sequence` 0 key of `game_update_deploy_list` with `storage.lock_game_row`. This lock handles publishes and `prune_update_files` one after another. Then it runs step 2 again. `sequence` is the key of `game_update_deploy_list`, and no row with `sequence` 0 is kept. It fills the server fields, serializes in key byte order without whitespace, signs, and saves the deploy list and the signature in the game tx that `admin-api` opened
+6. In the game transaction that `admin-api` opened, the handler function first locks the `sequence` 0 key of `game_update_deploy_list` with `storage.lock_game_row`. This lock handles publishes and `prune_update_files` one after another. Then it runs step 2 again. `sequence` is the key of `game_update_deploy_list`, and no row with `sequence` 0 is kept. It fills the server fields, serializes in key byte order without whitespace, signs, and saves the deploy list and the signature in the game transaction that `admin-api` opened
 
 - `publish_deploy_list` is called after the server deploy. Because of the step 3 check, it cannot be published before the server. `## deploy` of the `build` skill decides the deploy order
 - A rollback is also a publish, and `sequence` goes up. `## deploy` of the `build` skill decides the input for a rollback
 - Only the latest `game-update.keepDeployLists` saved deploy lists are kept, and the rest are deleted
-- In the game tx that `admin-api` opened, `prune_update_files` first locks the `sequence` 0 key of `game_update_deploy_list` with `storage.lock_game_row`, then deletes from `game_update_file` the files that are in no remaining deploy list. Files of the `cdn` adapter and records of `game_update_cdn_upload` are not deleted
+- In the game transaction that `admin-api` opened, `prune_update_files` first locks the `sequence` 0 key of `game_update_deploy_list` with `storage.lock_game_row`, then deletes from `game_update_file` the files that are in no remaining deploy list. Files of the `cdn` adapter and records of `game_update_cdn_upload` are not deleted
 
 ### serving
 
 - `GET /update/deploy_list.json` and `GET /update/deploy_list.json.sig` have `Cache-Control: public, max-age=<quotient of game-update.deployListMaxAgeMs divided by 1000>` and `Content-Type: application/json`. Both are of the same `sequence`
 - `GET /update/files/<sha256>` has `Cache-Control: public, max-age=<quotient of game-update.fileMaxAgeMs divided by 1000>, immutable` and `Content-Type: application/octet-stream`
 - When `<sha256>` is not 64 lowercase hex characters or the file does not exist, HTTP 404 without a body
-- A server instance caches the current deploy list in memory. Job `game_update_cache`(period `game-update.cacheRefreshMs`), which game-update registers at server start with `server-time.schedule_job`, reads it again. The server instance that published replaces it right after commit with a `storage.after_commit` function registered in the game tx of that publish
+- A server instance caches the current deploy list in memory. Job `game_update_cache`(period `game-update.cacheRefreshMs`), which game-update registers at server start with `server-time.schedule_job`, reads it again. The server instance that published replaces it right after commit with a `storage.after_commit` function registered in the game transaction of that publish
 
 ### data update decision
 

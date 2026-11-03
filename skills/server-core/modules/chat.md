@@ -77,10 +77,10 @@ internal operation
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `remove_user` | ctx | none | `FAILED` | `auth`(`Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age, job `auth_guest_sweep`) |
-| `post_system_message` | ctx, `ChatChannelKind`, channel ID, `text` | the written `ChatMessage` | none. A lock wait timeout is a throw | content handler, hook |
+| `remove_user` | ctx | none | `FAILED` | `auth` |
+| `post_system_message` | ctx, `ChatChannelKind`, channel ID, `text` | the written `ChatMessage` | none. Exceeding the lock wait is a throw | content handler, hook |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -181,7 +181,7 @@ message deletion: locks the channel row with `storage.lock_game_row`, sets `dele
 3. Locks the channel row as in send step 6, writes `last_seq` and `last_at`, and writes the message row. `sender_id` is 0 and `message_kind` is `System`. The `channel_key` of the returned `ChatMessage` is the channel ID
 
 - Does not look at the child check, mute, send interval, banned words or hooks
-- A lock wait timeout on the guild row or the channel row is a throw, not none, and the request is `INTERNAL`
+- Exceeding the lock wait on the guild row or the channel row is a throw, not none, and the request is `INTERNAL`
 - Content decides the format of `text`. client content code makes the screen text from that format
 
 ### tables
@@ -200,7 +200,7 @@ message deletion: locks the channel row with `storage.lock_game_row`, sets `dele
 
 ### withdrawal
 
-- `remove_user` runs in the order below. `FAILED` on a lock wait timeout
+- `remove_user` runs in the order below. `FAILED` on exceeding the lock wait
   1. Reads the `Direct` channel rows the user is in to get the list of other users. When `friend` is in the server module list, adds the users of `friend.list_friend_ids`(ctx, that user). `auth` calls this before `friend.remove_user`, so the friend link rows are still there
   2. For each other user, locks the `Direct` channel key with that user with `storage.lock_game_row`, in ascending order of `(key_a, key_b)`. Also locks keys without a row
   3. Reads the `Direct` channel rows the user is in again. When there is a row with a key not locked in step 2, changes nothing and returns `FAILED`. The caller rolls back the transaction
@@ -210,7 +210,7 @@ message deletion: locks the channel row with `storage.lock_game_row`, sets `dele
 
 ### admin
 
-- `list_chat_messages` and `delete_chat_message` run in a game tx opened with `storage.run_game_transaction`. `list_chat_messages` also returns deleted messages with `deleted`, and the rule for `limit` is the body rules of `admin-api`. A row is an object keyed by column name, and `kind` is the value of input `channel_kind` (`World`, `Guild`, `Direct`)
+- `list_chat_messages` and `delete_chat_message` run in a game transaction opened with `storage.run_game_transaction`. `list_chat_messages` also returns deleted messages with `deleted`, and the rule for `limit` is the body rules of `admin-api`. A row is an object keyed by column name, and `kind` is the value of input `channel_kind` (`World`, `Guild`, `Direct`)
 - `delete_chat_message` locks the channel row with `storage.lock_game_row`, then reads the message row and runs message deletion. `not_found` when there is no row; when the message is already deleted, success without changing anything
 - `mute_chat_user` writes nothing and returns `bad_request` when `until_at` is less than 0. Otherwise it writes the target user's mute row with `until_at`, `reason` and `muted_at`(request time). `unmute_chat_user` deletes the mute row
 
@@ -254,9 +254,9 @@ none
 | role in `DeleteGuildChatMessage` is not `Leader` or `Officer` | `GUILD_PERMISSION` | `GUILD_PERMISSION` | none |
 | channel or `text` violation of `post_system_message` | none. Writes nothing | content decides | `error` log |
 | report count limit | `REPORT_LIMIT` | `REPORT_LIMIT` | log of `block-report` |
-| lock wait timeout on a channel row or guild row outside `post_system_message` and `remove_user` | `FAILED` | `INTERNAL` | `routing` writes an `error` log |
-| lock wait timeout on a channel row in `remove_user`, `remove_user` did not lock the key of a `Direct` channel row it read again | `FAILED` | the caller decides | none |
-| lock wait timeout on a channel row or guild row in `post_system_message` | throw | `INTERNAL` | `routing` writes an `error` log |
+| exceeding the lock wait on a channel row or guild row outside `post_system_message` and `remove_user` | `FAILED` | `INTERNAL` | `routing` leaves an `error` log |
+| exceeding the lock wait on a channel row in `remove_user`, `remove_user` did not lock the key of a `Direct` channel row it read again | `FAILED` | the caller decides | none |
+| exceeding the lock wait on a channel row or guild row in `post_system_message` | throw | `INTERNAL` | `routing` leaves an `error` log |
 | `delete_chat_message` of a message that does not exist | `not_found` | none | `audit` |
 | `mute_chat_user` with `until_at` less than 0 | `bad_request` | none | `audit` |
 | body rules violation of `list_chat_messages`; `mute_chat_user` or `unmute_chat_user` of a user that does not exist or a withdrawn user | `bad_request`, `not_found` | none | error rules of `admin-api` |
@@ -331,5 +331,5 @@ none
 - The `last_visible_seq` of a `GetChatChannels` item is the largest seq after leaving out messages of users the caller blocked, deleted messages and messages whose `chat.retentionMs` has passed, and 0 when there are only such messages. `last_seq` is the largest seq including those messages
 - `DeleteGuildChatMessage` is `GUILD_PERMISSION` for a `Member`, `GUILD_NOT_MEMBER` for a user who is not a guild member, and `CHAT_MESSAGE_NOT_FOUND` for an already deleted message
 - `post_system_message` writes a `System` message with `sender_id` 0 at the next seq, also in the ctx of a muted user. A `Direct` channel, an out-of-range `World` channel, a guild that does not exist, an empty `text` and a `text` more than `chat.maxSystemTextBytes` return none with an `error` log and leave no row. `System` in `SendChatMessage` and `ReportChatMessage` of a `System` message are `INVALID_REQUEST`
-- When a lock wait timeout happens while another transaction holds the lock on the guild row, `post_system_message` on a `Guild` channel throws, the request is `INTERNAL`, and there is no message row
+- On exceeding the lock wait while another transaction holds the lock on the guild row, `post_system_message` on a `Guild` channel throws, the request is `INTERNAL`, and there is no message row
 - `SendChatMessage` on a `Guild` channel locks the guild row before the channel row. A `SendChatMessage` sent while another transaction holds that guild row with `lock_guild` waits until that commit, and when that transaction kicked the sender, it is `GUILD_NOT_MEMBER` and there is no message row. While `on_chat_message_sent` calls `lock_guild` of the same guild, `post_system_message` and `DeleteGuildChatMessage` of the same guild arriving at the same time all finish

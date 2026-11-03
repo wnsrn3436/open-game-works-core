@@ -74,7 +74,7 @@ none
 | `DeleteUserState` (core cheat). changes: `content` | kind name, item ID | empty response. The deleted item is in the delta | `INVALID_REQUEST` | `routing` DEV code. client `QACore`, bots and `testing` send it |
 
 - cheat handler: input is ctx and the cheat request message, output is the cheat response message or `GameError`. The output of a core cheat handler also includes `CoreError`. The type of a content cheat handler is `GameCheatContract.<Name>Handler`, which the contract tool generates per `rpc` of `service Cheat` in `contract/cheat.proto`. The type of a core cheat handler is decided by the module that defines that core cheat
-- When an `rpc` of `service Cheat` has no handler, or there is an unknown name, a duplicate registration or a registration after `registerDev` has ended, the server does not start
+- When an `rpc` of `service Cheat` has no handler, or there is an unknown name or a duplicate registration, the server does not start. A registration after `registerDev` has ended throws
 - Core cheats that other core modules add are the operations marked `(core cheat)` in the `## DEV` table of that module's spec. The DEV code of `routing` collects them, and the path table of `routing` decides the path
 - `## DEV` operations of a core module that are not `(core cheat)` are not cheats. The caller column of that operation decides who calls it
 

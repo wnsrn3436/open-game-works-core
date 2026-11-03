@@ -1,13 +1,11 @@
 # base proto table
 
-The core agent reads this when writing or fixing the base proto. The content agent reads it when looking up a `CoreError` or a core UserState kind.
-
 - field table
 - CoreError
 - core UserState kind
 - base proto check
 
-Rows of the tables of `## CoreError` and `## core UserState kind` are not deleted, and their order and numbers are not changed. A new row is added at the end of the table.
+Rows of the `CoreError` table and the core UserState kind table are not deleted, and their order and numbers are not changed. A new row is added at the end of the table.
 
 ## field table
 
@@ -152,5 +150,5 @@ When the target is `server` or an engine, `ogw core test` compares the module sp
 
 - For each row of a request field table and of a response field table, that message in core.proto has a field of the same name, and the type, the field number (from 1, in table order of the rows of the same message) and, for a request field table, the `(ogw.v)` option are equal. That message in core.proto has no field that is not in the table
 - For each operation cell `<rpc name> (core rpc[, <option>...]). changes: <saved state>` of an `## API` table, the core service of core.proto has that `rpc`, its attached `rpc` options equal `<option>`, and its last comment line is `changes: <saved state>`. `<cheat name> (core cheat). changes: <saved state>` of a `## DEV` table is compared the same way in the core cheat service. The two services of core.proto have no `rpc` that is not in a spec
-- The values of the `CoreError` enum are `CORE_ERROR_UNSPECIFIED` at 0 and `CORE_ERROR_<name> = <number>` for each row of the `## CoreError` table, and there are no other values
-- The declaration order of the core UserState kind messages in core.proto is the order of the `## core UserState kind` table
+- The values of the `CoreError` enum are `CORE_ERROR_UNSPECIFIED` at 0 and `CORE_ERROR_<name> = <number>` for each row of the `CoreError` table, and there are no other values
+- The declaration order of the core UserState kind messages in core.proto is the order of the core UserState kind table

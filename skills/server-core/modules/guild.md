@@ -93,9 +93,9 @@ internal operation
 | `register_disband_listener` | function (ctx or game tx, guild ID → none) | none | none. A registration error is a server start failure | `ranking`. Called at server start |
 | `set_guild_max_members` | ctx, guild ID, capacity | success flag | `false`. Exceeding the lock wait throws | content handler, hook |
 | `set_member_role` | ctx, guild ID, user ID, `GuildRole` | success flag | `false`. Exceeding the lock wait throws | content handler, hook |
-| `remove_user` | ctx | none | `FAILED` | `auth`(`Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` below the minimum age, job `auth_guest_sweep`) |
+| `remove_user` | ctx | none | `FAILED` | `auth` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -113,7 +113,7 @@ admin operation. `routing` collects them and passes them to `admin-api`; process
 - `GuildRole`(base proto enum): `Leader`, `Officer`, `Member`
 - `join_value`: the join condition value. Content decides its meaning, and hook `validate_guild_join` judges it. e.g. minimum level
 - `max_join_value`: the maximum `join_value` that `ListJoinableGuilds` filters by. Client content code puts in the user's join condition value (e.g. level). When 0, it does not filter by `join_value`
-- `get_guild` output JSON: `join_type` and `role` are element names, the `int64` columns (`guild_id`, `join_value`, `leader_id`, `created_at`, `updated_at`) and `user_id`, `joined_at`, `active_at` of `members` are decimal strings, `member_count` and `max_members` are JSON integers, and `joinable` is a JSON boolean
+- `get_guild` output JSON: `join_type` and `role` are the strings of their `enum{...}` field types (`Open`, `Approval`, `Closed` and `Leader`, `Officer`, `Member`), the `int64` columns (`guild_id`, `join_value`, `leader_id`, `created_at`, `updated_at`) and `user_id`, `joined_at`, `active_at` of `members` are decimal strings, `member_count` and `max_members` are JSON integers, and `joinable` is a JSON boolean
 - admin operation field types: `guild_id` is `int64`, `name` and `description` are `string`, `role` is `enum{Leader, Officer, Member}`, `join_type` is `enum{Open, Approval, Closed}`, `join_value` is `int64`, `max_members` is `int32`, and `members` is `array<object{user_id: int64, role: enum{Leader, Officer, Member}}>`. `user_target` of `set_guild_member_role`, `kick_guild_member` and `disband_guild` is `user_id`
 - `GetMyGuild` output: `guild` (`GuildInfo` of my guild. When I am not a member, an empty `GuildInfo` with `guild_id` 0), `members` (same order as `GetGuild`), `join_requests` (when I am `Leader` or `Officer`, the list of `PublicProfileEntry` of the join requests to my guild. Users without a profile are left out. Ascending order of `created_at` of the join request row, ties in ascending order of user ID. Otherwise an empty list), `my_join_requests` (list of the guild IDs I sent join requests to. Ascending order of `created_at` of the join request row, ties in ascending order of guild ID), `cooldown_ends_at` (0 when there is no cooldown)
 
@@ -229,7 +229,7 @@ admin operation. `routing` collects them and passes them to `admin-api`; process
 
 ### admin
 
-- `get_guild`, `rename_guild` and `set_guild_description` run in a game tx opened with `storage.run_game_transaction`. When the guild does not exist, `not_found`
+- `get_guild`, `rename_guild` and `set_guild_description` run in a game transaction opened with `storage.run_game_transaction`. When the guild does not exist, `not_found`
 - `rename_guild`: when `validation.is_plain_text`(`name`, `guild.maxNameLength`) is `false` or the code point count is less than `guild.minNameLength`, `bad_request`. Banned words are not checked. After locking the guild row, it does the following
   1. When the normalized `name` equals `normalized_name` of the guild row, keeps the name row as it is and does 3
   2. Writes the new name row with name registration. When another guild uses the name, `conflict`. Deletes the name row of the previous `normalized_name`
@@ -239,7 +239,7 @@ admin operation. `routing` collects them and passes them to `admin-api`; process
 - `set_guild_member_role`: runs role change(`guild_id`, `user_id`, `role`). When the target is not a member of that guild, or the target is `Leader` and `role` is not `Leader`, `bad_request`; at the `Officer` count limit, `conflict`
 - `kick_guild_member`: locks the guild row and the target's row in lock order and reads them again. When the target is not a member of that guild or is `Leader`, `bad_request`. Like `KickGuildMember`, deletes the target's row, lowers `member_count` by 1 and writes the target's cooldown. after hook(`Kicked`)
 - `disband_guild`: locks the guild row and all `guild_member` rows of that guild in lock order and reads them again. When `user_id` is not the `Leader` of that guild, `bad_request`. For each member that is not `Leader`, in ascending order of user ID, deletes its row and calls after hook(`Kicked`), then disbands with the one remaining `Leader`. Writes no cooldown
-- `import_guild` creates a guild used to reproduce a PROD problem. It runs in the game tx that `admin-api` opens, in the order below. On failure, nothing changes
+- `import_guild` creates a guild used to reproduce a PROD problem. It runs in the game transaction that `admin-api` opens, in the order below. On failure, nothing changes
   1. When the environment is PROD, `conflict`
   2. When `members` is empty, or the number of members whose `role` is `Leader` is not one, or the same `user_id` appears twice, or `max_members` is less than 1 or more than `guild.maxMembersLimit`, or the member count is more than `max_members`, or the `Officer` count is more than `guild.maxOfficers`, or `join_value` is less than 0 or more than 2^53−1, or `name` violates the name rules of `rename_guild`, or `description` violates the rules of `set_guild_description`, `bad_request`
   3. Locks the members' `guild_member` rows in ascending order of user ID
@@ -294,17 +294,18 @@ none
 | `Officer` count limit | `GUILD_OFFICER_LIMIT` | `GUILD_OFFICER_LIMIT` | none |
 | capacity out of range, `set_guild_max_members` of a guild that does not exist | `false` | content decides | `error` log |
 | `set_member_role` with a role change failure | `false` | content decides | none |
-| lock wait exceeded in a core rpc | `FAILED` | `INTERNAL` | `error` log by `routing` |
-| lock wait exceeded in `lock_guild` called by `chat` or `ranking`, lock wait exceeded in `remove_user`, the `guild_member` row of that user that `remove_user` read again is not a row of the guild locked in 1 | `FAILED` | the caller decides | none |
-| lock wait exceeded in `lock_guild`, `set_guild_max_members` or `set_member_role` called by a content handler or a hook | throw | `INTERNAL` | `error` log by `routing` |
+| exceeding the lock wait in a core rpc | `FAILED` | `INTERNAL` | `error` log by `routing` |
+| exceeding the lock wait in `lock_guild` called by `chat` or `ranking`, exceeding the lock wait in `remove_user`, the `guild_member` row of that user that `remove_user` read again is not a row of the guild locked in 1 | `FAILED` | the caller decides | none |
+| exceeding the lock wait in `lock_guild`, `set_guild_max_members` or `set_member_role` called by a content handler or a hook | throw | `INTERNAL` | `error` log by `routing` |
 | throw of a `register_disband_listener` function | throw | `INTERNAL` | `error` log by `routing` |
-| second `register_disband_listener` registration of the same function, registration outside server start | server start failure | none | `error` log |
+| second `register_disband_listener` registration of the same function | server start failure | none | `error` log |
+| `register_disband_listener` registration after `complete_start()` | throw | none | `error` log |
 | `get_guild`, `rename_guild`, `set_guild_description`, `set_guild_member_role`, `kick_guild_member` or `disband_guild` of a guild that does not exist | `not_found` | none | `audit` |
 | plain text violation or short `name` in `rename_guild`, plain text violation in `set_guild_description` | `bad_request` | none | `audit` |
 | `rename_guild` to a name that another guild uses | `conflict` | none | `audit` |
 | `kick_guild_member` whose target is not a member of that guild or is `Leader`, `set_guild_member_role` that violates the `Leader` rules, `disband_guild` with a `user_id` that is not `Leader` | `bad_request` | none | `audit` |
 | `set_guild_member_role` at the `Officer` count limit | `conflict` | none | `audit` |
-| lock wait exceeded in an admin operation | `internal` | none | error rules of `admin-api` |
+| exceeding the lock wait in an admin operation | `internal` | none | error rules of `admin-api` |
 | `rename_guild`, `set_guild_description`, `set_guild_member_role`, `kick_guild_member`, `disband_guild` or `import_guild` with a different input for the same `operation_id` | `conflict` | none | `audit` |
 | `import_guild` in the PROD environment, with a member that is a guild member, or with a name that another guild uses | `conflict` | none | `audit` |
 | `import_guild` that violates the `members`, `max_members`, `join_value`, `name` or `description` rules | `bad_request` | none | `audit` |
@@ -364,7 +365,7 @@ none
 - `SearchGuilds` returns only guilds with the same normalized prefix, and `ListJoinableGuilds` leaves out `Closed` guilds and full guilds. When `max_join_value` is not 0, it leaves out guilds whose `join_value` is greater than that value, and when 0, it does not leave out by `join_value`. It does not return guilds older than the latest `guild.maxSearchResults` guilds whose `joinable` is `true`
 - `set_guild_max_members` gives `false` for a value out of range and for a guild that does not exist, and members remain when the capacity is reduced
 - `JoinGuild` of another user waits until the transaction that locked with `lock_guild` ends
-- When the lock wait is exceeded while another transaction holds the lock on the guild row, `lock_guild` called by a content handler throws, the request gives `INTERNAL`, and the saved state is the value before handling. At the same time, `Withdraw` of a member of that guild gives `INTERNAL`, and that user's `guild_member` row and `withdrawn_at` are the values before handling
+- On exceeding the lock wait while another transaction holds the lock on the guild row, `lock_guild` called by a content handler throws, the request gives `INTERNAL`, and the saved state is the value before handling. At the same time, `Withdraw` of a member of that guild gives `INTERNAL`, and that user's `guild_member` row and `withdrawn_at` are the values before handling
 - In PostgreSQL, even while another transaction locks a guild that received a join request with `lock_guild`, the applicant's `CancelGuildJoinRequest` and join to another `Open` guild delete that join request row without waiting
 - When a transaction that locked a guild that received a join request with `lock_guild` and the applicant's `CancelGuildJoinRequest` come concurrently, after both end, that join request row does not exist and the changes of the locking transaction remain. When the applicant's join to another `Open` guild also comes, after they end, the applicant is a member of that `Open` guild and the applicant has no join request row
 - After `Withdraw` of a `Leader`, the `Officer` who joined first is `Leader`, and when there is no `Officer`, the `Member` who joined first is `Leader`. `Withdraw` of a `Leader` alone disbands

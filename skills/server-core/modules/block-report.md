@@ -62,9 +62,9 @@ internal operation
 | `list_blocked_ids` | ctx, user ID | list of user IDs that user has blocked. Ascending order | empty list | content handler, hook, `chat`, `matchmaker` |
 | `add_report` | ctx, target user ID, `reason_id`, `ReportContext`, `ref`, `comment`, `evidence` | `ReportResult.OK` | failure element of `ReportResult` | `chat`, content handler, hook |
 | `register_block_listener` | function(ctx, blocking user ID, blocked user ID → none. failure is a throw) | none | none. A registration error is a server start failure | `friend`. Calls it at server start |
-| `remove_user` | ctx | none | none | `auth`(`Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age, job `auth_guest_sweep`) |
+| `remove_user` | ctx | none | none | `auth` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
@@ -119,7 +119,7 @@ admin operation. `routing` collects them and passes them to `admin-api`; process
   2. When an `Open` report with the same (reporter, target, `ReportContext`, `ref`) exists, writes nothing and returns `OK`
   3. `LIMIT` when `count` in the current fixed window is `block-report.maxReportsPerWindow` or more
   4. Writes the report row as `Open` and increases `count` by 1. Leaves `report_id`, the target user ID and `reason_id` in an `info` log
-- `resolve_report` runs in a game tx opened with `storage.run_game_transaction`, locking and reading the report row with `storage.lock_game_row`. `not_found` when there is no report, `conflict` when it is `Resolved`, `bad_request` when `resolution` is the empty string. Otherwise it sets `status` to `Resolved`, `resolved_at` to `clock_now` and `expires_at` to `resolved_at` + `block-report.reportRetentionMs`, and writes `resolution`. The expiry cleanup of `storage` deletes report rows that reached `expires_at`
+- `resolve_report` runs in a game transaction opened with `storage.run_game_transaction`, locking and reading the report row with `storage.lock_game_row`. `not_found` when there is no report, `conflict` when it is `Resolved`, `bad_request` when `resolution` is the empty string. Otherwise it sets `status` to `Resolved`, `resolved_at` to `clock_now` and `expires_at` to `resolved_at` + `block-report.reportRetentionMs`, and writes `resolution`. The expiry cleanup of `storage` deletes report rows that reached `expires_at`
 - `list_reports` returns up to `limit` reports with that `status` and `from_at` ≤ `created_at` < `to_at`, in ascending order of `(created_at, report_id)`. The rules for the time range and `limit` are the body rules of `admin-api`
 - cursor: when `after_created_at` and `after_report_id` are given, returns only reports whose `(created_at, report_id)` is greater than `(after_created_at, after_report_id)`. The next query gives the `created_at` and `report_id` of the last report of the previous query. Giving only one of the two is `bad_request`
 - A ban after handling a report is done separately with `admin-api.ban_user`, a chat mute with `chat.mute_chat_user`
@@ -150,10 +150,10 @@ none
 | report count limit | `REPORT_LIMIT`, `LIMIT` of `add_report` | `REPORT_LIMIT`. For `LIMIT` of `add_report` called by a content handler or hook, the caller decides | `warn` log. reporter user ID |
 | `INVALID_INPUT` of `add_report` in `ReportUser` | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | `INVALID_INPUT` of `add_report` called by a core module, content handler or hook | `INVALID_INPUT` | the caller decides | `error` log |
-| throw of a listener function | throw | `INTERNAL` | `routing` writes an `error` log |
+| throw of a listener function | throw | `INTERNAL` | `routing` leaves an `error` log |
 | second `register_block_listener` registration of the same function | server start failure | none | `error` log |
-| lock wait timeout on the `block_report_sequence` row in step 4 of `add_report` | throw | `INTERNAL` | `routing` writes an `error` log |
-| lock wait timeout on the report row in `resolve_report` | `internal` | none | error rules of `admin-api` |
+| exceeding the lock wait on the `block_report_sequence` row in step 4 of `add_report` | throw | `INTERNAL` | `routing` leaves an `error` log |
+| exceeding the lock wait on the report row in `resolve_report` | `internal` | none | error rules of `admin-api` |
 | `resolve_report` with an empty `resolution` | `bad_request` | none | `audit` |
 | `resolve_report` of a report that does not exist | `not_found` | none | `audit` |
 | `resolve_report` of a `Resolved` report | `conflict` | none | `audit` |
