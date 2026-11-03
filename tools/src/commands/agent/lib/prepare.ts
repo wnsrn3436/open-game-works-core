@@ -131,6 +131,9 @@ async function agentTimeLimitMs(ctx: Context, role: Role): Promise<number> {
 
 async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<string> {
   const caller = await agentContext(ctx.env);
+  const jobId = id ?? newId();
+  // the record holds the run log from its start: a job without one is no agent to `agentContext` and the index of running agents
+  meta.runLog = await runLogPath(jobId, ctx.env);
   return startJob({
     argv: ['agent', '__run'],
     cwd: ctx.cwd,
@@ -141,7 +144,7 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
     meta,
     env: ctx.env,
     logFolder: AGENT_LOG_FOLDER,
-    ...(id === undefined ? {} : { id }),
+    id: jobId,
   });
 }
 
@@ -241,7 +244,6 @@ async function startPlayJudge(
           ? checkRunPlace(game, run as RunState, given.runPlace)
           : await runPlace(ctx, game, role, run as RunState, meta);
     meta.output = join(folder, basename(place.output));
-    meta.runLog = runLogPath(meta.output);
     meta.finalOutput = place.output;
     meta.evidence = place.evidence;
     id = await launchJob(ctx, meta);
@@ -350,7 +352,6 @@ async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request
     meta.place = { kind: 'checkout', dir: game.root };
     meta.folder = game.root;
     meta.output = join(game.root, 'records', 'loops', run.name, `content-${String(run.iteration)}.md`);
-    meta.runLog = runLogPath(meta.output);
     meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
     return launchJob(ctx, meta);
   }
@@ -399,7 +400,6 @@ async function startCoreOrReview(ctx: Context, role: Role, meta: AgentMeta, base
   }
   meta.place = { kind: 'tool-worktree', harness: ws.harness, baseCommit: baseCommit ?? (await head(ws.harness, { env: ctx.env })) };
   meta.output = join(await newPrivateTempFolder('ogw-review-file-', ctx.env), name);
-  meta.runLog = runLogPath(meta.output);
   return launchJob(ctx, meta);
 }
 

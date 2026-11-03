@@ -83,17 +83,17 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
         sh(fake.root, 'worktree', 'add', '-q', '-b', `agent/${id}`, wt);
         const rel = `records/loops/update-1/content-2-v${String(k)}.md`;
         const behavior = fake.behavior(k);
-        if (behavior !== 'fail') {
+        if (behavior === 'commit') {
           fs.mkdirSync(path.join(wt, 'records/loops/update-1'), { recursive: true });
           fs.writeFileSync(path.join(wt, rel), `## hypothesis\n\nvariant ${String(k)}\n`);
-          // the run log `ogw agent` commits is no change of the agent
-          fs.writeFileSync(path.join(wt, `records/loops/update-1/content-2-v${String(k)}-runs.json`), '{"runs":[]}\n');
-          if (behavior === 'commit') fs.writeFileSync(path.join(wt, `client/v${String(k)}.gd`), `# variant ${String(k)}\n`);
-          else fs.rmSync(path.join(wt, rel));
+          fs.writeFileSync(path.join(wt, `client/v${String(k)}.gd`), `# variant ${String(k)}\n`);
           sh(wt, 'add', '-A');
           sh(wt, 'commit', '-qm', `variant ${String(k)}`);
-          if (behavior === 'commit') fake.commits.set(sh(wt, 'rev-parse', 'HEAD'), k);
-          else fs.writeFileSync(path.join(wt, rel), 'report without a change\n');
+          fake.commits.set(sh(wt, 'rev-parse', 'HEAD'), k);
+        } else if (behavior !== 'fail') {
+          // a report and no commit: the branch is the work branch commit the variant was made from
+          fs.mkdirSync(path.join(wt, 'records/loops/update-1'), { recursive: true });
+          fs.writeFileSync(path.join(wt, rel), 'report without a change\n');
         }
         fake.content.push({ id, k, input: options.input, output: path.join(wt, rel), status: behavior === 'fail' ? 'failed' : 'done' });
         return Promise.resolve(id);
@@ -254,7 +254,6 @@ describe('ogw loop variants', () => {
     expect(committed).toEqual(
       [
         'client/v2.gd',
-        `${R}/content-2-v2-runs.json`,
         `${R}/content-2-v2.md`,
         `${R}/content-2.md`,
         `${R}/judge-2-v1-1.md`,

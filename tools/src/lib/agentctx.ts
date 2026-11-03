@@ -10,7 +10,6 @@ function gone(error: unknown): null {
   throw error;
 }
 import { withLock } from './lock.ts';
-import { withoutExtension } from './paths.ts';
 import { ancestorPids, pidNamespace, samePidNamespace } from './proc.ts';
 import type { Role } from './settings.ts';
 
@@ -23,7 +22,7 @@ export interface AgentJobMeta {
   keyHash?: string;
   /** Absolute path of the result file. */
   output: string;
-  /** Absolute path of the run log. */
+  /** Absolute path of the run log (`runLogPath`). */
   runLog: string;
   [key: string]: unknown;
 }
@@ -156,9 +155,12 @@ export async function agentContext(env: NodeJS.ProcessEnv = process.env, ns: str
   return agentByKey(env, ns);
 }
 
-/** Path of the run log next to a result file: `<name without extension>-runs.json`. */
-export function runLogPath(output: string): string {
-  return `${withoutExtension(output)}-runs.json`;
+/** Folder of the jobs folder that holds the run log of each agent job: `<job id>.json`. */
+export const RUN_LOG_FOLDER = 'run-logs';
+
+/** Path of the run log of agent job `id`. */
+export async function runLogPath(id: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  return join(await jobsDir(env), RUN_LOG_FOLDER, `${id}.json`);
 }
 
 async function changeRunLog(path: string, change: (log: RunLog) => void): Promise<void> {
@@ -197,7 +199,7 @@ export async function addRunLogFields(path: string, fields: Record<string, unkno
 
 /**
  * When a background job an agent started ends while the agent CLI still runs, its run log entry gets the exit code
- * and summary. After the agent CLI ended the run log is not changed: it may be committed, or its folder removed.
+ * and summary. After the agent CLI ended the run log is not changed.
  */
 export async function recordJobEnd(id: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const job = await readJob(id, env);
@@ -205,7 +207,6 @@ export async function recordJobEnd(id: string, env: NodeJS.ProcessEnv = process.
   if (!agentId) return;
   const open = (agent: JobRecord | null): agent is JobRecord => agent?.status === 'running' && agent.meta.cliEnded !== true;
   const first = await readJob(agentId, env).catch(() => null);
-  // checked before taking the lock too: the lock folder must not bring back a removed worktree folder
   if (!open(first)) return;
   const runLog = first.meta.runLog;
   if (typeof runLog !== 'string') return;

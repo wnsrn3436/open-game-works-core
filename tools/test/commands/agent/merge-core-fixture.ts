@@ -19,7 +19,7 @@ export async function coreJob(ws: TestWorkspace, module: string, runs: unknown[]
   writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
   const fake = fakeAgentCli(
     ws,
-    `fs.mkdirSync(${JSON.stringify(file.slice(0, file.lastIndexOf('/')))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(file.endsWith('.json') ? JSON.stringify({ name: module, dependencies: ['routing'] }) : 'x')}); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: ${JSON.stringify(runs)} }));`,
+    `fs.mkdirSync(${JSON.stringify(file.slice(0, file.lastIndexOf('/')))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(file.endsWith('.json') ? JSON.stringify({ name: module, dependencies: ['routing'] }) : 'x')}); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: ${JSON.stringify(runs)} }));`,
   );
   const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
   expect(waited.code).toBe(0);
@@ -34,7 +34,7 @@ export function writeScript(file: string, text: string): string {
 /** A core job for `module` whose agent runs `change`, commits, runs `after` and leaves a passing core test run log. */
 export async function scriptJob(ws: TestWorkspace, module: string, change: string, after = ''): Promise<string> {
   writeFileSync(join(ws.root, `in-${module}.md`), 'command: create server core\n');
-  const fake = fakeAgentCli(ws, `${change} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); ${after} fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
+  const fake = fakeAgentCli(ws, `${change} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', '${module}', '--no-verify']); ${after} fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [${JSON.stringify(PASSED)}] }));`);
   const { id, waited } = await runAgent(ws, ['core', '--module', module, '--input', join(ws.root, `in-${module}.md`)], fake.env);
   expect(waited.code).toBe(0);
   return id;

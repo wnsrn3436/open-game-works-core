@@ -1,6 +1,5 @@
 import { readFile, rm } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { runLogPath } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
@@ -107,14 +106,13 @@ async function waitAgents(ctx: Context, jobs: readonly string[]): Promise<Map<st
   return outcomes;
 }
 
-/** The variant commit: the HEAD of `agent/<id>` of a `done` agent that changed a path other than its run log; else null. */
-async function variantCommit(ctx: Context, game: GameRepo, run: RunState, base: string, variant: Started, outcome: AgentOutcome | undefined): Promise<string | null> {
+/** The variant commit: the HEAD of `agent/<id>` of a `done` agent that changed a path; else null. */
+async function variantCommit(ctx: Context, game: GameRepo, base: string, variant: Started, outcome: AgentOutcome | undefined): Promise<string | null> {
   if (outcome?.status !== 'done') return null;
   const commit = await revParse(game.root, `agent/${variant.job}`, { env: ctx.env });
   if (commit === null) return null;
-  const runLog = runLogPath(runRel(run, `content-${String(run.iteration)}-v${String(variant.k)}.md`));
   const changed = await git(game.root, ['diff', '--name-only', '--no-renames', '-z', base, commit], { env: ctx.env });
-  return changed.split('\0').some((path) => path !== '' && path !== runLog) ? commit : null;
+  return changed === '' ? null : commit;
 }
 
 /** The judging site of the variant judges: `judge-<n>-v<k>-<j>.md` in the run folder, the rest in its `evidence/`. */
@@ -217,7 +215,7 @@ async function entriesOf(
   const reports = new Map<number, string>();
   for (const variant of started) {
     const outcome = outcomes.get(variant.job);
-    const commit = await variantCommit(ctx, game, run, base, variant, outcome);
+    const commit = await variantCommit(ctx, game, base, variant, outcome);
     const output = outcome?.output ?? null;
     if (commit !== null && output !== null) reports.set(variant.k, await readFile(output, 'utf8'));
     entries.push({ k: variant.k, job: variant.job, element: variant.element, commit: reports.has(variant.k) ? commit : null, judges: [], votes: null, vsBaseline: null, merge: null, chosen: false });

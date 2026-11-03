@@ -56,7 +56,7 @@ describe('ogw agent merge: core worktrees', () => {
     const noModuleJob = async (files: string[]): Promise<string> => {
       writeFileSync(join(ws.root, 'in-engine.md'), 'command: create client core\n');
       const writes = files.map((file) => `fs.mkdirSync(${JSON.stringify(file.slice(0, file.lastIndexOf('/')))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(file)}, '{"changed":true}');`).join(' ');
-      const fake = fakeAgentCli(ws, `${writes} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'engine', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: [] }));`);
+      const fake = fakeAgentCli(ws, `${writes} execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'engine', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: [] }));`);
       const { id, waited } = await runAgent(ws, ['core', '--input', join(ws.root, 'in-engine.md')], fake.env);
       expect(waited.code).toBe(0);
       return id;

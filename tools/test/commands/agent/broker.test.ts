@@ -14,9 +14,9 @@ import { newAgentKey } from '../../../src/lib/agentctx.ts';
 import { fakeAgentJob } from '../instance/agents.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { isAlive } from '../../../src/lib/proc.ts';
-import { ogw, makeWorkspace, realHarness, sh } from '../../helpers/workspace.ts';
+import { ogw, makeWorkspace, realHarness } from '../../helpers/workspace.ts';
 import { jobWorkspace, writeJob } from '../job/helpers.ts';
-import { fakeAgentCli, gameWithRun, runAgent } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, readRunLog, runAgent } from './helpers.ts';
 
 interface Captured {
   code: number;
@@ -370,7 +370,7 @@ fs.writeFileSync(output, JSON.stringify(results));
     expect([results.ipv4, results.ipv6, results.unix]).toEqual(['EPERM', 'EPERM', 'EPERM']);
     expect(results.remote).not.toBe('EPERM');
     // the broker wrote the run log as for any agent, and is gone with the agent
-    const runLog = JSON.parse(sh(root, 'git', ['show', 'loop/r1:records/loops/r1/play-1-1-runs.json'])) as { runs: { command: string; job?: string }[] };
+    const runLog = (await readRunLog(ws, id)) as { runs: { command: string; job?: string }[] };
     expect(runLog.runs.map((entry) => entry.command)).toEqual(['ogw input --help', `ogw job status ${id}`, `ogw job wait ${id} --timeout 0`, 'ogw step no-such-instance 50 --stream']);
     expect(existsSync(join(jobs, 'brokers', id))).toBe(false);
   }, 120_000);
