@@ -57,7 +57,7 @@ Owns build info, the boot order from running the app to the first scene, the ord
 
 ### boot order
 
-The boot entry scene that the engine opens first calls only `start_boot`. A stage starts after the previous stage ends. This table is every operation that `BootstrapCore` calls in each stage outside DEV code, and their order. It does not call operations of modules that are not in the module list.
+The boot entry scene that the engine opens first calls only `start_boot`. A stage starts after the previous stage ends. Apart from the `boot` block, this table is every operation that `BootstrapCore` calls in each stage outside DEV code, and their order. It does not call operations of modules that are not in the module list.
 
 | stage | work, in the listed order | failure |
 |---|---|---|
@@ -71,7 +71,7 @@ The boot entry scene that the engine opens first calls only `start_boot`. A stag
 | `Login` | 1. Wait for `NoticeCore.wait_maintenance_clear`<br>2. Wait for `AuthCore.boot_login` | When 2 is not `Success`, login failure handling |
 | `AfterLogin` | Calls `LocalDataCore.load_user_file`(the logged-in user ID), `BadgeCore.load_saved`, `PaymentCore.recover_purchases`, `AdCore.start`, `ChatCore.start` in this order. Does not wait, even for async operations | Each module handles it |
 | `FirstScene` | Waits for `SceneCore.change_scene`(scene key, none) with the scene key that `select_first_scene` gave | fatal on `false` |
-| `Done` | Emits `BootCompletedEvent` | none |
+| `Done` | Publishes `BootCompletedEvent` | none |
 
 - passing adapters: the module spec sets the adapter key. `BootstrapCore` picks the adapter by the build info `adapters` value of that key. When the value is `fake`, DEV code passes the fake adapter of that module. Otherwise it passes the real adapter that the selection criterion of that module spec decides from that value and build info `platform`. E.g. `PushCore` gets the APNs adapter for `push-apns-sandbox`. In other cases it passes none. When there is a value but it cannot pass an adapter, it leaves an error log. A fake adapter is DEV code. In a build without DEV code, `fake` is a value it cannot pass
 - Logs left in `InitModules` 1 and 2 are collected and left, in the order they were left, right after 3 does `init` of `LogCore`. When 1 is fatal, it does `init` of `LogCore` only, leaves the collected logs, then does fatal error handling
@@ -125,7 +125,7 @@ The boot entry scene that the engine opens first calls only `start_boot`. A stag
 ### app exit
 
 - exit request: an app exit request of the OS (closing the desktop window, a termination signal) and `UICore.ExitConfirmedEvent`
-- On an exit request, it does these in order in the same frame: set the boot order to `Halted` and discard a restart scheduled for the next frame → emit `AppQuitEvent` → `LogCore.notify_app_state(quit)` → `LocalDataCore.flush` → reverse release. For `ExitConfirmedEvent`, it then requests process termination from the engine
+- On an exit request, it does these in order in the same frame: set the boot order to `Halted` and discard a restart scheduled for the next frame → publish `AppQuitEvent` → `LogCore.notify_app_state(quit)` → `LocalDataCore.flush` → reverse release. For `ExitConfirmedEvent`, it then requests process termination from the engine
 - Exit requests, restart requests and fatal reports after the reverse release ends are ignored
 - When it receives an exit request before `start_boot`, it ends without `init` of any module
 
@@ -141,7 +141,7 @@ Received through the content entry. There is no registration operation.
 
 ## event
 
-none. `BootCompletedEvent` and `AppQuitEvent` that `BootstrapCore` emits and `RestartRequestedEvent` and `FatalErrorRequestedEvent` that it subscribes to are boot events of `EventCore`. It subscribes to `UICore.ExitConfirmedEvent`.
+none. `BootCompletedEvent` and `AppQuitEvent` that `BootstrapCore` publishes and `RestartRequestedEvent` and `FatalErrorRequestedEvent` that it subscribes to are boot events of `EventCore`. It subscribes to `UICore.ExitConfirmedEvent`.
 
 ## error
 
@@ -149,7 +149,7 @@ none. `BootCompletedEvent` and `AppQuitEvent` that `BootstrapCore` emits and `Re
 |---|---|---|
 | `content_release` hook throws | continues the reverse release | error |
 | fatal of the boot order table | fatal | error. module name |
-| build info file has a wrong format, STG·PROD build cannot read the build info file | fatal screen | error |
+| build info file has a wrong format, an STG or PROD build cannot read the build info file | fatal screen | error |
 | `Prepare` stage operation fails | next operation | error. module name |
 | `check_update` is `false` | goes to `ContentInit` | error |
 | `content_init` returns `false` or throws | goes to `ContentInit` 2 | error |
@@ -220,7 +220,7 @@ format argument
 - `BootTestReplacements`: the set of test replacements that a test passes to `start_boot`. The fields are test clock, `NetworkTransport`, log listener, realtime transport, server URL and update downloads, and each field can be none. Update downloads are the three lists that `ApplyUpdate` uses instead of the downloaded data, translation and bundles of `GameUpdateCore`. `BootstrapCore` keeps the received value until `shutdown`
 - passing test replacements: when there are kept `BootTestReplacements`, `InitModules` 2 of every boot (restart and update reboot included) calls, together with the adapters, `TimeCore.set_test_clock`(test clock), `LogCore.set_test_clock`(test clock), `NetworkCore.set_transport`(`NetworkTransport`), `LogCore.set_log_listener`(log listener). It does not call the operation of a field that is none
 - passing DEV token storage: when `AuthCore` is in the module list, `InitModules` 2 calls `AuthCore.use_dev_token_storage` right after `AuthCore.set_storage_scope`
-- value for `RealtimeCore.set_transport` in `InitModules` 2: when `BootTestReplacements` has a realtime transport, it passes that without wrapping it. Otherwise, a dev run passes the P2P transport wrapped in a network simulation transport that is again wrapped in a lockstep transport, a DEV build with a build info file passes the P2P transport wrapped in a lockstep transport, and an STG·PROD build passes the P2P transport
+- value for `RealtimeCore.set_transport` in `InitModules` 2: when `BootTestReplacements` has a realtime transport, it passes that without wrapping it. Otherwise, a dev run passes the P2P transport wrapped in a network simulation transport that is again wrapped in a lockstep transport, a DEV build with a build info file passes the P2P transport wrapped in a lockstep transport, and an STG or PROD build passes the P2P transport
 - touch emulation: when the build info `platform` of a dev run is `android` or `ios` and `VirtualPadCore` is in the module list, it calls `VirtualPadCore.set_test_touch_support`(`true`) after `InitModules` 3
 - adding `QACore`: in a run that contains DEV code (dev run and DEV build), `start_boot` called without `BootTestReplacements` adds `QACore` at the end of the received module list (the generated module list when omitted) when `QACore` is not in it. Restart and update reboot also use the module list with it added. `QACore` is `init`ed in `InitModules` 3 like other modules and `release`d by reverse release. `start_boot` given `BootTestReplacements` does not add it. A test of that kind that needs `QACore` puts it in the module list directly
 - passing dev access: after `InitModules` 5, it passes to `NetworkCore.set_dev_access` the `dev_access` of the build info file in a DEV build with that file, or launch value `OGW_DEV_ACCESS` in a dev run
@@ -231,7 +231,7 @@ format argument
   4. Remove the fatal screen
   5. Clear the update set, the read build info and the kept `BootTestReplacements`, and set `boot_stage` to `None`
 - `shutdown` does not do `AppQuitEvent`, `LogCore.notify_app_state(quit)`, `LocalDataCore.flush` or the process termination request. The boot from before `shutdown` does not go to the next stage even when an operation it was waiting for ends. A `start_boot` call after `shutdown` is the same as the first call
-- An STG·PROD build has no `get_launch_value`, `shutdown`, launch value reading, fake adapter, adding `QACore`, passing DEV token storage, DEV registration list call, `BootTestReplacements`, network simulation transport, lockstep transport, touch emulation or passing dev access
+- STG and PROD builds have no `get_launch_value`, `shutdown`, launch value reading, fake adapter, adding `QACore`, passing DEV token storage, DEV registration list call, `BootTestReplacements`, network simulation transport, lockstep transport, touch emulation or passing dev access
 
 ## test
 
@@ -252,14 +252,14 @@ format argument
 - Without `select_first_scene`, it goes to game settings `firstScene`
 - `get_first_scene` returns game settings `firstScene`
 - For each fatal condition of the error table, there is no next stage and an error log is left
-- The error log of an adapter that could not be passed is in the log file of `LogCore`. When an STG·PROD build cannot read build info, that error log is in the `LogCore` log file directly under app storage and the fatal screen is shown. A build info file without `ad_units` or with `environment` outside the values of the `BuildInfo` table also shows the fatal screen, and a build info file with extra unknown keys reaches `Done` without fatal
+- The error log of an adapter that could not be passed is in the log file of `LogCore`. When an STG or PROD build cannot read build info, that error log is in the `LogCore` log file directly under app storage and the fatal screen is shown. A build info file without `ad_units` or with `environment` outside the values of the `BuildInfo` table also shows the fatal screen, and a build info file with extra unknown keys reaches `Done` without fatal
 - When `change_scene` of `FirstScene` is `false` because of a transition that the content code of the title scene started, one fatal popup opens
 - On a fatal after UI ready, there is no `boot` block, one fatal popup opens with one button, and pressing it starts a restart. Reporting again while it is open leaves the popup count unchanged
 - On a fatal before UI ready (`LoadData` failure), no `UICore` popup is opened, the fatal screen is shown once, and there is no restart
-- `FatalErrorRequestedEvent` and `RestartRequestedEvent` emitted by another module are handled the same as `report_fatal` and `request_restart`, and `ExitConfirmedEvent` starts app exit. The same holds in the boot after a restart and after an update reboot, with one handling per event
+- `FatalErrorRequestedEvent` and `RestartRequestedEvent` published by another module are handled the same as `report_fatal` and `request_restart`, and `ExitConfirmedEvent` starts app exit. The same holds in the boot after a restart and after an update reboot, with one handling per event
 - Reporting a restart several times in one frame gives one reverse release. Reverse release does not start before the reporting call returns
 - When an exit request comes in the frame in which a restart was reported, there is one reverse release, and after it there is no module `init` and no `InitModules` stage
-- Calling `report_fatal` or `request_restart` inside `content_init` leaves no `build_derived_containers` and no DEV registration list call in that boot. When a module `init` in `InitModules` 3 emits `FatalErrorRequestedEvent`, that boot has no `init` of later modules and no `InitModules` 4 to 8. When an operation of `AfterLogin` reports a fatal, that boot has no later operations
+- Calling `report_fatal` or `request_restart` inside `content_init` leaves no `build_derived_containers` and no DEV registration list call in that boot. When a module `init` in `InitModules` 3 publishes `FatalErrorRequestedEvent`, that boot has no `init` of later modules and no `InitModules` 4 to 8. When an operation of `AfterLogin` reports a fatal, that boot has no later operations
 - A restart while waiting in `Login` leaves no `AfterLogin` of the halted boot, and the new boot goes from `InitModules`. When the new boot finishes `TitleScene`, there are no open popups or messages. Even when `boot_login` of the halted boot later returns a result other than `Success`, there is no login failure popup, no fatal, and no error log or stage info log of that boot
 - A restart while an `Interaction` request of `NetworkCore`, a popup open flow or a black box message holds a block leaves no unchecked error log through the restart up to `Done` of the new boot
 - After a restart, `content_init` is called again, and a hook registered before the restart is registered only once
@@ -280,5 +280,5 @@ format argument
 - In a dev run outside a browser, when `OGW_PLATFORM` is `web` and `OGW_DEV_ACCOUNT` is an empty string, `platform` of `get_build_info` is `web`, `boot_login` is `Success` through new account login and login token save, and `boot_stage` becomes `Done`
 - When `PushCore` is in the module list, a build whose build info `platform` is `android` or `ios` passes the notification adapter of that platform with `set_notification_adapter`, a dev run passes the fake notification adapter, and a build of any other platform passes none
 - In a dev run, the value of launch value `OGW_DEV_ACCESS` is passed to `NetworkCore.set_dev_access`, so `X-Ogw-Dev-Access` of a cheat command request of `QACore` is that value
-- An STG·PROD build has no `get_launch_value`, fake adapter or DEV registration list call
+- STG and PROD builds have no `get_launch_value`, fake adapter or DEV registration list call
 - In a run that contains DEV code, `start_boot` called without `BootTestReplacements` with a module list without `QACore` does `init` of `QACore` as the last of the module list. `start_boot` given `BootTestReplacements` does not `init` `QACore`

@@ -27,7 +27,7 @@ Delivers core events and content events, told apart by event type, to subscriber
 | `subscribe` | event type, callback | success flag | `false` | all code |
 | `unsubscribe` | event type, callback | none | none | all code |
 | `unsubscribe_all` | subscriber | number of deleted subscriptions | 0 | all code |
-| `count_subscriptions` | subscriber | number of subscriptions of that subscriber | 0 | `PoolCore`, core test |
+| `count_subscriptions` | subscriber | number of subscriptions of that subscriber | 0 | `PoolCore`, `UnitTestCore`, core test |
 | `acquire` | event type | event object to fill and pass to `publish` | none | for core events and content events, the side that defines the event type; for boot events, the module that `when` of the `## event` table names |
 | `publish` | event | none | none | for core events and content events, the side that defines the event type; for boot events, the module that `when` of the `## event` table names |
 
@@ -45,7 +45,7 @@ Delivers core events and content events, told apart by event type, to subscriber
 | content event | content code in `client/features/<feature>/`, `client/common/` | content code | content code |
 
 - A module defines and publishes only the core events written in `## event` of its own spec. Only the module that `when` of the table names publishes a boot event
-- A boot event is a notification between `BootstrapCore` and another module. With it, modules other than `BootstrapCore` do not depend on `BootstrapCore`
+- A boot event is a notification between `BootstrapCore` and another module
 - Content events are used for notifications between features. The notification method inside one feature is not restricted
 - An event type name is PascalCase and ends with `Event`. e.g. `QuestCompletedEvent`, `DayChangedEvent`
 - Event fields hold only payload values. An ID value field is int32, a time is Unix ms, and a duration is ms
@@ -116,7 +116,7 @@ none
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `register_init_listener` | listener (a function called when `init` finishes). A custom `Callable` (lambda, `bind()`) is not registered and gives an `error` log | none | none | `UnitTestCore` |
+| `register_init_listener` | listener (a function called when `init` finishes). A lambda or a callback with bound arguments is not registered and gives an `error` log | none | none | `UnitTestCore` |
 
 - `register_init_listener` is called before `init`. A call that a listener makes during `init` also counts as a call after `init`
 - Right before `init` finishes, after it can accept subscriptions, it calls the registered listeners once each in registration order. `release` deletes the registrations

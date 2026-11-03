@@ -38,7 +38,7 @@ Shows rewarded ads, interstitial ads and banner ads through the ads SDK. The ser
 | `is_ad_privacy_options_required` | none | whether an entry to change ads consent is needed | `false` | content code |
 | `open_ad_privacy_options` | none | async operation. whether the ads consent change screen was opened | `false` | content code |
 
-- `set_ads_adapter` is called before `init`. A call after `init` leaves an error log and is ignored
+- `set_ads_adapter` is called before `init`
 - ad unit list: the list from placement ID value to ad unit ID. `BootstrapCore` passes build info `ad_units`
 - `AdReadyState`: `NotReady`(not loaded, load failed, or used by `show`), `Loading`, `Ready`, `LimitReached`(the grant count of the rewarded ad reached `limit_count`. Set by the limit judgement of `preload` or by `AD_LIMIT_REACHED` of `BeginAdReward` in `show`), `Unsupported`(no ads adapter)
 - `AdShowResult`
@@ -64,25 +64,24 @@ The ads adapter wraps the ads SDK. Handling that differs per ads SDK is only ins
 | `request_ad_consent` | none | async operation. `required`(whether the region requires ads consent), `personalized`(whether the user agreed to personalization on the ads consent screen). When a consent screen is needed, it shows it and waits until it closes |
 | `is_privacy_options_required` | none | whether an entry to change ads consent is needed |
 | `show_privacy_options` | none | async operation. whether the ads consent change screen was opened |
-| `initialize` | ad consent | async operation. success flag |
-| `load` | ad type, unit ID, ad consent | async operation. success flag |
+| `initialize` | ad request consent | async operation. success flag |
+| `load` | ad type, unit ID, ad request consent | async operation. success flag |
 | `present` | ad type, unit ID, verification value(rewarded only) | async operation. One of `Completed`, `Aborted`, `Failed`. An interstitial ad is `Completed` when it closes after being shown, and `Aborted` is never returned for it |
-| `open_banner` | unit ID, ad consent | async operation. success flag |
+| `open_banner` | unit ID, ad request consent | async operation. success flag |
 | `close_banner` | none | none |
 
-- ad consent: `ad_personalization_allowed`(whether ad personalization is allowed), `child`(whether it is child-directed), `below_consent_age`(whether the user is below the consent age). AdCore makes it with `AuthCore.get_consent` at each call. The adapter passes these values to the ads SDK as request parameters
+- ad request consent: `ad_personalization_allowed`(whether ad personalization is allowed), `child`(whether it is child-directed), `below_consent_age`(whether the user is below the consent age). AdCore makes it with `AuthCore.get_consent` at each call. The adapter passes these values to the ads SDK as request parameters
 - verification value: the user ID and the reward notify ID. In `present`, the adapter puts them in the server-side verification custom data of the loaded rewarded ad and then shows it
 - AdCore defines the adapter key `ads` and the selection criteria below, and `BootstrapCore` chooses by the `ads` value of build info `adapters` and passes the adapter with `set_ads_adapter`
 
   | value | platform `ios`, `android` | other platforms |
   |---|---|---|
   | `fake` | fake adapter | fake adapter |
-  | `ads-admob` | `admob` adapter | none |
+  | `ads-admob` | `ads-admob` adapter | none |
   | no key | none | none |
 
-  The callback `<network>` of server `ads-reward` is the provider name of this value (`admob`)
-- The build puts the app ID of the `admob` adapter in the app ID item of the ads SDK (build-time check `admob` of [`build`](../../build/SKILL.md)). AdCore does not pass it to the adapter
-- `request_ad_consent`, `is_privacy_options_required` and `show_privacy_options` of the `admob` adapter use the Google UMP SDK (a Google-certified CMP). UMP does the region judgement and the consent screen, and UMP saves the consent result in IAB TCF format, which the ads SDK reads. `required` is whether the region is one where UMP requires consent; `personalized` is whether the saved TCF consent has the Google vendor consent and consent to purposes 1, 3 and 4
+- The build puts the app ID of the `ads-admob` adapter in the app ID item of the ads SDK (build-time check `admob` of [`build`](../../build/SKILL.md)). AdCore does not pass it to the adapter
+- `request_ad_consent`, `is_privacy_options_required` and `show_privacy_options` of the `ads-admob` adapter use the Google UMP SDK. `required` is whether the region is one where UMP requires consent; `personalized` is whether the TCF consent that UMP saved has the Google vendor consent and consent to purposes 1, 3 and 4
 - The unit ID is the value of that placement in the ad unit list, and an empty string when the list has none. The unit ID of the fake adapter is the decimal string of the placement ID value
 - In `release` the adapter discards all loaded ads. When it receives `initialize` several times in one process, it does not initialize the ads SDK again and succeeds
 
@@ -200,7 +199,9 @@ none
 | `preload` of a rewarded ad when not logged in | none. The ready state does not change, and there is no `load` | error |
 | `BeginAdReward` of `show` fails | with `AD_LIMIT_REACHED`, `NotReady` and the ready state set to `LimitReached`; otherwise `Failed`. There is no `present` | `NetworkCore` leaves it |
 | `preload` of a rewarded ad blocked by the limit judgement | none. Sets the ready state to `LimitReached`, and there is no `load` | none |
+| adapter `load` fails | none. Sets the ready state to `NotReady` | warn |
 | `show` of a rewarded ad before login, another `show` in progress | `Failed` | error |
+| `show` when the ready state is not `Ready` | `NotReady` | warn |
 | `initialize` fails | `false` | error |
 | `request_ad_consent` fails | continues | warn |
 | `report_ad_consent` fails | continues | `AuthCore` or `NetworkCore` leaves it |
@@ -209,6 +210,7 @@ none
 | `present` of an interstitial ad is `Aborted` | `Completed` | error |
 | `run_blocked` could not set a block | `Failed`. Releases the pause | `InputBlockCore` leaves it |
 | `ClaimAdReward` fails | result in the show table | `NetworkCore` leaves it |
+| adapter `open_banner` fails | none. The shown banner is gone | warn |
 | `set_ads_adapter` called after `init` | none | error |
 | element of `AdCore.opportunity_count` with a wrong format, a negative count, or the same placement ID value as a previous element | discards that element | warn |
 
@@ -268,7 +270,7 @@ reserved ID, reserved string, reserved sound: none
 - `preload` of a rewarded placement with `limit_count` set and `UserStateCore.get_ad_reward_count` equal to `limit_count` is `LimitReached` without `load` and request, and `preload` from `reset_at` of that grant count + `TimeCore.reachMarginMs` calls `load`
 - When `present` of a rewarded ad is `Completed`, one `ClaimAdReward` goes before `show` returns, and its reward notify ID is the value of the `BeginAdReward` response of that `show`. For each result, the `show` result is as in the show table
 - In `show` of an interstitial ad, of a rewarded ad that is not `Completed`, and of a banner, there is no `ClaimAdReward`
-- The ad consent that `initialize`, `load`, `open_banner` receive matches `AuthCore.get_consent` at that call by the rules of behavior
+- The ad request consent that `initialize`, `load`, `open_banner` receive matches `AuthCore.get_consent` at that call by the rules of behavior
 - `start` calls `request_ad_consent` before `initialize`, and when `required` is `true` calls `AuthCore.report_ad_consent` once with that `personalized`. When `required` is `false`, it does not call it. Even when `request_ad_consent` fails, it calls `initialize`
 - `open_ad_privacy_options` calls `request_ad_consent` and `report_ad_consent` again after `show_privacy_options`. Before the started state, it does not call the adapter and is `false`
 - With the fake adapter and the server fake adapter, `show` of a rewarded ad is `Completed` and the grant delta is applied

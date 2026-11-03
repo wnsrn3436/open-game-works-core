@@ -39,7 +39,7 @@ Saves local data (keys and values) in the device's app storage, and reads and wr
 | `file_exists` | path | whether the file exists | `false` | `DataCore`, `LocalizationCore`, `GameUpdateCore`, `ResourceCore` |
 | `get_file_size` | path | byte count | −1 | `DataCore`, `LocalizationCore`, `GameUpdateCore` |
 | `list_files` | folder path | list of file names directly under the folder | empty list | `GameUpdateCore` |
-| `hash_file` | path | `FileResult`. `text` is the SHA-256 in lowercase hexadecimal | `FileResult` whose `ok` is `false` | `DataCore`, `LocalizationCore`, `GameUpdateCore`, `ResourceCore` |
+| `hash_file` | path | `FileResult`. `text` is the SHA-256 in lowercase hexadecimal | `FileResult` whose `ok` is `false` | `GameUpdateCore`, `ResourceCore` |
 | `resolve_engine_path` | path | path the engine opens the file with | empty string | `ResourceCore` |
 
 - file kind: `device` (one per device), `user` (one per user ID)
@@ -51,9 +51,9 @@ Saves local data (keys and values) in the device's app storage, and reads and wr
 
 ### app storage and path
 
-- The app storage is the device storage area the app reads and writes. Its actual location is in the engine implementation rules
-- The app storage of the browser runtime is a memory file system. It is filled with the contents of IndexedDB and mounted before `BootstrapCore.start_boot`. In the first frame that starts after an operation that changes the file system (`write_file`, `delete_file`, local data file write, backup restore) returns, saving the whole file system to IndexedDB starts. If a save is in progress at that time, it starts in the first frame that starts after that save ends. The results of file operations and local data file writes are the results of the memory file system. When an IndexedDB save fails, the engine writes an error line to the browser console (not a `LogCore` log), and the next save saves the whole file system again. How mount and save are triggered is in the engine implementation rules
-- app storage root: the base folder of paths. `BootstrapCore` sets its value; before it is set, it is the app storage. `log/` of `LogCore` is also under the app storage root. How a module reads the app storage root is in the engine implementation rules
+- The app storage is the device storage area the app reads and writes. Its actual location is in the engine-specific implementation rules
+- The app storage of the browser runtime is a memory file system. It is filled with the contents of IndexedDB and mounted before `BootstrapCore.start_boot`. In the first frame that starts after an operation that changes the file system (`write_file`, `delete_file`, local data file write, backup restore) returns, saving the whole file system to IndexedDB starts. If a save is in progress at that time, it starts in the first frame that starts after that save ends. The results of file operations and local data file writes are the results of the memory file system. When an IndexedDB save fails, the engine writes an error line to the browser console (not a `LogCore` log), and the next save saves the whole file system again. How mount and save are triggered is in the engine-specific implementation rules
+- app storage root: the base folder of paths. `BootstrapCore` sets its value; before it is set, it is the app storage. `log/` of `LogCore` is also under the app storage root. How a module reads the app storage root is in the engine-specific implementation rules
 - A path is relative to the app storage root and its separator is `/`. A segment is each part of a path split by `/`
 - invalid path: an empty string, a character outside `[a-z0-9_./-]`, starting or ending with `/`, an empty segment, a segment starting with `.`, ending with `.tmp` or `.bak`, a first segment of `log` or `local_data`. `log` is used by `LogCore`, `local_data` by the local data files. An empty folder path of `list_files` is the root
 - An operation that receives an invalid path does not access the file system
@@ -74,8 +74,8 @@ Saves local data (keys and values) in the device's app storage, and reads and wr
 
 ### load
 
-- `load_device_file` is called after module `init`, and `load_user_file` after login with that user ID. Switching users is done by restart
-- The local data files are `local_data/device.dat`, `local_data/user_<hash>.dat`. `<hash>` is the first 16 characters of `UtilCore.sha256_hex` of the bytes of the user ID written as an ASCII decimal string. The content is the schema version and a list of (key, value type, value). The format, the format error conditions, and the entry order that makes the same file state into the same bytes are in the engine implementation rules
+- Switching users is done by restart
+- The local data files are `local_data/device.dat`, `local_data/user_<hash>.dat`. `<hash>` is the first 16 characters of `UtilCore.sha256_hex` of the bytes of the user ID written as an ASCII decimal string. The content is the schema version and a list of (key, value type, value). The format, the format error conditions, and the entry order that makes the same file state into the same bytes are in the engine-specific implementation rules
 - The schema version is the version of the local data file format the core defines. The first schema version is 1. The schema version stays the same when content keys and values change. When the core changes the format, it raises the schema version by 1 and adds a conversion that turns files of every previous schema version into the current format
 - Load does the backup restore of the local data file before reading that file
 - Load ends without waiting and makes that file kind loaded regardless of the result. Exception: `load_user_file` with user ID ≤ 0 does not make it loaded
@@ -109,12 +109,12 @@ Saves local data (keys and values) in the device's app storage, and reads and wr
   4. Deletes `<path>.bak`
   - If 1 or 2 fails, the target file has the previous content. If 3 fails, `<path>.bak` is renamed back to the target file. If one of 1 to 3 fails, the write fails. If only 4 fails, it is a success. When it ends, there is no `<path>.tmp`
 - backup restore: renaming `<path>.bak` to the target file when the target file does not exist and `<path>.bak` exists. Every file operation does a backup restore before handling the target file. `list_files` does a backup restore for each `.bak` in the folder, and when one fails, it does not do the backup restore of the remaining `.bak` files. Backup restores that already ended are not reverted
-- `NotFound` of `FileError` means the target file does not exist, and `NoSpace` means atomic write step 1 failed because the remaining device space is less than the number of bytes to write. The rule that maps the engine's failure results to `FileError` is in the engine implementation rules
+- `NotFound` of `FileError` means the target file does not exist, and `NoSpace` means atomic write step 1 failed because the remaining device space is less than the number of bytes to write. The rule that maps the engine's failure results to `FileError` is in the engine-specific implementation rules
 - `write_file` creates missing parent folders
 - When the size is more than the max bytes, `read_file` does not read and fails with `TooLarge`
 - `delete_file` deletes the target file and `<path>.bak`. When neither exists, it is a success
 - `list_files` excludes subfolders, `.tmp`, `.bak` and returns names in byte order. When the folder does not exist, an empty list is a success
-- hash chunk size: the max number of bytes `hash_file` reads at once. The value is in the engine implementation rules. `hash_file` reads the file in pieces of at most the hash chunk size
+- hash chunk size: the max number of bytes `hash_file` reads at once. The value is in the engine-specific implementation rules. `hash_file` reads the file in pieces of at most the hash chunk size
 - `resolve_engine_path` returns the path even when the file does not exist
 - Only `read_file` fills `bytes` of `FileResult`, and only `hash_file` fills `text`. Other operations leave them empty
 
@@ -179,7 +179,7 @@ none
 - When writes of one file kind fail repeatedly with the same failure cause, there is one `error` log. A failure with another failure cause, and a failure after a write succeeded, each leave one more `error` log
 - A value written to the `user` file of user A does not appear in the `user` file of user B after `release`, `init`
 - Files written from the same file state have the same bytes even when the order of writing keys or the device locale differs
-- For each format error condition of the engine implementation rules, file state, dirty, output, log of the load equal the format error row of the load table
+- For each format error condition of the engine-specific implementation rules, file state, dirty, output, log of the load equal the format error row of the load table
 - For each invalid path condition, `file_exists` is `false`, `get_file_size` is −1, `list_files` is an empty list, `resolve_engine_path` is an empty string, operations that return `FileResult` give `InvalidPath`, and the app storage stays the same. The same holds for `log`, `local_data` and the paths under them
 - For a path that is a folder, `file_exists` is `false`, `get_file_size` is −1, `read_file` and `hash_file` give `NotFound`, `delete_file` succeeds, `write_file` gives `Failed`, and that folder and the files in it stay the same
 - For a file without read permission, `file_exists` is `true` and `read_file`, `hash_file` give `Failed`. When the remaining device space is less than the number of bytes to write, `write_file` gives `NoSpace` and the target file has the previous content

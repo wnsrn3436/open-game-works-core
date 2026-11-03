@@ -51,8 +51,8 @@ Plays a cutscene that shows dialogue and presentation by running the steps writt
 - A wait-optional command(`Move`, `Animate`, `Camera`, `ScreenEffect`, `Staging`) runs the next step after it ends when `wait` is `true`, and right after it starts when `false`. Other commands run the next step after they end
 - in-progress command: a wait-optional command that has started and has not ended yet
 - playback end: `End` has run or there is no next step to run, and there is no in-progress command
-- finalize: puts an in-progress command into its end state and ends it. `Move` skips the tween to its end, `Camera` puts the camera at the goal position with `CameraCore.snap_to`, `ScreenEffect` skips the effect to its end, `Animate` applies the animation end state, and `Staging` destroys the instance.
-- When a new command starts while the same command on the same target is in progress, it finalizes the previous command, then starts. `Move` and `Animate` have the same target when `actor` is the same; `Camera` and `ScreenEffect` have the same target as any command of the same kind. When the new command fails the start check (the list below of commands that leave an error log and end at once, the "the command ends at once" row of the error table), the start check comes before finalize, and the previous command is not finalized and continues. When an operation of a dependency module fails after the start check passes (e.g. `Failed` of `CameraCore.move_by_preset`, `ScreenEffectCore.play_preset`), the previous command has already been finalized
+- finalize: puts an in-progress command into its end state and ends it. `Move` skips the tween to its end, `Camera` puts the camera at the goal position with `CameraCore.snap_to`, `ScreenEffect` skips the effect to its end, `Animate` applies the animation end state, and `Staging` destroys the staged object.
+- When a new command starts while the same command on the same target is in progress, it finalizes the previous command, then starts. `Move` and `Animate` have the same target when `actor` is the same; `Camera` and `ScreenEffect` have the same target as any command of the same kind. When the new command fails the start check, the start check comes before finalize, and the previous command is not finalized and continues. When an operation of a dependency module fails after the start check passes (e.g. `Failed` of `CameraCore.move_by_preset`, `ScreenEffectCore.play_preset`), the previous command has already been finalized
 - Measured in game time: `Wait`, the tweens of `Move` and `Camera`. Measured in real elapsed time: typing, auto advance, fast forward, `ScreenEffect`
 
 | command | behavior | ends when |
@@ -66,13 +66,13 @@ Plays a cutscene that shows dialogue and presentation by running the steps writt
 | `Sound` | Plays the `resource` sound as a sound effect. For a looping sound, keeps the playback handle | immediately |
 | `Bgm` | Plays that BGM when `resource` is set, and stops the BGM when it is `null` | immediately |
 | `ScreenEffect` | Plays the `resource` tween preset on the `Cutscene` channel with `ScreenEffectCore.play_preset`. The owner is the cutscene view | when the effect ends |
-| `Staging` | Makes an instance from `resource`, attaches it as a child of `actor`, or to the staging parent when `actor` is an empty string, and starts it. Staging without an end counts as ended once it starts and is destroyed in playback end handling | when the staging ends and the instance is destroyed |
-| `Cue` | Emits `CutsceneCueEvent` | immediately |
+| `Staging` | Makes a staged object from `resource`, attaches it as a child of `actor`, or to the staging parent when `actor` is an empty string, and starts it. Staging without an end counts as ended once it starts and is destroyed in playback end handling | when the staging ends and the staged object is destroyed |
+| `Cue` | Publishes `CutsceneCueEvent` | immediately |
 | `Jump` | Goes to the `next_step` step | immediately |
 | `Branch` | Judges `requirement` with `RequirementCore.evaluate` and goes to the `next_step` step when `passed` is `true`, or to the next step in `step` order when `false` | immediately |
 | `End` | Runs no more steps | immediately |
 
-- These leave an error log and end at once: a command that uses an unregistered actor key, a command whose `Move` tween preset has no `Position` change, a `Move` whose `actor` and `target` differ in dimension (2D or 3D), an `Animate` of an animation the actor does not have, a `Camera` while `CameraCore.has_camera` is `false`, a `Camera` whose `target` dimension differs from the dimension of the attached camera (`CameraCore.is_3d_camera`), a `Move`, `Camera` or `ScreenEffect` whose tween preset has no first change, a `Camera` whose first change of the tween preset has a duration out of range. When there is no camera or the camera and `target` differ in dimension, the `Camera` command and its skip application call no `CameraCore` operation other than `CameraCore.has_camera` and `CameraCore.is_3d_camera`. When the actor is destroyed during a command, that command ends
+- start check: the check at command start. These fail it, leave an error log and end at once: a command that uses an unregistered actor key, a command whose `Move` tween preset has no `Position` change, a `Move` whose `actor` and `target` differ in dimension (2D or 3D), an `Animate` of an animation the actor does not have, a `Camera` while `CameraCore.has_camera` is `false`, a `Camera` whose `target` dimension differs from the dimension of the attached camera (`CameraCore.is_3d_camera`), a `Move`, `Camera` or `ScreenEffect` whose tween preset has no first change, a `Camera` whose first change of the tween preset has a duration out of range. When there is no camera or the camera and `target` differ in dimension, the `Camera` command and its skip application call no `CameraCore` operation other than `CameraCore.has_camera` and `CameraCore.is_3d_camera`. When the actor is destroyed during a command, that command ends
 - The tween preset of `Move`, `Camera`, `ScreenEffect` is resource type `tween`, loaded with the kind of `TweenCore.get_preset_kind`. At command start, it gets the preset that step 3 preloaded with `ResourceCore.get_loaded`(playback scope). When the received definition has no first change in its first step (a fallback definition from a failed load included), the start check fails. For `Camera`, the start check also fails when the duration of that change is not at least 0 and at most `TweenCore.maxDurationMs`. `ScreenEffect` calls `ScreenEffectCore.play_preset` at once with the received definition
 - `Move` copies the tween preset with `TweenCore.copy_definition`, sets the target value of the last `Position` change in step order to the position of the `target` actor at command start converted to coordinates relative to the parent of `actor`, then plays it on `actor` with `TweenCore.play`. Other changes keep the preset values
 - When the step run after a `Line` or `Choice` is neither `Line` nor `Choice`, it hides the dialogue box
@@ -87,14 +87,14 @@ Plays a cutscene that shows dialogue and presentation by running the steps writt
 
 - playback scope: the resource scope that `play` received. The resources that playback loads and the sounds, BGM and tweens it plays all use the playback scope. When the playback scope is released, it does the stop
 - cutscene check: applies the data check conditions of `## data` again to the rows of the cutscene to play
-- playback end handling: the `TimeCore` handling of the cutscene pause end when in a cutscene pause, clearing the back override, destroying staging instances, stopping the kept looping sounds, stopping the line voice and replay voice, destroying the cutscene view, emptying the line history, hiding the cutscene root, releasing the block, returning the result. Actor positions, camera and BGM are not returned to their state before playback
+- playback end handling: the `TimeCore` handling of the cutscene pause end when in a cutscene pause, clearing the back override, destroying staged objects, stopping the kept looping sounds, stopping the line voice and replay voice, destroying the cutscene view, emptying the line history, hiding the cutscene root, releasing the block, returning the result. Actor positions, camera and BGM are not returned to their state before playback
 - stop: without finalizing in-progress commands, stops the tweens, calls `CameraCore.stop_move` for `Camera`, then does playback end handling. `status` of the result is `Stopped`
 - The line text and choice text are the result of `LocalizationCore.format` converting `text` with the `FormatArgs` of `play`. The inline icon height is the current font size of the text element for line text and 0 for choice text. It converts once when `Line` and `Choice` start and does not convert again on `InputCore.InputPromptChangedEvent`. The speaker name is the translation of `cutscene_speaker.name`
 
 ### cutscene view
 
 - cutscene root: the UI element that CutsceneCore makes in `init` under one safe area root of `SafeAreaCore` that it makes inside `UICore.get_layer(Cutscene)`. Its position and size equal that safe area root. It is hidden while not playing, and while shown it receives all pointer input in its area. The engine mapping is in the engine-specific implementation rules
-- cutscene view root: the root of the instance made from the cutscene view resource; a UI element. When attached to the cutscene root in step 4, its position and size are set equal to the cutscene root, and they change when the cutscene root changes. The engine mapping is in the engine-specific implementation rules
+- cutscene view root: the root of the object made from the cutscene view resource; a UI element. When attached to the cutscene root in step 4, its position and size are set equal to the cutscene root, and they change when the cutscene root changes. The engine mapping is in the engine-specific implementation rules
 - The cutscene view resource is game settings `cutsceneView`. The view root has the cutscene view component of the engine-specific implementation rules, and the component points to the parts below
 
   | part | required |
@@ -143,7 +143,7 @@ Plays a cutscene that shows dialogue and presentation by running the steps writt
 - skippable playback: a playback in which the skippable flag of `play` is `true`. In a playback that is not skippable, it hides the skip button for the whole playback and ignores skip input, so no skip happens. Line progress, choice and line history are the same
 - skip input: in a skippable playback, a skip button click, a press of the `cutscene_skip` action in this frame.
 - On a skip input, it does these in order without waiting: finalize the in-progress commands → end the running `Line` or `Wait` and hide the dialogue box → do skip application from the next step → on reaching a `Choice`, run that `Choice` and end the skip. Later steps run without skip application → on reaching playback end, do playback end handling
-- skip application: `Line` is not shown, plays no line voice and is not put in the line history. `Wait`, `Staging`, `Sound` are not done. `Move`, `Animate`, `Camera`, `ScreenEffect` start and are finalized at once. `Cue` emits the event. `Jump`, `Branch`, `End` are done as usual. Of the `Bgm` steps met, only the last one runs, before the `Choice` runs or before playback end handling
+- skip application: `Line` is not shown, plays no line voice and is not put in the line history. `Wait`, `Staging`, `Sound` are not done. `Move`, `Animate`, `Camera`, `ScreenEffect` start and are finalized at once. `Cue` publishes the event. `Jump`, `Branch`, `End` are done as usual. Of the `Bgm` steps met, only the last one runs, before the `Choice` runs or before playback end handling
 - Skip input during `Choice` is ignored
 
 ### cutscene pause
@@ -219,7 +219,7 @@ none
 | `target` | `string` | `Client` | `Move`, `Camera` |
 | `speaker` | `ref<cutscene_speaker.id>?` | `Client` | `Line`(can be empty) |
 | `text` | `tstring<id,step>` | `Client` | `Line` |
-| `resource` | `reskey?` | `Client` | `Line`·`Bgm`(can be empty), `Move`, `Camera`, `Sound`, `ScreenEffect`, `Staging` |
+| `resource` | `reskey?` | `Client` | `Line`(can be empty), `Bgm`(can be empty), `Move`, `Camera`, `Sound`, `ScreenEffect`, `Staging` |
 | `animation` | `string` | `Client` | `Animate` |
 | `duration` | `duration?` | `Client` | `Wait` |
 | `cue` | `enum<CutsceneCue>?` | `Client` | `Cue` |
@@ -257,7 +257,6 @@ data check. The rows with the same `id` are one cutscene
 - Two rows in `cutscene_choice` with the same `id`, `step`, `choice` are `duplicate`. A `cutscene_choice` row with no `cutscene_step` row of the same `id`, `step` is `ref_missing`, and when `command` of that `cutscene_step` row is not `Choice`, it is `out_of_range`
 - The empty string of `string` and `tstring`, `null` of a nullable, `false` of `bool` and the empty cell of `requirement` count as empty values. In a `cutscene_step` row, a column that the command does not use and that holds a value that is not empty is `out_of_range`. Among the columns the command uses, a column other than `wait` and the columns marked as can be empty that holds an empty value is `empty_required`
 - An `actor` or `target` that is not an empty string and not snake_case is `value_type`
-- When `cue` is `null`, that step emits no cue
 - A `voice` other than `null` that is the same in two `cutscene_step` rows is `duplicate`
 
 `data/enums.csv`
@@ -277,7 +276,7 @@ none
 
 ## test
 
-- During a `Line`, while the line history button has UICore focus, pressing and releasing a gamepad button bound to both `ui_accept` and `cutscene_advance` opens the line history window, and the `Line` does not end
+- During a `Line`, while the line history button has UICore focus, pressing and releasing a gamepad button bound to both the accept input and `cutscene_advance` opens the line history window, and the `Line` does not end
 - Clicking the advance button with the mouse while holding the `cutscene_advance` key gives one advance input, that of the key press
 - Steps run in `step` order from the first step, and the next step runs after a wait-optional command with `wait` `true` ends, and right after one with `false` starts
 - With the test clock, `Wait` does not end before the in-progress commands have ended and `duration` has passed, and ends once it has passed
@@ -303,9 +302,9 @@ none
 - `Choice` shows choices in `choice` order and does not end before a choice input, even with auto advance and fast forward on and an advance input arriving. Choices are shown even when `Choice` runs with the dialogue box hidden
 - The line history grows per `Line`, and after the (`CutsceneCore.lineHistoryMaxCount` + 1)th `Line` the oldest item is gone. Index 0 of the line history list is the oldest item
 - While the line history window is open, advance, choice and skip input are ignored and auto advance does not end the `Line`. After the window closes, it ends at `CutsceneCore.autoAdvanceDelayMs`
-- The skip of a cutscene without `Choice` ends in the same frame, `status` of the result is `Skipped`, the actors of all `Move` are at their goal positions, the remaining `Cue` are emitted in order, there are no sound effects, line voice or staging instances, and the BGM is the result of the last `Bgm`
+- The skip of a cutscene without `Choice` ends in the same frame, `status` of the result is `Skipped`, the actors of all `Move` are at their goal positions, the remaining `Cue` are published in order, there are no sound effects, line voice or staged objects, and the BGM is the result of the last `Bgm`
 - With a `Choice`, the skip stops at that `Choice`, and the steps after the choice input run without skip application. A skip during `Choice` is ignored
-- Releasing the playback scope or doing `release` during playback makes `status` of the result `Stopped`, and there is no view, staging instance, line voice, replay voice or block. After `release` and `init` again, registration with a previous actor key succeeds
+- Releasing the playback scope or doing `release` during playback makes `status` of the result `Stopped`, and there is no view, staged object, line voice, replay voice or block. After `release` and `init` again, registration with a previous actor key succeeds
 - During playback the active block is the one with reason tag `cutscene`, and `cutscene_advance`, `cutscene_skip`, `back` and the cutscene root area pass while other actions do not
 - In a `Line` that is typing, back input opens the pause popup and `TimeCore.is_paused` is `true`; advancing the test clock leaves the visible character count unchanged, the line voice stays stopped on the `Voice` bus, and the next step does not run. After a `[cutscene_pause_resume]` click or the back input of the pause popup, typing and line voice continue and `TimeCore.is_paused` is `false`
 - When `TimeCore.set_paused(true)` was in effect before playback, `TimeCore.is_paused` is `true` even after the cutscene pause ends
@@ -318,7 +317,7 @@ none
 - Pressing `cutscene_advance` for one frame during typing shows the whole text, and the `Line` does not end
 - When playback ends after the block was released by `InputBlockCore.release_all` during playback, there is no error log
 - Actor positions and BGM right before and right after `Completed`, `Skipped`, `Stopped` playback end handling are the same. The handle of a looping sound is stopped after playback end handling
-- For each `Cue`, `CutsceneCueEvent` holding the cutscene ID, `step` and `cue` is emitted once
+- For each `Cue`, `CutsceneCueEvent` holding the cutscene ID, `step` and `cue` is published once
 - The `Cutscene` channel is transparent at start, in the preset end state when `ScreenEffect` completes, and transparent after playback end, stop and `release`
 - The dialogue box is hidden on a `Move` after a `Line`, and shown on a `Line` or `Choice` after a `Line`
 - When playing with a virtual notch, the position and size of the cutscene root and the view root equal the safe area

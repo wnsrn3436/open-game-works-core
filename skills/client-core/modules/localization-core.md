@@ -43,7 +43,7 @@ Sets the current language, turns translation keys into text of that language, ma
 
 | type | contents |
 |---|---|
-| `FormatArgs` | Holds one value per name. Value kinds are integer (64-bit), float (64-bit), string. Operations are `clear`, `set_int(name, value)`, `set_float(name, value)`, `set_string(name, value)`. Setting the same name again replaces the value |
+| `FormatArgs` | Holds one value per name. Value kinds are integer (64-bit), real (64-bit), string. Operations are `clear`, `set_int(name, value)`, `set_float(name, value)`, `set_string(name, value)`. Setting the same name again replaces the value |
 | `DownloadedTranslation` | language `code`, app storage path, SHA-256, data version. `GameUpdateCore` makes it |
 
 - The caller makes a `FormatArgs` once and reuses it after `clear`. `format` does not change `FormatArgs`
@@ -57,10 +57,10 @@ Sets the current language, turns translation keys into text of that language, ma
   1. The language saved in `LocalizationCore.language` of the `LocalDataCore` `device` file
   2. The language that matches the device language tag
   3. The language whose `code` is game settings `sourceLanguage`
-- The device language tag is `<language>[-<script>][-<region>][-<variant>]`. How the engine reads it from the device is in the engine implementation rules. The candidates below are compared with `code` in order, ignoring case. A candidate that contains a subtag the tag does not have and a candidate already compared are skipped
+- The device language tag is `<language>[-<script>][-<region>][-<variant>]`. How the engine reads it from the device is in the engine-specific implementation rules. The candidates below are compared with `code` in order, ignoring case. A candidate that contains a subtag the tag does not have and a candidate already compared are skipped
   1. the whole device language tag 2. `<language>-<script>-<region>` 3. `<language>-<region>` 4. `<language>-<script>` 5. `<language>`
   - e.g. `zh-Hant-TW` → `zh-TW` → `zh-Hant` → `zh`. `ca-ES-valencia` → `ca-ES` → `ca`
-- `resolve_language` is called once after `init`. When it is called again, it writes an error log, does not change the current language, and returns its ID value
+- `resolve_language` is called once after `init`. When it is called again, it leaves an error log, does not change the current language, and returns its ID value
 - `load_translation`, `load_fonts`, `get_language`, `get_language_code` before the current language is set return the failure value
 - `list_languages` fills the rows of the `language` table in `order` order
 - `select_language` only saves the language to `LocalizationCore.language`. It does not change the current language, translation, font. After success the caller reports a restart (content code with `BootstrapCore.request_restart`), and after the restart `resolve_language` picks the saved language
@@ -74,29 +74,29 @@ Sets the current language, turns translation keys into text of that language, ma
   - The data version equals the data version of `DataCore`
 - On success, it discards the previous translation, the format parse cache, and the log records of missing keys and input prompt tokens, and rewrites all bound UI text elements
 - When neither can be used, it returns `false` and keeps the previous translation
-- When it is called while a `load_translation` is in progress, it writes an error log and returns `false`. The one in progress continues
+- When it is called while a `load_translation` is in progress, it leaves an error log and returns `false`. The one in progress continues
 - The translation key that `get_text`, `format`, `bind_text` receive is a `tstring` field value of generated code, the result of a `ReservedString` accessor, or a translation key that a core operation returned. When content code passes a string literal in place of a translation key, static check `data literal` blocks it
 - An empty translation key from an empty `tstring` cell is an empty string and is not an error
-- A missing key (a key not in the current translation, including lookups before load) writes an error log once per key per load and returns an empty string
+- A missing key (a key not in the current translation, including lookups before load) leaves an error log once per key per load and returns an empty string
 
 ### format
 
 - Format argument syntax, formatter results, culture rules follow the format of [`data`](../../data/SKILL.md). Culture rules are looked up by the `code` of the current language, and the timezone offset of `date`, `datetime` is the device timezone offset
 - The parse result that splits text into pieces, argument slots, input prompt token slots is made and cached per key at the first `get_text` or `format` of that key
-- The length of `get_text` and `format` results is the number of Unicode code points, and an inline icon counts as one code point. Pieces from the one that makes the length more than `LocalizationCore.maxFormattedLength` onward are dropped and an error log is written
+- The length of `get_text` and `format` results is the number of Unicode code points, and an inline icon counts as one code point. Pieces from the one that makes the length more than `LocalizationCore.maxFormattedLength` onward are dropped and an error log is left
 - A `}` without a matching `{` is written as the character itself. A `{` without a matching `}` makes everything up to the next `{` or the end of the text one error slot
-- error slot: no value for the name, a value kind that does not match the formatter, an unknown formatter, braces that do not fit the syntax, a NaN or infinite float, a `date`·`datetime` result year that is not from 1 to 9999, a string value of `compact` that is not a big integer (`UtilCore.big_is_valid` is `false`). For each error slot, an error log is written and that slot is left empty
+- error slot: no value for the name, a value kind that does not match the formatter, an unknown formatter, braces that do not fit the syntax, a NaN or infinite real, a `date` or `datetime` result year that is not from 1 to 9999, a string value of `compact` that is not a big integer (`UtilCore.big_is_valid` is `false`). For each error slot, it leaves an error log and that slot is left empty
 
 ### input prompt token
 
 - input prompt token: `{action:<action>}` in text. `<action>` is an action name of `InputCore`. Syntax and data check follow the format of [`data`](../../data/SKILL.md). An input prompt token is not a format argument and does not become an error slot
 - Each time `get_text` and `format` make a result, they replace input prompt tokens with the result of `InputCore.get_prompt`(action) at that time. When the inline icon height is greater than 0 and `icon` is an icon loaded by `load_prompt_icons`, it is an inline icon of that height; otherwise it is the display name
 - display name: the `get_text` result of `name_key` of `InputPrompt` when it is not none, and `input` when it is none
-- An input prompt token whose `get_prompt` is `false` leaves that slot empty and writes an error log once per action per load
+- An input prompt token whose `get_prompt` is `false` leaves that slot empty and leaves an error log once per action per load
 - When the input prompt token `<action>` of game data text is not in the game's action list, static check `action reference` blocks it
-- rich text element: a UI text element that can draw inline icons. inline icon: an icon drawn together with characters in a rich text element. The inline icon height is in the same unit as the font size of the UI text element. The engine mapping of both is in the engine implementation rules
-- `load_prompt_icons` loads every `icon` of the `input_prompt` table that is not `null` into the global scope of `ResourceCore`. When any icon is loaded as a fallback resource, it writes an error log and returns `false`, and that icon is not used as an inline icon
-- When it is called while a `load_prompt_icons` is in progress, it writes an error log and returns `false`. The one in progress continues
+- rich text element: a UI text element that can draw inline icons. inline icon: an icon drawn together with characters in a rich text element. The inline icon height is in the same unit as the font size of the UI text element. The engine mapping of both is in the engine-specific implementation rules
+- `load_prompt_icons` loads every `icon` of the `input_prompt` table that is not `null` into the global scope of `ResourceCore`. When any icon is loaded as a fallback resource, it leaves an error log and returns `false`, and that icon is not used as an inline icon
+- When it is called while a `load_prompt_icons` is in progress, it leaves an error log and returns `false`. The one in progress continues
 - A caller that wrote the results of `get_text` and `format` itself receives `InputCore.InputPromptChangedEvent` and decides whether to write them again
 
 ### font
@@ -104,17 +104,17 @@ Sets the current language, turns translation keys into text of that language, ma
 - The font chain is the list of the `font` of the current language followed by the `font` of the languages reached by following `fallback`. The same resource key is added only once
 - `load_fonts` loads the fonts of the font chain into the global scope of `ResourceCore` and applies the chain as the default font and as the heading font. A character is looked up from the first font of the chain onward
 - font weight: the OpenType `wght` value a font is drawn with. The default font is drawn with `LocalizationCore.bodyFontWeight` and the heading font with `LocalizationCore.headingFontWeight`. A weight of 0 draws the font at its default weight
-- A font of the chain that has no `wght` axis is drawn at its default weight, and a font whose `wght` axis range does not hold the weight of a text style is drawn at the nearest end of that range. For each such font, `load_fonts` writes one warn log per text style whose weight is greater than 0
-- text style: a UI text element is drawn in the `body` or the `heading` text style. An element whose text style content code did not set is `body`. `body` uses the default font and `heading` uses the heading font. The engine mapping of the text style is in the engine implementation rules
-- When any font of the chain is loaded as a fallback resource, it writes an error log and returns `false`. It applies the chain with the fallback resource in that position
-- When it is called while a `load_fonts` is in progress, it writes an error log and returns `false`
+- A font of the chain that has no `wght` axis is drawn at its default weight, and a font whose `wght` axis range does not hold the weight of a text style is drawn at the nearest end of that range. For each such font, `load_fonts` leaves one warn log per text style whose weight is greater than 0
+- text style: a UI text element is drawn in the `body` or the `heading` text style. An element whose text style content code did not set is `body`. `body` uses the default font and `heading` uses the heading font. The engine mapping of the text style is in the engine-specific implementation rules
+- When any font of the chain is loaded as a fallback resource, it leaves an error log and returns `false`. It applies the chain with the fallback resource in that position
+- When it is called while a `load_fonts` is in progress, it leaves an error log and returns `false`
 - Content code does not set a font on a UI text element separately. It picks the heading font only by the text style. Decorative lettering is made as an image resource
-- `release` reverts the default font and heading font application, and keeps a style that the theme of `load_fonts` bases on the `heading` text style. That style draws with the heading font again after the next `load_fonts`
+- `release` reverts the default font and heading font application. A text style based on the `heading` text style stays based on it, so it draws with the heading font again after the next `load_fonts`
 
 ### text scale
 
 - The text scale is in permille and is 1000 at `init`. It changes only through `set_text_scale`
-- The font size of every UI text element is the size set on that element × text scale ÷ 1000 rounded down, and 1 when it is less than 1. It is also applied to existing elements in the frame the text scale changes. The engine mapping is in the engine implementation rules
+- The font size of every UI text element is the size set on that element × text scale ÷ 1000 rounded down, and 1 when it is less than 1. It is also applied to existing elements in the frame the text scale changes. The engine mapping is in the engine-specific implementation rules
 - `set_text_scale` with the same value does nothing
 - `release` sets the text scale back to 1000
 
@@ -122,7 +122,7 @@ Sets the current language, turns translation keys into text of that language, ma
 
 - `bind_text` binds a translation key to a UI text element. On binding, on `load_translation` success, and each time it receives `InputCore.InputPromptChangedEvent`, it writes the `get_text` result as that element's text. The inline icon height is that element's font size for a rich text element, and 0 otherwise
 - In the frame the text scale changes, it rewrites the bound rich text elements
-- When a bound rich text element enters the tree, it is rewritten in that frame, because the font size is set when it enters the tree
+- When a bound rich text element is added to the screen, it is rewritten in that frame, because the font size is set at that time
 - `init` subscribes to `InputPromptChangedEvent`
 - `unbind_text` removes the binding and does not change the element's text. `bind_text` with an empty translation key binds and writes an empty string
 - When the element is destroyed, the binding is deleted
@@ -192,8 +192,6 @@ used table: `input_prompt`
 |---|---|---|---|---|---|---|---|
 | `order_column` | `language` | `order` | | | | | |
 
-Reads the `icon` column of the `input_prompt` table (`InputCore`)
-
 `LocalDataCore` key
 
 | file kind | key | type | meaning |
@@ -206,7 +204,7 @@ Reads the `icon` column of the `input_prompt` table (`InputCore`)
 |---|---|---|---|
 | `set_test_device_language` | device language tag. An empty string clears the override | none | core test |
 
-- In a build with DEV code, the missing key result is `‼ <translation key>`, a format error slot gets `‼ ` and the original argument text (e.g. `‼ {count:n}`), and the slot of an input prompt token whose `InputCore.get_prompt` is `false` gets `‼ ` and the original token text (e.g. `‼ {action:jump}`). In STG·PROD builds it is an empty string
+- In a build with DEV code, the missing key result is `‼ <translation key>`, a format error slot gets `‼ ` and the original argument text (e.g. `‼ {count:n}`), and the slot of an input prompt token whose `InputCore.get_prompt` is `false` gets `‼ ` and the original token text (e.g. `‼ {action:jump}`). In STG and PROD builds it is an empty string
 - The tag of `set_test_device_language` is used in place of the device language tag until `release`
 
 ## test
@@ -220,16 +218,16 @@ Reads the `icon` column of the `input_prompt` table (`InputCore`)
 - A missing key gives an empty string (`‼ <key>` in a build with DEV code), and the error log is once per key per load
 - An empty translation key gives an empty string with no log
 - Core test fixture `text-format` is the vector below. The `input` of a case is `{"kind": "<kind>", "value": "<value>", "text": "<text>", "language": "<code>"}` and `expected` is the result string or `null`
-  - `kind` is `int`, `float`, `string` by whether table `value` is an integer, float, string. The test puts the value into name `v` with `set_int`, `set_float`, `set_string` of `FormatArgs`
-  - `value` writes integers and floats also as decimal strings, and a float NaN is `NaN`
-  - `error log and empty slot` in the table is `expected` `null`. When it is `null`, that slot is an error slot and an error log is written
+  - `kind` is `int`, `float`, `string` by whether table `value` is an integer, real, string. The test puts the value into name `v` with `set_int`, `set_float`, `set_string` of `FormatArgs`
+  - `value` writes integers and reals also as decimal strings, and a real NaN is `NaN`
+  - `error log and empty slot` in the table is `expected` `null`. When it is `null`, that slot is an error slot and an error log is left
   - In one row of the table, columns with several values are paired by the same position into one case each, and a column with one value is used for every case of that row
   - For each case, the `format` result equals `expected` (device timezone offset 0). The server `push` test uses the same fixture
 
 | value | text | language | result |
 |---|---|---|---|
 | integer `1234567` | `{v}`, `{v:n}` | `ko`, `ja` | `1234567`, `1,234,567` |
-| float `1234.567`, `1234.5`, `-0.001` | `{v}`, `{v:n}`, `{v}` | `en` | `1234.57`, `1,234.5`, `0` |
+| real `1234.567`, `1234.5`, `-0.001` | `{v}`, `{v:n}`, `{v}` | `en` | `1234.57`, `1,234.5`, `0` |
 | integer `1`, `2`, `3`, `11`, `12`, `13`, `21`, `112`, `-12`, `-23` | `{v:ordinal}` | `en` | `1st`, `2nd`, `3rd`, `11th`, `12th`, `13th`, `21st`, `112th`, `-12th`, `-23rd` |
 | integer `-3` | `{v:ordinal}` | `ko`, `ja`, `zh-Hans` | `-3번째`, `-3番目`, `第-3` |
 | integer `3` | `{v:ordinal}` | `ko-KR`, `zh-Hant-TW` | `3번째`, `3rd` |
@@ -248,7 +246,7 @@ Reads the `icon` column of the `input_prompt` table (`InputCore`)
 | string `5000000000000000`, `99999999999999999`, `12345678901234567890`, `-12345678901234567890` | `{v:compact}` | `en` | `5000T`, `9.99e16`, `1.23e19`, `-1.23e19` |
 | string `12a`, `007` | `{v:compact}` | `en` | error log and empty slot |
 | integer `1` | `{v}}` | `en` | `1}` |
-| float NaN, integer `253402300800000` | `{v}`, `{v:date}` | `en` | error log and empty slot |
+| real NaN, integer `253402300800000` | `{v}`, `{v:date}` | `en` | error log and empty slot |
 
 - When the device timezone offset is 9 hours, the `date` result of time `t` equals the result of `t` + 9 hours at offset 0
 - After `format`, the values of `FormatArgs` stay the same
@@ -258,7 +256,7 @@ Reads the `icon` column of the `input_prompt` table (`InputCore`)
 - With `LocalizationCore.headingFontWeight` 1000 and a font whose `wght` axis range is 100 to 900, after `load_fonts` the heading font draws that font at weight 900, and there is one warn log for it
 - With both font weights 0, after `load_fonts` the default font and the heading font draw every font of the chain at its default weight, and there is no warn log
 - A UI text element in the `heading` text style draws with the heading font, and an element whose text style was not set draws with the default font. The character lookup order of the heading font equals the font chain. After `release`, an element in the `heading` text style draws with the default font of before `init`
-- With a style based on the `heading` text style in the theme of `load_fonts`, after `load_fonts`, `release`, another `init` and another `load_fonts`, that style draws with the heading font
+- With a text style based on the `heading` text style, after `load_fonts`, `release`, another `init` and another `load_fonts`, that style draws with the heading font
 - After `set_text_scale`(1500), the font size of a UI text element set to size 20 is 30, an element made after that is the same, and after `release` it is 20. 0 gives an error log and no change
 - The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string
 - `get_text` with inline icon height 0 of text with an input prompt token gives the display name of the input prompt of `InputCore`, and calling it again after changing the input device with `InputCore.set_test_device` gives the display name for that device. When there is no `input_prompt` row, it is prompt input

@@ -33,7 +33,7 @@ Acquires and releases blocks, and judges whether one input passes the active blo
 | `is_active` | block token | whether that block is an active block | `false` | core, content code |
 | `pass_action` | action | pass flag | `true` | `InputCore`, `UICore` |
 | `pass_position` | window pixel position | pass flag | `true` | `InputCore` |
-| `pass_focus` | UI element | pass flag | `true` | `InputCore` |
+| `pass_focus` | UI element | pass flag | `true` | `InputCore`, `UICore` |
 | `release_all` | reason tag to keep(optional) | number of released blocks | 0 | `SceneCore`, `BootstrapCore`(restart, update reboot) |
 | `set_timer_hold` | reason tag(`ui`, `network`, `step`), whether to hold | none | none | `UICore`(`ui`), `NetworkCore`(`network`), `QACore`(`step`) |
 | `restart_timer` | block token | success flag | `false` | `NetworkCore` |
@@ -84,7 +84,7 @@ Acquires and releases blocks, and judges whether one input passes the active blo
 - The side that acquired a block releases its own block before it opens a popup that waits for user input. When another side can open a system popup during the block, it puts the system popup root of `UICore.get_block_pass_list` into `elements` of the pass list
 - A block for which content code calls `block` and `unblock` directly is acquired and released inside one function. There is no wait (async operation, engine notification, timer) in between. The block token is kept only in a local variable of that function and is not passed to functions other than `unblock` and `is_active`
 - When there is a wait between acquiring and releasing, content code uses only `run_blocked`
-- The two rules above apply only to content code, and the automated check of client content code blocks violations. Core modules (`NetworkCore`, `TweenCore`, `UICore`, `MessageCore`, `SceneCore`, `CutsceneCore`, `BootstrapCore`) hold the block token across waits and release it on every path where they end. On release, they do not call `unblock` for a token whose `is_active` is `false`. That is a block released earlier by `release_all`, forced release or owner object destruction
+- The rule for direct `block` and `unblock` calls and the rule for waits apply only to content code, and static check `block token` blocks violations. Core modules (`NetworkCore`, `TweenCore`, `UICore`, `MessageCore`, `SceneCore`, `CutsceneCore`, `BootstrapCore`) hold the block token across waits and release it on every path where they end. On release, they do not call `unblock` for a token whose `is_active` is `false`. That is a block released earlier by `release_all`, forced release or owner object destruction
 
 ### run_blocked
 
@@ -161,8 +161,6 @@ none
 |---|---|---|---|---|
 | `list_active` | caller buffer | number filled. Per active block: reason tag, caller location, block elapsed time (ms) | `0` | `QACore`, core test, client regression test |
 | `count_active` | none | number of active blocks | `0` | `QACore`, core test, client regression test |
-
-- The softlock judgement of `QACore` uses the result of `list_active`
 
 ## test
 
