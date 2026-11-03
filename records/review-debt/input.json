@@ -1,6 +1,6 @@
 {
   "target": "input",
-  "nextId": 4,
+  "nextId": 5,
   "items": [
     {
       "id": "D1",
@@ -19,6 +19,12 @@
       "location": "tools/src/commands/agent/lib/play-budget.ts:79",
       "problem": "`brokerBudgetRefusal` treats opening `ogw step <instance> <ms> --stream` as a step. Run in a temporary copy with a judge agent key: opening a stream before any line created the budget file of `insta`, so the budget starts without an input or step, and opening a stream after the budget was refused with `the play budget of 240 s of instance insta has passed`, so its `input key_up` lines never reach `streamAction`, which excepts a release. `ogw input <instance> key_up <key>` still releases. The target of this defect is `ogw step`, and it also applies to the play agent budget",
       "foundBy": "input round 1"
+    },
+    {
+      "id": "D4",
+      "location": "tools/src/commands/step/step.ts:178",
+      "problem": "`ogw step --count <n>` and the stream line `step <n>` check the budget once before the first step (step.ts:273, step.ts:223), and the loop of `runSteps` does not check it again, and `--count` has no upper limit, which differs from ogw.md `## loop evaluate` (`ogw step` fails once the budget has passed). Run in a temporary copy with a judge agent key and 200 ms of budget left: `ogw step <instance> 50 --count 3000` sent all 3000 steps, exited 0 and ended 1361 ms after the budget end. The target of this defect is `ogw step`, it existed before this range, and it also applies to the play agent budget",
+      "foundBy": "input round 2"
     }
   ]
 }
