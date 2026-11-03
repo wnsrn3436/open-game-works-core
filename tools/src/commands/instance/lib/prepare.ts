@@ -42,7 +42,7 @@ export async function generateIfNeeded(ctx: Context, checkout: GameRepo, fresh: 
 }
 
 /**
- * The one engine import of a checkout before its first dev run (client-content engines/godot `## dev run`):
+ * The one engine import of a checkout before its first dev run (ogw.md `## runner`):
  * `godot --headless --path client --import` when `client/.godot/` is missing. Returns whether it ran.
  */
 export async function importIfNeeded(ctx: Context, plan: { engine: string; enginePath: string }, root: string): Promise<boolean> {

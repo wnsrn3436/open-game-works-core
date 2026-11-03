@@ -48,13 +48,13 @@ export interface PrepareMergeRecord {
   failed?: string;
 }
 
-/** A confirmation iteration (`game-loop` `## stop`) and the candidate iteration it confirms. */
+/** A confirmation iteration (ogw.md `## loop verdict`) and the candidate iteration it confirms. */
 export interface ConfirmRecord {
   iteration: number;
   candidate: number;
 }
 
-/** The kind `ogw loop next` gave an iteration (`game-loop` `## iteration`). */
+/** The kind `ogw loop next` gave an iteration (ogw.md `## loop next`). */
 export interface KindRecord {
   iteration: number;
   kind: IterationKind;

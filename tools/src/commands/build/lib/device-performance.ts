@@ -98,9 +98,9 @@ async function udpReachesHost(ctx: Context, serial: string): Promise<boolean | n
 }
 
 /**
- * Check `device performance` (`build` `## build-time check`, engines/godot.md `## device performance`):
+ * Check `device performance` (`build` `## build-time check`, ogw.md `### device performance`):
  * the bot playtest scenario on the first android device of harness settings `testDevices` with the DEV
- * export of the build branch HEAD, judged by `game-loop` performance.md `## performance`.
+ * export of the build branch HEAD, judged by ogw.md `## performance`.
  */
 export async function devicePerformance(input: ClientCheckInput): Promise<BuildCheck> {
   const { ctx } = input;

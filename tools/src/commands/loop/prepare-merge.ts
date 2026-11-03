@@ -25,7 +25,7 @@ async function mergeChoice(ctx: Context, game: GameRepo, run: RunState, given: s
   return chooseMergeCommit(game, run, (await ctx.settings()).loopStop);
 }
 
-/** Makes `merge/<run>` for the choice (`game-loop` `## end` 2). */
+/** Makes `merge/<run>` for the choice (ogw.md `## loop prepare-merge`). */
 async function prepareChoice(ctx: Context, game: GameRepo, run: RunState, choice: MergeChoice | null): Promise<void> {
   if (choice === null) await prepareRecordsOnly(game, run);
   else if (choice.withSyncedWork) await prepareCommit(ctx, game, run, choice.commit);

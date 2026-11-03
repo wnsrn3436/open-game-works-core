@@ -1,6 +1,6 @@
 /**
  * The converter list file the contract tool generates (`contract` tool.md `## generation target`) and the
- * converters a PROD build added after the last PROD build (`build` `## build report` `## converters`).
+ * converters a PROD build added after the last PROD build (ogw.md `## build report` `## converters`).
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';

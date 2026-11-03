@@ -320,7 +320,7 @@ async function previousContentSession(ctx: Context, game: GameRepo, run: RunStat
 }
 
 /**
- * The Claude Code session of a content agent (`game-loop` `## sub-agent`): in a fun iteration whose previous iteration
+ * The Claude Code session of a content agent (ogw.md `## agent`): in a fun iteration whose previous iteration
  * is a fun iteration of the run, the session of the previous content agent continued, when its file is kept; else a
  * new session. null when the content agent CLI is not Claude Code.
  */

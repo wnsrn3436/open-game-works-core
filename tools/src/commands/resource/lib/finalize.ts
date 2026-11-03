@@ -474,7 +474,7 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
   return job;
 }
 
-/** `ogw resource finalize` (`production.md` `## finalize`). Changes nothing when a check fails. */
+/** `ogw resource finalize` (`production.md` `## finalize`, ogw.md `## finalize`). Changes nothing when a check fails. */
 export async function finalizeResource(ctx: Context, game: GameRepo, options: FinalizeOptions, tools: Tools = hostTools(ctx)): Promise<FinalizeResult> {
   const job = await prepare(ctx, game, options, tools);
   const before = { ...job.row };

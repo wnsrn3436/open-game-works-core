@@ -54,7 +54,7 @@ export function variantJobs(jobs: readonly JobRecord[], run: RunState, iteration
   );
 }
 
-/** Removes what the variant agents of the run that ended and were not merged left (`game-loop` `## resume` 5). */
+/** Removes what the variant agents of the run that ended and were not merged left (ogw.md `## loop resume` 5). */
 export async function removeVariantLeftovers(ctx: Context, game: GameRepo, run: RunState, jobs: readonly JobRecord[]): Promise<Removal> {
   const left = variantJobs(jobs, run).filter((job) => job.status !== 'running' && job.meta.merged !== true);
   return removeAgentWorktrees(ctx, game, left.map((job) => job.id));

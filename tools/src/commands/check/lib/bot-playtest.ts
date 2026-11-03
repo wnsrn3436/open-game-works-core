@@ -15,7 +15,7 @@ export const BOT_PLAYTEST_POLL_MS = 200;
 export const SCENARIO = 'client/dev/bot/scenario.json';
 
 /**
- * `where` (`game-loop` `## loop iteration record`: a file:line) of a failure of a check that runs the scenario and
+ * `where` (ogw.md `## check`: a file:line) of a failure of a check that runs the scenario and
  * has no step or scene to point at: line 1 of the scenario file.
  */
 export const SCENARIO_WHERE = `${SCENARIO}:1`;

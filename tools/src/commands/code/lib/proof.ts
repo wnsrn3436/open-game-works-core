@@ -1,5 +1,5 @@
 /**
- * `fix test proof` (core command.md `## review and code check`, ogw.md `## update harness tool`): the target's test
+ * `fix test proof` (ogw.md `## review run`, `## update harness tool`): the target's test
  * files changed from the fix base to the round's commit, laid over the code at the fix base, must fail there. A test
  * that passes on the code before the fix does not test the fixed behavior.
  */

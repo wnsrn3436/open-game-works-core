@@ -22,13 +22,13 @@ script = ExtResource("1_boot")
 `;
 
 /**
- * `resource/resources.csv.import` (`client-core` Godot `## engine meta file`): the Godot 4 import file of the "Skip"
+ * `resource/resources.csv.import` (ogw.md `## meta sync`): the Godot 4 import file of the "Skip"
  * import mode, as the editor's import dock saves it, so Godot neither imports the resource list file (as a translation
  * CSV) nor exports it.
  */
 export const RESOURCE_LIST_IMPORT = '[remap]\n\nimporter="skip"\n';
 
-/** `client/.gitignore` (`client-content` Godot `## project`). */
+/** `client/.gitignore` (ogw.md `## engine project`). */
 export const CLIENT_GITIGNORE = 'addons/\nandroid/\nios/plugins/\n.godot/\n';
 
 /** Features with a DEV registration file `client/dev/features/<feature>/<feature>_dev.gd`, in byte order. */

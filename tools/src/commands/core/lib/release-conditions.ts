@@ -99,7 +99,7 @@ function lowerRelease(version: string, released: readonly string[]): string | un
 }
 
 /**
- * The review conditions (`core` command.md `## version and release`): each target with review state has a judged
+ * The review conditions (ogw.md `## core release`): each target with review state has a judged
  * `done` last round and did not change since it started, and each review target of the changes since the tag of the
  * highest release below `version` (`ogw core review-targets`) has review state.
  */
@@ -207,7 +207,7 @@ export async function baseProtoViolations(ctx: Context, implDir: string, version
   return [`base proto breaks backward compatibility with ${lower} but the major version is not higher:\n  ${breaks.join('\n  ')}`];
 }
 
-/** Every release condition `ogw core release` checks (`core` command.md `## version and release`). */
+/** Every release condition `ogw core release` checks (ogw.md `## core release`). */
 export async function releaseViolations(
   ctx: Context,
   implDir: string,

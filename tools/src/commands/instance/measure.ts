@@ -120,7 +120,7 @@ async function countHolds(ctx: Context, target: Target, scenario: Scenario, coun
     const failed = starts.findIndex((start) => start.status === 'rejected');
     if (failed >= 0) {
       const error = (starts[failed] as PromiseRejectedResult).reason as Error;
-      // one instance that does not start is not a measured count: the measure fails with the reason (`host-env` 5)
+      // one instance that does not start is not a measured count: the measure fails with the reason (ogw.md `## instance measure`)
       if (count === 1) throw new OgwError(`${target.name}: the first instance did not start: ${error.message}`);
       return { holds: false, reason: `instance ${String(failed + 1)} of ${String(count)} did not start: ${error.message}` };
     }
@@ -132,7 +132,7 @@ async function countHolds(ctx: Context, target: Target, scenario: Scenario, coun
 }
 
 /**
- * The count measured first (`host-env` 5): this host's last value, else half its CPU count, within 1 and the upper bound
+ * The count measured first (ogw.md `## instance measure`): this host's last value, else half its CPU count, within 1 and the upper bound
  * `limit` (harness settings `instanceMeasureLimit`).
  */
 export function firstCount(previous: number | null, cpus: number, limit: number): number {
@@ -215,7 +215,7 @@ export const measureCommand: CommandDef = {
       const job = await heaviestJob(ctx);
       const { maxConcurrentInstances: previous, instanceMeasureLimit: limit } = await ctx.settings();
       let stop = false;
-      // a load job that fails leaves the instances measured without the load: the measure fails (`host-env` 5)
+      // a load job that fails leaves the instances measured without the load: the measure fails (ogw.md `## instance measure`)
       const failed: { error: Error | null } = { error: null };
       const load = job === null ? Promise.resolve() : loadLoop(ctx, job, () => stop).catch((error: unknown) => {
         failed.error = error as Error;

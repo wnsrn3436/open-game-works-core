@@ -45,7 +45,7 @@ export interface Moment {
   description: string;
 }
 
-/** The judge moment of `## memorable moment` of `brief.md` (`game-loop` `## sub-agent`). */
+/** The judge moment of `## memorable moment` of `brief.md` (ogw.md `## agent`). */
 export const MEMORABLE_MOMENT = 'memorable_moment';
 
 /** `` - `<name>`: <description> `` lines under `request.md` `## judge moments`; `(set by lead agent)` removed. */

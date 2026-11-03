@@ -36,7 +36,7 @@ function lastOk(method: GenerationMethod): MeasuredStep | null {
 }
 
 /**
- * `game-setup` 6: status of a type and its methods with an `ok` step. With `makers` (an image type: the methods
+ * ogw.md `## generation check`: status of a type and its methods with an `ok` step. With `makers` (an image type: the methods
  * `ogw generation methods` gives it), the status and the duration come only from the methods of the type named there.
  */
 export function typeRow(type: string, methods: readonly GenerationMethod[], count: number | null, makers?: readonly string[]): TypeRow {
@@ -84,7 +84,7 @@ export function hostCheckMarkdown(rows: TypeRow[]): string {
 
 /**
  * Fills `use` of the `ok` rows: each method `ogw generation methods` would give a key of that type in this game, with
- * `temporary` for the temporary method, and its billing (`game-setup` 6).
+ * `temporary` for the temporary method, and its billing (ogw.md `## generation check`).
  */
 async function addUse(ctx: Context, settings: HarnessSettings, imageMethod: string, rows: TypeRow[]): Promise<void> {
   const ok = rows.filter((r) => r.status === 'ok');

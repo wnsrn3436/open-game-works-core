@@ -96,7 +96,7 @@ Loads resources by resource key, holds and releases loaded resources per scope, 
 
 ### bundle
 
-- A bundle file holds the resources in the bundle and the list of their resource keys. The bundle patch section of the `build` skill sets which keys it holds, and the file format is in the engine-specific implementation rules
+- A bundle file holds the resources in the bundle and the list of their resource keys. `## bundle patch` of [`ogw`](../../../tools/ogw.md) sets which keys it holds, and the file format is in the engine-specific implementation rules
 - `apply_bundles` is called once per `init`, before any `load` with any scope, because a resource loaded earlier stays in the cache and is not replaced by the bundle's resource. Bundles are applied in input order
   - A bundle is skipped when `LocalDataCore.hash_file` of the bundle file differs from the SHA-256 of `DownloadedBundle`, its name is not snake_case, it cannot be attached to the engine, or its key list cannot be read. The rest are applied
   - On an engine that can read the key list only after attaching, whether the file of a bundle skipped because its key list could not be read stays in the engine is in the engine-specific implementation rules. Keys of a skipped bundle are not looked up in the bundle

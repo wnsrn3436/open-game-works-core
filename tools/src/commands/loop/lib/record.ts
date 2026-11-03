@@ -58,7 +58,7 @@ async function labelOf(game: GameRepo, run: RunState, hardening: boolean): Promi
   return { label: `iteration-${String(run.iteration)}`, findingsRel: runRel(run, `findings-${String(run.iteration)}.json`), hardening };
 }
 
-/** Results of this record that a confirmation of `### defect status` reads. */
+/** Results of this record that a confirmation of ogw.md `## loop record` reads. */
 interface Confirmations {
   check: CheckFile | null;
   measure: MeasureFile | null;
@@ -75,7 +75,7 @@ function checkConfirmed(results: Confirmations, defect: Defect): boolean {
 }
 
 /**
- * True when this record's confirmation of the defect gave a result (`### defect status`). A confirmation iteration
+ * True when this record's confirmation of the defect gave a result (ogw.md `## loop record`). A confirmation iteration
  * (`confirming`) takes only blocker play findings, so for another play defect it gives a result only when this record
  * has a finding of its id (`found`), and like any play confirmation only with a done play. A judge defect is confirmed
  * only by a completeness iteration: a fun judge sees three elements, no reference and no moments.

@@ -4,7 +4,7 @@ import type { GameSettings } from '../../../lib/settings.ts';
 import type { Env } from './names.ts';
 import { chosenAdapterNames, type CollectedDataRow, type CoreSpecModule } from './settingschecks.ts';
 
-/** `build` `## store privacy disclosure` data type mapping: App Store, NSPrivacyCollectedDataType, Google Play. */
+/** ogw.md `## store privacy disclosure` data type mapping: App Store, NSPrivacyCollectedDataType, Google Play. */
 export const DATA_TYPES: Record<string, readonly [string, string, string]> = {
   user_id: ['User ID', 'NSPrivacyCollectedDataTypeUserID', 'Personal info: User IDs'],
   device_id: ['Device ID', 'NSPrivacyCollectedDataTypeDeviceID', 'Device or other IDs'],
@@ -44,7 +44,7 @@ function valueAt(settings: GameSettings, path: string): unknown {
   return value;
 }
 
-/** The declaration rows of the build (`build` `## store privacy disclosure`). */
+/** The declaration rows of the build (ogw.md `## store privacy disclosure`). */
 export function declarations(settings: GameSettings, env: Env, modules: readonly CoreSpecModule[]): Declaration[] {
   const adapters = new Set(chosenAdapterNames(settings, env));
   const rows: Declaration[] = [];

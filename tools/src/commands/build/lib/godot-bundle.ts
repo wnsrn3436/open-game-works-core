@@ -81,7 +81,7 @@ function usesChangedCode(text: string, changed: Set<string>): boolean {
   return [...text.matchAll(/^\[ext_resource [^\]]*path="([^"]+)"/gm)].some((m) => changed.has(m[1] as string));
 }
 
-/** Bundle check items about the chosen files (`build` engines/godot.md `### bundle export` 5). */
+/** Bundle check items about the chosen files (ogw.md `#### bundle export` 5). */
 export async function bundleFileFailures(files: readonly PackFile[]): Promise<string[]> {
   const failures: string[] = [];
   for (const f of files) {
@@ -149,7 +149,7 @@ async function limitOf(ctx: Context, input: BundleBuildInput): Promise<number> {
   return Math.min(...values);
 }
 
-/** Bundle patch export of `build` engines/godot.md `### bundle export`; returns the bundle check failures. */
+/** Bundle patch export of ogw.md `#### bundle export`; returns the bundle check failures. */
 export async function godotBundle(ctx: Context, input: BundleBuildInput): Promise<string[]> {
   const root = input.game.root;
   const appCommit = await tagCommit(root, buildTagName(input.env, input.appVersion));

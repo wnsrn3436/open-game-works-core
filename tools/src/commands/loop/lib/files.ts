@@ -35,13 +35,13 @@ export interface PlayEntry {
 export type VsBaseline = 'better' | 'worse' | 'indistinguishable';
 export type VsReference = 'pass' | 'fail' | 'unknown';
 
-/** Iteration kind (`game-loop` `## iteration`). */
+/** Iteration kind (ogw.md `## loop next`). */
 export type IterationKind = 'fun' | 'completeness';
 
 /** The elements of `agents/judge.md` `## fun judgement criteria`, in table order. */
 export const FUN_ELEMENTS = ['game feel', 'tension and release', 'progression', 'one more run', 'no friction', 'presentation'] as const;
 
-/** The elements a judge of a fun iteration judges (`game-loop` `## iteration` 4). */
+/** The elements a judge of a fun iteration judges (ogw.md `## loop evaluate`). */
 export const FUN_ITERATION_ELEMENTS = ['game feel', 'tension and release', 'no friction'] as const;
 
 /** The judge input `elements` of an iteration of that kind. */
@@ -104,7 +104,7 @@ export interface EvaluateFile {
   /** `vs reference` of the step 4 judges together; null in a fun iteration. */
   vsReference: VsReference | null;
   measure: string | null;
-  /** Set when `memorable_moment` was asked for and the step 4 judges did not get it (`game-loop` `## iteration` 3). */
+  /** Set when `memorable_moment` was asked for and the step 4 judges did not get it (ogw.md `## loop evaluate`). */
   memorableMoment?: 'missing' | 'omitted';
 }
 
@@ -121,11 +121,11 @@ export function gateOf(file: CheckFile): 'pass' | 'fail' | null {
   return gate === 'pass' || gate === 'fail' ? gate : null;
 }
 
-/** Completeness elements a candidate iteration needs (`game-loop` `## stop`): all but `no placeholder`. */
+/** Completeness elements a candidate iteration needs (ogw.md `## loop verdict`): all but `no placeholder`. */
 export const CANDIDATE_CHECKS: readonly string[] = COMPLETENESS_CHECKS.filter((name) => name !== 'no placeholder');
 
 /**
- * The rest of a candidate iteration besides the success judges (`game-loop` `## stop`): a completeness iteration whose
+ * The rest of a candidate iteration besides the success judges (ogw.md `## loop verdict`): a completeness iteration whose
  * step 4 judges together have `vs reference` `pass` and a `vs baseline` that is not `worse`, and whose completeness
  * elements but `no placeholder` are `pass` by `resultOf`.
  */

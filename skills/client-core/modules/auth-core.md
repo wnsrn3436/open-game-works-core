@@ -77,7 +77,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
   3. When the saved version equals the current version for every item, `Agreed` without a screen
   4. Otherwise it opens the terms popup with `UICore.open_popup` and waits until it closes. When it cannot open it, error log and `Failed`
   5. When the popup closes with confirm and every item is on, it saves the current version per item and returns `Agreed`. Otherwise `Refused` without changing the saved values
-- document URL check: the scheme is `https`, there is a host, and there is no user info. A build that contains DEV code also accepts scheme `http`
+- document URL check: the scheme is `https`, there is a host, and there is no user info. The environments that include DEV code also accept scheme `http`
 - The terms popup is the prefab of game settings `termsPopup`, and its root is the core `TermsPopup` class. `TermsPopup` points to a toggle and a view-document button per item and to a confirm button. When any of them is missing, the param check of the popup fails
   - `TermsPopup` binds the text of the elements to `[auth_terms_title]`, `[auth_terms_agree_terms]`, `[auth_terms_agree_privacy]`, `[auth_terms_view]`, `[auth_terms_confirm]` with `LocalizationCore.bind_text`
   - The view-document button opens the URL of that item with the OS URL open. It does not draw the document inside the popup
@@ -346,7 +346,7 @@ format argument
 
 - `dev_login` sends `DevLogin` with `NetworkCore.send_auth_cheat`. It does not do the terms check and the install marker check. After success, it does 2 to 4 of the login success order. It does not read or write the storage item and the pending token
 - `expire_access_token` sets the expiry time in memory to the current server time
-- DEV token storage is the storage that keeps the token in a run that contains DEV code and cannot use the login token storage of the engine. The storage location and when it is used are in the engine-specific implementation rules
+- DEV token storage is the storage that keeps the token in the environments that include DEV code and cannot use the login token storage of the engine. The storage location and when it is used are in the engine-specific implementation rules
 
 ## test
 

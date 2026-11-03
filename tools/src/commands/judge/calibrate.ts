@@ -29,7 +29,7 @@ const USAGE = 'ogw judge calibrate <game>';
 /** The judge input `elements` of a fun iteration, which every calibration judge gets. */
 const ELEMENTS = elementsOf('fun');
 
-/** The pairs of judge calibration, in report order (`game-loop` `## judge calibration`). */
+/** The pairs of judge calibration, in report order (ogw.md `## judge calibrate`). */
 async function calibrationPairs(ctx: Context, game: GameRepo, main: string, settings: HarnessSettings): Promise<CalibrationPair[]> {
   const votes = settings.loop.judgeVotes;
   const pair = (name: string, kind: CalibrationPair['kind'], commit: string, baseline: string, rest: Partial<CalibrationPair> = {}): CalibrationPair => ({
@@ -92,7 +92,7 @@ function outcomesOf(pairs: readonly CalibrationPair[], judged: Map<CalibrationPa
 }
 
 /**
- * `ogw judge calibrate <game>` (`game-loop` `## judge calibration`): judges the null pairs, the order pair, the degraded
+ * `ogw judge calibrate <game>` (ogw.md `## judge calibrate`): judges the null pairs, the order pair, the degraded
  * pair and the labeled pairs with the judges of a fun iteration, and writes and commits the report on main.
  */
 export const judgeCalibrate: CommandDef = {

@@ -46,7 +46,7 @@ Of the `MatchmakerFrame` of `matchmaker`, this module handles `PEER_SIGNAL`, `MA
 
 ### transport
 
-- A P2P connection is a WebRTC data channel, and all participants connect to each other. Each P2P connection has one channel for each of `Reliable` and `Unreliable` of `RealtimeChannel`. The P2P transport of `RealtimeCore` decides the `payload` format, the side that sends the offer, and the choice between direct connection and relay
+- The P2P transport of `RealtimeCore` decides the connections and channels between participants, the `payload` format, the side that sends the offer, and the choice between direct connection and relay
 - The server does not interpret `payload` or the data of P2P connections. The relay only relays the encrypted channel
 - `prepare_transport`
   - `stun_urls` is `p2p-signaling.stunUrls`. In LOCAL it is an empty list

@@ -145,7 +145,7 @@ function deployProblems(ctx: Context, input: HostCheckInput): string[] {
   return problems;
 }
 
-/** Host and settings checks of `build` `## procedure` 1, before anything is made. */
+/** Host and settings checks of ogw.md `## build start`, before anything is made. */
 export async function hostProblems(ctx: Context, input: HostCheckInput): Promise<string[]> {
   const problems: string[] = [];
   if (input.platforms.some((p) => p === 'ios' || p === 'macos') && hostPlatform(ctx.env) !== 'macos-arm64') {

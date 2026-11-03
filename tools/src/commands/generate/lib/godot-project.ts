@@ -230,7 +230,7 @@ function renderSettings(settings: readonly [string, string][]): string {
 
 /**
  * The core project's `project.godot` (`client-core` Godot `## folder`): the engine settings, the name `ogw-core` and no
- * physics object picking. `mainScene` is the main scene of the browser run's export copy (`client-core` Godot `## test`).
+ * physics object picking. `mainScene` is the main scene of the browser run's export copy (ogw.md `### Godot core test`).
  */
 export function renderCoreProjectGodot(mainScene: string | null = null): string {
   const main: [string, string][] = mainScene === null ? [] : [['application/run/main_scene', quote(mainScene)]];

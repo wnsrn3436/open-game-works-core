@@ -131,7 +131,7 @@ none
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
 | `baseResolution` | array<integer> | game | none | base resolution. Width, height |
-| `maxResolution` | array<integer> | game | none | maximum resolution. Width, height. In game coordinates units |
+| `maxResolution` | array<integer> | game | none | maximum resolution. Width, height. In game coordinate units |
 | `ResolutionCore.fillColor` | array<integer> | core | content | fill color. R, G, B |
 | `ResolutionCore.fillImage` | string | core | content | resource key of the fill image. There is no fill image when it is an empty string |
 

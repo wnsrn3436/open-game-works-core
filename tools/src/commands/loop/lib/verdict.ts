@@ -13,12 +13,12 @@ export interface VerdictInput {
   /** `check-<iteration>.json` path, the check evidence of `success`. */
   checkPath: string;
   defects: DefectsFile | null;
-  /** Resource and translation jobs of the run that `ogw loop sync` has not handled (`game-loop` `## stop`). */
+  /** Resource and translation jobs of the run that `ogw loop sync` has not handled (ogw.md `## loop verdict`). */
   unhandled: readonly string[];
 }
 
 /**
- * Evidence that the record is a candidate iteration (`game-loop` `## stop`): not a confirmation iteration, its kind, its
+ * Evidence that the record is a candidate iteration (ogw.md `## loop verdict`): not a confirmation iteration, its kind, its
  * step 4 judges together and its checks meet `successPrecondition`, and its success judges all passed. null when it is
  * not one.
  */
@@ -77,7 +77,7 @@ function plateau(input: VerdictInput): string[] | null {
   return run.length >= input.loopStop.plateau ? run.map(String) : null;
 }
 
-/** The first `game-loop` `## stop` reason that holds, else `confirm` or `continue`. */
+/** The first ogw.md `## loop verdict` reason that holds, else `confirm` or `continue`. */
 export function verdict(input: VerdictInput): Omit<VerdictRecord, 'iteration'> {
   const checks: [VerdictRecord['reason'], () => string[] | null][] = [
     ['success', () => success(input)],

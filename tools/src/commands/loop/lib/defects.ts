@@ -1,6 +1,6 @@
 import { KEBAB } from './run.ts';
 
-/** Defect list types and the merge and status rules of `game-loop` `## defect list` and `### defect status`. */
+/** Defect list types and the merge and status rules of ogw.md `## loop record`. */
 
 export type Severity = 'blocker' | 'major' | 'minor';
 export type Source = 'check' | 'play' | 'judge' | 'hardening';
@@ -38,9 +38,9 @@ export interface Defect {
   status: DefectStatus;
   /** Reason the content agent gave when it refused the defect. */
   refusedReason: string | null;
-  /** `## stop` `repeated defect` count. */
+  /** `## loop verdict` `repeated defect` count. */
   repeatedDefect: number;
-  /** `## stop` `oscillation` count. */
+  /** `## loop verdict` `oscillation` count. */
   oscillation: number;
 }
 

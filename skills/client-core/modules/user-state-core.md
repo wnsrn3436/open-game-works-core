@@ -195,7 +195,7 @@ used table: `item`, `item_overflow`, `item_recovery`, `item_group`, `item_timed`
 - For each case of core test fixture `item-recovery`, `get_item_balance`, `get_item_recovery` equal the expected values
 - After a `full` delta, only the upserts of that delta remain in the cache, an object that remains with the same `id` is the same object, and `UserStateChangedEvent` is published once for each kind that had a deleted object or has an upsert
 - After `release` and `init` again, the cache is empty, change numbers are `0`, and hooks registered before are not called
-- `export_json` writes the same values as the cache in the same format as `user_state` of server core `admin-api.get_user`, and is not in STG·PROD builds
+- `export_json` writes the same values as the cache in the same format as `user_state` of server core `admin-api.get_user`, and is not in STG and PROD builds
 - For a `ShopPurchaseUserState` object whose `reset_at` is R, `get_shop_purchase_count` is `count` at server time R + `TimeCore.reachMarginMs` − 1 and `0` at R + `TimeCore.reachMarginMs`. The same holds for `get_iap_purchase_count`, `get_ad_reward_count`, `get_reset_counter`
 - For a `MissionProgressUserState` object whose `reset_at` is R, `get_mission_progress` is the saved `(progress, claimed)` at server time R − `TimeCore.reachMarginMs` − 1 and `(0, false)` at R − `TimeCore.reachMarginMs`
 - For an object with `event_round` 1 of a shop product bound to a `live_event` with `repeat`, `get_shop_purchase_count` is `count` between rounds and `0` from the start time of round 2 + `TimeCore.reachMarginMs`. The same holds for `get_iap_purchase_count` of a `Consumable` product, `get_mission_progress`, `get_attendance`

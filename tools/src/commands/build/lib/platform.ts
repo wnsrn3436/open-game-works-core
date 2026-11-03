@@ -54,7 +54,7 @@ export interface BundleBuildInput {
   withData: boolean;
 }
 
-/** Bundle patch export: `builds/<env>-<version>/patch/` (`build` `## bundle patch`). Returns the bundle check failures. */
+/** Bundle patch export: `builds/<env>-<version>/patch/` (ogw.md `## bundle patch`). Returns the bundle check failures. */
 export async function buildBundle(ctx: Context, input: BundleBuildInput): Promise<string[]> {
   const engine = input.settings.engine ?? 'godot';
   if (engine !== 'godot') throw new OgwError(`not defined: bundle export of engine ${engine}`);

@@ -11,7 +11,7 @@ import { ts } from './lib/ts-source.ts';
 /**
  * type check: content code fails the type check of `ogw code check`. GDScript: `godot --headless --path client --import`,
  * then `godot --headless --path client --check-only --script <file>` per content `.gd` ends without an error
- * (`client-core` Godot `## GDScript`), under the import lock of the checkout (`withClientImport`). TypeScript: `tsc`
+ * (ogw.md `## code check`), under the import lock of the checkout (`withClientImport`). TypeScript: `tsc`
  * `strict` on server content code.
  */
 export const NAME = 'type check';

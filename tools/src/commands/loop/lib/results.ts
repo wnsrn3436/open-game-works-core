@@ -48,7 +48,7 @@ export function lostMoments(text: string, instanceSide: 'A' | 'B', judgeMoments:
 }
 
 /**
- * The vote of each element of `elements` (`game-loop` `## iteration` 4): the winner of its `## vs baseline` row restated
+ * The vote of each element of `elements` (ogw.md `## loop evaluate`): the winner of its `## vs baseline` row restated
  * relative to this commit's side. `indistinguishable`, `n/a` and an element without a row are no vote. Throws when
  * the table cannot be read.
  */

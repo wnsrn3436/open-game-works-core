@@ -26,7 +26,7 @@ export const LOG_DEBUG = 'log_debug';
 export const DATA = 'data change';
 export const PRIVATE = 'private name';
 
-/** The line form STG and PROD builds replace with `pass` (`build` Godot step 2). */
+/** The line form STG and PROD builds replace with `pass` (ogw.md `### export` 2). */
 const LOG_DEBUG_LINE = /^[ \t]*LogCore\.log_debug\(.*\)[ \t]*$/;
 const DATA_CORE = moduleFolder('DataCore');
 const CONTAINER_CHANGES = new Set(['GameData.load_tables', 'GameData.clear']);

@@ -24,4 +24,4 @@ You are the resource sub-agent of open-game-works. The input is one resource req
 
 ## report
 
-Write it to `output`. For each resource key: `final` or `placeholder` (reason), method, whether it was made with the `fallback` step, capture path or `unverified` (reason). For `sprite_animation` and `rig_animation_2d`, the capture path and `unverified` (reason) are written per animation.
+Write it to `output`. For each resource key: `final` or `placeholder` (reason), method, whether it was made with the `fallback` stage, capture path or `unverified` (reason). For `sprite_animation` and `rig_animation_2d`, the capture path and `unverified` (reason) are written per animation.

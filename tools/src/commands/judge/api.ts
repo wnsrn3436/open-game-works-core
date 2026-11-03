@@ -30,7 +30,7 @@ async function lastReport(game: GameRepo, env: NodeJS.ProcessEnv): Promise<strin
   return reports[0]?.path ?? null;
 }
 
-/** The judge calibration lines of loop end record `## human` (`game-loop` `### end-record`). */
+/** The judge calibration lines of loop end record `## human` (ogw.md `## loop end-record`). */
 export async function calibrationHumanLines(game: GameRepo, env: NodeJS.ProcessEnv): Promise<string[]> {
   const path = await lastReport(game, env);
   const text = path === null ? null : await showFile(game.root, 'main', path, { env });

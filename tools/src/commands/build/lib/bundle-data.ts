@@ -76,7 +76,7 @@ export interface DataBundleInput {
 }
 
 /**
- * Bundle check items of this build's data on an app version (`build` `## bundle patch`): the data is client data whose
+ * Bundle check items of this build's data on an app version (ogw.md `## bundle patch`): the data is client data whose
  * protocol hash is the app version's, and every resource key it names is one the app version has with its bundle.
  */
 export function dataBundleFailures(input: DataBundleInput): string[] {

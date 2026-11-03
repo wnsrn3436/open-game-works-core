@@ -238,7 +238,7 @@ export function grokLoginFile(env: NodeJS.ProcessEnv): string | null {
   return home.trim() === '' ? null : join(home, 'auth.json');
 }
 
-/** The login that the provider calls of sprite-gen use, and how those calls are paid (`host-env` step 1). */
+/** The login that the provider calls of sprite-gen use, and how those calls are paid (ogw.md `## env check`). */
 async function providerLogin(env: NodeJS.ProcessEnv, provider: string, state: CliState): Promise<Pick<ProviderCliCheck, 'loggedIn' | 'billing' | 'detail'>> {
   if (provider === 'grok') {
     const file = grokLoginFile(env);

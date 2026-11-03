@@ -241,7 +241,7 @@ async function nameErrors(implDir: string): Promise<string[]> {
 }
 
 /**
- * The `core-spec/` check of `ogw core test` (`core` command.md `## core spec file`). `whole` is true for a run
+ * The `core-spec/` check of `ogw core test` (ogw.md `## core spec and core test`). `whole` is true for a run
  * without modules: only that run requires the modules with an implementation to be the modules with a file.
  */
 export async function specDirErrors(implDir: string, side: ImplementationSide, whole: boolean): Promise<string[]> {

@@ -1,4 +1,4 @@
-// Reads one module spec in the tool-read form of `skills/core/SKILL.md` `### tool-read form`.
+// Reads one module spec in the tool-read form of `skills/core/command.md` `### tool-read form`.
 import {
   arrowTargetAt,
   cellValue,

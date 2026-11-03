@@ -4,7 +4,7 @@ import { OgwError } from './errors.ts';
 import { writeFileAtomic } from './fsx.ts';
 
 /**
- * The Web preset options of every Godot Web export (`client-core` Godot `## folder`, `build` Godot export table): a
+ * The Web preset options of every Godot Web export (`client-core` Godot `## folder`, ogw.md `#### platform`): a
  * threaded PWA build whose service worker gives the page cross-origin isolation, with client core's web shell.
  */
 export const WEB_EXPORT_OPTIONS: Readonly<Record<string, boolean | string>> = {

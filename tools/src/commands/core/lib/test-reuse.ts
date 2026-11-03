@@ -1,6 +1,6 @@
 /**
  * Passing module results of `ogw core test` kept with a key, which a later run of the same key uses instead of running
- * the module again (`core` command.md `## command`). They live in the harness git common dir.
+ * the module again (ogw.md `## temp folder`). They live in the harness git common dir.
  */
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -48,7 +48,7 @@ function reached(all: readonly CoreSpecModule[], start: readonly string[]): Core
  * The checkout paths a module's test depends on, besides the harness `tools/`: `[folders, package folders, module
  * folders]`. A package folder counts with every entry of it, and every entry of its `core/` except the module folders of
  * the side (`moduleFolders`): files such as `server/core/start.ts` or `client/<engine>/core/core_settings.gd` that the
- * module tests run are in no module folder. Besides the folders `core` command.md names, the run reads
+ * module tests run are in no module folder. Besides the folders ogw.md `## temp folder` names, the run reads
  * `fixtures/`, `proto/` and `settings/` (the core test data build, the fixture folder of the tests), and the server and
  * engine targets build the core test data with `tools/contract-tool/` and `tools/data-tool/`; the round trip of a tool
  * test compiles every engine's whole `client/<engine>/`.

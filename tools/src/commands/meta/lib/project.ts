@@ -54,7 +54,7 @@ export function isMetaFile(path: string): boolean {
   return path.endsWith('.uid') || path.endsWith('.import');
 }
 
-/** Meta files `ogw generate` writes (`client-core` Godot `## engine meta file`), which `ogw meta sync` leaves alone. */
+/** Meta files `ogw generate` writes (ogw.md `## meta sync`), which `ogw meta sync` leaves alone. */
 const GENERATED_META: readonly string[] = ['resource/resources.csv.import'];
 
 /** A meta file of the project that `ogw meta sync` lines up with its source: not one `ogw generate` writes. */
@@ -84,7 +84,7 @@ export function isProjectFile(project: MetaProject, path: string): boolean {
 }
 
 /**
- * An engine resource (`client-core` Godot `## engine meta file`): a non-meta file the project sees, other than the core
+ * An import trigger file (ogw.md `## meta sync`): a non-meta file the project sees, other than the core
  * project's `engine.json`, which Godot does not read.
  */
 export function isEngineResource(project: MetaProject, path: string): boolean {

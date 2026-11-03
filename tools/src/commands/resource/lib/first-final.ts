@@ -97,7 +97,7 @@ async function statusAt(root: string, commits: readonly Commit[], env: NodeJS.Pr
   return result;
 }
 
-/** `ogw resource first-final` (`production.md` `## first final`). */
+/** `ogw resource first-final` (ogw.md `## first final`). */
 export async function firstFinal(game: GameRepo, by: { name: string } | { speaker: string }, env: NodeJS.ProcessEnv): Promise<FirstFinal | null> {
   const rows = await readList(game.root);
   const chosen = rows.filter((row) => row.status === 'final' && ('name' in by ? parseKey(row.key)?.name === by.name : row.speaker === by.speaker));

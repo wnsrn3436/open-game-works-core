@@ -4,7 +4,7 @@ import { classIndex } from './lib/gd-shared.ts';
 import { lineOf, stringText, ts, tsSource, walkTs } from './lib/ts-source.ts';
 
 /**
- * DEV reference (client-content engines/godot `## boot and DEV code`): code outside DEV code references DEV code.
+ * DEV reference (ogw.md `## static check`): code outside DEV code references DEV code.
  * Godot: a `class_name` of `client/dev/` (`client/dev/generated/` included) or `client/core/*\/dev/`, or a `res://dev/`
  * or `res://core/*\/dev/` string, in a file outside DEV code (`client/dev/`, `client/core/*\/dev/`) and regression tests
  * (`client/tests/`). Server: an import that resolves into `server/dev/` or `server/core/*\/dev/`, in a file outside

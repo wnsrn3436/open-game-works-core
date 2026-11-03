@@ -30,7 +30,7 @@ function stageOf(step: MeasuredStep, fallback: boolean): Stage {
   };
 }
 
-/** `production.md` `## method`: the stage to use, or null for a method measured without stages. */
+/** ogw.md `## generation methods`: the stage to use, or null for a method measured without stages. */
 export function chooseStage(measured: readonly MeasuredStep[] | undefined, spec: Pick<Spec, 'size' | 'lengthMs'>): Stage | null {
   const steps = measured ?? [];
   if (!steps.some((s) => s.resolution !== undefined || s.durationMs !== undefined)) return null;
@@ -53,7 +53,7 @@ export interface MethodChoice {
   skill?: string | null;
   cli?: string | null;
   flux2Klein?: Stage | null;
-  /** The temporary method of the key (`production.md` `## method`): its resource becomes `temporary`. */
+  /** The temporary method of the key (ogw.md `## generation methods`): its resource becomes `temporary`. */
   temporary?: true;
   /** The method lacks the install that `generation install` gives it on this host (`installedOnHost`). */
   notInstalled?: true;
@@ -101,7 +101,7 @@ export async function keySpec(game: GameRepo, key: string): Promise<{ type: stri
 }
 
 /**
- * Methods a resource key can use and the stage of each (`production.md` `## method`). A logo key `image/logo/<language>`
+ * Methods a resource key can use and the stage of each (ogw.md `## generation methods`). A logo key `image/logo/<language>`
  * takes the image method of the game, which draws the lettering of the logotype method again in the world's hand, and
  * the logotype method, whose lettering is kept when no drawing keeps every character (`production.md` `## logo`); both
  * need the logotype method, as image generation does not letter text reliably without its lettering to follow.

@@ -21,7 +21,7 @@ export async function refuseWhileCalibrating(ctx: Context, game: string): Promis
 }
 
 /**
- * The start of `ogw judge calibrate` and `ogw judge label` (`game-loop` `## judge calibration`): no open run, no other
+ * The start of `ogw judge calibrate` and `ogw judge label` (ogw.md `## judge calibrate`): no open run, no other
  * `ogw judge calibrate` job of the game, no change in the game repo checkout; then main checked out. Returns main HEAD.
  */
 export async function prepareMain(ctx: Context, game: GameRepo): Promise<string> {

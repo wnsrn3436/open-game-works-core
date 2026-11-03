@@ -2,7 +2,7 @@ import type { ElementDecision, ElementVotes, JudgeEntry } from '../../loop/lib/f
 import { document, renderTable, section } from '../../loop/lib/markdown.ts';
 import type { Answer, LabelEntry } from './pairs.ts';
 
-/** The four kinds of pairs of judge calibration (`game-loop` `## judge calibration`). */
+/** The four kinds of pairs of judge calibration (ogw.md `## judge calibrate`). */
 export type PairKind = 'null' | 'order' | 'degraded' | 'label';
 
 /** A pair to judge: its `this` and `baseline` commits, its judges and how their sides go. */
@@ -131,7 +131,7 @@ function below(rate: Rate, min: number): boolean {
   return rate.total > 0 && rate.count / rate.total < min;
 }
 
-/** The recommendation lines of the rates (`game-loop` `## judge calibration`). */
+/** The recommendation lines of the rates (ogw.md `## judge calibrate`). */
 export function recommendations(r: Rates, judgeVotes: number): string[] {
   const lines: string[] = [];
   if (r.falseWin.count > 0) lines.push(`raise loop.judgeVotes to ${String(judgeVotes + 2)} (false win rate ${formatRate(r.falseWin)})`);

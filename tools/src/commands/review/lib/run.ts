@@ -223,7 +223,7 @@ interface CoreTestOutput {
 }
 
 /**
- * Lines of the `fail` modules of a core test output (`core` command.md `## review and code check`: only a `fail` stops
+ * Lines of the `fail` modules of a core test output (ogw.md `## review run`: only a `fail` stops
  * the fix). A `skipped` module has none: one skipped for a dependency that did not pass comes with that dependency's
  * lines, and a tool whose engine round trip was left out failed nothing.
  */

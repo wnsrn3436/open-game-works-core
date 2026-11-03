@@ -96,7 +96,7 @@ async function measureExternal(ctx: Context, method: GenerationMethod, allow: Re
   return measureProvider(ctx, method);
 }
 
-/** `host-env` 4 for one method. `done` holds the results of the methods measured before it in this run and the kept results. */
+/** ogw.md `## generation measure` for one method. `done` holds the results of the methods measured before it in this run and the kept results. */
 export async function measureMethod(ctx: Context, method: GenerationMethod, allow: ReadonlySet<string> = new Set(), done: Results = {}): Promise<MethodResult> {
   const base = { kind: method.kind, steps: [] as MeasuredRun[] };
   if (method.kind === 'catalog') {

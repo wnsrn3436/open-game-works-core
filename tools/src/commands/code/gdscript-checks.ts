@@ -10,7 +10,7 @@ import { run } from '../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 
 /**
- * The GDScript type check and lint of `client-core` Godot `## GDScript`, shared by `ogw code check` and static check
+ * The GDScript type check and lint of ogw.md `## code check` and `client-core` Godot `## GDScript`, shared by `ogw code check` and static check
  * `type check` and `lint`. Each caller gives its own files.
  */
 

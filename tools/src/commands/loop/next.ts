@@ -18,7 +18,7 @@ function kindOf(run: RunState, records: readonly ParsedRecord[], n: number): Ite
 }
 
 /**
- * The kind of the new iteration `n` (`game-loop` `## iteration`): iteration 1 and a confirmation iteration are
+ * The kind of the new iteration `n` (ogw.md `## loop next`): iteration 1 and a confirmation iteration are
  * completeness iterations; so is the iteration after a completeness iteration whose `gate` was `fail` (a record whose
  * gate checks did not all pass, or no record) and the iteration after `funIterations` fun iterations in a row.
  */
@@ -54,7 +54,7 @@ export const loopNext: CommandDef = {
         });
       }
       if (open.kind === 'loop' && open.iteration === 0) open.referenceCommit = await revParse(game.root, open.branch, { env: ctx.env });
-      // After a `confirm` verdict the new iteration confirms the candidate iteration (`game-loop` `## stop`).
+      // After a `confirm` verdict the new iteration confirms the candidate iteration (ogw.md `## loop verdict`).
       const data = open.kind === 'loop' ? loopData(open) : null;
       const confirming = data !== null && data.verdict?.reason === 'confirm' && data.verdict.iteration === open.iteration;
       const candidate = confirming ? (data.confirms.find((c) => c.iteration === open.iteration)?.candidate ?? open.iteration) : null;

@@ -48,7 +48,7 @@ async function mainHead(root: string): Promise<string> {
   return commit;
 }
 
-/** DEV, STG: the version (`build` `## procedure` 1) and main HEAD. */
+/** DEV, STG: the version (ogw.md `## build start`) and main HEAD. */
 export async function planDevStg(input: PlanInput): Promise<BuildPlan> {
   const { root, env, tags } = input;
   const startCommit = await mainHead(root);
@@ -87,7 +87,7 @@ async function prodSource(input: PlanInput): Promise<{ tag: string; commit: stri
   return { tag: found.tag, commit: found.commit, bundle: tag.bundle, version: tag.version };
 }
 
-/** PROD: the `stg-<version>` commit of main to build from (`build` `## procedure` 1). */
+/** PROD: the `stg-<version>` commit of main to build from (ogw.md `## build start`). */
 export async function planProd(input: PlanInput): Promise<BuildPlan & { compatibilityBase: string }> {
   const source = await prodSource(input);
   const version = buildVersionName(source.version, source.bundle);

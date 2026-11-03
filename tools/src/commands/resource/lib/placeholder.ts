@@ -96,7 +96,7 @@ function engineText(key: string, parsed: ParsedKey, spec: Spec): string {
   }
 }
 
-/** Placeholder resource files of a row (`resource` skill `## placeholder resource`). */
+/** Placeholder resource files of a row (ogw.md `## resource placeholder`). */
 export async function placeholderFiles(engine: string, key: string, parsed: ParsedKey, spec: Spec, tools: Tools): Promise<FileData[]> {
   const ext = engineType(engine, parsed.type).extensions[0] as string;
   if (PNG_TYPES.includes(parsed.type)) return [{ path: keyPath(key, ext), data: await placeholderPng(key, parsed.last, requireSize(key, spec)) }];

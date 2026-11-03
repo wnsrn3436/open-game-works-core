@@ -89,7 +89,7 @@ async function regressionDb(ctx: Context, db: 'postgresql' | undefined): Promise
 }
 
 /**
- * `where` of a failure of the whole run of a target (`game-loop` `## loop iteration record`: a file:line): line 1 of
+ * `where` of a failure of the whole run of a target (ogw.md `## check`: a file:line): line 1 of
  * the target file or folder.
  */
 export function targetWhere(path: string): string {
@@ -130,7 +130,7 @@ export interface ClientRunOptions {
   importFailure?: string;
 }
 
-/** GUT target arguments for a test file or folder under `client/tests/` (`client-core` godot `## test`). */
+/** GUT target arguments for a test file or folder under `client/tests/` (ogw.md `### Godot core test`). */
 export function gutTarget(path: string): string[] {
   const res = `res://${path.slice('client/'.length)}`;
   if (path.endsWith('.gd')) return [`-gtest=${res}`];

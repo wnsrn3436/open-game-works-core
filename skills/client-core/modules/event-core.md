@@ -74,7 +74,7 @@ Delivers core events and content events, told apart by event type, to subscriber
 - Even when one callback fails, it delivers to the remaining subscriptions and finishes `publish`
 - A subscriber does not change the fields of a received event and does not reference the event after the callback returns. It copies the values it needs
 - `publish`, `unsubscribe_all`, `count_subscriptions`, and `acquire` when the object of that delivery depth already exists do not allocate memory. Logs and the code inside callbacks are excluded
-- In a build that contains DEV code, each `publish` leaves a `debug` log with the event type name and the number of subscriptions whose callback was called
+- In the environments that include DEV code, each `publish` leaves a `debug` log with the event type name and the number of subscriptions whose callback was called
 
 ## hook
 
@@ -137,7 +137,7 @@ none
 - On an engine that reports callback failures, when the callback of one of three subscribers fails, the other two receive in the same publish, the next publish also goes to all three, and there is one `error` log per failed publish
 - On an engine that does not report callback failures, when the callback of one of three subscribers stops with a runtime error, the other two receive in the same publish and in the next publish, and there is no EventCore log
 - Even with 1000 repetitions of subscribing and unsubscribing during a delivery, the number of subscription record slots of that event type does not exceed twice the maximum number of concurrent subscriptions
-- In a build that contains DEV code, publishing an event type with 2 subscriptions leaves one `debug` log that holds the event type name and 2
+- In the environments that include DEV code, publishing an event type with 2 subscriptions leaves one `debug` log that holds the event type name and 2
 - After `release` and then `init`, there are no previous subscriptions
 - A listener registered before `init` or after `release` is called at the next `init`. `register_init_listener` after `init`, and inside a listener during `init`, leaves one `error` log and does not register
 - When D is the difference between the device monotonic times the test reads right before `start_boot` and when it receives `BootCompletedEvent`, `duration_ms` is at least 0 and at most D. The `duration_ms` of the boot after a restart is at most the difference between the device monotonic times at the restart request and when the test receives `BootCompletedEvent` of that boot

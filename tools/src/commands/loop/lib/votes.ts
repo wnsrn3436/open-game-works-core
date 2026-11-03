@@ -1,6 +1,6 @@
 import type { ElementDecision, ElementVotes, JudgeEntry, Vote, VsBaseline, VsReference } from './files.ts';
 
-/** Votes a decision needs (`game-loop` `## iteration` 4): two thirds of `loop.judgeVotes` rounded up, and at least 2. */
+/** Votes a decision needs (ogw.md `## loop evaluate`): two thirds of `loop.judgeVotes` rounded up, and at least 2. */
 export function quorum(judgeVotes: number): number {
   return Math.max(2, Math.ceil((2 * judgeVotes) / 3));
 }

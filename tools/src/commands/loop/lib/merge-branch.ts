@@ -22,7 +22,7 @@ export interface MergeChoice {
 }
 
 /**
- * The merge commit (`game-loop` `## end` 2): the `success` iteration; else the latest confirmation iteration that
+ * The merge commit (ogw.md `## loop prepare-merge`): the `success` iteration; else the latest confirmation iteration that
  * passed, else the latest candidate iteration, the three without the work synced after them, which no iteration
  * checked; else the latest iteration that passed the gate checks with a step 4 judge `done` and a `vs baseline` of the
  * step 4 judges together that is not `worse`. null when there is none.

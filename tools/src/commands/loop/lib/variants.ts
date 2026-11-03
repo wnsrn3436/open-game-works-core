@@ -17,7 +17,7 @@ import { combinedVsBaseline, countVotes } from './votes.ts';
 /** Dependencies tests replace: the poll interval of the wait for the variant agents. */
 export const variantDeps = { pollMs: 5000 };
 
-/** One variant of `records/loops/<run>/variants-<iteration>.json` (`game-loop` `## loop iteration record`). */
+/** One variant of `records/loops/<run>/variants-<iteration>.json` (ogw.md `## loop variants`). */
 export interface VariantEntry {
   k: number;
   job: string;
@@ -60,7 +60,7 @@ function votesFor(entry: VariantEntry, side: 'this' | 'baseline'): number {
 }
 
 /**
- * The variants with a commit in choice order (`game-loop` `## iteration` 1): those whose `vs baseline` is `better` by
+ * The variants with a commit in choice order (ogw.md `## loop variants`): those whose `vs baseline` is `better` by
  * the most elements decided `this`, the fewest `baseline` votes and the lowest k; then the others by the largest count
  * of `this` votes minus `baseline` votes and the lowest k. When a variant was judged, the variants not judged are left out.
  */
@@ -250,7 +250,7 @@ async function mergeChosen(ctx: Context, game: GameRepo, run: RunState, file: Va
 }
 
 /**
- * `ogw loop variants` (`game-loop` `## iteration` 1): writes and commits the variant inputs, runs the variant agents,
+ * `ogw loop variants` (ogw.md `## loop variants`): writes and commits the variant inputs, runs the variant agents,
  * judges their commits, merges the chosen one with its records, and removes the worktrees of the others.
  */
 export async function runVariants(

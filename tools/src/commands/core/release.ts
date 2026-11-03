@@ -124,7 +124,7 @@ async function releaseNotes(ctx: Context, path: string | undefined, usage: strin
   return text;
 }
 
-/** `ogw core release <version>` (`core` command.md `## version and release`). */
+/** `ogw core release <version>` (`core` command.md `## version and release`, ogw.md `## core release`). */
 export const releaseCommand: CommandDef = {
   name: ['core', 'release'],
   usage: 'ogw core release <version> --notes <file>',

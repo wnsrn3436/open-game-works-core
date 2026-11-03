@@ -167,7 +167,7 @@ none
 - While `ResolutionCore.set_test_screen` sets a window size that differs from the real window, `pass_position` is `true` for the position that `ResolutionCore.game_to_window` converts from a game position inside the pass list UI element area, and `false` for a position outside
 - With no block, `is_blocked` is `false`; with two acquired, `true`; with one released, still `true`; with the other also released, `false`
 - `unblock` of an already released token, of a token from before the slot was reused, and of an invalid token gives an error log and `false`, and other blocks stay as they are
-- Also in a build without DEV code, `unblock` of a bad token leaves an error log
+- Also in STG and PROD builds, `unblock` of a bad token leaves an error log
 - After a block is acquired and the test clock advances by `InputBlockCore.maxDurationMs` − 1, one frame later it is an active block, and after the clock advances 1 more, one frame later forced release releases it and one error log is left
 - Even when at least the max duration passes by background progress of the test clock, there is no forced release. During a `TimeCore` pause and at time scale 100 (permille), forced release also releases the block
 - `scene`, `cutscene`, `tutorial`, `ad`, `boot` blocks are still active blocks after the max duration passes

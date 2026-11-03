@@ -31,8 +31,8 @@ This module judges the schedule of live events defined in data and the active wi
 | `is_in_active_window` | ctx, `start_at`, `end_at`, `live_event` (each value from the data row. none and 0 mean absent) | `true` when inside the active window | `false` | content handler, hook, `shop`, `gacha`, `iap`, `mission`, `attendance`, `offer` |
 | `get_round` | ctx, event ID value | `round`, `start_at` (start time), `end_at` (end time) of the active round. When there is no active round, 0, the start time of the next round and the end time of the next round; when there is no next round either, all three 0 | all three 0 for an unknown event ID value | content handler, hook, `attendance` |
 | `get_latest_round` | event ID value, time | `round`, `start_at` (start time), `end_at` (end time) of the latest round among the rounds with start time ≤ that time. All three 0 when there is no such round | all three 0 for an unknown event ID value | `ranking` |
-| `round_to_write` | ctx, `live_event` (value from the data row. none and 0 mean absent) | `event_round` to write to a row by the round reset rule | none | `mission`, `shop`, `iap`, `attendance`, `offer` |
-| `is_round_reset` | ctx, `live_event` (value from the data row. none and 0 mean absent), the row's `event_round` | `true` when the round reset rule reads the row as returned to its start | `false` | `mission`, `attendance`, `offer` |
+| `round_to_write` | ctx, `live_event` (value from the data row. none and 0 mean absent) | `event_round` to write to a row by the round reset rule | none | `mission`, `shop`, `iap`, `offer` |
+| `is_round_reset` | ctx, `live_event` (value from the data row. none and 0 mean absent), the row's `event_round` | `true` when the round reset rule reads the row as returned to its start | `false` | `mission`, `offer` |
 | `join_event` | ctx, event ID value | `LiveEventResult.OK` | `LiveEventResult.NOT_ACTIVE`, `LiveEventResult.NOT_SETTLED`, `LiveEventResult.UNKNOWN_EVENT` | content handler, hook |
 | `get_participation` | ctx, event ID value | last `round` and `settled` of the participation | `round` 0, `settled` `false` | content handler, hook |
 | `on_request_start` | user ID | async operation. none | none. A failure is an `error` log | `routing`, `auth` |
@@ -61,7 +61,7 @@ active window
 
 round reset
 
-- Round reset is the rule that returns user saved state tied to a data row with a `live_event` column to its start for each round of that event. `mission`, `attendance` and `offer` use it on their own UserState rows with `round_to_write` and `is_round_reset`. `shop` and `iap` write their purchase count rows with `round_to_write` and read them with `offer.read_purchase_limit`
+- Round reset is the rule that returns user saved state tied to a data row with a `live_event` column to its start for each round of that event. `mission` and `offer` use it on their own UserState rows with `round_to_write` and `is_round_reset`. `attendance` uses it on its own UserState rows by calling `get_round` itself and comparing that round with the row's `event_round`. `shop` and `iap` write their purchase count rows with `round_to_write` and read them with `offer.read_purchase_limit`
 - That UserState row has an `int32 event_round` field. When the row is written, the round of `get_round`(`live_event`) is written when the data row has a `live_event`, otherwise 0 (`round_to_write`)
 - When the row is read, if the data row has a `live_event`, the round of `get_round`(`live_event`) is not 0, and it differs from the row's `event_round` (`is_round_reset` is `true`), the fields that the module sets as returning to the start are read as their initial values and `event_round` as that round. When the row has a `reset_at` field, `reset_at` is read as that module's next reset time. The values read this way are saved only when there is a write to that row
 - While the round is 0, the row's values are read as they are

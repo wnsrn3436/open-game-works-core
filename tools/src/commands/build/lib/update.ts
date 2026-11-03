@@ -38,7 +38,7 @@ export function latestBundleTag(tags: readonly BuildTag[], env: Env, appVersion:
 /**
  * App versions whose `<env>-<app version>` tag commit has the same Client build target protocol hash as this build,
  * and for which this build's data passes the `bundle` check together with the app version's latest bundle: this
- * build's data can go to them (`build` `## deploy`, `update.json` `apps`). The app version has the resource keys of
+ * build's data can go to them (ogw.md `## deploy`, `update.json` `apps`). The app version has the resource keys of
  * `resources.csv` at its tag commit and at its latest bundle's tag commit.
  */
 export async function compatibleApps(ctx: Context, game: GameRepo, env: Env, tags: readonly BuildTag[], build: DataVersions): Promise<string[]> {

@@ -201,7 +201,7 @@
       }
     },
     "uiQuality": {
-      "description": "The numbers of the `QACore` UI quality check",
+      "description": "The numbers of the UI quality check that a game sets (`## UI quality` of `tools/ogw.md`)",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -328,7 +328,7 @@
       }
     },
     "nicknameUnique": {
-      "description": "Whether duplicate nicknames are forbidden. Not changed after the first PROD build, because the save structure would change",
+      "description": "Whether duplicate nicknames are forbidden. Not changed after the first PROD build, because duplicates made while it was false remain",
       "type": "boolean"
     },
     "consent": {
@@ -823,7 +823,7 @@
           "pattern": "^https://"
         },
         "corsAllowedOrigins": {
-          "description": "List of origins that serve the web build. The web build calls the rpc, cheat and update routes of the server from these origins. The scheme is `https`. `ogw game derive` fills it by the rules of the `game-setup` skill",
+          "description": "List of origins that serve the web build. The web build calls the rpc, cheat and update routes of the server from these origins. The scheme is `https`. `ogw game derive` fills it by the rules of `## game derive` of `tools/ogw.md`",
           "type": "array",
           "items": {
             "type": "string",
@@ -847,7 +847,7 @@
           "minItems": 1
         },
         "adminOperators": {
-          "description": "List of operators that call the admin API. `name` is unique within an environment. `ogw game init` and `ogw game derive` fill `name`, `roles` and `secret` of the operator `ogw` of the harness tool by the rules of the `game-setup` skill",
+          "description": "List of operators that call the admin API. `name` is unique within an environment. `ogw game init` and `ogw game derive` fill `name`, `roles` and `secret` of the operator `ogw` of the harness tool by the rules of `## game derive` of `tools/ogw.md`",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -1228,7 +1228,7 @@
               ]
             },
             "cdn": {
-              "description": "The CDN adapter. `cdn-r2` is Cloudflare R2. `ogw game derive` fills it by the rules of the `game-setup` skill",
+              "description": "The CDN adapter. `cdn-r2` is Cloudflare R2. `ogw game derive` fills it by the rules of `## game derive` of `tools/ogw.md`",
               "enum": [
                 "fake",
                 "cdn-r2"

@@ -231,7 +231,7 @@ class Host {
     if (this.relayRequest(method, target, res) || (await this.inputRequest(method, target, body, res))) return;
     if (this.runSignal(method, target, body, res)) return;
     if (method === 'GET' && target.startsWith('/app/')) {
-      // the browser run opens `/app/index.html` with the test run config as its URL query (`client-core` Godot `## test`)
+      // the browser run opens `/app/index.html` with the test run config as its URL query (ogw.md `### Godot core test`)
       const path = target.split('?', 1)[0] as string;
       await this.app(path.slice('/app/'.length), res);
       return;

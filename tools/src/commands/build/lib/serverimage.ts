@@ -79,7 +79,7 @@ export async function serverImageDevCode(ctx: Context, game: GameRepo, settings:
 
 /**
  * DEV, STG: builds the server image for `serverImage.platform` from the build context, with `core/Dockerfile` of the
- * copy, and pushes it as `<env>-<version>` (`build` `## server image`).
+ * copy, and pushes it as `<env>-<version>` (ogw.md `## server image`).
  */
 export async function buildServerImage(ctx: Context, game: GameRepo, settings: GameSettings, env: Env, version: string, compat: string): Promise<ServerImage> {
   const { repository, platform } = repositoryOf(settings);

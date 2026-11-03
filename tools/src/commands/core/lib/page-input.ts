@@ -21,7 +21,7 @@ export function pageInput(profile: string, pageUrl: string, ended: () => string 
       const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: page.targetId, flatten: true });
       if (typeof sessionId !== 'string') throw new OgwError('DevTools Target.attachToTarget gave no sessionId');
       // the headless browser cannot ask for clipboard writes and leaves them at prompt; a person's browser writes
-      // without asking within a user activation (`client-core` Godot `## test`)
+      // without asking within a user activation (ogw.md `### Godot core test`)
       await cdp.send('Browser.grantPermissions', { permissions: ['clipboardSanitizedWrite'], origin: new URL(pageUrl).origin });
       return { cdp, sessionId };
     } catch (error) {

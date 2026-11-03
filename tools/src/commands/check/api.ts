@@ -6,7 +6,7 @@ import { OgwError } from '../../lib/errors.ts';
 import type { CsvRow } from '../data/lib/csv.ts';
 import { glossaryCellMissing, translationLanguages, translationRowState, translationTable } from '../data/lib/translation-state.ts';
 
-/** `<failure>` of `check-<iteration>.json` (`game-loop` `## loop iteration record`). */
+/** `<failure>` of `check-<iteration>.json` (ogw.md `## check`). */
 export interface CheckFailure {
   where: string;
   message: string;

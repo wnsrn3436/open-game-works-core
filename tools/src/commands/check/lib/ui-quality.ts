@@ -28,7 +28,7 @@ export interface UiQualityOptions extends InstanceCheckOptions {
   quality: UiQualityLimits;
 }
 
-/** Game settings `uiQuality`: the numbers of the presentation conditions (`qa-core` UI quality check). */
+/** Game settings `uiQuality`: the numbers of the presentation conditions (ogw.md `## UI quality`). */
 export interface UiQualityLimits {
   /** The longest real time waited after an open command for the opening presentation to end. */
   settleLimitMs: number;
@@ -99,7 +99,7 @@ function isAncestor(a: string, b: string): boolean {
   return b.startsWith(`${a}/`);
 }
 
-/** Clipped elements and overlaps (`qa-core` UI quality check) of one capture, with the `owner` of the problem. */
+/** Clipped elements and overlaps (ogw.md `## UI quality`) of one capture, with the `owner` of the problem. */
 export function layoutProblems(elements: readonly UiElement[]): { owner: string; message: string }[] {
   const problems = elements.filter((e) => e.clipped).map((e) => ({ owner: e.owner, message: `clipped ${e.path}` }));
   const texts = elements.filter((e) => e.text !== '');
@@ -196,7 +196,7 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
 }
 
 /**
- * The presentation conditions of one capture (`qa-core` UI quality check): text sizes, small text, the contrast of text
+ * The presentation conditions of one capture (ogw.md `## UI quality`): text sizes, small text, the contrast of text
  * that is not dimmed and empty panels, each with the `owner` of the problem.
  */
 export function presentationProblems(
@@ -253,7 +253,7 @@ function point(value: number): string {
 const OPEN_COMMAND = /^[a-z][a-z0-9_]*\.open_[a-z][a-z0-9_]*$/;
 
 /**
- * `where` of a UI quality failure the scene of which is not known (`game-loop` `## loop iteration record`: a file:line):
+ * `where` of a UI quality failure the scene of which is not known (ogw.md `## check`: a file:line):
  * line 1 of the DEV registration file of the open command's feature (client-content engines/godot `## DEV code`), or
  * line 1 of game settings, which holds `uiCheckScreens`, when no open command is involved.
  */
@@ -271,7 +271,7 @@ class OpenThrew extends Error {}
 
 class UiRun {
   readonly failures: CheckFailure[] = [];
-  /** `where` of the failures of the screen being checked: its scene key (`game-loop` `## loop iteration record`). */
+  /** `where` of the failures of the screen being checked: its scene key (ogw.md `## check`). */
   where = unknownSceneWhere(null);
   private captures = 0;
   private readonly ctx: Context;
@@ -342,7 +342,7 @@ class UiRun {
 
   /**
    * Calls the open command of a screen and reads the scene the failures of the screen are at. A failing command fails
-   * that screen (`qa-core` UI quality check 3): reported with the command in the message, then false. A request that
+   * that screen (ogw.md `## UI quality` 3): reported with the command in the message, then false. A request that
    * throws is reported the same way and stops the run.
    */
   async open(command: string, context: string): Promise<boolean> {
@@ -364,8 +364,8 @@ class UiRun {
   }
 
   /**
-   * Waits until `get_state` has `ui_flow` false and `finite_tweens` 0, at most `settleLimitMs` (`qa-core` UI quality
-   * check 3), so that the opening presentation of the screen has ended. A core whose state has neither field is
+   * Waits until `get_state` has `ui_flow` false and `finite_tweens` 0, at most `settleLimitMs` (ogw.md `## UI quality`
+   * 3), so that the opening presentation of the screen has ended. A core whose state has neither field is
    * waited for the whole limit.
    */
   private async settle(): Promise<void> {
@@ -489,7 +489,7 @@ async function inspect(ctx: Context, id: string, platform: string, options: UiQu
   return checkResult('UI quality', platform, run.failures);
 }
 
-/** UI quality of one platform profile (`qa-core` UI quality check) in an instance that draws the screen. */
+/** UI quality of one platform profile (ogw.md `## UI quality`) in an instance that draws the screen. */
 export async function uiQualityCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
   try {
     return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, (instance) =>

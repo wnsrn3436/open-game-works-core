@@ -224,7 +224,7 @@ function fixturePath(plan: Pick<JudgingPlan, 'fixtureDir'>, moment: Moment): str
 
 /**
  * Writes `client/dev/bot/fixtures/<moment>.json` of the work branch HEAD into a new temp folder for every
- * moment: every save fixture instance, whatever its commit, gets that file (`game-loop` `## iteration` 3).
+ * moment: every save fixture instance, whatever its commit, gets that file (ogw.md `## loop evaluate`).
  * A moment without the file at HEAD gets no file, so its instance start fails on the save fixture.
  */
 export async function fixturesAtHead(ctx: Context, plan: EvaluatePlan): Promise<string> {
@@ -309,7 +309,7 @@ function playSlot(spec: Spec, platform: string, moment: Moment | null, measure: 
 }
 
 /**
- * Groups in start order (`game-loop` `## iteration` 3): each step 4 judge (`loop.judgeVotes` with a baseline game,
+ * Groups in start order (ogw.md `## loop evaluate`): each step 4 judge (`loop.judgeVotes` with a baseline game,
  * else one; the first on a random side, each next on the other side), the `playInstances` plays, a play per judge
  * moment, and in a completeness iteration of a loop run the success judges (a random side each, with the agent of the
  * first step 4 judge).
@@ -355,7 +355,7 @@ function startFailureReason(error: unknown): StartFailure['reason'] | null {
   return error instanceof OgwError ? ((error.data as Partial<StartFailure> | undefined)?.reason ?? null) : null;
 }
 
-/** Starts an instance; null when a save fixture step failed (`game-loop` "An instance that could not be started with its save fixture is not put in"). */
+/** Starts an instance; null when a save fixture step failed (ogw.md `## loop evaluate` "An instance that could not be started with its save fixture is not put in"). */
 async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
   checkStopped(state);
   const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: spec.headless === true ? 'headless' : 'window' };
@@ -633,7 +633,7 @@ function judgeEntry(state: State, slot: JudgeSlot, output: string | null, verdic
   };
 }
 
-/** The step 4 judges together (`game-loop` `## iteration` 4): the votes, `vs baseline` and `vs reference`. */
+/** The step 4 judges together (ogw.md `## loop evaluate`): the votes, `vs baseline` and `vs reference`. */
 export function together(plan: Pick<EvaluatePlan, 'baseline' | 'kind' | 'settings'>, main: readonly JudgeEntry[]): Pick<EvaluateFile, 'votes' | 'vsBaseline' | 'vsReference'> {
   const votes = plan.baseline === null ? null : countVotes(main, elementsOf(plan.kind), plan.settings.loop.judgeVotes);
   const vsBaseline: VsBaseline | null = votes === null ? null : combinedVsBaseline(votes, main.some((j) => j.lostMoments.length > 0));
@@ -647,7 +647,7 @@ function mainEntries(state: State): JudgeEntry[] | null {
 }
 
 /**
- * Opens or closes the success judges once every step 4 judge ended (`game-loop` `## stop`); closes them after a success
+ * Opens or closes the success judges once every step 4 judge ended (ogw.md `## loop evaluate`); closes them after a success
  * judge that did not pass.
  */
 function updateSuccessGate(state: State, slot: JudgeSlot, entry: JudgeEntry): void {
@@ -809,7 +809,7 @@ async function completeRuns(state: State, commit: string, scenario: Scenario, in
 }
 
 /**
- * The shared telemetry of one pair (`game-loop` `## iteration` 4): the bot runs of the scenario on this commit and the
+ * The shared telemetry of one pair (ogw.md `## loop evaluate`): the bot runs of the scenario on this commit and the
  * baseline commit, compared with `A` and `B` of each step 4 judge of the pair in the site's telemetry file. A success
  * judge gets the file of the first step 4 judge of its side. Without both runs the judges of the pair get `telemetry`
  * null.

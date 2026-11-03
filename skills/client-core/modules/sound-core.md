@@ -159,7 +159,7 @@ none
 | bus that is not an element of `SoundBus` | volume and mute not changed. Queries return the failure value in the table | error |
 | bus of `play` is `Master` or `Bgm` | invalid handle | error |
 | missing or released resource scope | `play`: invalid handle, `play_bgm`: current BGM kept, `play_haptic`: `false` | error |
-| `play` of a sound that is not loaded | returns a handle and plays after loading | warn in a build that contains DEV code |
+| `play` of a sound that is not loaded | returns a handle and plays after loading | warn in the environments that include DEV code |
 | `release_pause` with an invalid pause token or a token already released | pause state not changed | error |
 | haptic resource that is not a fallback is not in haptic pattern format | `false` | error. Once per resource key until `release` |
 

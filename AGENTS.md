@@ -53,7 +53,7 @@ A harness for making server and client games of commercial quality, in which AI 
 - presentation game: another game whose screens the judgement of `presentation` compares with. A human picks it in `setup game`, and when the human picks none, it is the reference game
 - loop: the repetition in which the content agent edits, the play agent plays, the judge agent writes the judge result, and the harness tool decides success
 - hardening: the work in which, at build time, the server and client hardening agents fix content code based on the contract. Its target is every problem caused by the content agent also writing the server. e.g. missing server input validation, authoritative logic in the client, handling that differs from the contract
-- DEV code: all code used only for development. e.g. cheat, debug screen, automation channel. It is kept only in `client/dev/` and `server/dev/`
+- DEV code: all code used only for development. e.g. cheat, debug screen, automation channel. It is kept only in `client/dev/`, `client/core/*/dev/`, `server/dev/` and `server/core/*/dev/`
 - automation channel: the DEV code channel through which bots and tools read the state of a running game and put in input
 - automated check: every check that a tool runs without judgement by a human or an LLM. e.g. regression test, completeness check, build-time check
 - bot playtest: the automated check in which a bot runs a scenario written by the content agent through the automation channel up to its goal
@@ -66,7 +66,7 @@ A harness for making server and client games of commercial quality, in which AI 
 - game settings: `games/<game>/settings.json`. Values per game. They can override core settings values, and a value not overridden uses the core settings default
 - external service: a service that we do not start and that an outside company operates. e.g. store payment, ads, push notification, social login, analytics, CDN
 - secret: every value whose exposure lets someone gain access. e.g. API key, certificate, signing key, DB password
-- adapter: the implementation that connects an external service and core. One interface has a fake adapter, a sandbox adapter and a real adapter
+- adapter: the implementation that connects core to an external service, to an OS feature, or to the DB, files, secrets, outgoing HTTP or the system clock of the host. The interface of an external service has a fake adapter, a sandbox adapter and a real adapter, and the interface of an OS feature has a fake adapter and a real adapter
 
 ## repo
 
@@ -254,7 +254,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - Before writing, `ogw settings set` checks the schema, the conditions, the owner permission of the calling role and, for a role other than the lead agent, that no changed path is equal to or below a path of game settings `humanDecided` (the values a human decided), and does not write when a check does not pass. `ogw settings set` takes several `<path> <JSON value>` pairs and checks once the result of writing all of them. Values that keep the conditions only when changed together are written at once
 - Settings are filled one value at a time, so a missing required value does not block a write of `ogw settings set`. `ogw settings list --missing` and `ogw game check` catch missing required values
 - Harness settings values that differ per host are kept in `hosts` as one item per host id. `ogw settings` reads and writes a path without `hosts.<host id>.` (e.g. `maxConcurrentInstances`) as the path in the item of this host. Such a harness settings value that documents refer to, and that the harness tool reads and writes, is the value in the item of this host
-- The schema `x-owner` of a path follows the value of the deepest node, among the schema nodes that reach that path, that declares `x-owner`
+- The schema `x-owner` of a path follows the value of the deepest node, among the schema nodes that reach that path, that declares `x-owner`. The lead agent can change every path whose `x-owner` is not `tool`, the content agent the game settings paths whose `x-owner` is `content`, and the core agent core settings. A path whose `x-owner` is `tool` is written only by the harness tool
 - The merge of local harness settings over `settings.json` merges object values key by key and replaces arrays and other values whole. The schema and condition checks of `ogw settings set` run on the merged value. Without `settings.local.json`, `settings.json` alone is harness settings
 - A harness settings path is local-scope when a schema node that reaches it declares `x-scope` `local` (e.g. `humanLanguage`, `agents`, `hosts`, `loopStop`, `loop`). `ogw settings set` writes a local-scope path, and a path that local harness settings already hold, to `settings.local.json`, and every other path to `settings.json`. A removed value is removed from both files. The committed values of local-scope paths in `settings.json` are generic defaults for every user
 - The default of a value that exists only in game settings is in the JSON schema of game settings

@@ -12,7 +12,7 @@ import { judgeDefects, observations, referenceRows } from './results.ts';
 import { abs, confirmOf, iterationResults, readGameText, runRel } from './run.ts';
 import { MEMORABLE_MOMENT } from './setup.ts';
 
-/** Finding collection of `game-loop` `## defect list`. */
+/** Finding collection of ogw.md `## loop findings`. */
 
 function finding(fields: Partial<Finding> & Pick<Finding, 'source' | 'where' | 'what' | 'evidence'>): Finding {
   return { severity: null, owner: null, why: null, id: null, drop: null, ...fields };
@@ -39,7 +39,7 @@ function kebab(text: string): string {
 
 /**
  * The fields of a UI quality failure that need no judgement: one defect per problem kind in one prefab or scene, the
- * same `id` in every iteration and every resolution, language and text scale (`game-loop` `## defect list`). Empty for
+ * same `id` in every iteration and every resolution, language and text scale (ogw.md `## loop findings`). Empty for
  * a failure that names no kind or no prefab or scene.
  */
 export function uiQualityFields(message: string): Partial<Finding> {
@@ -94,7 +94,7 @@ export function playFindings(text: string, feedbackPath: string): Finding[] {
 
 /**
  * Findings of a judge result for this commit's side: its `## defects` rows, and its failed `## vs reference` rows
- * (`game-loop` `## defect list`). `judgePath` is the judge result path the reference findings point at.
+ * (ogw.md `## loop findings`). `judgePath` is the judge result path the reference findings point at.
  */
 export function judgeFindings(text: string, side: 'A' | 'B', judgePath: string): Finding[] {
   const defects = judgeDefects(text)
@@ -120,7 +120,7 @@ export function judgeFindings(text: string, side: 'A' | 'B', judgePath: string):
   return [...defects, ...reference];
 }
 
-/** The finding of a `memorable_moment` the step 4 judge did not get (`game-loop` `## defect list`); none when it got it. */
+/** The finding of a `memorable_moment` the step 4 judge did not get (ogw.md `## loop findings`); none when it got it. */
 export function memorableMomentFindings(evaluate: EvaluateFile, evaluatePath: string): Finding[] {
   if (evaluate.memorableMoment === undefined) return [];
   return [finding({

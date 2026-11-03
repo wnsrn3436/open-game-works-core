@@ -13,7 +13,7 @@ import { verdict } from './lib/verdict.ts';
 const USAGE = 'ogw loop verdict <game>';
 
 /**
- * Worker jobs the iteration's commit has not seen (`## stop`): running, done and not merged, or merged after the
+ * Worker jobs the iteration's commit has not seen (ogw.md `## loop verdict`): running, done and not merged, or merged after the
  * commit. A job given again or given up, and a stuck job, is not one.
  */
 async function unhandledJobs(game: GameRepo, run: RunState, jobs: readonly string[], commit: string | null): Promise<string[]> {

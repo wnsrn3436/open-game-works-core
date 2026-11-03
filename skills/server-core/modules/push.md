@@ -31,7 +31,7 @@ Takes device token registration, picks the targets of the remote pushes that han
 | `queue_push` | ctx, target user ID, message ID value, `args`, `send_at`, `dedupe_key` | push ID | 0 | content handler, hook, core module |
 | `cancel_push` | ctx, target user ID, `dedupe_key` | none | none | content handler, core module |
 | `refresh_push_consent` | ctx | none | none | `auth`(`UpdatePushConsent`) |
-| `remove_user` | ctx | none | none | `auth`(`Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age, job `auth_guest_sweep`) |
+| `remove_user` | ctx | none | none | `auth` |
 
 admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
 

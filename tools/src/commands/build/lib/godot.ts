@@ -147,7 +147,7 @@ async function androidOptions(p: PresetContext): Promise<Record<string, unknown>
 }
 
 /**
- * The entitlements plist of a macOS export without free signing (`build` engines/godot.md `### export preset`):
+ * The entitlements plist of a macOS export without free signing (ogw.md `#### export preset`):
  * `com.apple.application-identifier` and `com.apple.developer.team-identifier`, which give the process its keychain
  * access group, and `com.apple.developer.applesignin` when `adapters.login-apple` is `login-apple`.
  */
@@ -560,7 +560,7 @@ export async function godotCheckExport(ctx: Context, input: PlatformBuildInput, 
   return exportPath;
 }
 
-/** Exports one platform from a clean checkout of the build branch (`build` engines/godot.md `## export`). */
+/** Exports one platform from a clean checkout of the build branch (ogw.md `### export`). */
 export async function godotBuild(ctx: Context, input: PlatformBuildInput, platform: string): Promise<PlatformBuild> {
   const outDir = join(input.outDir, platform);
   await rm(outDir, { recursive: true, force: true });

@@ -4,7 +4,7 @@ import { at, type Finding, type StaticContext } from './lib/context.ts';
 
 /**
  * data check: the ERROR lines of the data tool are failures; WARN lines are warnings with `where` `<file>:<line>:<column>`
- * and `message` `data check <code> <message>` (`game-loop` `## loop iteration record`). The data tool runs as a binary
+ * and `message` `data check <code> <message>` (ogw.md `## check`). The data tool runs as a binary
  * build without `ogw generate`, which does not change committed files.
  */
 export const NAME = 'data check';

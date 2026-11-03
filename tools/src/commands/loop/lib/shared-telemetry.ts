@@ -10,7 +10,7 @@ import { compareRepeatedTelemetry, failureIsNone, formatComparison, freeScenes }
 import type { Telemetry } from '../../telemetry/lib/metrics.ts';
 
 /**
- * The shared telemetry of `game-loop` `## iteration` 4: the bot run of the scenario on a headless instance of this
+ * The shared telemetry of ogw.md `## loop evaluate`: the bot run of the scenario on a headless instance of this
  * commit and one of the baseline game commit, the same inputs on both.
  */
 

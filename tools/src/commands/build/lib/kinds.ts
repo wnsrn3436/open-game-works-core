@@ -1,5 +1,5 @@
 /**
- * Changed kinds of the save schema check (`build` `### save schema check`): game contract UserState, server state and
+ * Changed kinds of the save schema check (ogw.md `## save schema check`): game contract UserState, server state and
  * game state kinds whose definition, or the definition of a game contract message or enum they reach, differs
  * (comments left out) from the last PROD build.
  */

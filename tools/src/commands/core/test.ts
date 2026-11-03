@@ -74,7 +74,7 @@ async function preflight(ctx: Context, implDir: string, target: Target, work: st
   const spec = await writeCoreSpec(ctx);
   failIf('ogw core spec', spec.errors);
   // the core project's project.godot, module list file, core settings file and core settings type file are generated
-  // files of every engine (`client-core` Godot `## folder`): the settings files made as `ogw generate` makes a game's,
+  // files of every engine (ogw.md `### Godot core test`): the settings files made as `ogw generate` makes a game's,
   // from `settings/core-settings.json` and the core test data's game settings with the schema defaults
   for (const engine of await enginesOf(implDir)) {
     if (engine !== 'godot') continue;
@@ -365,7 +365,7 @@ export const testCommand: CommandDef = {
       // The record is of the commit the preflight checked and the tests start on, read while no merge can move HEAD.
       let start: TestStart;
       try {
-        // on the main checkout the generated files the preflight writes are committed (`core` command.md `## core spec file`),
+        // on the main checkout the generated files the preflight writes are committed (ogw.md `## core spec and core test`),
         // and merges wait for the module tests (ogw.md `## agent merge`)
         start = await testAtHead(implDir, (await ctx.workspace()).coreImpl, ctx.env, () => preflightAndImport(ctx, implDir, target, work, given.length === 0));
       } catch (error) {

@@ -2,7 +2,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { ENVIRONMENTS, type EnvName } from '../../settings/lib/game-check.ts';
 import { isPlainObject, type JsonObject } from '../../settings/lib/json-path.ts';
 
-/** Roles of operator `ogw` per environment (`game-setup` 7). */
+/** Roles of operator `ogw` per environment (ogw.md `## game derive`). */
 export const OGW_ROLES: Record<EnvName, string[]> = {
   DEV: ['read', 'ops', 'release'],
   STG: ['read', 'ops', 'release'],
@@ -20,7 +20,7 @@ function objectAt(parent: JsonObject, key: string, path: string): JsonObject {
   return value;
 }
 
-/** Secret name of operator `ogw` in an environment (`game-setup` 7). */
+/** Secret name of operator `ogw` in an environment (ogw.md `## game derive`). */
 export function ogwSecretName(name: EnvName): string {
   return `admin-ogw-${name.toLowerCase()}`;
 }
@@ -53,7 +53,7 @@ function deriveCors(env: JsonObject, web: boolean): void {
 }
 
 /**
- * Game settings with the values `ogw game derive` decides (`game-setup` 7) set again from the
+ * Game settings with the values `ogw game derive` decides (ogw.md `## game derive`) set again from the
  * other values: operator `ogw`, `adapters.cdn`, and `corsAllowedOrigins` of every environment.
  */
 export function deriveSettings(settings: JsonObject): JsonObject {

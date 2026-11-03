@@ -1,6 +1,6 @@
 /**
  * The main checkout of `open-game-works-core-impl/`: core agent merges and generated file commits change it one at a time
- * (ogw.md `## agent merge`, `core` command.md `## core spec file`).
+ * (ogw.md `## agent merge`, `## core spec and core test`).
  */
 import { resolve } from 'node:path';
 import { checkoutLock, currentBranch, git, isCheckout, statusLines } from '../../../lib/git.ts';
@@ -22,7 +22,7 @@ export async function withCoreMain<T>(coreImpl: string, env: NodeJS.ProcessEnv, 
   return options.readers === true ? withWriter(lock, fn) : withWriterLock(lock, fn);
 }
 
-/** The settings type table of `testing`, a generated file (`core` command.md `## core spec file`). */
+/** The settings type table of `testing`, a generated file (ogw.md `## core spec and core test`). */
 export const SETTING_TYPES_FILE = 'server/core/testing/dev/setting_types.ts';
 
 /**

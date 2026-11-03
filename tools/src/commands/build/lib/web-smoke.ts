@@ -70,7 +70,7 @@ async function smoke(
   return { results: judge(outcome, scenario.steps.length, await logs()), loadingMs: boot.at - page.openedAt };
 }
 
-/** Check `web smoke` (`build` `## build-time check`, engines/godot.md `## web smoke`). Null when the build has no web platform. */
+/** Check `web smoke` (`build` `## build-time check`, ogw.md `### web smoke`). Null when the build has no web platform. */
 export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult | null> {
   if (!input.platforms.includes('web')) return null;
   const { ctx } = input;

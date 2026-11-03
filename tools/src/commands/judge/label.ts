@@ -82,7 +82,7 @@ async function askAnswers(criteria: readonly Criterion[]): Promise<Record<string
 }
 
 /**
- * `ogw judge label <game>` (`game-loop` `## judge calibration`): the human plays the two commits of a judged pair as
+ * `ogw judge label <game>` (ogw.md `## judge label`): the human plays the two commits of a judged pair as
  * `A` and `B` and answers per element; the answers go into `records/calibration/labels.json` on main.
  */
 export const judgeLabel: CommandDef = {

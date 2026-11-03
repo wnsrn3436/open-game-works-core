@@ -51,8 +51,8 @@ export function withErrorWarnings(text: string): string {
 
 /**
  * The project the Godot type check runs in, made in `folder`: the target's `client/godot/` files without `addons/` and
- * `.godot/`, GUT and the host OS plugins of `engine.json` in `addons/` as `ogw core test` puts them (`client-core`
- * Godot `## folder`), and `project.godot` with the type rule warnings as errors (`## GDScript`). The checkout is not changed.
+ * `.godot/`, GUT and the host OS plugins of `engine.json` in `addons/` as `ogw core test` puts them (ogw.md
+ * `### Godot core test`), and `project.godot` with the type rule warnings as errors (`## GDScript`). The checkout is not changed.
  */
 async function checkProject(ctx: Context, target: CheckTarget, engine: EngineJson, folder: string): Promise<GodotProject> {
   const prefix = `${GODOT_FOLDER}/`;
@@ -68,7 +68,7 @@ async function checkProject(ctx: Context, target: CheckTarget, engine: EngineJso
   return coreProject(folder);
 }
 
-/** Godot type check (`client-core` Godot `## GDScript`) in a project made in `folder`. */
+/** Godot type check (ogw.md `## code check`) in a project made in `folder`. */
 async function godotTypeCheck(ctx: Context, target: CheckTarget, folder: string): Promise<string[]> {
   const files = gdFiles(target, 'godot');
   if (files.length === 0) return [];

@@ -1,5 +1,5 @@
 /**
- * Save schema check (`build` `### save schema check`, ogw.md `## save schema check`): PROD samples through the admin
+ * Save schema check (ogw.md `## save schema check`): PROD samples through the admin
  * API, one at a time through `migration` `migrate_snapshot` on a test server of the build checkout on a throwaway
  * PostgreSQL.
  */

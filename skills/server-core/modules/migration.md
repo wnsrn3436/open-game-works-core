@@ -93,7 +93,7 @@ A batch converts, without requests, all users who have items with a low contract
 
 ### migration test
 
-The migration test applies `migrate_snapshot` to samples of PROD users and game state and checks that there is no `FAILED` record. The save schema check of `build` runs it. The procedure is `### save schema check` of [`build`](../../build/SKILL.md).
+The migration test applies `migrate_snapshot` to samples of PROD users and game state and checks that there is no `FAILED` record. The save schema check of `build` runs it. The procedure is `## save schema check` of [`ogw`](../../../tools/ogw.md).
 
 - For each converter, a server regression test converts at least one item of the from version and compares the result
 

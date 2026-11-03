@@ -28,7 +28,7 @@ export interface Signing {
   cleanup(): Promise<void>;
 }
 
-/** The macOS signing after the export (`build` engines/godot.md `## signing`). */
+/** The macOS signing after the export (ogw.md `### signing`). */
 export interface MacosSigning {
   /** SHA-1 hash of the Developer ID Application identity in the keychain. */
   identity: string;
@@ -110,7 +110,7 @@ function searchList(out: string): string[] {
     .filter((l) => l.length > 0);
 }
 
-/** The keychain search list lock of `## signing`, shared by the ogw processes of the OS user. */
+/** The keychain search list lock of ogw.md `### signing`, shared by the ogw processes of the OS user. */
 function searchListLock(env: NodeJS.ProcessEnv): string {
   return join(ogwKeychainFolder(env), 'search-list.lock');
 }
@@ -150,7 +150,7 @@ async function importCertificate(ctx: Context, keychain: string, p12: string, ce
 
 /**
  * The SHA-1 hash of the one valid code signing identity of the keychain, which must be a `Developer ID Application`
- * certificate (`build` engines/godot.md `## signing`).
+ * certificate (ogw.md `### signing`).
  */
 export async function developerIdIdentity(ctx: Context, keychain: string): Promise<string> {
   const out = await sec(ctx, ['find-identity', '-v', '-p', 'codesigning', keychain]);
@@ -233,7 +233,7 @@ const run = (ctx: Context, cmd: string, args: string[]): Promise<string> =>
   runOk(cmd, args, { env: ctx.env, timeoutMs: LIMITS.programMs }).then((r) => r.stdout);
 
 /**
- * The macOS signing after the export (`build` engines/godot.md `## signing`): the `.app` of `zip` gets the provisioning
+ * The macOS signing after the export (ogw.md `### signing`): the `.app` of `zip` gets the provisioning
  * profile as `Contents/embedded.provisionprofile` and is signed again with `entitlements`, the identity of `keychain`
  * and the hardened runtime; STG and PROD then notarize it and staple the ticket; then `zip` is written again.
  */
@@ -272,7 +272,7 @@ export async function signMacosApp(ctx: Context, zip: string, entitlements: stri
 
 const NONE: Signing = { env: {}, options: {}, credentials: {}, cleanup: () => Promise.resolve() };
 
-/** The debug keystore of this host and its key (`build` `## platform build`); not a secret. */
+/** The debug keystore of this host and its key (ogw.md `### signing`); not a secret. */
 export const DEBUG_KEYSTORE = { alias: 'androiddebugkey', password: 'android' };
 
 export function debugKeystorePath(env: NodeJS.ProcessEnv): string {
@@ -317,7 +317,7 @@ export async function ensureDebugKeystore(ctx: Context, buildTools: readonly Bui
   return path;
 }
 
-/** Free signing of a DEV export (`build` engines/godot.md `## signing`): android debug keystore, macos ad-hoc, windows none. */
+/** Free signing of a DEV export (ogw.md `### signing`): android debug keystore, macos ad-hoc, windows none. */
 async function freeSigningOf(ctx: Context, platform: string, buildTools: () => Promise<readonly BuildTool[]>): Promise<Signing> {
   if (platform === 'macos') return { ...NONE, options: { 'codesign/codesign': 1 } };
   if (platform !== 'android') return NONE;
@@ -329,7 +329,7 @@ async function freeSigningOf(ctx: Context, platform: string, buildTools: () => P
 }
 
 /**
- * Signing preparation of `build` engines/godot.md `## signing` for one platform export. `buildTools` gives the
+ * Signing preparation of ogw.md `### signing` for one platform export. `buildTools` gives the
  * `engine.json` `buildTools` when free signing makes the debug keystore.
  */
 export async function prepareSigning(
@@ -383,7 +383,7 @@ async function toolProgramOf(ctx: Context, tool: BuildTool): Promise<string> {
 
 /**
  * `jsign` and the Java runtime that runs it, from the `engine.json` `buildTools` items of platform `windows` for this
- * host (`build` engines/godot.md `## signing`): the item `jsign` and the other item. A jsign `.jar` runs with
+ * host (ogw.md `### signing`): the item `jsign` and the other item. A jsign `.jar` runs with
  * `java -jar`; an installed Java runtime goes first on PATH and is `JAVA_HOME`.
  */
 export async function windowsSigner(ctx: Context, buildTools: readonly BuildTool[]): Promise<Signer> {

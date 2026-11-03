@@ -64,7 +64,7 @@ admin operation. Collection and handling follow `admin-api`.
 - `count`: used only by `unique`. At least 1 and at most `coupon.maxBatchCount`. 0 for `shared`
 - `max_uses`: total use count limit of `shared`. 0 means no limit. 0 for `unique`
 - `start_at`, `end_at`: active window. 0 ≤ `start_at` < `end_at`
-- `items`: list of `ItemAmount`. When `extra_id` is 0, at least 1 and at most `coupon.maxRewardItems` items; when it is not 0, 0 or more and at most the smaller of `coupon.maxRewardItems` and `mailbox.maxAttachments`. Must pass the input check of `item-ledger`
+- `items`: list of `ItemAmount`. When `extra_id` is 0, at least 1 and at most `coupon.maxRewardItems` items; when it is not 0, 0 or more and at most the smaller of `coupon.maxRewardItems` and `mailbox.maxAttachments`. Must pass `item-ledger.check_add_items`
 - `extra_id`: integer 0 or more. When it is not 0, the reward is sent as a mail that holds `extra_id`, and when that mail is received, the `mailbox` hook `grant_mail_extra` grants the reward that is not an item
 - `memo`: description the operator leaves. Not sent to the client
 - field types: `kind` is `enum{shared, unique}`, `code`, `after_code` and `memo` are `string`, `count`, `max_uses` and `extra_id` are `int32`, `coupon_id` is `int64`

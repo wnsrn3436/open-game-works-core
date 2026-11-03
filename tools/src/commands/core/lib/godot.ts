@@ -30,7 +30,7 @@ export interface ModuleOutcome {
   failures: string[];
   /**
    * Whether the module's test runner (vitest, GUT) was started: false only when the run stopped before it, as an
-   * `npm ci` that failed or a tool without vitest (`core` command.md `fix test proof`). Absent: true.
+   * `npm ci` that failed or a tool without vitest (ogw.md `## review run` `fix test proof`). Absent: true.
    */
   ran?: boolean;
   /** Why part of the module's tests were left out, which makes a module with no failure `skipped`. */
@@ -105,7 +105,7 @@ export interface GodotSetup {
 
 /**
  * Puts GUT and the `engine.json` plugins whose `platforms` hold this host OS into the Godot project `project`
- * (`client-core` Godot `## folder` `addons/`). A `ogw-` plugin comes from its committed `plugins/<plugin>/dist/<platform>/`.
+ * (ogw.md `## generate`, `### Godot core test`). A `ogw-` plugin comes from its committed `plugins/<plugin>/dist/<platform>/`.
  */
 export async function installHostAddons(ctx: Context, engineJson: EngineJson, project: string): Promise<void> {
   await installPackage(ctx, gutPackage(engineJson), project);
@@ -549,7 +549,7 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
     });
     const cutOff = json === null && (host.appCutOff().length > 0 || notStarted());
     // the post-run hook's `release` prints after the result; the run sends `PUT /released` and prints its last line when
-    // it has ended (`client-core` Godot `## test`). Without that signal the run reads on at most CONSOLE_DRAIN_MS.
+    // it has ended (ogw.md `### Godot core test`). Without that signal the run reads on at most CONSOLE_DRAIN_MS.
     if (json !== null) await releasedOrDrained(host, () => stderr, runId, CONSOLE_DRAIN_MS);
     if (json !== null) await writeJsonAtomic(join(options.resultsDir, `${runId}.json`), json);
     const outcome = judgeRun(json, consoleMessages(stderr), null, 'browser run');

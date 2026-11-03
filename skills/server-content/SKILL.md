@@ -91,7 +91,6 @@ DEV code that puts other users on the social screens and ranking screens of an i
 
 - paid random: a request whose purpose is to decide by random the items received as the result, and that directly uses in that request an item whose `type` in the `item` table is `Currency` or an item bought with such an item (e.g. box, enhancement material). e.g. opening a box, enhancement, synthesis, gacha. The round results and rewards of `play-session` are not paid random
 - Paid random from a banner of data `gacha_banner` uses the `gacha` request `DrawGacha`. Other paid random (e.g. opening a box, enhancement, synthesis) rolls a public loot table with the `loot-table` operation `roll`. ctx random is not used directly
-- Each public loot table has a row in data `public_loot_table`
 
 ## collected data
 

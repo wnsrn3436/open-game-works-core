@@ -6,7 +6,7 @@ import { gitRaw, showFile } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { parseIterationRecord } from '../../loop/lib/iteration-record.ts';
 
-/** The calibration folder of a game repo (`game-loop` `## judge calibration`). */
+/** The calibration folder of a game repo (ogw.md `## judge calibrate`). */
 export const CALIBRATION_DIR = 'records/calibration';
 export const LABELS_FILE = `${CALIBRATION_DIR}/labels.json`;
 

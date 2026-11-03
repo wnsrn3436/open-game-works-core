@@ -12,7 +12,7 @@ import type { Env } from './names.ts';
 import type { StoreAnswer } from './privacy.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
-/** iOS preset `icons/` items ogw fills from resource `app_icon/main` and their pixel size (`build` engines/godot.md). */
+/** iOS preset `icons/` items ogw fills from resource `app_icon/main` and their pixel size (ogw.md `#### export preset`). */
 export const IOS_ICONS: readonly (readonly [string, number])[] = [
   ['icons/icon_1024x1024', 1024],
   ['icons/app_store_1024x1024', 1024],
@@ -158,7 +158,7 @@ export interface IosPresetInput {
   icon(size: number): Promise<string>;
 }
 
-/** The ios export preset options (`build` engines/godot.md `### export preset`). */
+/** The ios export preset options (ogw.md `#### export preset`). */
 export async function iosOptions(input: IosPresetInput): Promise<Record<string, unknown>> {
   const team = input.settings.appleTeamId;
   if (typeof team !== 'string' || team === '') throw new OgwError('game settings appleTeamId is missing');

@@ -1,4 +1,4 @@
-// GUT and the plugins of `engine.json` whose name does not start with `ogw-` (`client-core` Godot `## engine version`).
+// GUT and the plugins of `engine.json` whose name does not start with `ogw-` (ogw.md `## engine packages`).
 import { cp, mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';

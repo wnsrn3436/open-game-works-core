@@ -215,7 +215,7 @@ export async function simulateRows(ctx: Context, id: string, root: string, optio
   return { rows, tables: simulated, missing };
 }
 
-/** `row simulation` failures (`game-loop` `## loop iteration record`). */
+/** `row simulation` failures (ogw.md `## check`). */
 export function rowSimulationFailures(simulation: RowSimulation): CheckFailure[] {
   const failures = simulation.rows
     .filter((row) => row.verdict !== 'in')

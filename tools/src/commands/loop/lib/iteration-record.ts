@@ -9,7 +9,7 @@ import { cell, column, document, parseTable, renderTable, section } from './mark
 import { abs, runRel } from './run.ts';
 import { combinedVsReference } from './votes.ts';
 
-/** Loop iteration record `records/loops/<run>/iteration-<n>.md` (`game-loop` `## loop iteration record`). */
+/** Loop iteration record `records/loops/<run>/iteration-<n>.md` (ogw.md `## loop record`). */
 
 export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'A' | 'B' | 'vsReference' | 'omittedMoments' | 'status'> {
   /** null when the evaluate file has no agent of the judge. */
@@ -41,7 +41,7 @@ export interface IterationRecordData {
   measurements: MeasureTarget[] | null;
   /** null when the `performance` check did not fail. */
   load: { platform: string | null; hostLoad: unknown }[] | null;
-  /** Keys that became `temporary` since the previous iteration (`game-loop` `## loop iteration record`). */
+  /** Keys that became `temporary` since the previous iteration (ogw.md `## loop record`). */
   temporary: string[];
 }
 

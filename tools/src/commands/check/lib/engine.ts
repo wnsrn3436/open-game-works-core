@@ -38,7 +38,7 @@ export async function withClientImport<T>(ctx: Context, root: string, fn: () => 
 /**
  * `godot --headless --path client --import` of the checkout under {@link withClientImport}. Returns null when it
  * succeeded, else the failure message. A failed import removes `client/.godot/` before the lock is released
- * (client-content engines/godot `## dev run`), so no instance of the checkout starts on a broken import.
+ * (ogw.md `## runner`), so no instance of the checkout starts on a broken import.
  */
 export async function importClient(ctx: Context, godot: string, root: string): Promise<string | null> {
   return withClientImport(ctx, root, () => runImport(ctx, godot, root));

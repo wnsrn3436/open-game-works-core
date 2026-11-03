@@ -173,7 +173,7 @@
       "minimum": 1
     },
     "loopStop": {
-      "description": "Values of the loop stop judgement. `## stop` of the `game-loop` skill defines their meaning",
+      "description": "Values of the loop stop judgement. `## loop verdict` of `tools/ogw.md` defines their meaning",
       "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
@@ -207,7 +207,7 @@
       }
     },
     "loop": {
-      "description": "Values of the loop iteration kinds and the step 4 judges. `## iteration` of the `game-loop` skill defines their meaning",
+      "description": "Values of the loop iteration kinds and the step 4 judges. `## loop next` and `## loop evaluate` of `tools/ogw.md` define their meaning",
       "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
@@ -261,7 +261,7 @@
       }
     },
     "calibration": {
-      "description": "Values of judge calibration. `## judge calibration` of the `game-loop` skill defines their meaning",
+      "description": "Values of judge calibration. `## judge calibrate` of `tools/ogw.md` defines their meaning",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -308,7 +308,7 @@
       }
     },
     "rigCheck": {
-      "description": "Pass criterion values of `ogw resource rig-check`. `production.md` of the `resource` skill defines how they are measured",
+      "description": "Pass criterion values of `ogw resource rig-check`. `### rig-check` of `## rig tools` of `tools/ogw.md` defines how they are measured",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -561,7 +561,7 @@
           "type": "string"
         },
         "license": {
-          "description": "The license of resources made with this method. An SPDX license expression, and `unknown` when commercial use is not confirmed. Required for kinds other than `catalog`",
+          "description": "The license of resources made with this method. An SPDX license expression, and `unknown` when commercial use is not confirmed. Required for kinds other than `catalog`. `LicenseRef-OpenAI-Output`: output of OpenAI models, the license of a method whose `provider` is `codex`. The OpenAI Terms of Use (https://openai.com/policies/terms-of-use/, personal ChatGPT account) and the OpenAI Services Agreement (https://openai.com/policies/services-agreement/, ChatGPT Business, ChatGPT Enterprise, API key) give the ownership of the output to the user, so commercial use is allowed. `LicenseRef-xAI-Output`: output of xAI models, the license of a method whose `provider` is `grok`. The xAI Terms of Service - Consumer (https://x.ai/legal/terms-of-service, Grok login) and the xAI Terms of Service - Enterprise (https://x.ai/legal/terms-of-service-enterprise, `XAI_API_KEY`) give the ownership of the output to the user, so commercial use is allowed. The same terms have a clause on attributing the output to the service, as the xAI Brand Guidelines (https://x.ai/legal/brand-guidelines) describe, so a method whose `provider` is `grok` has an `attribution`, in the wording those guidelines give for made images. `LicenseRef-game-owned`: what the game's own procedural generation made: a program, script or shader that an agent wrote, and its output. It is part of the content of the game and is under the license of that content. It is the license of the `procedural` methods. `LicenseRef-DINOv3`: the DINOv3 License of Meta, in `LICENSE.md` of the hf pin `facebook/dinov3-vitl16-pretrain-lvd1689m` of `trellis2`",
           "type": "string"
         },
         "attribution": {

@@ -97,7 +97,6 @@ Content code registers hooks in core: functions that take over game-specific dec
 
 - Core tells content code about things through events. When a result has to come back, a hook is used, not an event
 - A callback that the caller passed to an operation is not an event. When the callback's object is destroyed and it cannot be called, it is not called and one error log is left. `UtilCore`, which does not call `LogCore`, skips it without a log
-- An event subscriber unsubscribes at the `release` or destruction of the subscribed object
 
 ## error handling
 

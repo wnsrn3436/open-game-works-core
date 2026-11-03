@@ -163,7 +163,7 @@ export const sync: CommandDef = {
   options: { staged: { type: 'boolean' } },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, this.usage);
-    // the pre-commit hook's sync of the commit's staged files is the only sync (`client-core` Godot `## engine meta file`)
+    // the pre-commit hook's sync of the commit's staged files is the only sync (ogw.md `## meta sync`)
     if (!flag(args, 'staged')) throw new OgwError(`usage: ${this.usage}`);
     const target = positional(args, 0, 'game or core');
     const project = target === 'core' ? await coreProject(ctx) : await gameProject(ctx, target);

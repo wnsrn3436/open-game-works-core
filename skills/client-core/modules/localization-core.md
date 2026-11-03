@@ -204,7 +204,7 @@ used table: `input_prompt`
 |---|---|---|---|
 | `set_test_device_language` | device language tag. An empty string clears the override | none | core test |
 
-- In a build with DEV code, the missing key result is `‼ <translation key>`, a format error slot gets `‼ ` and the original argument text (e.g. `‼ {count:n}`), and the slot of an input prompt token whose `InputCore.get_prompt` is `false` gets `‼ ` and the original token text (e.g. `‼ {action:jump}`). In STG and PROD builds it is an empty string
+- In the environments that include DEV code, the missing key result is `‼ <translation key>`, a format error slot gets `‼ ` and the original argument text (e.g. `‼ {count:n}`), and the slot of an input prompt token whose `InputCore.get_prompt` is `false` gets `‼ ` and the original token text (e.g. `‼ {action:jump}`). In STG and PROD builds it is an empty string
 - The tag of `set_test_device_language` is used in place of the device language tag until `release`
 
 ## test
@@ -215,7 +215,7 @@ used table: `input_prompt`
 - `select_language` only saves and does not change the current language and text. After restart, the selected language is the current language
 - For each of hash mismatch, data version mismatch, size exceeded of the downloaded translation file, an error log and use of the build translation. A file that exceeds the size is not read
 - After a `load_translation` failure, the previous text still appears
-- A missing key gives an empty string (`‼ <key>` in a build with DEV code), and the error log is once per key per load
+- A missing key gives an empty string (`‼ <key>` in the environments that include DEV code), and the error log is once per key per load
 - An empty translation key gives an empty string with no log
 - Core test fixture `text-format` is the vector below. The `input` of a case is `{"kind": "<kind>", "value": "<value>", "text": "<text>", "language": "<code>"}` and `expected` is the result string or `null`
   - `kind` is `int`, `float`, `string` by whether table `value` is an integer, real, string. The test puts the value into name `v` with `set_int`, `set_float`, `set_string` of `FormatArgs`
@@ -262,6 +262,6 @@ used table: `input_prompt`
 - `get_text` with inline icon height 0 of text with an input prompt token gives the display name of the input prompt of `InputCore`, and calling it again after changing the input device with `InputCore.set_test_device` gives the display name for that device. When there is no `input_prompt` row, it is prompt input
 - After `load_prompt_icons`, `get_text` with an inline icon height greater than 0 replaces an input prompt that has an icon with an inline icon of that height, and an input prompt without an icon with its display name. Before `load_prompt_icons`, it is the display name
 - `format` of text that contains both an input prompt token and a format argument replaces both, and there is no error log
-- The input prompt token of an action whose `get_prompt` is `false` is an empty slot (`‼ {action:<action>}` in a build with DEV code), and the error log is once per action per load
+- The input prompt token of an action whose `get_prompt` is `false` is an empty slot (`‼ {action:<action>}` in the environments that include DEV code), and the error log is once per action per load
 - The text of a bound element is rewritten with the new input prompt after `InputPromptChangedEvent`. The inline icon height of a bound rich text element is that element's font size, and after `set_text_scale` it is rewritten with the new font size
 - When `icon` of `input_prompt` is loaded as a fallback resource, `load_prompt_icons` is `false` with an error log, and the input prompt of that icon is the display name. For every other `icon`, `ResourceCore.is_loaded` is `true`

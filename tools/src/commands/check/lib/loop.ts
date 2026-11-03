@@ -46,7 +46,7 @@ export interface LoopOutcome {
 
 /**
  * Runs a check; an error it throws makes it `unknown` (what was not checked is not a failure), at `where`: line 1 of
- * the file or folder the check reads (`game-loop` `## loop iteration record`: a file:line).
+ * the file or folder the check reads (ogw.md `## check`: a file:line).
  */
 async function guarded(name: string, where: string, work: () => Promise<CheckResult>): Promise<CheckResult> {
   try {
@@ -99,7 +99,7 @@ const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', '
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
- * the bot playtest (`game-loop` `## iteration` 2).
+ * the bot playtest (ogw.md `## check`).
  */
 export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSettings, options: LoopOptions, evidence: Evidence, set: CheckSet): Promise<CheckResult[]> {
   const instance: InstanceCheckOptions = { evidence, slots: await slotsOf(ctx), db: options.db, pollMs: options.pollMs };

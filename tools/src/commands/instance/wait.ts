@@ -15,7 +15,7 @@ export const waitDeps = {
 
 /**
  * `ogw instance wait`: a judge agent waits until an instance of its input runs. `ogw loop evaluate` starts some
- * instances of a judge after the judge, as the judge gives back others (`game-loop` `## iteration` 3). The command runs
+ * instances of a judge after the judge, as the judge gives back others (ogw.md `## loop evaluate`). The command runs
  * in the broker sandbox: it reads the play access file the instance writes once it runs, and the note
  * `ogw loop evaluate` leaves when it could not start the instance or the judge gave it back.
  */

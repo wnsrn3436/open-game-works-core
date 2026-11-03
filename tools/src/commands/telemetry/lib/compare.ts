@@ -96,7 +96,7 @@ function apart(a: readonly number[], b: readonly number[]): boolean {
 }
 
 /**
- * The comparison of several runs of `A` and of `B` (`game-loop` `## iteration` 4 shared telemetry): a metric value is
+ * The comparison of several runs of `A` and of `B` (ogw.md `## loop evaluate` shared telemetry): a metric value is
  * the mean of its runs, and `d` is 0 unless the runs of `A` and of `B` are apart, because otherwise the difference is
  * not larger than the difference between runs of one commit.
  */

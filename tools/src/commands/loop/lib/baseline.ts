@@ -4,7 +4,7 @@ import { confirmOf } from './run.ts';
 import { gatePassed, iterationRecords, type ParsedRecord } from './iteration-record.ts';
 
 /**
- * Baseline game commit from the loop iteration records before `iteration` (`game-loop` `## iteration` 7):
+ * Baseline game commit from the loop iteration records before `iteration` (ogw.md `## loop baseline`):
  * none for `create` and the work branch base for `update` at first; then an iteration whose step 4 judges together
  * say `better` sets it, and while there is none, an iteration that passed the gate checks sets it.
  */
