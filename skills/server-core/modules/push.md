@@ -14,7 +14,7 @@
 
 ## purpose
 
-Takes device token registration, picks the targets of the remote pushes that handlers and operators schedule, sends them through the OS push service adapter, and keeps send records. Sends an ad push only to devices with receive consent (ad push consent), and at night does not send it to devices without night receive consent but defers it.
+Takes device token registration, picks the targets of the remote pushes that handlers and operators schedule, sends them through the OS push service adapter, and keeps push records. Sends an ad push only to devices with receive consent (ad push consent), and at night does not send it to devices without night receive consent but defers it.
 
 ## dependency
 
@@ -63,7 +63,7 @@ core `rpc` request field
 ### device registration
 
 - A device registration row is a `push_device` row. Because it has to change another user's row of the same `device_token`, its scope is not `user`, and it is not in user snapshot clone. There is one per `device_token` and one per user
-- When the checks below pass, `RegisterPushToken` deletes that user's rows whose `device_token` differs from the requested value, and inserts or replaces the row with the requested `device_token` key. That row's `user_id` is the requesting user, and `session_id` and the other columns are the values of the current request. The session ID and the platform are `session_id` and `platform` of ctx
+- When these checks pass, `RegisterPushToken` deletes that user's rows whose `device_token` differs from the requested value, and inserts or replaces the row with the requested `device_token` key. That row's `user_id` is the requesting user, and `session_id` and the other columns are the values of the current request. The session ID and the platform are `session_id` and `platform` of ctx
   - `provider` is `fcm` when `X-Ogw-Platform` is `android`, and `apns` when it is `ios`. Another platform is `INVALID_REQUEST`
   - When `device_token` is empty, `INVALID_REQUEST`
   - When `language` is not in game settings `supportedLanguages`, `INVALID_REQUEST`
@@ -84,7 +84,7 @@ core `rpc` request field
   - when an argument of the `compact` formatter is a string, its value is a big integer of the contract
   - request time ≤ `send_at` ≤ request time + `push.maxScheduleAheadMs`
   - `dedupe_key` is `push.maxDedupeKeyBytes` or less
-- Among the `queue_push` calls in content code, when a call that picks the message ID value with a `ReservedId` accessor and passes `args` as an array literal violates the name set and value kind checks above, static check `format args` blocks it
+- Among the `queue_push` calls in content code, when a call that picks the message ID value with a `ReservedId` accessor and passes `args` as an array literal violates the name set and value kind checks of `queue_push`, static check `format args` blocks it
 - When the target user has `push.maxScheduledPerUser` `SCHEDULED` records, returns 0 and leaves a `warn` log
 - When `dedupe_key` is not empty, changes the `SCHEDULED` records of the same (target user, `dedupe_key`) to `CANCELED` and schedules anew
 - `cancel_push` changes the `SCHEDULED` records of the same (target user, `dedupe_key`) to `CANCELED` in the transaction of ctx. When `dedupe_key` is an empty string, does nothing
@@ -100,7 +100,7 @@ core `rpc` request field
 - When `send_at` of a `SCHEDULED` record that job `push_send` picked is < `clock_now` − `push.maxDelayMs`, does not change it to `SENDING` but changes it to `EXPIRED` in the same game transaction, and does not send it. A `SENDING` record continues sending from `cursor_user_id` regardless of `send_at`
 - target device: a device registration row of a user who matches `target`. `user_ids` selects those users; `filter` selects by the platform of `provider`, `language`, and `updated_at` ≥ `clock_now` − `active_within_ms`. Handles `push.sendBatchSize` devices at a time in ascending order of user ID and keeps `cursor_user_id`. Within a batch, a group of devices with the same provider and payload is sent concurrently
 - `device_count` is the count of handled target devices that passed `session.check_current`
-- ad push: for a push whose `push_message` row has `kind` `Ad`, also checks the below per device
+- ad push: for a push whose `push_message` row has `kind` `Ad`, also checks per device
   - when `ad_allowed` is `false`, does not send and increases `consent_skipped_count`
   - when the device's local time is within the night window and `night_allowed` is `false`, does not send, writes (push ID, user ID, the time that night window ends) to `push_held` and increases `held_count`
   - the device's local time is `clock_now` + `timezone_offset_ms` of the device registration row. When game settings `pushConsent.nightStartMinute` is less than `pushConsent.nightEndMinute`, the night window is the range where the minute within the local day is `pushConsent.nightStartMinute` or more and less than `pushConsent.nightEndMinute`. When `pushConsent.nightStartMinute` is more than `pushConsent.nightEndMinute`, it crosses midnight and is the range where the minute is `pushConsent.nightStartMinute` or more, or less than `pushConsent.nightEndMinute`
@@ -111,7 +111,7 @@ core `rpc` request field
   - `OK`: increases `sent_count`
   - `INVALID_TOKEN`: deletes that device registration row and increases `invalid_count`
   - `FAILED` and exceeding time limit `push.sendTimeoutMs`: waits `push.retryIntervalMs` with `server-time.sleep`, then sends again. After `push.retryMaxAttempts` failures including the first, increases `failed_count`
-- When the game transaction that writes a batch result or the game transaction that finishes a record is `FAILED` (lock wait over the limit, PostgreSQL deadlock or serialization failure), writes again after `push.retryIntervalMs`. Leaves one `error` log at the first failure of that write and one when sending stops. This goes up to `push.retryMaxAttempts` attempts including the first, and only while `clock_now` + `push.retryIntervalMs` < `lease_until`. When the write still fails, stops sending that record, the same as when the lease is lost
+- When the game transaction that writes a batch result or the game transaction that finishes a record is `FAILED` (exceeding the lock wait, PostgreSQL deadlock or serialization failure), writes again after `push.retryIntervalMs`. Leaves one `error` log at the first failure of that write and one when sending stops. This goes up to `push.retryMaxAttempts` attempts including the first, and only while `clock_now` + `push.retryIntervalMs` < `lease_until`. When the write still fails, stops sending that record, the same as when the lease is lost
 - When, at send time, `message_id` of the record is not in `push_message` of the server build data (a data update between `queue_push` and sending), does not send, finishes that record as `FAILED` in one game transaction and leaves one `error` log per record. The `push_held` rows of that record are deleted without sending. When the record has already finished (e.g. `SENT`), does not change the status, deletes only the `push_held` rows and leaves one `error` log
 - When all target devices are handled, `SENT`. When `device_count` is 1 or more and all of them are in `failed_count`, `FAILED`
 - When a record becomes `SENT`, `FAILED`, `CANCELED` or `EXPIRED`, writes `clock_now` to `finished_at` and `finished_at` + `push.recordRetentionMs` to `expires_at`. The expiry cleanup of `storage` deletes that record
@@ -121,7 +121,7 @@ core `rpc` request field
 
 - Per-environment `adapters.push-fcm` (values `fake`, `push-fcm`) and `adapters.push-apns` (values `fake`, `push-apns-sandbox`, `push-apns`) of game settings. A `RegisterPushToken` whose provider is that of a key whose value is `null` (`fcm` for `push-fcm`, `apns` for `push-apns`) is `INVALID_REQUEST`
 - interface: `send(list of device tokens, payload)` → `OK`, `INVALID_TOKEN` or `FAILED` per device. `FAILED` can carry a failure reason (e.g. HTTP status, APNs `reason`, FCM error code, network error), without the device token. push writes that reason to `reason` of the first failure log
-- The fake adapter returns `OK` for a token that starts with `fake:` and `INVALID_TOKEN` for other tokens. The fake adapter token of `PushCore` is `fake:<install ID>`
+- The fake adapter returns `OK` for a token that starts with `fake:` and `INVALID_TOKEN` for other tokens.
 - `push-fcm` calls the FCM HTTP v1 API with the project of game settings `environments.<ENV>.fcm.projectId`. The access token is the value that the token endpoint gives in exchange for an RS256 JWT with `iss` `environments.<ENV>.fcm.serviceAccountEmail`, `scope` `https://www.googleapis.com/auth/firebase.messaging` and `aud` `https://oauth2.googleapis.com/token`, signed with the private key of secret `environments.<ENV>.secrets.pushFcm`
 - `push-apns` sends to the APNs production endpoint and `push-apns-sandbox` to the APNs development endpoint, with token authentication. The provider token is an ES256 JWT with header `kid` game settings `pushApns.keyId` and payload `iss` `appleTeamId`, signed with the private key of secret `environments.<ENV>.secrets.pushApns`. `apns-topic` is `appId`
 
@@ -168,7 +168,7 @@ none
 | `RegisterPushToken` input violation, adapter value of that provider is `null` | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | `queue_push` check violation | 0. Nothing scheduled | none | `error` |
 | scheduled count limit of the target user | 0. Nothing scheduled | none | `warn` |
-| `push_target_lock` lock wait over the limit in `queue_push`, `cancel_push` | throw | `INTERNAL` | `error` log by `routing` |
+| exceeding the `push_target_lock` lock wait in `queue_push`, `cancel_push` | throw | `INTERNAL` | `error` log by `routing` |
 | `schedule_push` check violation | `bad_request` | none | `audit` |
 | cancel of a record that is not `SCHEDULED` | `conflict` | none | `audit` |
 | adapter failure | `failed_count` after retries | none | `error`. Per record, at the first failure and at the end |
@@ -190,7 +190,7 @@ Added `CoreError`: none
 | `push.maxTargetUserIds` | integer | core | content | maximum count of `user_ids` of `schedule_push` |
 | `push.pollIntervalMs` | integer | core | content | interval for finding records to send. 1 or more |
 | `push.leaseMs` | integer | core | content | valid duration of a send lease |
-| `push.maxDelayMs` | integer | core | content | maximum duration by which a push can be sent later than `send_at` |
+| `push.maxDelayMs` | integer | core | content | duration past `send_at` after which job `push_send` changes a picked `SCHEDULED` record to `EXPIRED`. A `push_held` row expires at its `send_at` + this value |
 | `push.sendBatchSize` | integer | core | content | device count handled at a time |
 | `push.sendTimeoutMs` | integer | core | content | time limit of an adapter call. 1 or more |
 | `push.retryIntervalMs` | integer | core | content | interval before sending again to a failed device |
@@ -225,7 +225,7 @@ Added `CoreError`: none
 | `body` | `tstring<id>` | `Server` |
 | `kind` | `enum<PushKind>` | `Server` |
 
-- When game settings `pushConsent.adPush` is `false` and there is a row with `kind` `Ad`, the server does not start
+- When game settings `pushConsent.adPush` is `false`, a row with `kind` `Ad` is data check `out_of_range`, which fails the binary build
 
 `data/enums.csv`
 

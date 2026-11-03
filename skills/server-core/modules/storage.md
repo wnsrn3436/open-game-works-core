@@ -47,12 +47,12 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 | `check_hook_output` | hook name, hook output | `pass` when the output is `pass`, that value when it is `GameError` | none. When neither, throws with a message containing the hook name | core module |
 | `run_read_only` | ctx or game tx, function | result of the function | none | `validation`, `admin-api`, `public-profile` |
 | `lock_game_row` | ctx or game tx, table name, key value | none | `FAILED`. A call from a content handler or hook throws | core module, content handler, hook |
-| `after_commit` | ctx or game tx, function | none | an invalid ctx or tx throws | core module |
-| `on_commit` | ctx or game tx, synchronous function | none | an invalid ctx or tx throws | core module |
+| `after_commit` | ctx or game tx, function | none | an invalid ctx or game tx throws | core module |
+| `on_commit` | ctx or game tx, synchronous function | none | an invalid ctx or game tx throws | core module |
 | `send_user_change` | ctx, target user ID, change name, payload bytes | none | misuse throws | content handler, hook, core module |
 | `register_user_change` | change name, apply function, fail function | none | none. A registration error is a server start failure | `register` of content `server/main.ts`, core module |
 | `run_user_changes` | none | async operation. number of applied rows | `FAILED` | `routing` |
-| `db` | ctx or game tx | DB handle | an invalid ctx or tx throws | core module |
+| `db` | ctx or game tx | DB handle | an invalid ctx or game tx throws | core module |
 | `read_db` | none | read-only DB handle | none | core module |
 | `create_user` | game tx | new user ID and its public code | none | `auth` |
 | `delete_user` | ctx | none | none | `auth` |
@@ -91,7 +91,7 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 - random instance: a PCG32 sequence that `create_random` makes from a seed. When it is passed to `random_u32`, `random_int`, `random_weighted` or `random_shuffle` instead of ctx, they draw from that sequence instead of the ctx random. `create_random` and `make_purpose_seed` use the same algorithm as the operations of the same name in `UtilCore`
 - The change function of `run_user_transaction` receives an out-of-request ctx and returns `pass` or a failure code (`GameError` or `CoreError`). On a failure code, rolls back, and the result is `REJECTED`
 - `run_rollback_transaction` opens the same user transaction as `run_user_transaction`, calls the function with an out-of-request ctx, and always rolls back regardless of the result. It makes no delta and no pending delta
-- The function of `run_game_transaction` receives a game tx. When the function returns a failure code (`GameError` or `CoreError`), rolls back and returns that value. For any other result, commits and returns that result. So when the result to commit is a number, the function returns the number wrapped in an object. When the function throws, rolls back and throws
+- game tx: the handle of one game transaction, as ctx is of one user transaction. The function of `run_game_transaction` receives a game tx. When the function returns a failure code (`GameError` or `CoreError`), rolls back and returns that value. For any other result, commits and returns that result. So when the result to commit is a number, the function returns the number wrapped in an object. When the function throws, rolls back and throws
 - The functions passed to `run_request_transaction`, `run_user_transaction` and `run_game_transaction`, and the apply function and fail function of a user change, are synchronous functions. They do not return a promise
 - DB handle: `db(ctx)` of a user transaction, `db(tx)` of a game transaction, or the handle of `read_db`. With a DB handle, a core module reads and writes, by parameterized SQL, only the tables it registered with `register_table`. The `user` table is read only with `get_user_record`, `find_user_by_public_code`, `scan_users` and `sample_users`
 - A DB handle has one method, `query(sql, parameter list)`, and it is synchronous. Both reads and writes use this method, and it returns the list of result rows. A row is an object keyed by column name, and the values are `bigint` for `int64`, `number` for `int32`, `boolean` for `bool`, `string` for `string`, `Uint8Array` for `bytes`, and `null` for null. In both DBs, parameters are written as numbers from `$1`, and the same number can be used again. `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING` is used in both DBs
@@ -127,7 +127,7 @@ ctx is the handling scope of one user transaction. One request or one out-of-req
 | `seed` | seed of the ctx random of that transaction. A 64-bit value |
 
 - ctx is invalid after the transaction ends. Handlers and hooks do not keep ctx outside the transaction
-- The TypeScript type of ctx is interface `RequestCtx` that `server/core/storage/request_ctx.ts` exports. Its fields are the fields of the table above. A request ctx and an out-of-request ctx have the same type
+- The TypeScript type of ctx is interface `RequestCtx` that `server/core/storage/request_ctx.ts` exports. Its fields are the fields of the table of `### ctx`. A request ctx and an out-of-request ctx have the same type
 - random: the algorithm is PCG32, and it produces the same sequence as the random of `UtilCore`. The seed is a 64-bit value made with secure random per transaction and is `seed` of the ctx. `routing` records the seed of a request in `seed` of the `request` log as a decimal string
 
 ### transaction
@@ -171,7 +171,7 @@ ctx is the handling scope of one user transaction. One request or one out-of-req
 ### game state
 
 - game state is the saved state of the whole game that does not belong to a user. It is kept in the `game_state` base table, one row per game state kind and key
-- Any user transaction reads and writes it. When several user transactions change the same row (e.g. shared boss HP, per-guild progress), each first locks that row with `lock_game_row`, reads it, then writes. Reads and writes without a lock can overwrite the changes of another transaction
+- Any user transaction reads and writes it. When several user transactions change the same row (e.g. shared boss HP, per-guild progress), reads and writes without `lock_game_row` can overwrite the changes of another transaction
 - When the expiry time of `put_game_state` is not 0, that value is `expires_at` of the row. `get_game_state` and `list_game_state` treat a row with `expires_at` ≤ `server-time.clock_now` as none, and `sweep_expired` deletes it
 - The maximum count of `list_game_state` is at least 1 and at most `storage.maxGameStateList`
 - `above this key` of `list_game_state` accepts every int64 value. With −1, returns from key 0. The negative game state key of misuse does not apply to this value
@@ -204,24 +204,24 @@ A user change is a change of the saved state of another user by the transaction 
   - An item that did not exist from the start and is written then deleted does not go in
 - Server state kinds do not go into the delta
 - The delta is `UserStateDelta` of the contract. `kind` of an entry is the kind message name, and the format and entry order follow the UserState section of [`contract`](../../contract/SKILL.md)
-- Handlers and core modules do not make the delta
+- Only `storage` makes the delta
 
 ### pending delta
 
 - The delta of an out-of-request change accumulates in `pending_delta` with order number `seq`. `seq` is the largest `seq` of the `pending_delta` rows of that user read inside that user transaction + 1, and 1 when there is no row
 - The response delta is the values carried in `user_state`, `pending_user_state`, `item_changes` and `item_mails` of `ResponseEnvelope`. For a success response, it is made with `take_response_delta`. `user_state` is the delta of that request, and `pending_user_state` is the delta that merges all pending deltas of that user in order number order. The pending delta rows are deleted in the same transaction
-- When the same item is in both deltas, it goes into both with its saved value at commit time. An item that does not exist at commit time goes only into delete
+- The value of an item in both deltas follows `## UserState` of [`contract`](../../contract/SKILL.md). An item that does not exist at commit time goes only into delete
 - `item_changes` puts the `ItemChange` of the pending delta rows in order number order, then the `ItemChange` of that request. `item_mails` is the same. `ItemChange` and `ItemMail` of the ctx are in the order in which `item-ledger` and `mailbox` added them with `add_item_change` and `add_item_mail`. Those of an out-of-request change accumulate in its pending delta row at commit
 - `take_response_delta` is called once per ctx. After that, a UserState write, `add_item_change`, `add_item_mail` and `take_response_delta` on that ctx are misuses
 - `delta` of `pending_delta` is the UTF-8 bytes of a JSON object that holds `items` (`[kind column value, item ID]` per written or deleted item), `item_changes` and `item_mails` of one out-of-request change. `ItemChange` and `ItemMail` are written with the proto3 JSON mapping. Item values are not included. The response carries, per item, its saved value at the commit time of that response
 - An error response does not carry the pending delta and does not delete it
-- The delta that `read_full_state` makes has `full` field `true`. The client clears the existing UserState and applies it. Deletes the pending delta rows in the same transaction, and returns the `ItemChange` and `ItemMail` accumulated with the deleted pending delta in accumulation order
+- The delta that `read_full_state` makes has `full` field `true`. Deletes the pending delta rows in the same transaction, and returns the `ItemChange` and `ItemMail` accumulated with the deleted pending delta in accumulation order
 - `take_response_delta` of a ctx that called `read_full_state` carries the delta that `read_full_state` made in `user_state` and an empty delta in `pending_user_state`, and puts the lists that `read_full_state` returned before the lists of that request in `item_changes` and `item_mails`. A UserState write on that ctx after `read_full_state` is a misuse
 
 ### storage format
 
 - A value is saved as the protobuf bytes of the kind message, together with the contract version at save time
-- `game_state` rows also follow the same storage format and the read conversion below. The game state key is passed as the item ID of the converter function
+- `game_state` rows follow the same storage format and read conversion as `user_state` rows. The game state key is passed as the item ID of the converter function
 - When the contract version of a read row is lower than the current contract version, uses the result of the converter function registered with `register_item_converter`. For converted bytes, returns that value and saves it again with the current contract version in that transaction. For delete, deletes that item and returns none. For `FAILED`, throws. Inside a `run_read_only` function, only returns the converted value or none and does not save again or delete. So no delta and no pending delta are made either
 - Saving again and deleting a `game_state` row are a conditional update and a conditional delete that write only to a row whose `contract_version` and `value` are still those of the read row. When no row changed, another transaction changed that row in between, and it writes nothing and returns the converted value or none
 - `upgrade_user_rows` does the read conversion on all `user_state` and `server_state` rows of that user whose contract version is lower than the current one. When even one is `FAILED`, returns `FAILED` without throwing. The caller rolls back the transaction
@@ -233,7 +233,7 @@ A user change is a change of the saved state of another user by the transaction 
 
 | table | scope | column | key |
 |---|---|---|---|
-| `user` | `game` | `user_id`(`int64`), `public_code`(`string?`. null only in a row made by an earlier core version until server start fills it), `created_at`(`int64`), `withdrawn_at`(`int64?`. null when none) | `user_id` |
+| `user` | `game` | `user_id`(`int64`), `public_code`(`string?`. null only in a row inserted without a public code, until server start fills it), `created_at`(`int64`), `withdrawn_at`(`int64?`. null when none) | `user_id` |
 | `user_state` | `user` | `user_id`(`int64`), `kind`(`string`), `item_id`(`int64`), `value`(`bytes`), `contract_version`(`int64`), `updated_at`(`int64`) | `(user_id, kind, item_id)` |
 | `server_state` | `user` | `user_id`(`int64`), `kind`(`string`), `item_id`(`int64`), `value`(`bytes`), `contract_version`(`int64`), `updated_at`(`int64`) | `(user_id, kind, item_id)` |
 | `pending_delta` | `user` | `user_id`(`int64`), `seq`(`int64`), `delta`(`bytes`), `created_at`(`int64`) | `(user_id, seq)` |
@@ -249,7 +249,7 @@ A user change is a change of the saved state of another user by the transaction 
 - After `delete_user`, `take_response_delta` of that ctx returns an empty response delta
 - user ID and public code: `create_user` picks the user ID with secure random from the integers of 1 or more and below 2^53, and the public code as 8 characters of `0123456789ABCDEFGHJKMNPQRSTVWXYZ` with secure random. It inserts the row with an insert that inserts nothing on a conflict of `user_id` or `public_code` (a withdrawn user's row included), and when no row was inserted, picks both again and inserts again. So the user ID tells neither the number of users nor the order they came in, and is not found by trying numbers. `user` has a unique index on `public_code`
 - public code input: a text that, with the characters U+0009, U+000A, U+000D, U+0020 and `-` removed, `a` to `z` changed to `A` to `Z` (no other character is changed), `O` changed to `0` and `I` and `L` changed to `1`, is 8 characters of the public code characters. `find_user_by_public_code` returns the user ID of the `user` row (a withdrawn user's included) whose `public_code` is that text, and none for a text that is not a public code input or has no row
-- `public_code` of `get_user_record` is an empty string for a row whose `public_code` is null (a row that a server of an earlier core version made after the last start), and a reader treats an empty public code as no public code
+- `public_code` of `get_user_record` is an empty string for a row whose `public_code` is null (a row inserted without a public code after the last server start), and a reader treats an empty public code as no public code
 - At server start, in the transaction of the schema lock and after the schema changes, each `user` row whose `public_code` is null gets a public code picked as `create_user` picks it, written with an update that writes only while `public_code` of that row is still null and picks again on a conflict of `public_code`. A failure of that transaction is a failure of server start
 - `get_user_record` is none when there is no `user` row. When v is given, `scan_users` returns only users that have a row with contract version < v in `user_state` or `server_state`
 - `sample_users` picks with one query, by secure random and without duplicates, up to the maximum count of users from the users that are not withdrawn users. When there are fewer users than the maximum count, all of them
@@ -260,12 +260,12 @@ A user change is a change of the saved state of another user by the transaction 
 - creating and changing registered tables: at server start, for each registered table, reads the row of the table name from `storage_schema`. When there is no row, creates the table and the registered indexes. When there is a row, adds the registered columns that are not in `definition` of the row. An added column is of a `?` type. Creates the registered indexes that are not in `definition` of the row. Indexes only in `definition` of the row are left as they are, and the server starts. When the columns only in `definition` of the row are all of a `?` type, they are left as they are, and the server starts. That server does not read or write those columns, and those columns of rows that server inserts are null. So a previous server can be started again after a server that added a `?` column. A non-`?` column only in `definition`, a column type change, a key column change and a scope change are server start failures. Writes, as JSON in `definition` of that row, the list merging the columns of the row and the registered columns, the key columns, and the list merging the indexes of the row and the registered indexes
 - The creation of base tables and the core schema changes are applied at server start in the order contained in the core release, and the applied core schema version is written to `definition` of the `storage_schema` row whose `name` is `base`. When the core schema version of the `base` row is higher than the highest core schema version of that core release, nothing is changed and server start fails. The failure reason contains both versions
 - The core schema version is an integer from 1 and increases by 1 per core schema change. The highest core schema version of a core release is kept in `open-game-works-core-impl/server/core/storage/core-schema-version` (one line with a decimal integer). The commit that adds a core schema change raises that value in the same commit, and `storage` does not read that file and keeps a constant equal to that value
-- schema lock: server start does the base table creation, the core schema changes, and the creation and change of registered tables in one transaction, and at the start of that transaction takes the schema lock, one per DB. PostgreSQL calls `pg_advisory_xact_lock` with one constant of the core code as the key, and SQLite opens that transaction with `BEGIN IMMEDIATE`. When it waits more than `storage.schemaLockWaitMs`, server start fails. `storage_schema` is read after the lock is taken, and when there is no `storage_schema` table, the base tables are created first. When even one step fails, rolls back, and server start fails. So server instances started together on the same DB apply the schema one at a time, and a later instance reads the `storage_schema` that an earlier instance committed
+- schema lock: server start does the base table creation, the core schema changes, and the creation and change of registered tables in one transaction, and at the start of that transaction takes the schema lock, one per DB. PostgreSQL calls `pg_advisory_xact_lock` with one constant of the core code as the key, and SQLite opens that transaction with `BEGIN IMMEDIATE`. When it waits more than `storage.schemaLockWaitMs`, server start fails. `storage_schema` is read after the lock is taken, and when there is no `storage_schema` table, the base tables are created first. When even one step fails, rolls back, and server start fails. So server instances started together on the same DB apply the schema one at a time, and a later server instance reads the `storage_schema` that an earlier server instance committed
 
 ### expiry
 
 - expiry cleanup `sweep_expired`: a storage maintenance delete. It is neither a user transaction nor a game transaction, and takes neither the per-user lock nor the lock of `lock_game_row`. For each table given an expiry column, regardless of scope, deletes the rows with expiry column ≤ `server-time.clock_now` in batches. One delete statement deletes up to `storage.sweepBatchSize` of those rows and is one DB transaction. The delete statements of one table repeat until a statement deletes fewer rows than `storage.sweepBatchSize` or `storage.sweepTableBudgetMs` has passed in real elapsed time since the first statement of that table, and the later runs delete the expired rows that remain. When a delete statement is `FAILED`, `sweep_expired` stops deleting that table, adds the table name and the DB error code (the SQLSTATE of PostgreSQL, the result code of SQLite, and the empty string for a failure without a DB answer) to the failed table list, and continues with the next table. Job `storage_sweep` of `routing` calls it
-- `sweep_expired` can delete an expired row that a user transaction read, during that transaction. So a module that uses a table given an expiry column keeps the rules below
+- `sweep_expired` can delete an expired row that a user transaction read, during that transaction. So a module that uses a table given an expiry column keeps these rules
   - A row with expiry column ≤ `clock_now` counts as a row that does not exist, also before it is deleted
   - A write that creates a row or increments a counter does not write back the read value but uses one upsert statement, and the value after the write is read from that statement
 
@@ -329,11 +329,12 @@ storage leaves no logs. It returns failures to the caller as a throw or a failur
 | condition | failure value | error code | log |
 |---|---|---|---|
 | misuse, random input violation | throw | `INTERNAL` | none |
-| user lock wait exceeded, wait for the write transaction of another server instance on SQLite exceeded | `FAILED` | `INTERNAL` | none |
+| an unknown table or a format violation in `replace_user_rows`, a format violation in `replace_game_rows`, a non-finite number or a value with no JSON format in `canonical_json` | throw | none | none |
+| exceeding the user lock wait, exceeding the wait for the write transaction of another server instance on SQLite | `FAILED` | `INTERNAL` | none |
 | nested transaction | throw | none | none |
 | `FAILED` of the converter function | throw. The saved row does not change | none | none |
-| a table of the same name registered twice, a table name that breaks the rules, a snapshot flag on a `game` scope table, a missing snapshot flag on a `user` scope table, a personal data user column not in the table, a key column, expiry column or index column not in the column list, an empty index, two indexes with the same column list, a `user` scope table whose first column is not `user_id`, a non-`?` column added to an existing table, a non-`?` column only in `definition`, a change of column type, key column or scope, a converter function registered twice, a core schema version of the `base` row higher than that of the core release, schema lock wait exceeded | server start failure | none | none |
-| game row lock wait exceeded, PostgreSQL deadlock, serialization failure | `FAILED` | `INTERNAL` | none |
+| a table of the same name registered twice, a table name that breaks the rules, a snapshot flag on a `game` scope table, a missing snapshot flag on a `user` scope table, a personal data user column not in the table, a key column, expiry column or index column not in the column list, an empty index, two indexes with the same column list, a `user` scope table whose first column is not `user_id`, a non-`?` column added to an existing table, a non-`?` column only in `definition`, a change of column type, key column or scope, a converter function registered twice, a core schema version of the `base` row higher than that of the core release, exceeding the schema lock wait | server start failure | none | none |
+| exceeding the game row lock wait, PostgreSQL deadlock, serialization failure | `FAILED` | `INTERNAL` | none |
 | `lock_game_row` wait exceeded or deadlock of a content handler or hook | throw | `INTERNAL` | none |
 | change name registration error | server start failure | none | none |
 | `FAILED` of a user change application, throw of the apply function or fail function | retries. After the maximum attempts, moves to the `fail` phase or deletes the row | none | none |
@@ -441,7 +442,7 @@ none
 - An index given to `register_table` exists in SQLite and PostgreSQL with that name and column order. On restart with a definition that adds one index, that index is created, and on restart with the previous definition without that index, the server also starts and the index remains. With an index on a column not in the column list, an empty index, or two indexes with the same column list, the server does not start
 - With a DB whose `base` row has a core schema version higher than the highest core schema version of the core release, the server does not start and the `base` row stays unchanged
 - The value of `open-game-works-core-impl/server/core/storage/core-schema-version` equals the highest core schema version that `storage` applies
-- When `start` of two server instances that `routing.create_server` made is called together on the same empty DB, both start, there is one of each base table and registered table, and the rows of `storage_schema` equal the registered definitions. Also when one instance starts together with a definition that adds one `?` column, both start and that column is added once
+- When `start` of two server instances that `routing.create_server` made is called together on the same empty DB, both start, there is one of each base table and registered table, and the rows of `storage_schema` equal the registered definitions. Also when one server instance starts together with a definition that adds one `?` column, both start and that column is added once
 - An `int64` value larger than 2^53 is read back unchanged after save
 - Saved values remain after a restart
 - Functions registered with `after_commit` are called once each in registration order after commit. Functions registered in a rolled-back transaction, in `run_rollback_transaction` or in a reverted savepoint are not called. Even when a function throws, the commit result and the next function are unaffected

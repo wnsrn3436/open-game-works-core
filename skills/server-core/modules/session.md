@@ -32,8 +32,6 @@ Keeps one session per user and checks the request signature with the session sig
 | `sign_request` | session signing key, signature name, request ID, `X-Ogw-Timestamp`, body | `X-Ogw-Signature` value by the request signature rules | none | `testing` |
 | `Resync` (core rpc, `silent`). changes: none | `full` | empty response | none | `routing`. Client `NetworkCore` sends it |
 
-- session exports the handler of `Resync`, and `routing` collects it
-
 core `rpc` request field
 
 | message | field | type | `(ogw.v)` |
@@ -50,7 +48,6 @@ core `rpc` request field
 - `start_session` deletes the previous session record of that user and writes a new record
 - `check_current`: `UNAUTHORIZED` when there is no session record, `SESSION_REPLACED` when the session ID of the record differs
 - `check_current` and `verify_signature` read the session record with `storage.read_db`
-- The client keeps the session signing key only in memory
 
 ### Resync
 

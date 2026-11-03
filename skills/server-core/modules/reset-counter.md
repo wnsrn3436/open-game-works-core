@@ -79,7 +79,7 @@ none
 | `limit` | `long?` | `All` |
 | `reset` | `enum<ResetCycle>?` | `All` |
 
-- When `limit` is `null`, the row has no limit. When it is not `null`, it is from 1 to 2^53−1. A violation is data check `out_of_range`, and the server does not start
+- When `limit` is `null`, the row has no limit. When it is not `null`, it is from 1 to 2^53−1. A violation is data check `out_of_range`, which fails the binary build
 - When `reset` is `null`, the count is not reset
 - `ResetCycle` is an enum of `server-time`
 
@@ -90,7 +90,6 @@ none
 | `SetResetCounter` (core cheat). changes: `ResetCounterUserState` | reset counter ID value, count | empty response. The changed `ResetCounterUserState` in the delta | `INVALID_REQUEST` | `routing` DEV code. Client `QACore`, bots and `testing` send it |
 
 - `SetResetCounter` follows the processing order of `cheat`. Writes the received value to the row's `count` and writes `server-time.get_next_reset`(`reset`, request time) to `reset_at`. Does not look at the limit
-- STG·PROD builds do not have `SetResetCounter`
 
 core cheat request field
 
@@ -107,5 +106,5 @@ core cheat request field
 - `add_count` after the reset time counts from 0 and changes `reset_at` to the next reset time
 - When the handler ends with `GameError` after `add_count`, the count stays the same
 - `add_count` with an unknown reset counter ID value, or with 0 or 2^53 as amount, is `INTERNAL`
-- When there is a row whose `limit` is 0, the server does not start
+- A row whose `limit` is 0 is data check `out_of_range`
 - In DEV, `SetResetCounter` changes the count to that value and carries the `ResetCounterUserState` delta. It also writes a value above the limit. An unknown reset counter is `INVALID_REQUEST`

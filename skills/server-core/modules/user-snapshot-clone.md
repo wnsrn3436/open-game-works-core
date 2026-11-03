@@ -14,7 +14,7 @@
 
 ## purpose
 
-Exports the saved state of one PROD user and PROD game state rows chosen by kind and key as a snapshot by only reading them, and overwrites STG or DEV with that snapshot so that a PROD problem can be reproduced. The samples of PROD users and game state that `migration` tests use are also obtained with it.
+Exports the saved state of one PROD user and PROD game state rows chosen by kind and key as a snapshot by only reading them, and overwrites a server that is not PROD (a LOCAL instance, DEV or STG) with that snapshot so that a PROD problem can be reproduced. The samples of PROD users and game state that `migration` tests use are also obtained with it.
 
 ## dependency
 
@@ -69,7 +69,7 @@ A snapshot is one JSON object.
 | `contract_version` | JSON integer | contract version of the exporting server |
 | `data_version` | JSON string | server data version of the exporting server |
 | `core_version` | JSON string | core version of the exporting server |
-| `records` | JSON array | list of the records below. In byte order of `table`, `key` |
+| `records` | JSON array | list of records. In byte order of `table`, `key` |
 | `sha256` | JSON string | lowercase hex SHA-256 of the UTF-8 of `storage.canonical_json` of `records` |
 
 record: a raw row of `storage` written as a JSON object with only the four fields `table`, `key`, `contract_version`, `value`. `table` (JSON string), `key` (JSON string) and `contract_version` (JSON integer) are the raw row values as they are, and `value` (JSON string) is the standard base64 of the raw row bytes
@@ -94,11 +94,11 @@ record: a raw row of `storage` written as a JSON object with only the four field
 ### sample_user_ids
 
 - `count` is at least 1 and at most `user-snapshot-clone.maxSampleCount`
-- Chooses with `storage.sample_users` (`count`) in the game tx that `admin-api` opened. It reads nothing other than user records
+- Chooses with `storage.sample_users` (`count`) in the game transaction that `admin-api` opened. It reads nothing other than user records
 
 ### import_user_snapshot
 
-Checks in the order below, and on a failure changes nothing.
+Checks in this order, and on a failure changes nothing.
 
 1. When the environment is PROD, `conflict`
 2. When the body is not one JSON object, or the name or type of a snapshot field differs from the snapshot table, or the field name or type of a record differs from the record definition, or `format` is not 1, or `validation.parse_version` cannot read `core_version`, or `sha256` does not match, `bad_request`
@@ -123,14 +123,14 @@ A game state snapshot is a JSON object with the fields of the snapshot table oth
 
 - `export_game_state`
   1. When `kind` is not a kind of `game_state.proto`, or `keys` is empty or has more than `user-snapshot-clone.maxSampleCount` keys, or has a key less than 0 or duplicate keys, `bad_request`
-  2. Reads with `storage.read_game_rows` (`kind`, `keys`) in the game tx that `admin-api` opened. It does no read conversion and writes nothing
+  2. Reads with `storage.read_game_rows` (`kind`, `keys`) in the game transaction that `admin-api` opened. It does no read conversion and writes nothing
   3. When the serialized game state snapshot is more than `user-snapshot-clone.maxSnapshotBytes`, `conflict`
 - `export_game_state` can be called in every environment
-- `sample_game_state`: when `kind` is not a kind of `game_state.proto`, or `count` is not from 1 to `user-snapshot-clone.maxSampleCount`, it is `bad_request`. Chooses with `storage.sample_game_rows` (`kind`, `count`) in the game tx that `admin-api` opened. When the serialized game state snapshot is more than `user-snapshot-clone.maxSnapshotBytes`, it is `conflict`. It can be called in every environment
-- `import_game_state` does checks 1 to 4 of `import_user_snapshot`. The snapshot table of check 2 is the table without `source_user_id` and `user_created_at`. Then, in the cases below, it is `bad_request`. On a failure it changes nothing
+- `sample_game_state`: when `kind` is not a kind of `game_state.proto`, or `count` is not from 1 to `user-snapshot-clone.maxSampleCount`, it is `bad_request`. Chooses with `storage.sample_game_rows` (`kind`, `count`) in the game transaction that `admin-api` opened. When the serialized game state snapshot is more than `user-snapshot-clone.maxSnapshotBytes`, it is `conflict`. It can be called in every environment
+- `import_game_state` does checks 1 to 4 of `import_user_snapshot`. The snapshot table of check 2 is the table without `source_user_id` and `user_created_at`. Then it is `bad_request` in these cases. On a failure it changes nothing
   - The `table` of a record is not `game_state`, or the kind of `key` is not a game state kind of this server
   - `target_key` is given and there is not exactly one record, or `target_key` is less than 0
-- When the checks pass, writes the records with `storage.replace_game_rows` in the game tx that `admin-api` opened. When `target_key` is given, it writes the record with its `key` changed to `<kind column value>/<target_key>` and the value of field `int64 key = 1` of `value` changed to `target_key`. When `replace_game_rows` is `FAILED`, it is `internal`. It does not write a clone record
+- When the checks pass, writes the records with `storage.replace_game_rows` in the game transaction that `admin-api` opened. When `target_key` is given, it writes the record with its `key` changed to `<kind column value>/<target_key>` and the value of field `int64 key = 1` of `value` changed to `target_key`. When `replace_game_rows` is `FAILED`, it is `internal`. It does not write a clone record
 - Output `replaced_records` is the number of written records, `data_version_matches` is whether the `data_version` of the game state snapshot equals that of this server, and `data_version` is the server data version of this server
 - The `args` of the `audit` log keep `source_environment`, the key list of the records, `sha256`, `target_key` instead of the game state snapshot
 
@@ -176,7 +176,6 @@ Added `CoreError`: none
 | `coreVersion` | string | game | none | core version of this server, written to snapshot `core_version` and compared at import |
 | `user-snapshot-clone.cloneRetentionMs` | integer | core | content | duration that an imported clone is kept before it is deleted |
 | `user-snapshot-clone.sweepIntervalMs` | integer | core | content | period for finding expired clones. 1 or more |
-| `admin-api.maxBodyBytes` | integer | core | content | maximum bytes of the JSON body of `admin-api`. The import body is limited by `user-snapshot-clone.maxSnapshotBytes`, not by this value |
 
 ## data
 
@@ -204,7 +203,7 @@ none
 - When import fails during save, the rows of the target user are the same as before the import
 - `sample_user_ids` does not return withdrawn users and has no duplicates
 - Export of a user that is more than `maxSnapshotBytes` is `conflict`
-- Import of a snapshot larger than `admin-api.maxBodyBytes` and at most `user-snapshot-clone.maxSnapshotBytes` succeeds, and a body of more than `user-snapshot-clone.maxSnapshotBytes` is 400 `bad_request`
+- Import of a snapshot larger than the JSON body limit of `admin-api` and at most `user-snapshot-clone.maxSnapshotBytes` succeeds, and a body of more than `user-snapshot-clone.maxSnapshotBytes` is 400 `bad_request`
 - After import, a clone record exists and appears in `list_clones`. When `advance_time` moves past `cloned_at` + `user-snapshot-clone.cloneRetentionMs` and `wait_background` waits, job `user_snapshot_clone_sweep` deletes all included rows of the target user, closes the session and deletes the clone record. The rows of excluded tables remain
 - `wipe_clone` does the same deletion, and a target with no clone record is `not_found`
 - When the same target user is imported again before a `wipe_clone` carrying the `cloned_at` that `list_clones` returned, that `wipe_clone` is `not_found`, and the new clone record and the imported rows remain
