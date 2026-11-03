@@ -291,12 +291,7 @@ none
 | `QACore.stepMaxMs` | integer | core | content | maximum ms of one `step` command. 1 or more |
 | `QACore.timeScaleMaxPermille` | integer | core | content | maximum permille of the `set_time_scale` command. 1000 or more |
 | `QACore.touchIndexCount` | integer | core | content | number of touch indexes QACore uses. A touch index is 0 or more and less than this value |
-| `AccessibilityCore.textScales` | array<integer> | core | human | list whose largest value UI quality check uses as text scale |
 | `baseResolution` | array<integer> | game | none | base resolution that `set_test_screen` passes to `ResolutionCore.set_test_screen` |
-| `uiCheckScreens` | array<object> | game | none | list of screens UI quality check captures. An item is `name` (snake_case), `window` (window width, height in pixels), `fillMode` (`Crop`, `Letterbox`), `notch` (left, top, right, bottom in integer window pixels), `keyboard` (on-screen keyboard height for keyboard capture, in window pixels. 0 means no keyboard capture) |
-| `gamepadSupported` | boolean | game | none | When `true`, UI quality check runs gamepad focus check |
-| `uiQuality` | object | game | none | the numbers of UI quality check that a game sets: `settleLimitMs` and the presentation conditions `maxFontSizes`, `minFontPx`, `minContrast`, `maxEmptyShare`. The defaults are in the game settings schema |
-| `supportedLanguages` | array<string> | game | none | list of languages UI quality check runs through |
 
 ## data
 

@@ -77,7 +77,7 @@ code
 
 - code normalization: deletes every `-` and every whitespace character (Unicode `White_Space`) wherever it is in the input, and changes ASCII lowercase letters to uppercase. Saving, comparison and input all use the normalized value
 - A normalized code uses only characters of `coupon.codeAlphabet` and has a length of at least `coupon.minCodeLength` and at most `coupon.maxCodeLength`. On a violation, admin operations are `bad_request` and `RedeemCoupon` is `COUPON_INVALID`
-- A `unique` code picks `coupon.generatedCodeLength` characters from `coupon.codeAlphabet` with secure random. It does not use ctx random. When it collides with an existing code or a code picked earlier in the same `create_coupon`, it picks again. When one code still collides after 100 picks, `create_coupon` writes nothing and returns `conflict`
+- A `unique` code picks `coupon.generatedCodeLength` characters from `coupon.codeAlphabet` with secure random. It does not use ctx random. When it collides with an existing code or a code picked earlier in the same `create_coupon`, it picks again. When one code still collides after `coupon.maxCodePicks` picks, `create_coupon` writes nothing and returns `conflict`
 - The codes of all coupons differ from each other. When the `code` of a `shared` coupon already exists, `create_coupon` is `conflict`
 
 redeem attempt limit
@@ -139,7 +139,7 @@ none
 | the user transaction of `count_redeem_attempt` is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
 | reward grant failure (failure of `grant_or_mail`, `INVALID_INPUT` of `send_mail`) | `INTERNAL` | `INTERNAL` | error rules of `mailbox` |
 | rule violation of `create_coupon` input, format violation of the normalized code, `get_coupon` that did not get exactly one of `coupon_id` and `code` | `bad_request` | none | `audit` |
-| `shared` `create_coupon` with an existing code, `unique` `create_coupon` in which one code still collided after 100 picks | `conflict` | none | `audit` |
+| `shared` `create_coupon` with an existing code, `unique` `create_coupon` in which one code still collided after `coupon.maxCodePicks` picks | `conflict` | none | `audit` |
 | `get_coupon`, `list_coupon_codes`, `disable_coupon` of a coupon that does not exist | `not_found` | none | `audit` |
 | violation of the server start condition of `coupon.codeAlphabet` | server start failure | none | `error` log |
 
@@ -153,6 +153,7 @@ Added `CoreError`: `COUPON_INVALID`, `COUPON_NOT_ACTIVE`, `COUPON_ALREADY_REDEEM
 | `coupon.minCodeLength` | integer | core | content | minimum length of a normalized code |
 | `coupon.maxCodeLength` | integer | core | content | maximum length of a normalized code |
 | `coupon.generatedCodeLength` | integer | core | content | length of a `unique` code |
+| `coupon.maxCodePicks` | integer | core | content | how many times one `unique` code is picked before `create_coupon` gives up. 1 or more |
 | `coupon.maxCodeInputBytes` | integer | core | content | byte limit of the `RedeemCoupon` code field |
 | `coupon.maxBatchCount` | integer | core | content | limit on the number of codes of one `unique` coupon |
 | `coupon.maxRewardItems` | integer | core | content | limit on the number of reward items of one coupon. 1 or more |

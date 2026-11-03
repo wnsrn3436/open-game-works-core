@@ -235,7 +235,7 @@ Added `CoreError`: `INVALID_REQUEST`, `RATE_LIMITED`, `MAINTENANCE`, `BANNED`, `
 | `environments.<ENV>.corsAllowedOrigins` | array<string> | game | none | allowed origin list of that environment |
 | `routing.corsPreflightMaxAgeMs` | integer | core | content | preflight cache duration |
 | `routing.externalMaxResponseBytes` | integer | core | content | maximum bytes of the response body that every external service call of every module reads |
-| `routing.storageSweepIntervalMs` | integer | core | content | period at which job `storage_sweep` calls `storage.sweep_expired` and `run_user_changes` |
+| `routing.storageSweepIntervalMs` | integer | core | content | period at which job `storage_sweep` calls `storage.sweep_expired` and `run_user_changes`. 1 or more |
 
 ## data
 

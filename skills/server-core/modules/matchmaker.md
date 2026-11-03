@@ -131,7 +131,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 ### room
 
 - A room is kept in the memory of the server instance that received `--matchmaker` and has a room code, `mode_id`, a member user ID list (in joining order), `RoomStatus`, the lockstep flag, and `data_version` and `client_version` of the `HELLO` of the connection of the user who created the room. The first user of the list is the host
-- A room code is a string of `matchmaker.roomCodeLength` characters picked with secure random from `matchmaker.roomCodeAlphabet`. When it collides with the code of an existing room, it is picked again. When it still collides after 100 picks, no room is created and that `ROOM_CREATE` is `ROOM_BUSY`
+- A room code is a string of `matchmaker.roomCodeLength` characters picked with secure random from `matchmaker.roomCodeAlphabet`. When it collides with the code of an existing room, it is picked again. When it still collides after `matchmaker.roomCodeMaxPicks` picks, no room is created and that `ROOM_CREATE` is `ROOM_BUSY`
 - A user is in only one room at a time. Every time a room changes, `ROOM_STATE` is sent to all members
 - `ROOM_KICK` and `ROOM_START` of a user outside a room are `ROOM_NOT_HOST`
 - When the members of the room change while member rating resolution waits for the transaction of each member, nothing is changed and `ROOM_FAILED`(`ROOM_BUSY`. `request` is the `kind` of the host frame that started member rating resolution) is sent to all members
@@ -277,6 +277,7 @@ Added `CoreError`: `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_RE
 | `matchmaker.helloTimeoutMs` | integer | core | content | time limit from connection accept to authentication |
 | `matchmaker.roomCodeAlphabet` | string | core | content | character set used in room codes. Picked from ASCII uppercase letters and digits |
 | `matchmaker.roomCodeLength` | integer | core | content | length of a room code |
+| `matchmaker.roomCodeMaxPicks` | integer | core | content | how many times one room code is picked before no room is created. 1 or more |
 | `matchmaker.lockstepMaxDurationMs` | integer | core | human | duration used instead of `max_duration` in a DEV lockstep match |
 | `admin-api.switchCacheMs` | integer | core | content | interval for rereading the maintenance and kill switch cache |
 
