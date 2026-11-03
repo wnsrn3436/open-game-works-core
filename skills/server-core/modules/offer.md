@@ -30,7 +30,7 @@ Handles offers that open for a limited period only to a user who meets a conditi
 |---|---|---|---|---|
 | `trigger_offer` | ctx, offer ID value | `OfferTriggerResult.OK` | failure element of `OfferTriggerResult` | content handler, hook |
 | `is_offer_active` | ctx, offer ID value | `true` when active | `false`. An unknown offer ID value is also `false` | content handler, hook, `shop`, `iap` |
-| `get_offer_ends_at` | ctx, offer ID value | end time of the last turn-on of the offer | 0. The offer was never turned on, or the offer ID value is unknown | content handler, hook, `shop`, `iap` |
+| `get_offer_ends_at` | ctx, offer ID value | end time of the last turn-on of the offer | 0. The offer was never turned on, or the offer ID value is unknown | content handler, hook |
 | `read_purchase_limit` | ctx, `offer`(0 means none) of the product data row, `reset`(`ResetCycle?`) of the product data row, `live_event`(0 means none) used for round reset, `count` of the purchase count row, `reset_at`, `event_round`(all three 0 when there is no row) | `count`, `reset_at`, `event_round` read by the purchase limit read rule, and `write_reset_at` for writing an increased purchase count | none | `shop`, `iap` |
 
 - offer ID value: ID value of the `offer` table. Content code gets it with a reserved ID accessor
@@ -45,7 +45,7 @@ Handles offers that open for a limited period only to a user who meets a conditi
 | `ACTIVE` | already active. The end time was not changed |
 | `LIMIT_REACHED` | the turn-on count reached `max_triggers` |
 | `COOLDOWN` | before the last end time + `cooldown` |
-| `LOCKED` | `passed` of the `evaluate_requirement` result for `requirement` is `false` |
+| `LOCKED` | `passed` of the `validation.evaluate_requirement` result for `requirement` is `false` |
 
 ## behavior
 
@@ -54,7 +54,6 @@ Handles offers that open for a limited period only to a user who meets a conditi
 - The state is saved to the core UserState kind `OfferUserState` (list kind) of the base proto. Only this module writes it, with `storage.put_core_state` and `delete_core_state`. field: `int64 id` (offer ID value), `int64 started_at` (time of the last turn-on), `int32 trigger_count` (turn-on count), `int32 event_round`
 - The end time is `started_at` + `duration`. The offer is active when the row exists and `server-time.is_reached_strict`(end time) is `false`
 - When the offer row has `live_event`, the `OfferUserState` row follows the round reset of `live-event`. The fields that go back to their initial value are `started_at` and `trigger_count`, and the initial value is 0. A row with `trigger_count` 0 counts as no row
-- Client `UserStateCore.is_offer_active` and `get_offer_ends_at` do the same calculation
 - purchase limit read: `read_purchase_limit` starts from the received values of `count`, `reset_at` and `event_round` of the product's purchase count row (`ShopPurchaseUserState` of `shop`, `IapPurchaseUserState` of `iap`) and reads them in the order below. `shop` and `iap` read the purchase count row only with this operation, and get the next reset time only from `write_reset_at` of this operation. The values changed by this read are saved only when something writes to that row
   1. round reset of `live-event`: when `live-event.is_round_reset`(`live_event`, `event_round`) is `true`, takes `count` as 0, `event_round` as `live-event.round_to_write`(`live_event`) and `reset_at` as the next reset time
   2. offer purchase reset: when `offer` is there and `reset_at` is not 0 and differs from `get_offer_ends_at`(`offer`), takes `count` as 0 and `reset_at` as `get_offer_ends_at`(`offer`). So even when the offer is turned on again before the previous end time, the purchase count starts from 0
@@ -71,7 +70,7 @@ Handles offers that open for a limited period only to a user who meets a conditi
 3. When active, `ACTIVE`
 4. When `trigger_count` ≥ `max_triggers`, `LIMIT_REACHED`. When there is no `max_triggers`, takes the `int32` maximum 2^31−1 of `trigger_count` as `max_triggers`
 5. When the row exists and request time < end time + `cooldown`, `COOLDOWN`
-6. When `passed` of the `validation` `evaluate_requirement` result for `requirement` is `false`, `LOCKED`
+6. When `passed` of the `validation.evaluate_requirement` result for `requirement` is `false`, `LOCKED`
 7. Writes `started_at` as request time, `trigger_count` as its value plus 1, and `event_round` by the round reset rule of `live-event`
 8. Emits core analytics event `core_offer_triggered` with `logging.track_core_event`
 
@@ -92,7 +91,7 @@ none
 | condition | failure value | error code | log |
 |---|---|---|---|
 | unknown offer ID value in `trigger_offer` | `UNKNOWN_OFFER` | content decides | `error` log |
-| outside the active window, active, count limit, cooldown, `passed` of `evaluate_requirement` is `false` | that element | content decides | none |
+| outside the active window, active, count limit, cooldown, `passed` of `validation.evaluate_requirement` is `false` | that element | content decides | none |
 
 Added `CoreError`: none
 

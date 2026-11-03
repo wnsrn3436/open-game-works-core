@@ -63,7 +63,7 @@ Verifies the receipt of a store payment with an adapter, and grants only once pe
 | `OTHER_USER` | a store transaction that is bound to another user, is not yet granted to any user, and does not meet the ownership transfer condition. Not granted | does not end the store transaction |
 | `PENDING` | the store has not finished the payment | keeps it as an incomplete purchase |
 
-- `RecoverPurchase` is the request in which the client sends incomplete purchases and purchases to restore. The server handling is the same as `VerifyPurchase`; only the name in the request log differs
+- `RecoverPurchase` is the request in which the client sends incomplete purchases and purchases to restore. The processing order is the same as `VerifyPurchase`. The name in the request log differs, and only `RecoverPurchase` has `silent`, so `server-time.is_reached` judges it as a `silent` request
 
 core `rpc` request field
 
@@ -98,7 +98,7 @@ core `rpc` response field
 
 ### pre-purchase check
 
-- The order that `PaymentCore` sends for one purchase is `CheckPurchase` → store purchase → `VerifyPurchase`. Incomplete purchases are sent with `RecoverPurchase`
+- The order that `PaymentCore` sends for one purchase is `CheckPurchase` → store purchase → `VerifyPurchase`
 - `CheckPurchase` checks the items below in this order
   1. When the store of the request does not sell the product (the SKU column of that store is an empty string, or game settings have no adapter of that store), `IAP_PRODUCT_UNAVAILABLE`
   2. sale condition check. When `live-event.is_in_active_window`(`start_at`, `end_at`, `live_event` of the product row) is `false`, or `offer` exists and `offer.is_offer_active` is `false`, `IAP_PRODUCT_UNAVAILABLE`; when neither, and `requirement` does not pass `validation.evaluate_requirement`, `IAP_PRODUCT_LOCKED`
@@ -185,7 +185,7 @@ core `rpc` response field
 
 - The purchase count, pass and daily reward state are saved in core UserState kind `IapPurchaseUserState` (list kind) of base proto. Only this module writes it, with `storage.put_core_state`. field: `int64 id`(product ID value), `int32 count`(purchase count. The number granted within the current limit period minus the number refunded), `int64 reset_at`, `int64 pass_end_day`(number of the game day on which the pass ends. That game day is not in the pass period. 0 when none), `int64 daily_claimed_day`(number of the game day on which the daily reward was last claimed. 0 when none), `int32 event_round`
 - Today is `server-time.get_day_number`(request time)
-- limit period: `count`, `reset_at` and `event_round` of the row are read with `offer.read_purchase_limit`(`offer` and `reset` of the product, the `live_event` used for round reset, the values of the row). The `live_event` used for round reset is the product's `live_event` only for products whose `type` is `Consumable`; for `NonConsumable` and `Subscription` it is 0, so no round reset happens. When raising `count`, `reset_at` is written as `write_reset_at` of `read_purchase_limit`. When lowering `count`, it does not go below 0. Client `UserStateCore.get_iap_purchase_count` reads with the same rules
+- limit period: `count`, `reset_at` and `event_round` of the row are read with `offer.read_purchase_limit`(`offer` and `reset` of the product, the `live_event` used for round reset, the values of the row). The `live_event` used for round reset is the product's `live_event` only for products whose `type` is `Consumable`; for `NonConsumable` and `Subscription` it is 0, so no round reset happens. When raising `count`, `reset_at` is written as `write_reset_at` of `read_purchase_limit`. When lowering `count`, it does not go below 0
 - The places that lower the purchase count (`REFUND` processing order step 3, ownership transfer step 5) lower the purchase count by 1 only when `reset_at` and `event_round` of that user's `IapPurchaseUserState` row read with the limit period rules equal `reset_at` and `event_round` of the payment record of that grant. When they differ, that grant belongs to a past limit period, so the purchase count does not change
 - pass: a product whose `type` is `Consumable` and that has `pass_days`. On each grant, when `pass_end_day` is greater than today, it changes to `pass_end_day` + `pass_days`, otherwise to today + `pass_days`. While today < `pass_end_day`, the pass is active, and `is_pass_active` is this judgement
 - daily entitlement: for `Subscription`, the entitlement; for a pass, the pass being active. Other products have none
@@ -293,7 +293,7 @@ none
 | `revoke_test_grant` of a store transaction that does not exist, does not belong to the target user or is not a test transaction, or of a store transaction that is not `GRANTED` | `not_found`, `conflict` | none | `audit` |
 | unknown SKU | `PurchaseStatus.INVALID` | none | `error` log |
 | product not sold, outside the sale condition | `IAP_PRODUCT_UNAVAILABLE` | `IAP_PRODUCT_UNAVAILABLE` | none |
-| `passed` of `evaluate_requirement` is `false` | `IAP_PRODUCT_LOCKED` | `IAP_PRODUCT_LOCKED` | none |
+| `passed` of `validation.evaluate_requirement` is `false` | `IAP_PRODUCT_LOCKED` | `IAP_PRODUCT_LOCKED` | none |
 | purchase limit reached, auto-renewing subscription with an entitlement | `IAP_LIMIT_REACHED` | `IAP_LIMIT_REACHED` | none |
 | age confirmation is required and the age is not confirmed yet | `AGE_CONFIRMATION_REQUIRED` | `AGE_CONFIRMATION_REQUIRED` | none |
 | monthly spend limit exceeded | `IAP_SPEND_LIMIT_REACHED` | `IAP_SPEND_LIMIT_REACHED` | none |
@@ -446,7 +446,7 @@ reserved ID: `[iap_grant_mail]` → row of `mail_template`
 - When the store notification body exceeds `iap.notifyMaxBodyBytes` or the read duration exceeds `iap.notifyBodyReadTimeoutMs`, HTTP 400, and it is not handled
 - When the adapter response body exceeds `routing.externalMaxResponseBytes`, `IAP_VERIFY_UNAVAILABLE`
 - The `REFUND` notification of a `GRANTED` store transaction of a withdrawn user gives HTTP 200, the payment record is `REFUNDED`, and a resend with the same notification ID is not handled
-- A `SUBSCRIPTION` notification with a subscription record of a withdrawn user gives HTTP 200, `state`, `ends_at` and `auto_renew` of the subscription record are the snapshot values, and there is no grant and no pending delta. When the snapshot is `EXPIRED`, `delete_at` stays unchanged; when `ACTIVE`, `delete_at` of the subscription record and of the binding is handling time + `iap.withdrawnRecordRetentionMs`. A resend with the same notification ID is not handled
+- A `SUBSCRIPTION` notification with a subscription record of a withdrawn user gives HTTP 200, `state`, `ends_at` and `auto_renew` of the subscription record are the snapshot values, and there is no grant and no pending delta. When the snapshot is `EXPIRED`, `delete_at` stays unchanged; when `ACTIVE`, `delete_at` of the subscription record and of the binding is `server-time.clock_now` + `iap.withdrawnRecordRetentionMs`. A resend with the same notification ID is not handled
 - The `REFUND` notification of a `Subscription` store transaction does a subscription status lookup with the original transaction ID of the payment record before `claim_notify`, and does subscription apply with that subscription snapshot. On lookup failure, HTTP 500, and the payment record and the subscription record stay unchanged
 - The revocation `ItemChange` of default `revoke_iap` has source `IapRefund` and `ref` transaction ID
 - When there is an `iap_product` row whose `extra_grant` is `true` and content leaves at least one of `grant_iap_extra` and `revoke_iap` unregistered, the server does not start and an `error` log is left
@@ -454,7 +454,7 @@ reserved ID: `[iap_grant_mail]` → row of `mail_template`
 - `has_granted_payment` is `true` for a user with a `GRANTED` payment record that is not a test transaction, and `false` for a user with only test transaction records or `REFUNDED` and `INVALID` records and for a user with no records
 - When another user sends a deleted `APPLE` store transaction or `GOOGLE` store transaction without an account token, `INVALID`
 - A grant of a `Consumable` with `pass_days` writes `pass_end_day` as today + `pass_days`, and the next grant while the pass is active adds `pass_days`. `is_pass_active` is `true` up to the game day before `pass_end_day` and `false` on that game day. `REFUND` of that product subtracts `pass_days` from `pass_end_day`
-- Before `start_at`, from `end_at` on, with an inactive offer, and while the linked live event is not active, `CheckPurchase` gives `IAP_PRODUCT_UNAVAILABLE`, and when `passed` of `evaluate_requirement` is `false`, `IAP_PRODUCT_LOCKED`
+- Before `start_at`, from `end_at` on, with an inactive offer, and while the linked live event is not active, `CheckPurchase` gives `IAP_PRODUCT_UNAVAILABLE`, and when `passed` of `validation.evaluate_requirement` is `false`, `IAP_PRODUCT_LOCKED`
 - `reset_at` of the `IapPurchaseUserState` row made by the first grant of a product with `reset` is `server-time.get_next_reset`(`reset`, request time), the purchase count is 0 from the reset time, and `CheckPurchase` passes again. `reset_at` of a product with `offer` is the end time of that offer
 - A `Consumable` product with `limit_count` 1 bound to a `live_event` with `repeat` passes `CheckPurchase` in round 2 after being granted in round 1, and a `NonConsumable` product bound to the same event gives `IAP_LIMIT_REACHED` in round 2 too
 - After one `Consumable` with `reset` `Daily` is granted on game day d and one on d + 1, when the `REFUND` of the store transaction of d comes, the purchase count of d + 1 stays 1, and the `REFUND` of the store transaction of d + 1 lowers the purchase count to 0. When the `REFUND` of a `repeat` live event product store transaction granted in round 1 comes in round 2, the purchase count of round 2 stays unchanged. `reset_at` and `event_round` of the granted payment record equal the values of the `IapPurchaseUserState` row right after the grant

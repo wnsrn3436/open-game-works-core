@@ -89,7 +89,7 @@ The order of rolling one table T. `roll` rolls the first table the given count o
 
 ### public loot table
 
-- A public loot table is a loot table with a row in `public_loot_table`. A loot table that a paid random of `server-content` rolls is a public loot table
+- A public loot table is a loot table with a row in `public_loot_table`
 - `GetLootRates` returns the result of `get_rates` (no substitution list) of that loot table as `LootRate` in the same order. `weight` has build target `Server`, but the probabilities are disclosed through this response
 
 ## hook

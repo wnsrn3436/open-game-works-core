@@ -14,7 +14,7 @@
 
 ## purpose
 
-Builds the profile that other users see (nickname, the `PublicProfile` message that the game defines in `service.proto`, last access time). Also handles the target user judgement that core `rpc`s pointing to another user use.
+Builds the profile that other users see (nickname, the `PublicProfile` message that the game defines in `service.proto`, last active time). Also handles the target user judgement that core `rpc`s pointing to another user use.
 
 ## dependency
 
@@ -34,7 +34,7 @@ Builds the profile that other users see (nickname, the `PublicProfile` message t
 | `on_request_start` | user ID | async operation. none | none. A failure is an `error` log | `routing`, `auth` |
 | `count_find_attempt` | user ID | async operation. `pass` | `RATE_LIMITED`, `UNAUTHORIZED`, `INTERNAL` | `routing` |
 
-- `PublicProfileEntry`(base proto message): `int64 user_id`, `string nickname` (empty string when there is no nickname), `bytes profile` (bytes of the game `PublicProfile` message; empty bytes when there is no hook `build_public_profile`), `int64 last_active_at` (last access time; 0 when there is no record), `string public_code` (the public code of `storage`)
+- `PublicProfileEntry`(base proto message): `int64 user_id`, `string nickname` (empty string when there is no nickname), `bytes profile` (bytes of the game `PublicProfile` message; empty bytes when there is no hook `build_public_profile`), `int64 last_active_at` (last active time; 0 when there is no record), `string public_code` (the public code of `storage`)
 - The output list is in ascending order of user ID and leaves out users for whom `is_active_user` is `false`
 
 core `rpc` request field

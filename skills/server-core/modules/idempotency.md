@@ -59,7 +59,7 @@ Returns the saved response unchanged to a request that comes again with the same
 - When there is no row of `(source, notify ID)` or the row is expired, `claim_notify` records it with one upsert statement and returns `FIRST`; when there is an unexpired row, it returns `DUPLICATE`
 - `idempotency_notify` is a `game` scope table and is also used in a user transaction. The calling module calls `claim_notify` in the same transaction as the handling. When the handling is rolled back, the record is also gone, and the next resend is handled again
 - On `DUPLICATE`, the calling module does not handle it and sends a success response
-- `created_at` of a record is `clock_now` at `claim_notify`, and `expires_at` is `created_at` + `idempotency.notifyRetentionMs`. `idempotency.notifyRetentionMs` is longer than the sender's resend period
+- `created_at` of a record is `clock_now` at `claim_notify`, and `expires_at` is `created_at` + `idempotency.notifyRetentionMs`. `idempotency.notifyRetentionMs` is longer than the longest period over which the sender of a source resends one notification: the App Store Server Notifications retries for `iap-apple` and `iap-apple-sandbox`, the Pub/Sub message retention of the Real-time developer notifications subscription for `iap-google`, and the server-side verification callback retries for `ads-admob`
 
 ### withdrawn response
 
