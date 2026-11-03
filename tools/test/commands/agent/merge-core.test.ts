@@ -250,7 +250,8 @@ describe('ogw agent merge: core worktrees', () => {
     const { id, waited } = await runAgent(ws, ['core', '--module', 'storage', '--input', join(ws.root, 'in-storage.md')], fake.env);
     expect(waited.code).toBe(0);
     sh(ws.coreImpl, 'git', ['rm', '-q', 'client/godot/generated/core_modules.gd']);
-    commitAll(ws.coreImpl, 'main deletes the generated file');
+    // without the hook, which imports the Godot project this core does not have: the merge is what is tested
+    sh(ws.coreImpl, 'git', ['commit', '-qm', 'main deletes the generated file', '--no-verify']);
     expect((await ogw(ws, ['agent', 'merge', id])).stdout.split('\n')).toContain(`merged ${id}`);
     expect(existsSync(join(ws.coreImpl, 'client', 'godot', 'generated', 'core_modules.gd'))).toBe(false);
     expect(sh(ws.coreImpl, 'git', ['status', '--porcelain'])).toBe('');
