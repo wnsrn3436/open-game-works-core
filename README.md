@@ -82,7 +82,7 @@ you -- one command --> lead agent (your Claude Code or Codex session)
   -> loop end record, merge into main, report to you
 ```
 
-- **Two kinds of iteration.** A fun iteration tries one change aimed at fun and runs only the checks that block play. It is judged only on game feel, tension and release and no friction from a short play, so it takes about half as long as a completeness iteration (on pong, 20 to 35 minutes against 40 to 55). A completeness iteration fixes defects and runs every step. Success is judged only in completeness iterations.
+- **Two kinds of iteration.** A fun iteration tries one change aimed at fun and runs only the checks that block play. It is judged only on game feel, tension and release and no friction from a short play, so it ends in tens of minutes. A completeness iteration fixes defects and runs every step. Success is judged only in completeness iterations.
 - **Votes, not one opinion.** Several judges each pick a winner per fun element. An element is decided only when at least two thirds of the judges pick the same side in both A/B assignments. Bot telemetry from three runs per commit decides the elements it can measure.
 - **Evidence order.** Automated checks rank above telemetry, and telemetry above LLM opinion. What could not be checked is recorded as unknown, not as a failure.
 - **Resources and translations never block the loop.** Agents keep developing with placeholder resources while resource and translation sub-agents work in parallel.
