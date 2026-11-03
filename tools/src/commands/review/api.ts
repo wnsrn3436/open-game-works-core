@@ -81,10 +81,13 @@ export async function clearReviews(ctx: Context, side: 'core' | 'tool'): Promise
  * command.md: the command ended, and a result not merged is dropped); returns what stays. The names come from the job
  * id as `ogw agent` makes them: a job that ended during `git worktree add` has none in its meta. `-f -f` also removes
  * a worktree that an interrupted add left locked, and the prune drops one whose folder is gone, so its branch can go.
+ * Returns report lines: `not removed: <what>` and `discarded: <branch>: <n> commits not in main, last <sha>`, the sha
+ * being what restores a result that should not have gone.
  */
 async function removeLeftAgentWorktrees(ctx: Context): Promise<string[]> {
   const coreImpl = resolve((await ctx.workspace()).coreImpl);
   const left: string[] = [];
+  const discarded: string[] = [];
   for (const job of await listJobs(ctx.env)) {
     if (job.command !== 'agent' || job.status === 'running') continue;
     const place = (job.meta as AgentMeta).place;
@@ -96,9 +99,14 @@ async function removeLeftAgentWorktrees(ctx: Context): Promise<string[]> {
     if (exists(worktree)) left.push(worktree);
     const branch = `agent/${job.id}`;
     if (await branchExists(coreImpl, branch, { env: ctx.env })) {
+      const unmerged = await gitRaw(coreImpl, ['rev-list', '--count', `main..${branch}`], { env: ctx.env });
+      if (unmerged.code === 0 && unmerged.stdout.trim() !== '0') {
+        const tip = await gitRaw(coreImpl, ['rev-parse', branch], { env: ctx.env });
+        discarded.push(`${branch}: ${unmerged.stdout.trim()} commits not in main, last ${tip.stdout.trim()}`);
+      }
       await gitRaw(coreImpl, ['branch', '-D', branch], { env: ctx.env });
       if (await branchExists(coreImpl, branch, { env: ctx.env })) left.push(branch);
     }
   }
-  return left;
+  return [...left.map((what) => `not removed: ${what}`), ...discarded.map((what) => `discarded: ${what}`)];
 }

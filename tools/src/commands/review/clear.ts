@@ -10,6 +10,6 @@ export const clear: CommandDef = {
     const side = args.positionals[0];
     if (side !== 'core' && side !== 'tool') throw new OgwError(`usage: ${this.usage}`);
     const left = await clearReviews(ctx, side);
-    return { text: [`cleared ${side} review state`, ...left.map((what) => `not removed: ${what}`)].join('\n'), data: { cleared: side, notRemoved: left } };
+    return { text: [`cleared ${side} review state`, ...left].join('\n'), data: { cleared: side, notRemoved: left } };
   },
 };

@@ -85,8 +85,8 @@ export const CORE_STUBS: Files = {
   'client/core/virtual_pad_core/virtual_pad_layout.gd':
     'class_name VirtualPadLayout\nextends Control\n\n@export var joystick_mode: VirtualPadCore.JoystickMode = VirtualPadCore.JoystickMode.FLOATING\n',
   'client/core/virtual_pad_core/virtual_button.gd': 'class_name VirtualButton\nextends Control\n\n@export var action: StringName\n',
-  'client/core/virtual_pad_core/virtual_joystick.gd':
-    'class_name VirtualJoystick\nextends Control\n\n@export var action_negative_x: StringName\n@export var action_positive_x: StringName\n@export var action_negative_y: StringName\n@export var action_positive_y: StringName\n',
+  'client/core/virtual_pad_core/virtual_pad_joystick.gd':
+    'class_name VirtualPadJoystick\nextends Control\n\n@export var action_negative_x: StringName\n@export var action_positive_x: StringName\n@export var action_negative_y: StringName\n@export var action_positive_y: StringName\n',
   'client/generated/data/game_data.gd': [
     'class_name GameData',
     'extends RefCounted',

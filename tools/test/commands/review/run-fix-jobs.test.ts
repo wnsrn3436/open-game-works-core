@@ -75,7 +75,14 @@ describe('ogw review run', () => {
     writeFileSync(record, JSON.stringify({ ...job, meta: { ...job.meta, worktree: null, branch: null } }));
     // a worktree folder that is gone while git still lists it
     rmSync(tree(unmerged), { recursive: true, force: true });
-    expect(await ogw(ws, ['review', 'clear', 'core'])).toMatchObject({ code: 0, stdout: 'cleared core review state\n' });
+    // a result that is not in main is named with the commit that restores it
+    const extra = sh(ws.coreImpl, 'git', ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'unmerged result']).trim();
+    sh(ws.coreImpl, 'git', ['update-ref', `refs/heads/agent/${failed}`, extra]);
+    const notMerged = sh(ws.coreImpl, 'git', ['rev-parse', `agent/${unmerged}`]).trim();
+    const notMergedCount = sh(ws.coreImpl, 'git', ['rev-list', '--count', `main..agent/${unmerged}`]).trim();
+    const firstClear = await ogw(ws, ['review', 'clear', 'core']);
+    expect(firstClear.code).toBe(0);
+    expect(firstClear.stdout.split('\n').sort()).toEqual(['', 'cleared core review state', `discarded: agent/${failed}: 1 commits not in main, last ${extra}`, `discarded: agent/${unmerged}: ${notMergedCount} commits not in main, last ${notMerged}`].sort());
     expect([existsSync(tree(failed)), existsSync(tree(running))]).toEqual([false, true]);
     const branches = sh(ws.coreImpl, 'git', ['branch', '--format=%(refname:short)']);
     expect([failed, unmerged, running].map((id) => branches.includes(`agent/${id}`))).toEqual([false, false, true]);

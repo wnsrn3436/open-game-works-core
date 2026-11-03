@@ -6,7 +6,7 @@ import { parseTextScene, strOf } from './lib/tscn.ts';
 
 /**
  * action reference: a reference to an action that is not in the game's input map (`project.godot` `input/` keys
- * without `ui_` actions, core actions included): `UIButton`, `VirtualButton`, `VirtualJoystick` node actions,
+ * without `ui_` actions, core actions included): `UIButton`, `VirtualButton`, `VirtualPadJoystick` node actions,
  * a `UIButton` with action `back`, input prompt tokens `{action:<action>}` in `tstring` cells and translations,
  * and `input_prompt` rows (`Touch` input not an action, `KeyboardMouse` input not a key or mouse button name).
  */
@@ -15,7 +15,7 @@ export const NAME = 'action reference';
 export const CORE_ACTIONS = ['back', 'cutscene_advance', 'cutscene_skip'];
 const MOUSE_BUTTONS = new Set(['mouse_left', 'mouse_right', 'mouse_middle']);
 const ACTION_PROPS = ['action', 'action_negative_x', 'action_positive_x', 'action_negative_y', 'action_positive_y'];
-const BUTTON_CLASSES = ['UIButton', 'VirtualButton', 'VirtualJoystick'];
+const BUTTON_CLASSES = ['UIButton', 'VirtualButton', 'VirtualPadJoystick'];
 const TOKEN = /\{action:([^}]*)\}/g;
 
 /** Actions of the input map. */
