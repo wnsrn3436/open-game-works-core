@@ -440,6 +440,9 @@ describe('ogw agent: core and review', () => {
     expect(hook).toContain('meta sync core --staged');
     // the hook syncs in the workspace of this harness, not of whatever harness a commit's environment names
     expect(hook).toContain(`OGW_HARNESS_ROOT="${ws.harness}"`);
+    // it runs the ogw wrapper, which finds node in PATH, not this node binary, which a node upgrade can remove
+    expect(hook).not.toContain(process.execPath);
+    expect(hook).toContain(`"${join(dirname(cliEntry()), '..', 'bin', 'ogw')}" meta sync core --staged`);
   });
 
   it('adds the hook command to an existing pre-commit hook once', async () => {
@@ -455,17 +458,16 @@ describe('ogw agent: core and review', () => {
     expect(hook).toContain('echo mine');
   });
 
-  it('runs the core pre-commit hook in the workspace of its harness with nothing from PATH but what git adds', async () => {
+  it('runs the core pre-commit hook in the workspace of its harness when the commit names no harness', async () => {
     const ws = makeWorkspace();
     const { ensurePreCommitHook } = await import('../../../src/commands/agent/lib/launch.ts');
     await ensurePreCommitHook(ws.coreImpl, ws.env);
     writeFileSync(join(ws.coreImpl, 'x.txt'), 'x');
-    const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-    // no OGW_HARNESS_ROOT: the commit names no harness
-    const env = { ...gitEnv, PATH: '/nonexistent' };
-    execFileSync(git, ['add', 'x.txt'], { cwd: ws.coreImpl, env });
+    // no OGW_HARNESS_ROOT
+    const env = { ...gitEnv, PATH: process.env.PATH };
+    execFileSync('git', ['add', 'x.txt'], { cwd: ws.coreImpl, env });
     // git gives the hook's output to stderr
-    const commit = spawnSync(git, ['commit', '-m', 'x'], { cwd: ws.coreImpl, env, encoding: 'utf8' });
+    const commit = spawnSync('git', ['commit', '-m', 'x'], { cwd: ws.coreImpl, env, encoding: 'utf8' });
     expect(commit).toMatchObject({ status: 0 });
     expect(commit.stderr).toContain('no staged engine resource');
     expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%s'])).toBe('x\n');
