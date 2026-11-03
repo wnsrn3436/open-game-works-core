@@ -1,6 +1,6 @@
 {
   "target": "input",
-  "nextId": 3,
+  "nextId": 4,
   "items": [
     {
       "id": "D1",
@@ -13,6 +13,12 @@
       "location": "skills/game-loop/instance.md:41",
       "problem": "The `step` mode text says an input put in between steps \"advances game time by 1 ms per key or touch event\", and the same item has the agent turn step mode on before a realtime match. skills/client-core/modules/qa-core.md:116 adds no budget in `Playing` of a lockstep match, and says that game time there grows only by the steps of the match, so an input between those steps does not advance game time. The two defining documents differ for a lockstep realtime match. The condition `the client is not in Playing of a lockstep match` was already in qa-core.md at c8066bb, so the difference was there before this range",
       "foundBy": "input round 4"
+    },
+    {
+      "id": "D3",
+      "location": "tools/src/commands/agent/lib/play-budget.ts:79",
+      "problem": "`brokerBudgetRefusal` treats opening `ogw step <instance> <ms> --stream` as a step. Run in a temporary copy with a judge agent key: opening a stream before any line created the budget file of `insta`, so the budget starts without an input or step, and opening a stream after the budget was refused with `the play budget of 240 s of instance insta has passed`, so its `input key_up` lines never reach `streamAction`, which excepts a release. `ogw input <instance> key_up <key>` still releases. The target of this defect is `ogw step`, and it also applies to the play agent budget",
+      "foundBy": "input round 1"
     }
   ]
 }
