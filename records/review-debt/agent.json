@@ -1,0 +1,12 @@
+{
+  "target": "agent",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/step/step.ts:273",
+      "problem": "`ogw step <instance> <ms> --count <n>` checks the play budget once before its first step, and `runSteps` (step.ts:178) sends the other steps without a check, so a call started before the budget ends goes on after it. tools/ogw.md:299 and :300 say `ogw step` of a play or judge agent fails once the budget has passed. A `step <n>` stream line (step.ts:224) goes through the same `runSteps`. Measured in a temporary copy with the fake client as a judge agent, 60 ms of budget left and `--count 1000`: exit code 0, 1000 steps sent, and the command ended 1110 ms after the budget ended. The same gap was closed for `ogw input --script` in this range. The code predates this range and belongs to the `step` target",
+      "foundBy": "agent round 2"
+    }
+  ]
+}
