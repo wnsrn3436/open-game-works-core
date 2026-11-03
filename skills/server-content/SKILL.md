@@ -25,7 +25,8 @@ Server content code is written in TypeScript. The common rules of requests, hand
 - Server content code is the code in `server/` except `server/core/`, `server/generated/` and `server/dev/`. Static checks treat this range as server content code
 - Server code is written as ES modules (`import`, `export`)
 - `server/core/`, `server/generated/` and `server/build/` are not edited
-- The settings files (`settings.json`, `core-settings.json`) are not read. Gameplay values go in data `game_setting`. Static check `settings access` blocks violations
+- A file outside `server/dev/`, the `dev/` folders of `server/core/` and `server/tests/` does not import a file inside `server/dev/` or the `dev/` folders of `server/core/`. Static check `DEV reference` blocks violations
+- The settings files (`settings.json`, `core_settings.json`) are not read. Gameplay values go in data `game_setting`. Static check `settings access` blocks violations
 - Each `rpc` of the contract has one handler. When an `rpc` has no handler, the server does not start
 - `core` of `register` and `registerDev` is an object that server core passes, and it holds per module the operations of that module. Registration operations are called only inside these two functions
 
@@ -36,7 +37,6 @@ Server content code is written in TypeScript. The common rules of requests, hand
 3. The saved state is changed. Items (currency and goods) are changed only with `item-ledger`
 4. The response message is returned
 
-- The code leaves no failure path unhandled
 - Core handles resends of the same request ID. A handler is written assuming it runs once
 - Time conditions are judged with the server time of ctx. A time the client sent is not used
 - The system clock is not read (`Date.now()`, `new Date()` without arguments, `Date()` called as a function, `performance.now()`, `performance.timeOrigin`, `process.hrtime()`, `process.hrtime.bigint()`, `process.uptime()`). The time is read with the `server-time` operation `now`. Static check `system clock` blocks violations
@@ -90,7 +90,7 @@ DEV code that puts other users on the social screens and ranking screens of an i
 ## probability disclosure
 
 - paid random: a request whose purpose is to decide by random the items received as the result, and that directly uses in that request an item whose `type` in the `item` table is `Currency` or an item bought with such an item (e.g. box, enhancement material). e.g. opening a box, enhancement, synthesis, gacha. The round results and rewards of `play-session` are not paid random
-- Paid random uses the `gacha` request `DrawGacha`, or rolls a public loot table with the `loot-table` operation `roll`. ctx random is not used directly
+- Paid random from a banner of data `gacha_banner` uses the `gacha` request `DrawGacha`. Other paid random (e.g. opening a box, enhancement, synthesis) rolls a public loot table with the `loot-table` operation `roll`. ctx random is not used directly
 - Each public loot table has a row in data `public_loot_table`
 
 ## collected data
@@ -119,7 +119,7 @@ At build, the server hardening agent finds and fixes the items below based on th
 - A handler that uses a result the client decided. The range of judgements that decide results is `## role split with server` of [`client-content`](../client-content/SKILL.md)
 - Prices, rewards and probabilities received as request values
 - The handler of a paid random request deciding that random result with ctx random or with a loot table that is not a public loot table
-- Use of resources outside ctx
+- Use of files, network, environment variables or global mutable state in a handler
 - A content admin operation that changes the saved state without `operation_id`
 - A content admin operation registered with a role that differs from what it does under the criteria of `### role` of `admin-api`
 - Constants in `server/common/constants.ts` that are game data values

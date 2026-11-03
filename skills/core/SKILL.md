@@ -5,7 +5,7 @@ description: Holds the rules common to client core and server core (spec format,
 
 # core
 
-The procedures of core version, release, license manifest, core test and the core commands (`create contract tool`, `create server core`, `create client core`, `update core`) are in [command.md](command.md). The core agent and the lead agent of a core command read it.
+The procedures of core version, release, license manifest, core test and the core commands (`create contract tool`, `create server core`, `create client core`, `update core`) are in [command.md](command.md). The core agent, the review agent and the lead agent of a core command read it.
 
 ## module
 
@@ -58,31 +58,11 @@ A spec file has the headings below in this order. A heading with no content for 
 - The modules and code that call an operation are set only by the `caller` cell of that operation's row. An operation that another module calls has that module in `caller`, and an operation that can be called inside a hook has `hook` in `caller`
 - A table header is written only in `## data` of the one spec that defines the table. Other specs point to it by table name
 - The implementation does not change before the spec changes
-
-### tool-read form
-
-`ogw core spec` (`## core spec file` of [command.md](command.md)) reads only the forms below from a spec. It does not read inside code fences. The same content is not written again as sentences outside these forms.
-
-- lifecycle sentence: a line of `## purpose` that contains `has no lifecycle`
-- operation table: a table of `## API` whose header starts with `operation`, `input`. Only the rows whose `operation` cell is operation name code spans joined by `, ` are read. The `input` cell is `none`, or one description per input, split at `, ` outside parentheses and code spans. An input whose description contains `translation key` is an input that receives a translation key
-- dependency line: a line of `## dependency` that, after removing the leading `- ` and, when present, the label `server dependency: ` or `optional dependency: `, starts with a module name code span, and whose list of code spans joined by `, ` ends at the line end or at `. `. A comment that starts with `(` and ends with `)` can follow a code span directly. A line with the label `dev dependency: ` in place of those labels has the same form, and its modules are modules that only DEV code depends on. A line where a code span is directly followed by a character other than `, `, `(`, `. ` or the line end (e.g. `` `NetworkCore` is ``) is not a dependency line
-- table definition: a line of `## data` that starts with `` `data/tables/<table>.csv` ``, and the table right after it. The table header starts with `column`, `type`, `build target`, and in each row these three cells are one code span each. As an exception, a row whose `column` starts with `#` is a comment column, and its other cells are not read. The row order is the column order of the CSV header
-- enum table: the table right after the `` `data/enums.csv` `` line in `## data`. Columns are `type`, `element`. The `element` cell starts with a list of element code spans joined by `, `, or, for an enum whose elements the game sets, starts with `set by the game`. The list ends at the cell end or at `. `. When the line is `` `data/enums.csv`: none``, there is no table
-- invariant table: the table right after the `` `data/invariants.csv` `` line. Its format is set by the `## data` row of the `## spec` table
-- used table line: a line of `## data` that starts with `used table: `, followed by a list of the code spans, joined by `, `, of names of tables whose table definition is outside this module. The list ends at the line end or at `. `. It lists every table of another module that this module reads but does not point to with a `ref<...>` type of its own table definitions or with the `→` of a reserved name
-- reserved name: the two forms below in `## data`. `<kind>` is one of `reserved ID`, `reserved string`, `reserved sound`
-  - list line: a line that, without the leading `- `, starts with `<kind>` values joined by `, ` and then `: `, followed by `none` or a list of ID name code spans joined by `, `. The list ends at the line end or at `. `. A comment that starts with `(` and ends with `)` can follow each ID name code span directly, and when `<kind>` is `reserved ID` alone, `` → row of `<table>` `` can follow
-  - table: a line that is exactly one `<kind>`, and the table right after it whose first column is `name`. In each row, the `name` cell is ID name code spans joined by `, `. The second cell of a `reserved ID` table can start with `` → row of `<table>` ``
-  - `` → row of `<table>` `` means that the ID name the reserved ID points to must be a row of that table. When the text after `. ` of a list line or the second cell of a table contains ``required when game settings `<path>` is `<JSON value>` ``, the reserved IDs of that line or row are required only under that condition
-- format argument table: a line of `## data` that is exactly `format argument`, and the table right after it. Columns are `text`, `arguments`. The `text` cell is the ID name code span of a reserved string or reserved ID, or `` `<table>.<column>` `` of a table core defines. The `arguments` cell is `` `{<name>}`(`<kind>`) `` joined by `, `, or `none`. `<kind>` is one of the value kinds `integer`, `real`, `string` of `### format` in [`data`](../data/SKILL.md). Every text that core gives values to and that has format arguments is written in this table
-- adapter table: the table right after the heading of `## behavior` whose whole line is `### real adapter`. Columns are `adapter key`, `real adapter`, and in each row the two cells are one code span each. `real adapter` is the name of a real adapter this module implements (`## adapter` of [`server-core`](../server-core/SKILL.md))
-- settings table: the first table of `## settings`. Its format is set by the `## settings` row of the `## spec` table
-- settings constraint table: a line of `## settings` that is exactly `settings constraint`, and the table right after it. Its format is set by settings constraint in `## core settings`
-- collected data table: the `### collected data` table of `## behavior`. Its format is set by `## collected data`
+- The forms of a spec that `ogw core spec` reads are `### tool-read form` of [command.md](command.md)
 
 ## lifecycle
 
-- A client core module has one instance in the game. A caller calls operations by the module name and does not create or keep an instance
+- A client core module is one object in the game. A caller calls operations by the module name and does not create or keep that object
 - The lifecycle is `init` and `release`. The init check is an operation that returns whether the module is in the `init` state, and every module with a lifecycle has one. `BootstrapCore` sets the call order by dependency order. A module without state has no lifecycle
 - A module without a lifecycle writes `has no lifecycle` in `## purpose` of its spec. The client core modules other than `BootstrapCore` and those modules have a lifecycle
 - A spec does not write `init` and `release` in `## API`. The additional work of that module's `init` and `release` and the state it keeps after `release` are written in `## behavior`
@@ -149,7 +129,6 @@ Content code registers hooks in core: functions that take over game-specific dec
   | `NetworkCore.requestTimeoutMs` | 2 | `InputBlockCore.maxDurationMs` |
   ```
 
-- `ogw core release` merges the settings constraints of all modules into the release asset `core-settings-constraints.json`. This file is a JSON array whose items are `{"left": "<core settings key>", "factor": <integer>, "right": "<core settings key>"}`
 - `ogw game check` evaluates the condition of each item of `core-settings-constraints.json` of that core version with the core settings values merged with game settings `core`, and fails when any item is violated
 - Duration values are integers in ms, and byte sizes are integers
 - The value range of a core settings key follows the rules below, and `core-settings.schema.json` writes it with `minimum`, `maximum`, `exclusiveMinimum`. A spec writes only a range that differs from these rules, in `meaning` of `## settings`, and a key with a written range follows only that range instead of these rules
