@@ -14,7 +14,7 @@
 
 ## purpose
 
-Handles per-bus volume and mute, BGM switching, sound effect playback and the concurrent playback limit, pause, and haptic pattern playback. Code, scenes and prefabs outside SoundCore have no sound players other than content positional players and no haptic calls.
+Handles per-bus volume and mute, BGM switching, sound effect playback and the concurrent playback limit, pause, and haptic pattern playback. Code, scenes and prefabs outside SoundCore have no engine sound players other than content positional players and no engine haptic calls.
 
 ## dependency
 
@@ -52,7 +52,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 | play handle, pause token | a value that SoundCore issues. An issued value is not issued again until `release`. An invalid value points to no request |
 | haptic pattern | content of a `haptic` resource. The file is `resource/haptic/<name>.json`, a UTF-8 JSON object `{"segments": [{"delay_ms": <integer>, "duration_ms": <integer>, "intensity": <integer>}, ...]}`. `segments` has 1 or more items, `delay_ms` is 0 or more, `duration_ms` is 1 or more, and `intensity` is in permille, at least 0 and at most 1000. Any other key or value is a format error |
 
-- A resource key is received as a `ReservedSound` accessor or a `reskey` value of data
+- A resource key is received as a resource key constant, a `reskey` value of data or, for a sound core plays, a `ReservedSound` accessor
 
 ## behavior
 
@@ -99,7 +99,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
   - The playback count of the same resource key is at most `SoundCore.maxConcurrentPerKey`, and the total is at most `SoundCore.maxConcurrent`
   - When a limit is exceeded, a replacement target is picked: the playback with the lowest priority that started first, among the playback of the same key when the same-key limit is exceeded, otherwise among all
   - When the replacement target's priority is higher than the new playback's, the new playback does not happen. Otherwise the replacement target stops without a fade and the new playback starts
-- When the playback of a `play` request starts, SoundCore sends `SoundPlayedEvent`. It does not send it for a request decided not to play or for BGM
+- When the playback of a `play` request starts, SoundCore publishes `SoundPlayedEvent`. It does not publish it for a request decided not to play or for BGM
 - The handle of a request that ended, was stopped, was replaced or was decided not to play is invalid. `stop` with an invalid handle does nothing
 - `is_playing` is `false` from the frame in which the end, stop or replacement happens
 - A caller that runs `play` on a loop sound keeps the handle and ends it with `stop`
@@ -115,7 +115,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 
 - While the game time of `TimeCore` is paused, playback on the `Sfx` and `Voice` buses stops while keeping its position, and continues when the pause is lifted. `Sfx` and `Voice` playback started during that time starts in the stopped state. `Bgm` and `Ui` do not stop
 - global pause stops playback and fades on all buses while there is one or more reason. The reasons are the unfocused state and the tokens of `request_pause`
-- unfocused state: the period after the app loses focus, as the engine reports, until the app regains focus, or the period after `TimeCore.AppBackgroundEnteredEvent` until `AppForegroundReturnedEvent`. The engine mapping of the app losing and regaining focus is in the engine-specific implementation rules
+- unfocused state: the period after the app loses focus, as the engine reports, until the app regains focus, or the period after `TimeCore.AppBackgroundEnteredEvent` until `TimeCore.AppForegroundReturnedEvent`. The engine mapping of the app losing and regaining focus is in the engine-specific implementation rules
 - `release_pause` removes the reason of that token
 
 ### haptic
@@ -125,7 +125,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 - When the obtained pattern that is not a fallback is not in haptic pattern format, the result is `false`. This error log is left once per resource key until `release`
 - haptic target: when `InputCore.get_device` is `Gamepad` at the time `play_haptic` is called, the gamepad of `InputCore.get_last_gamepad` (`Gamepad`); otherwise the device (`Device`). It does not depend on the platform. The haptic target of a pattern being played does not change until that pattern ends
 - `play_haptic` plays the haptic pattern as vibration of the haptic target. Segments play in order. From the time the previous segment ends (for the first segment, the playback start), it waits `delay_ms` and then vibrates at `intensity` for `duration_ms`. `intensity` 0 does not vibrate. When a pattern is playing, it stops it and plays the new pattern
-- After the format check passes, when haptics are off, global pause is on, or the haptic target has no vibration feature, it does not play and returns `false` without a log. A `Gamepad` target has the vibration feature when `get_last_gamepad` is not −1. The platforms on which a `Device` target has the vibration feature are in the engine-specific implementation rules
+- After the format check passes, when haptics are off, global pause is on, or the haptic target has no vibration feature, it does not play and returns `false` without a log. A `Gamepad` target has the vibration feature when `InputCore.get_last_gamepad` is not −1. The platforms on which a `Device` target has the vibration feature are in the engine-specific implementation rules
 - A haptic target that does not support intensity plays a segment whose intensity is greater than 0 as vibration of the same duration
 - `set_haptic_enabled` writes to the `device` file of `LocalDataCore`. The default is `true`, and `load_volume_settings` loads it too
 
@@ -134,7 +134,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 - content positional player: an engine positional sound player that content code, scenes and prefabs own. It attenuates by distance to the listener and pans by direction. The engine mapping is in the engine-specific implementation rules
 - A content positional player plays only `sfx` resources, and its output bus is `Sfx`. So the volume, mute and limiter of `Sfx` and `Master` apply
 - A content positional player stops while keeping its position during a game time pause of `TimeCore` and continues when the pause is lifted. During global pause, SoundCore stops content positional players and continues them when it is lifted
-- Playback of a content positional player is not in the playback count of `play` and sends no `SoundPlayedEvent`. The content code that owns the player plays, stops and destroys it. `release` does not destroy content positional players
+- Playback of a content positional player is not in the playback count of `play` and publishes no `SoundPlayedEvent`. The content code that owns the player plays, stops and destroys it. `release` does not destroy content positional players
 
 ### release
 
@@ -227,10 +227,10 @@ none
 - `play` of a sound that is not loaded returns the handle at once and plays after loading. With `stop` before that, it does not play
 - During game time pause, only `Sfx` and `Voice` stop, and they continue when the pause is lifted
 - After `inject_focus_change(false)`, all playback and fades stop. Releasing only one of two pause tokens keeps the pause, and in the unfocused state, releasing all tokens still keeps the pause. Then after `inject_focus_change(true)`, when there is no token, playback continues from the stopped position
-- A content positional player that ran `play()` during global pause and an `autoplay` player instanced during that time also make no sound until global pause ends
+- A content positional player started during global pause and a content positional player that starts itself when created during that time also make no sound until global pause ends
 - A content positional player on the `Sfx` bus is silent with `Sfx` mute, stops during game time pause and global pause, and continues when they are lifted. Its playback is not in `get_playing` or `SoundPlayedEvent`
 - All issued handle and token values differ until `release`
 - When haptics are off, or the haptic target is `Device` on a platform without the vibration feature, `play_haptic` is `false` with no log. A new `play_haptic` during playback stops the earlier pattern
-- After a gamepad button press through `InputCore.inject_device_input` makes `InputCore.get_device` `Gamepad`, `play_haptic` of a loaded haptic resource in the right format is `true` even on a platform without the `Device` vibration feature, and the haptic target in `get_haptic_log` is `Gamepad`. `play_haptic` after only `InputCore.set_test_device`(`Gamepad`) without gamepad input is `false` without a log. When `get_device` is `Touch`, the haptic target is `Device`
+- After a gamepad button press through `InputCore.inject_device_input` makes `InputCore.get_device` `Gamepad`, `play_haptic` of a loaded haptic resource in the right format is `true` even on a platform without the `Device` vibration feature, and the haptic target in `get_haptic_log` is `Gamepad`. `play_haptic` after only `InputCore.set_test_device`(`Gamepad`) without gamepad input is `false` without a log. When `InputCore.get_device` is `Touch`, the haptic target is `Device`
 - `play_haptic` of a loaded haptic resource in the right format is `true` on a platform with the vibration feature and is recorded as played in `get_haptic_log`. A key that is not loaded is `false` with no SoundCore log. A file with empty `segments`, `duration_ms` 0, `intensity` 1001 or an unknown key is `false` regardless of the vibration feature, and playing the same key twice leaves one error log
 - After `release` there is no player; after `init` again there is no current BGM and no previous BGM, no pause, and all volumes are 1

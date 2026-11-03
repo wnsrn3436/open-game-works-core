@@ -20,7 +20,7 @@ Handles the conventions of core tests and client regression tests, test setup, t
 
 `UtilCore`, `LogCore`, `EventCore`, `TimeCore`, `NetworkCore`, `InputCore`, `UICore`, `RealtimeCore`, `BootstrapCore`
 
-- Depending on `BootstrapCore` is an exception for a DEV module. It calls only `start_boot` and `shutdown`
+- Depending on `BootstrapCore` is an exception for a DEV module. It calls only `BootstrapCore.start_boot` and `BootstrapCore.shutdown`
 
 ## API
 
@@ -51,9 +51,9 @@ Before each test starts, the following runs in order.
 5. Replacement registration: pass the test clock to `TimeCore.set_test_clock` and `LogCore.set_test_clock`, the fake network to `NetworkCore.set_transport`, and the log collector to `LogCore.set_log_listener`. This runs before `init` of the target module
 
 - When, after step 2, there is an unchecked error log produced after the previous test ended, it is recorded as one run failure. The message has the previous test name (`before run` for the first test) and the log. The results of the previous test and the next test do not change
-- Module initialization is one of two: the test calls `init` directly in module list order, or the test calls `start_test_boot` with a test module list (test boot)
-- A test that puts in the test module list an entry that is not a static func of a module class (e.g. a method of an object in the test) ends that boot with `BootstrapCore.shutdown` before it returns. Otherwise the `shutdown` of the next test setup calls the entry of a freed object
-- test boot: `start_test_boot` calls `BootstrapCore.start_boot` with a `BootTestReplacements` of `BootstrapCore` that holds the test clock, fake network, and log collector of this test and the received fake realtime transport and server URL (`http://127.0.0.1` when omitted). The boot after a restart or an update reboot also uses the same test replacements
+- Module initialization: by default the test calls `init` directly in module list order on the modules it needs. A test that needs the boot flow (a content entry, a boot stage, a restart, an update reboot) calls `start_test_boot` with a test module list instead (test boot). This holds for core tests and regression tests
+- A test that puts in the test module list an entry that is not an operation of a module (e.g. a method of an object in the test) ends that boot with `BootstrapCore.shutdown` before it returns. Otherwise the `BootstrapCore.shutdown` of the next test setup calls the entry of a freed object
+- test boot: `start_test_boot` calls `BootstrapCore.start_boot` with a `BootTestReplacements` of `BootstrapCore` that holds the test clock, fake network, and log collector of this test and the received fake realtime transport, server URL (`http://127.0.0.1` when omitted) and update downloads. The boot after a restart or an update reboot also uses the same test replacements
 - For the adapters and transports of a module, the test implementation is passed with the `set_*` operation of that module before `init`
 
 ### external connection
@@ -107,35 +107,36 @@ Before each test starts, the following runs in order.
 ### input
 
 - Test input is put in with `InputCore.inject_device_input`. The input enters at the very front of engine input handling and passes the same path as human input
-- Tests do not call input handlers, click functions of UI elements, or engine input signals directly. An automated check blocks it
+- Regression tests do not call input handlers, click functions of UI elements, or engine input signals directly. Static check `test input` blocks it. A core test does so only for the input handling of the module it tests
 
 ### log
 
 - collected logs: the level and tag of the logs the log collector received in the current test
 - Logs whose count was received with `check_logs` become checked logs. A test with an unchecked error log left fails
-- A test with an unchecked engine script runtime error left fails. The result has `checked_script_errors` (the checked count) per test, and only when the number of `SCRIPT ERROR:` lines in the engine output equals their sum does the tool not treat the run as failed because of those lines. An engine script runtime error that occurs between tests (after one test ends and before the next test setup) is a run failure
+- A test with an unchecked engine script runtime error left fails. The result has `checked_script_errors` (the checked count) per test, and only when the number of engine script runtime error lines in the engine output equals their sum does the tool not treat the run as failed because of those lines. An engine script runtime error that occurs between tests (after one test ends and before the next test setup) is a run failure
 
 ### async wait
 
-- The completion of an async operation is waited for with its completion result or an event. It is not waited for with a polling loop that has a frame count limit. An automated check blocks it
-- A condition without an event (e.g. boot stage, a message of a loopback socket, accumulated WebRTC signals) is checked every frame without a frame count limit, and the wait ends when the module is released with `release`. The test time limit also calls `release` on the module
+- The completion of an async operation is waited for with its completion result or an event. It is not waited for with a polling loop that has a frame count limit
+- In a core test, a condition without an event (e.g. boot stage, a message of a loopback socket, accumulated WebRTC signals) is checked every frame without a frame count limit, and the wait ends when the module is released with `release`. The test time limit also calls `release` on the module
+- A regression test waits only with a completion result, an event latch or `wait_frames`, and a condition of content code that has no event gets a content event. Static check `frame polling` blocks a loop that waits for frames in a regression test, with or without a frame count limit
 - A core test that waits by frames for a flow that first loads a resource loads that resource beforehand with `ResourceCore.preload` and waits for its result. A test that needs the loading state waits for the result of that load
-- `wait_frames` is used only for targets whose progress is decided by engine frames (tween, layout, deferred call)
-- event latch: created before the action that raises the event, and when waited on, ends at once when the event has already occurred. Its result holds whether the event had already occurred before the wait. A latch created before `EventCore` is initialized with `init` subscribes when it receives the init notice of `EventCoreDev`. `release` deletes that registration, so UnitTestCore registers again at each test boot and each time `EventCore` is released with `release` during a test (restart, update reboot)
+- `wait_frames` is used only for targets whose progress is decided by engine frames (tween, layout, deferred call) and for the per-frame check of a core test
+- event latch: created before the action that publishes the event, and when waited on, ends at once when the event has already occurred. Its result holds whether the event had already occurred before the wait. A latch created before `EventCore` is initialized with `init` subscribes through `EventCore.register_init_listener`. `release` deletes that registration, so UnitTestCore registers again at each test boot and each time `EventCore` is released with `release` during a test (restart, update reboot)
 
 ### run and result file
 
 - test run: a native run starts the engine from the command line, and a browser run opens the web export in a headless browser. A browser run runs only core tests. The method is in the engine-specific implementation rules. The input is the run target (all, or a list of files and folders), run ID, test host URL, shared fixture folder, and core fixture folder. The shared fixture folder exists only for regression tests of a native run and is `data/fixtures/` of the game. The core fixture folder exists only for core tests and holds the files of `open-game-works-core-impl/fixtures/`
 - A native run is a `headless pass` that does not draw the screen. As an exception, render tests among core tests run only in a `render pass` that draws the screen. A render test is a core test that reads pixels or captures of the drawn screen, and whether a test is a render test is decided by the test file name that the engine-specific implementation rules set. A render pass runs only render tests. A browser run draws the screen, so it also runs render tests
-- At the start of a run, the run calls `init` on UnitTestCore, records the file list of app storage, and hides the test runner's own GUI for the whole run (it does not receive input over the test screen or appear in captures), and at the end it calls `release`. `release` resets the replacements the last test setup put in (test clock, log collector, fake transport) to none with the DEV operation of each module, and deletes the files not in the record
+- At the start of a run, the run calls `init` on UnitTestCore, records the file list of app storage, and hides the test framework's own GUI for the whole run (it does not receive input over the test screen or appear in captures), and at the end it calls `release`. `release` resets the replacements the last test setup put in (test clock, log collector, fake transport) to none with the DEV operation of each module, and deletes the files not in the record
 - A core test that calls `release` on a module directly and calls `init` again does not call `release` on `LogCore` or `TimeCore`: the replacements of test setup are put in only at test setup and test boot
 - One test must end within `UnitTestCore.testTimeLimitMs`, and the whole run within `UnitTestCore.runTimeLimitMs`. A test that exceeds its limit fails, and when the whole run exceeds its limit, the remaining tests do not run and it is recorded as a run failure. When a test that exceeded the time limit does not end within another `UnitTestCore.testTimeLimitMs` after that (e.g. it waits on a signal that never fires), that test fails, and as when the whole run exceeds its limit, the remaining tests do not run and it is recorded as a run failure. This is because the test framework cannot stop a test function and so cannot run the next test
-- failure: assert failure, throw, unchecked error log, request with no result to use, time limit exceeded
+- failure: assert failure, throw, unchecked error log, unchecked engine script runtime error, request with no result to use, time limit exceeded, an error condition of this module whose failure value says that test fails
 - skip: only core tests are skipped. A test is skipped with `require_platform` in a run whose current platform is outside the list, and render tests are skipped in a headless pass. The platform of a browser run is `web`. Regression tests have no skip
 - exit code: 0 when all tests are pass or skip, there is no run failure, and there is at least one test, otherwise 1. A browser run has no exit code, and the tool applies the same rule to the result it receives. The engine timer starts after the engine is up, so when the tool does not receive the result within `UnitTestCore.runTimeLimitMs` plus the boot duration the engine-specific implementation rules set, counted from when it starts the process or opens the page, it treats that run as failed
-- A run sends `PUT /started` with its run ID once, when the engine is up and before its first test (a run whose `init` failed: before its result), and waits for its response (a failure of it is the `## error` row of a failed test host request) before the test setup of the first test. When the tool has not received it within `UnitTestCore.startTimeLimitMs`, counted from when it starts the process or opens the page, the run did not start: the tool ends it without waiting for `UnitTestCore.runTimeLimitMs`. What the tool does next is in the engine-specific implementation rules
+- A run sends `PUT /started` with its run ID once, when the engine is up and before its first test (a run whose `init` failed: before its result), and waits for its response (a failure of it is a failed test host request) before the test setup of the first test. When the tool has not received it within `UnitTestCore.startTimeLimitMs`, counted from when it starts the process or opens the page, the run did not start: the tool ends it without waiting for `UnitTestCore.runTimeLimitMs`. What the tool does next is in the engine-specific implementation rules
 - result: one UTF-8 JSON. At the end of the run it is sent to the test host with `PUT /result`, and the tool writes it as the result file
-- After `release` finishes (for a run whose `init` failed, after sending its result; for a run that exceeded the whole-run time limit, after `release` and before ending), the run sends `PUT /released` and then writes one line `UnitTestCore released run <run ID>` to the engine output. This line is the last line UnitTestCore writes in that run. When the request fails, the test host request failure row of `## error` applies, and the exit code does not change
+- After `release` finishes (for a run whose `init` failed, after sending its result; for a run that exceeded the whole-run time limit, after `release` and before ending), the run sends `PUT /released` and then writes one line `UnitTestCore released run <run ID>` to the engine output. This line is the last line UnitTestCore writes in that run. When the request fails, it is a failed test host request, and the exit code does not change
 
   ```
   {
@@ -248,13 +249,13 @@ The whole module is DEV code. STG and PROD builds do not have UnitTestCore, `cli
 - Without `advance_clock`, the monotonic time and device time of `TimeCore` are unchanged; with d both increase by d; with d as device sleep only device time increases by d; and a negative value leaves them unchanged after an error log
 - In a test that did not run `init` on `TimeCore`, `advance_clock` moves only the test clock without an error log. In a test that ran `init` on `TimeCore`, d with background progress flag `false` and device sleep makes `TimeCore` handle background entry and return, and the background elapsed time is d
 - `tap` delivers a press and release over a UI element to that element, and does not deliver them when there is a block over that element
-- During a run the test runner GUI is hidden, and `tap` is delivered to a UI element at the place of that GUI. That GUI place is where a test runner GUI element that blocks the pointer sits inside the visible game area. The test runner GUI is laid out with the screen size at run start, so that place differs per run kind
+- During a run the test framework GUI is hidden, and `tap` is delivered to a UI element at the place of that GUI. That GUI place is where a test framework GUI element that blocks the pointer sits inside the visible game area. The test framework GUI is laid out with the screen size at run start, so that place differs per run kind
 - When anchor keys 7 and 9 are set on two `UIButton` elements with a `UIAnchor` of the same anchor name, `tap_anchor`(name, 9) clicks only the element with key 9 and returns `true`, and `tap_anchor`(name, 8) returns `false` without a click
 - A test with an unchecked error log left is recorded as failed, and when all are checked it does not fail because of logs
 - An error log produced by the `release` of the previous test remains as a run failure in the next test setup, and the results of the two tests do not change
 - With any of a failed test, a test file that could not be loaded, or 0 tests, the exit code is 1, and when all pass it is 0
 - In a headless pass render tests are recorded as skip, and in a render pass only render tests run and are recorded as pass or fail
-- The result file has the format above and contains every test that ran
+- The result file has the result format and contains every test that ran
 - A test that exceeds `UnitTestCore.testTimeLimitMs` is fail, and the next test runs
 - A latch created before the event and waited on after the event ends at once with already-occurred `true`, and when waited on before the event, it ends after the event with `false`
 - Two loopback HTTP servers get different base URLs and each records only the requests it received, a path not registered gets 404, and when the test ends that base URL gets 404

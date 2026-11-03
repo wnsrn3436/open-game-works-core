@@ -76,20 +76,20 @@ Handles the tween, which changes a property value of one object over time, and p
 
 ### definition check
 
-At playback start, when not all of the items below hold, leaves an error log and plays with a definition that has no steps. A tween with no steps does not change the value and ends with `Completed`.
+At playback start, when not all of the definition check items hold, leaves an error log and plays with a definition that has no steps. A tween with no steps does not change the value and ends with `Completed`.
 
 - Every step has one or more changes
 - The `Easing` of every change is a member of `Easing`
 - Every duration and delay is at least 0 and at most `TweenCore.maxDurationMs`
 - The repeat count is at least 0 and at most `TweenCore.maxRepeatCount`
 - The target value and start value of the used components are finite numbers. The target value and start value of `Color` and `Opacity` are at least 0 and at most 1
-- The target value and start value of the unused components (components that `### type` does not define for that property and the dimension of the target) are 0. e.g. y, z, w of `Opacity`, z, w of 2D `Position` and `Scale`
-- The two items above also check the start value of a change that does not use the start value
+- The target value and start value of the unused components (components that the target property does not use in the dimension of the target) are 0. e.g. y, z, w of `Opacity`, z, w of 2D `Position` and `Scale`
+- The used component and unused component items also check the start value of a change that does not use the start value
 - When the repeat is infinite, the cycle time is more than 0
 - No step has two or more changes that change the same property
 - The target object has the property of every change
 
-`check_definition` checks the items above with the received definition and target object without playback, and returns `true` when all hold, otherwise `false`. It leaves no log for a definition that violates an item.
+`check_definition` checks the definition check items with the received definition and target object without playback, and returns `true` when all hold, otherwise `false`. It leaves no log for a definition that violates an item.
 
 ### tween preset
 
@@ -115,7 +115,7 @@ At playback start, when not all of the items below hold, leaves an error log and
 ### handle and end
 
 - A tween handle points to one `play`, `play_preset` or `play_value` request. An invalid handle points to no request. The handle of an ended tween points to no request. Handle values are not reused from `init` to `release`
-- End happens once per tween. The end handling time is as below
+- End happens once per tween. The end handling time depends on the end
   - When an end condition arises inside a playback operation for the tween that operation started (a definition with no steps, a definition whose cycle time is 0), the end handling of that tween runs after the operation returns and before the frame that called the operation ends
   - For any other end, the operation or the TweenCore frame handling that caused the end finishes the end handling inside it and then returns. e.g. `stop`, `skip_to_end`, per-target and per-tag operations, pool return, `Completed` from progress
   - When a new request ends an earlier tween (a new playback of the same property, a new request on the same target while waiting for loading), the new tween starts after the end handling of the earlier tween finishes
@@ -163,7 +163,7 @@ none
 |---|---|---|
 | `TweenStartedEvent` | when a tween starts playback. For `play` and `play_value` inside the operation, for `play_preset` when loading finishes and playback starts. `QACore` counts it as feedback | none |
 
-- Not emitted for a `play_preset` tween that ended before starting playback or for a request that returned an invalid handle
+- Not published for a `play_preset` tween that ended before starting playback or for a request that returned an invalid handle
 
 ## error
 
@@ -224,7 +224,7 @@ none
 - Changing the copy of `copy_definition` leaves the source unchanged, and both a copy with more steps than the source and a copy with fewer steps have the same structure as the source after copying
 - When an object whose tween is playing is returned to `PoolCore`, that tween ends with `Stopped`
 - After `release`, callbacks are not called, `wait_end` is `None`, and there is no block of reason tag `tween`. After `init` again, a playback ends with `Completed`
-- `TweenStartedEvent` is emitted once for each `play`, each `play_value` and each `play_preset` whose loading finished, and not for a `play_preset` ended with `stop` before loading or for a request with an invalid handle
+- `TweenStartedEvent` is published once for each `play`, each `play_value` and each `play_preset` whose loading finished, and not for a `play_preset` ended with `stop` before loading or for a request with an invalid handle
 - A `tween/<name>` resource loaded with the kind from `get_preset_kind` is a `TweenDefinition`, and a key that does not exist gives a definition with no steps
 - For each `TweenValueKind`, `play_value` calls the receiver with values between the start value and end value, applies the end value after the duration and ends with `Completed`
 - For each definition check item, `check_definition` of a definition that violates only that item is `false` without a log, a passing definition gives `true`, and in both cases the property values of the target object stay the same

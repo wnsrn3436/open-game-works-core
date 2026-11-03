@@ -57,7 +57,7 @@ none. It does not call `LogCore` either.
 
 ### inclusion rule
 
-- UtilCore holds only operations that meet one of these: two or more core modules outside `UtilCore` use it, every game uses it
+- UtilCore holds only operations that meet one of these: two or more core modules outside `UtilCore` use it, it is an integer calculation, big integer, random or state machine operation
 - Operations are added with `update core`
 
 ### common
@@ -70,19 +70,19 @@ none. It does not call `LogCore` either.
 
 - A big integer here is the big integer of the contract (a decimal integer string). There is no digit limit
 - The result of a big integer operation is a big integer. It never gives `-0`
-- The result equals the value of the same calculation on integers. The server does the same calculation with `bigint`
+- The result equals the value of the same calculation on integers
 
 ### random
 
 - A random instance is a sequence generator created from one seed. No operation creates one without a seed
 - A failed operation does not advance the sequence
-- Core and content code do not use the engine's built-in random functions. The list of those functions is in the engine implementation rules
+- Core and content code do not use the engine's built-in random functions. The list of those functions is in the engine-specific implementation rules
 - A purpose name is a snake_case string constant that names the use of one random instance. e.g. `battle_effect`, `drop_preview`
-- Each purpose gets its own random instance. Several purposes do not share one instance
+- Each purpose gets its own random instance. Several purposes do not share one random instance
 - Code that creates a random instance leaves the purpose name and the seed in a `debug` log of `LogCore`
 - Random whose result becomes saved state as it is (rewards, draws) is drawn by the server. The client does not draw it
 - The seed of a purpose that needs reproduction is made with `make_purpose_seed` from the match seed or a seed that DEV code received as the base. For a purpose that needs no reproduction, the base is the device time of `TimeCore`
-- The random and `make_purpose_seed` of server core `storage` are the same algorithm as these. The same seed and the same operation order give the same result on every engine and on the server. A purpose name for which server core recreates the same sequence is defined by that server core spec. e.g. `match_simulation` in `matchmaker`
+- The random and `make_purpose_seed` of server core `storage` are the same algorithm as these. The same seed and the same operation order give the same result on every engine and on the server. For `range_int` this holds when min and max are inside int32: outside it `range_int` returns the failure value and `storage.random_int` draws. A purpose name for which server core recreates the same sequence is defined by that server core spec. e.g. `match_simulation` in `matchmaker`
 
 ### PCG32 algorithm
 

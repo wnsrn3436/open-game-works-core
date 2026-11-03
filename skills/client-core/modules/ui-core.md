@@ -25,7 +25,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
 | `prepare` | none | async operation. success flag | `false` | `BootstrapCore`(`Prepare` stage) |
-| `get_layer` | `UILayer` | the engine object of that UI layer | none | the `used by` column of the UI layer table, `NativeUiCore`(`Debug`. hides it in `capture_screen`) |
+| `get_layer` | `UILayer` | the engine object of that UI layer | none | the `used by` column of the UI layer table, `NativeUiCore`(`Debug`. hides it in `NativeUiCore.capture_screen`) |
 | `open_root_panel` | panel key | async operation. success flag | `false` | `SceneCore` |
 | `open_panel` | panel key, param, clear stack flag | async operation. success flag | `false` | core, content code |
 | `open_panels` | list of (panel key, param), clear stack flag(optional. default `false`) | async operation. success flag | `false` | core, content code |
@@ -37,7 +37,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 | `suppress_popup` | suppress key, `PopupSuppressMode` | none | none | content code |
 | `is_popup_suppressed` | suppress key | whether suppressed | `false` | content code |
 | `open_system_popup` | `SystemPopupParam`, hidden callback | async operation. success flag | `false` | core, content code |
-| `close_popup` | popup instance, after-close callback(optional) | async operation. none | none | that popup instance itself. UICore calls it for back policy `Close` and from system popup buttons |
+| `close_popup` | popup object, after-close callback(optional) | async operation. none | none | that popup object itself. UICore calls it for back policy `Close` and from system popup buttons |
 | `close_all_popups` | none | none | none | `BootstrapCore`(restart, update reboot), `SceneCore`, `ShortcutCore` |
 | `show_loading_icon` | none | loading icon token | invalid token | core, content code |
 | `hide_loading_icon` | loading icon token | none | none | core, content code |
@@ -60,7 +60,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 
 | type | contents |
 |---|---|
-| `UILayer` | a layer of the UI layer table below |
+| `UILayer` | a layer of the UI layer table |
 | `UIPanel`, `UIPopup` | base of panel classes and popup classes. has the panel interface |
 | `UIParam` | base of param classes. content code inherits it |
 | `UIPanelCache` | base of cache classes. content code inherits it |
@@ -72,7 +72,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 | `BackPolicy` | `Close`, `Ignore`, `Custom` |
 | `PanelOpenReason` | `New`(opened forward), `Returned`(returned by closing the panel above) |
 | `PanelCloseReason` | `Covered`, `Closed` |
-| `AnchorResult` | `found`(a `UIAnchor` that is an anchor match is in the UI tree), `visible`, `rect`(rectangle in `ResolutionCore` game coordinates. empty rectangle when not visible), `element`(the UI element that `UIAnchor` is attached to. none when not visible), `owner`(key of the nearest panel or popup instance containing `element`. empty string when there is none or it is not visible) |
+| `AnchorResult` | `found`(a `UIAnchor` that is an anchor match is in the UI tree), `visible`, `rect`(rectangle in `ResolutionCore` game coordinates. empty rectangle when not visible), `element`(the UI element that `UIAnchor` is attached to. none when not visible), `owner`(key of the nearest panel or popup object containing `element`. empty string when there is none or it is not visible) |
 | `UIScrollSizeMode` | `Fixed`(the scroll-axis size of every item is the item size of the component property), `Measured`(uses the measured size per item) |
 
 ### component
@@ -127,11 +127,11 @@ A row further down the table is drawn above the rows before it. The scene's worl
 - The panel key and popup key are the resource keys of the panel and popup prefabs. The prefab root is a class that inherits `UIPanel` or `UIPopup`
 - UI property: a value set on the panel and popup prefab root. back policy(default `Close`), modal(default `true`), dim(default `false`), open tween preset key(default none), close tween preset key(default none), initial focus(a UI element in that prefab with `UIButton` attached. default none). The engine mapping is in the engine-specific implementation rules
 - While a panel or popup with modal on is visible, the UI and world below it do not receive pointer input. A modal blocker is placed directly below it. On the `Popup` layer, only one is placed, below the topmost modal popup
-- modal covered: a visible modal panel or modal popup (system popups included) is drawn above the UI element. The instance containing that element, instances being prepared, and instances whose destruction has started are not counted. The drawing order is the order of the UI layer table and the stacking order of popups
+- modal covered: a visible modal panel or modal popup (system popups included) is drawn above the UI element. The panel or popup object containing that element, objects being prepared, and objects whose destruction has started are not counted. The drawing order is the order of the UI layer table and the stacking order of popups
 - A dim is placed directly below a visible panel or popup with dim on. On the `Popup` layer, only one is placed, below the topmost visible popup with dim on (system popups included). Below the same popup the order is modal blocker, dim, popup. The dim does not receive pointer input
 - dimmed: a visible dim is drawn above the UI element. The drawing order is the order of the UI layer table and the stacking order of popups
 - Open and close tweens play on the prefab root with `TweenCore.play_preset`
-- UICore creates a resource scope per panel and popup instance and releases that scope after destroying the instance. An instance whose destruction has started is not visible and does not receive input
+- UICore creates a resource scope per panel or popup object and releases that scope after destroying the object. An object whose destruction has started is not visible and does not receive input
 - Params and caches do not reference engine objects or resources. Callbacks are the exception. UICore and panel classes do not change a received param
 
 ### panel interface
@@ -144,51 +144,51 @@ A row further down the table is drawn above the rows before it. The scene's worl
 | `on_closed` | panel: `PanelCloseReason`. popup: none | none | none |
 | `on_back` | none | none | none |
 
-- Only UICore calls the methods. An instance can read its key, param, and resource scope, and a panel holds a cache
-- `prepare` is the preparation before becoming visible (server requests for data to display, loading resources). An instance being prepared is not visible and does not receive input. `prepare` does not call an operation that starts a panel transition, or `open_popup`, which is not for system popups
+- Only UICore calls the methods. A panel or popup object can read its key, param, and resource scope, and a panel holds a cache
+- `prepare` is the preparation before becoming visible (server requests for data to display, loading resources). A panel or popup object being prepared is not visible and does not receive input. `prepare` does not call an operation that starts a panel transition, or `open_popup`, which is not for system popups
 - A panel's `PanelOpenReason` is the direction of movement. `New` means opened with `open_panel`, `open_root_panel`, or `open_panels`, and `Returned` means returned to with `close_panel` or `close_panels_to`. Whether the item is shown for the first time is known from the cache: the cache of an item never shown is none
 
 ### panel stack
 
-- A panel stack item holds only the panel key, param, cache, whether it has been shown, and whether it is the root item. Only the top item has a panel instance (current panel)
+- A panel stack item holds only the panel key, param, cache, whether it has been shown, and whether it is the root item. Only the top item has a panel object (current panel)
 - root item: the item that `open_root_panel` pushed. There is at most one, at the bottom of the stack, and only `reset_panel_stack` removes it
 - panel transition: from the start to the end of `open_root_panel`, `open_panel`, `open_panels`, `close_panel`, or `close_panels_to`. One at a time. During it, UICore sets a block with reason tag `ui` through `InputBlockCore.run_blocked` and uses `get_block_pass_list` as the pass list
 - A panel transition operation received during a panel transition or a panel lock leaves a warn log and returns `false`. `open_popup`, `open_system_popup`, `reset_panel_stack`, and `close_all_popups` are not blocked
-- The screen changes only after `prepare` of the item to be shown succeeds. When a panel transition fails, UICore destroys the created instance, releases its scope, and ends. The stack and the current panel do not change
+- The screen changes only after `prepare` of the item to be shown succeeds. When a panel transition fails, UICore destroys the created panel object, releases its scope, and ends. The stack and the current panel do not change
 
 `open_panel` processing order
 
-1. Start the transition. Create a scope, load the prefab, create an instance, and set the param
+1. Start the transition. Create a scope, load the prefab, create a panel object, and set the param
 2. When `accepts_param` is `false`, leave an error log and fail. When `prepare(New, none)` is `false`, fail
-3. When the panel key of the current panel equals the panel key being opened, replace: close the current panel immediately (`on_closed(Closed)`, destroy) and replace its item with the new item. The replaced item keeps its root flag, and clear stack is not used. Go to 4. Otherwise, when there is a current panel: when clear stack is off or the current panel is the root item, cover it (`on_closed(Covered)`, keep the cache in the item, destroy the instance). Otherwise close it immediately (`on_closed(Closed)`, destroy) and remove all items above the root item. When there is no root item, remove all items
+3. When the panel key of the current panel equals the panel key being opened, replace: close the current panel immediately (`on_closed(Closed)`, destroy) and replace its item with the new item. The replaced item keeps its root flag, and clear stack is not used. Go to 4. Otherwise, when there is a current panel: when clear stack is off or the current panel is the root item, cover it (`on_closed(Covered)`, keep the cache in the item, destroy the panel object). Otherwise close it immediately (`on_closed(Closed)`, destroy) and remove all items above the root item. When there is no root item, remove all items
 4. Push the new item on top of the stack (not when it was replaced in 3), make it visible, then call `on_opened(New)`
 5. Wait for the open tween and end the transition
 
 - `open_root_panel` is accepted only when the stack is empty, does the same as `open_panel` with param none and clear stack off, then makes the new item the root item
-- `open_panels` runs the flow of `open_panel`(with the received clear stack flag) for the last element. In step 4, before pushing the new item, it pushes the preceding elements in list order as items never shown. The preceding elements have no instance, `prepare`, `on_opened`, or event. On failure the preceding elements are not pushed either
+- `open_panels` runs the flow of `open_panel`(with the received clear stack flag) for the last element. Right before the new item goes on the stack (step 4, or the replacement of step 3), it pushes the preceding elements in list order as items never shown. When step 3 replaces the root item, it does not push them, and the root item stays the bottom item. The preceding elements have no panel object, `prepare`, `on_opened`, or event. On failure the preceding elements are not pushed either
 
 The close flow is the handling of `close_panel` and `close_panels_to`. The destination is the item the close flow shows.
 
 1. Start the transition. The current panel stays visible
-2. For the destination item, create a scope, load the prefab, create an invisible instance, and set the item's param and cache
+2. For the destination item, create a scope, load the prefab, create an invisible panel object, and set the item's param and cache
 3. The reason is `Returned`, and the cache is none when the destination item has never been shown, otherwise that item's cache. When `accepts_param` is `false`, leave an error log, and it is a destination failure. When `prepare(reason, cache)` is `false`, it is a destination failure
-4. Destination failure: when force is off, fail. When force is on and the destination is the root item, leave an error log and go to step 5. When force is on and the destination is not the root item, destroy the destination instance, release its scope, and repeat from step 2 with the item directly below as the destination
+4. Destination failure: when force is off, fail. When force is on and the destination is the root item, leave an error log and go to step 5. When force is on and the destination is not the root item, destroy the destination panel object, release its scope, and repeat from step 2 with the item directly below as the destination
 5. Call `on_closed(Closed)` on the current panel, wait for the close tween, then destroy it and remove its item. Remove the items between the current panel and the destination
 6. Make the destination visible and call `on_opened(Returned)`. No open tween plays. End the transition
 
 - When the prefab of step 2 is not a panel class, repeat from step 2 with the item directly below as the destination, regardless of force
 - When there is no item below to use as the destination, do step 5 and end with the stack empty
-- The items between the current panel and the destination are removed only in step 5 and have no instance or callback
+- The items between the current panel and the destination are removed only in step 5 and have no panel object or callback
 - The destination of `close_panel` is the item directly below the current panel. When there is no current panel or it is the root item, leave a warn log and return `false`
 - The destination of `close_panels_to` is the topmost item with that panel key. When the stack has no item with that panel key, leave a warn log and return `false`. When that item is the current panel, return `true` without a transition
-- flow cancel: `reset_panel_stack` and `release` stop the flow in progress. Instances not yet shown are destroyed, a panel in its open tween stays as the current panel, and the set block is released. The stopped operation ends with `false`, and the results of loads and `prepare` that finish after that are discarded
+- flow cancel: `reset_panel_stack` and `release` stop the flow in progress. Panel and popup objects not yet shown are destroyed, a panel in its open tween stays as the current panel, and the set block is released. The stopped operation ends with `false`, and the results of loads and `prepare` that finish after that are discarded
 - `reset_panel_stack` cancels the flow, closes the current panel immediately, and empties the stack. It does not wait
 
 ### popup
 
 - popup queue: `open_popup` runs open flows one at a time in the order received. When the same popup key is open, in an open flow, or in the queue, leave a warn log and return `Failed`
-- popup open flow: set a block with reason tag `ui` (the pass list is `get_block_pass_list`), scope and instance, `accepts_param`, `prepare`, make it visible on top and `on_opened`, open tween, release the block
-- An open popup is a popup instance from when the open flow makes it visible until closing (`close_popup`, `close_all_popups`) starts. A popup in its open tween is also an open popup. A popup after closing starts and before destruction is a closing popup. The popup flow is a popup's open flow and the handling of `close_popup`
+- popup open flow: set a block with reason tag `ui` (the pass list is `get_block_pass_list`), scope and popup object, `accepts_param`, `prepare`, make it visible on top and `on_opened`, open tween, release the block
+- An open popup is a popup object from when the open flow makes it visible until closing (`close_popup`, `close_all_popups`) starts. A popup in its open tween is also an open popup. A popup after closing starts and before destruction is a closing popup. The popup flow is a popup's open flow and the handling of `close_popup`
 - `close_popup`: set a block with reason tag `ui` (the pass list is `get_block_pass_list`), `on_closed`, close tween, destroy and release the scope, release the block, hidden callback, after-close callback. When it is not an open popup, leave a warn log and ignore
 - The after-close callback returns the popup's result to the opener. When its result is decided, the popup closes itself, passing the result callback it received in its param as the after-close callback. When closed by `close_all_popups`, the after-close callback is not called
 - `close_popup` of a popup in its open tween stops the open tween, ends that open flow (block release, `UIOpenedEvent`, `Opened` of `open_popup`), then closes
@@ -201,11 +201,11 @@ The close flow is the handling of `close_panel` and `close_panels_to`. The desti
 
 - Popup suppression exists only for popups whose `open_popup` received a `PopupSuppress`. For other popups there is no judgement and no save
 - The suppress key is `<owner>.<name>` and follows the `LocalDataCore` key rule. e.g. `shop_panel.loss_warning`, `event_notice.notice_12`
-- When `open_popup` has a `PopupSuppress` and `is_popup_suppressed`(that key) is `true`, it does not enter the queue and ends at once with `Suppressed`. There is no instance, hidden callback, event, or log. The judgement is made when `open_popup` is called
-- A popup instance reads the received `PopupSuppress` along with its key, param, and scope. The content popup prefab holds the suppression toggle, which is visible only when the instance has a `PopupSuppress`. When the popup closes with the toggle on, content code calls `suppress_popup`(that key, that mode)
+- When `open_popup` has a `PopupSuppress` and `is_popup_suppressed`(that key) is `true`, it does not enter the queue and ends at once with `Suppressed`. There is no popup object, hidden callback, event, or log. The judgement is made when `open_popup` is called
+- A popup object reads the received `PopupSuppress` along with its key, param, and scope. The content popup prefab holds the suppression toggle, which is visible only when the popup object has a `PopupSuppress`. When the popup closes with the toggle on, content code calls `suppress_popup`(that key, that mode)
 - It is saved in the `user` file of `LocalDataCore`, key `UICore.popup_suppress`. An element is `<suppress key>=<until>`, and until is a decimal integer. `Forever` is −1, and `Today` is `TimeCore.get_next_day_boundary`(`TimeCore.get_current_day`)
 - `is_popup_suppressed` is `true` when an element with that key exists and until is −1 or `TimeCore.is_reached`(until) is `false`
-- `suppress_popup` deletes the element with the same key and the elements whose until is not −1 and whose `is_reached`(until) is `true`, and adds the new element. For `Today`, when `TimeCore.is_synced` is `false`, it does not save and leaves a warn log
+- `suppress_popup` deletes the element with the same key and the elements whose until is not −1 and whose `TimeCore.is_reached`(until) is `true`, and adds the new element. For `Today`, when `TimeCore.is_synced` is `false`, it does not save and leaves a warn log
 - An element with a wrong format is treated as absent, and the next `suppress_popup` deletes it
 - The `user` file is loaded after login. While `LocalDataCore.is_loaded`(`user`) is `false`, `is_popup_suppressed` is `false`, `open_popup` does not judge a popup suppressed, and `suppress_popup` does not save. In that time UICore does not read or write the `user` file of `LocalDataCore` and leaves no log
 
@@ -226,7 +226,7 @@ The close flow is the handling of `close_panel` and `close_panels_to`. The desti
 ### open_licenses
 
 - `open_licenses` opens the license screen from the game's license manifest as a system popup, waits until it closes, then returns `true`. The license manifest format is `## license manifest` in command.md of the [`core`](../../core/SKILL.md) skill
-- The body of the system popup is `[ui_licenses_title]`, its only button is `[ui_licenses_close]`, and the back button is that button. The extra text is the text below joined in this order
+- The body of the system popup is `[ui_licenses_title]`, its only button is `[ui_licenses_close]`, and the back button is that button. The extra text joins these texts in this order
   1. For each component of `components` whose `platforms` contains the platform the app runs on, in manifest order: a line of `name` and `version` joined by one space, a `license` line, a `url` line, `notice`, an empty line. A line whose value is an empty string is not included
   2. For each SPDX license ID that appears in the `license` expressions of the components of 1 and is in `texts`, in order of first appearance: an ID line, its full text, an empty line
 - When the license screen is open, `open_licenses` does not open it and returns `false`
@@ -234,7 +234,7 @@ The close flow is the handling of `close_panel` and `close_panels_to`. The desti
 
 ### back input
 
-UICore registers a back handler with `InputCore.set_back_handler` in `init`. Back input before `prepare` finishes is ignored without a log. Later back input gets the first matching handling below.
+UICore registers a back handler with `InputCore.set_back_handler` in `init`. Back input before `prepare` finishes is ignored without a log. Later back input gets the first matching back handling:
 
 1. When an open flow or close of a system popup is in progress, ignore
 2. When there is an open system popup, apply back to the topmost system popup
@@ -242,7 +242,7 @@ UICore registers a back handler with `InputCore.set_back_handler` in `init`. Bac
 4. During a panel transition or while a popup flow is in progress, ignore
 5. When there is an open popup, follow the back policy of the topmost popup
 6. When there is a current panel, follow its back policy. However, when the current panel is the root panel and its back policy is `Close`, do 7
-7. When the platform the app runs on is `android`, `windows`, `macos`, or `linux`, open the exit confirm system popup. On `ios` or `web`, do nothing. Body `[ui_exit_confirm]`, buttons `[ui_exit_quit]`, `[ui_exit_cancel]`, back button `[ui_exit_cancel]`. Pressing `[ui_exit_quit]` emits `ExitConfirmedEvent`. `BootstrapCore`, which subscribes to that event, does the app exit
+7. When the platform the app runs on is `android`, `windows`, `macos`, or `linux`, open the exit confirm system popup. On `ios` or `web`, do nothing. Body `[ui_exit_confirm]`, buttons `[ui_exit_quit]`, `[ui_exit_cancel]`, back button `[ui_exit_cancel]`. Pressing `[ui_exit_quit]` publishes `ExitConfirmedEvent`. `BootstrapCore`, which subscribes to that event, does the app exit
 
 | `BackPolicy` | handling |
 |---|---|
@@ -251,25 +251,25 @@ UICore registers a back handler with `InputCore.set_back_handler` in `init`. Bac
 | `Custom` | calls `on_back` |
 
 - back override: the one callback set by `set_back_override`. Calling it again replaces it, and none deletes it. `release` deletes it
-- The back handler returns that it consumed the back input (`true`) when 1 to 5 above match or when it opens the exit confirm in 7 (including `Close` of the root panel), and returns `false` otherwise. It is also `false` before `prepare` finishes. Back input received by the current panel is not consumed, so a `Gameplay` action with the same key or gamepad button as `back` is also pressed. A panel that receives gameplay input sets its back policy to `Custom` or `Ignore`
+- The back handler returns that it consumed the back input (`true`) when back handling 1 to 5 match or when it opens the exit confirm in 7 (including `Close` of the root panel), and returns `false` otherwise. It is also `false` before `prepare` finishes. Back input received by the current panel is not consumed, so a `Gameplay` action with the same key or gamepad button as `back` is also pressed. A panel that receives gameplay input sets its back policy to `Custom` or `Ignore`
 
 ### focus
 
 - focus: the one UI element pressed with keys and gamepad. A `UIButton` that has focus is clicked by the engine's accept input. This click follows the `UICore.buttonClickIntervalMs` and `[ui_button_click]` rules the same as a pointer click
 - Focus is set only during focus mode. Focus mode lasts while `InputCore.get_device` is `Gamepad`, and, while it is `KeyboardMouse`, from receiving a key direction input until receiving a mouse movement or a mouse button press. A key direction input received by a text input element that has engine focus does not start focus mode
-- UICore sets focus on the focus target in the next frame when the device becomes `Gamepad` through `InputDeviceChangedEvent`, in that frame when focus mode starts by a key direction input, and in that frame when the focus target changes during focus mode. The direction input that started focus mode does not move focus. When focus mode ends, focus is removed at once
+- UICore sets focus on the focus target in the next frame when the device becomes `Gamepad` through `InputCore.InputDeviceChangedEvent`, in that frame when focus mode starts by a key direction input, and in that frame when the focus target changes during focus mode. The direction input that started focus mode does not move focus. When focus mode ends, focus is removed at once
 - focus target: the focus element of the first of the following that exists. When none exists, there is no focus target and no focus
-  1. the topmost instance among visible system popups
+  1. the topmost popup object among visible system popups
   2. `Tutorial` view focus
   3. `Cutscene` view focus
-  4. the topmost instance among visible modal panels and modal popups
-- An instance being prepared or whose destruction has started is not a focus target
+  4. the topmost panel or popup object among visible modal panels and modal popups
+- A panel or popup object being prepared or whose destruction has started is not a focus target
 - view focus: the list of focus elements set per `FocusView` with `set_view_focus`. It becomes a focus target only when the list has a visible element. Passing an empty list deletes that view focus. The list contains only UI elements with `UIButton` attached
 - The focus element of a view focus is first the initial focus element, and when that element is none, not in the list, or not visible, it is the first visible element in the list. Calling `set_view_focus` again applies the first-time rule. When focus moves within the list, the element it moved to is the focus element of the view focus
 - When an element of a view focus is clicked by accept input while it has focus, the accept callback is called once with that element after that click
-- The focus element of an instance is first the initial focus of its UI property, and when there is none, the first `UIButton` element in that instance in the engine's focus order. For a system popup it is the first button. When focus moves within the instance, the element it moved to is the focus element of that instance
-- When the topmost instance closes and the instance below becomes topmost again, focus is set on the focus element of that instance. When that element was destroyed or is not visible, the first-time rule applies. A panel that the close flow created again uses the first-time rule
-- Focus moves by the engine's direction input and does not leave the instance of the focus target or the visible elements of the view focus
+- The focus element of a panel or popup object is first the initial focus of its UI property, and when there is none, the first `UIButton` element in that object in the engine's focus order. For a system popup it is the first button. When focus moves within the object, the element it moved to is the focus element of that object
+- When the topmost panel or popup object closes and the object below becomes topmost again, focus is set on the focus element of that object. When that element was destroyed or is not visible, the first-time rule applies. A panel that the close flow created again uses the first-time rule
+- Focus moves by the engine's direction input and does not leave the panel or popup object of the focus target or the visible elements of the view focus
 - When an element inside a `UIScrollList` item UI has focus and a scroll-axis direction input arrives, and there is a next line in that direction that does not fully fit in the visible area, `UIScrollList` does the following instead of the engine's focus movement. When there is no next line or it fully fits in the visible area, the engine's focus movement applies
   1. In the direction of increasing index (down in a vertical list, right in a horizontal list), set the scroll position to (distance to the next line start + scroll-axis size of the next line − visible area length), and in the opposite direction to the distance to the next line start, then clamp it the same as `set_scroll_offset`. Borrow item UIs for the items of the next line and bind them
   2. Move focus to the first `UIButton` element, in the engine's focus order, inside the item UI of the item in the next line at the same cross-axis slot as the current item (the last item of that line when that slot does not exist)
@@ -280,9 +280,9 @@ UICore registers a back handler with `InputCore.set_back_handler` in `init`. Bac
 - text input element: a UI element where a human enters characters. The engine mapping is in the engine-specific implementation rules
 - A text input element pressed with the pointer gets engine focus regardless of input device. This engine focus is not the focus pressed with keys and gamepad, and UICore does not remove it even outside focus mode. When focus mode starts, focus is set on the focus target
 - keyboard shift: when there is a visible text input element E that has engine focus and `SafeAreaCore.get_keyboard_area` is not an empty rectangle, the shift target of E moves up by distance d from its original position. Otherwise the shift target stays at its original position
-  - shift target: the root of the nearest panel or popup instance containing E. When there is none, the UI layer E is on
+  - shift target: the root of the nearest panel or popup object containing E. When there is none, the UI layer E is on
   - d = max(0, min(bottom edge of E + `UICore.keyboardGap` − top edge of the keyboard area, top edge of E − top edge of `SafeAreaCore.get_safe_area`)). The edges of E are in game coordinates with the shift target at its original position
-  - when it is recomputed: on receiving `SafeAreaCore.KeyboardAreaChangedEvent` or `SafeAreaChangedEvent`, when the engine focus of a text input element changes, when the shift target instance is destroyed. It moves in the frame it is recomputed, without a tween
+  - when it is recomputed: on receiving `SafeAreaCore.KeyboardAreaChangedEvent` or `SafeAreaCore.SafeAreaChangedEvent`, when the engine focus of a text input element changes, when the panel or popup object of the shift target is destroyed. It moves in the frame it is recomputed, without a tween
   - There is one shift target. When the shift target changes, the previous shift target returns to its original position
   - While moved, pointer input and `get_anchor_rect` use the moved position
 
@@ -330,7 +330,7 @@ UICore registers a back handler with `InputCore.set_back_handler` in `init`. Bac
 
 - `prepare` loads into the global scope the keys among the core settings dim, loading icon, and system popup resources that are not an empty string, and `[ui_button_click]`. When one fails, it still loads the rest to the end, and when any one failed it returns `false`. Failure: the received resource is the fallback resource of `ResourceCore`, or the root of the loaded dim, loading icon, or system popup prefab is not a UI element. For a failed dim, loading icon, or system popup, the one built in code is used
 - `open_root_panel`, `open_panel`, `open_panels`, `open_popup`, `open_system_popup`, and `show_loading_icon` before `prepare` finishes leave an error log and return the failure value. Once `prepare` finishes, even when it failed, this restriction is lifted
-- `release` cancels all flows, empties the queue, and deletes view focus. Stopped operations end with the failure value. It destroys panels, popups, dims, modal blockers, the loading icon, and UI layers, and releases their scopes. It does not call `on_closed`, hidden callbacks, or button callbacks, and emits no event. It calls `InputBlockCore.set_timer_hold`(`ui`, `false`)
+- `release` cancels all flows, empties the queue, and deletes view focus. Stopped operations end with the failure value. It destroys panels, popups, dims, modal blockers, the loading icon, and UI layers, and releases their scopes. It does not call `on_closed`, hidden callbacks, or button callbacks, and publishes no event. It calls `InputBlockCore.set_timer_hold`(`ui`, `false`)
 
 ## hook
 
@@ -341,12 +341,12 @@ none
 | event | when | payload |
 |---|---|---|
 | `UIOpenedEvent` | after a panel transition that made a panel visible, or the open flow of a popup, ends | key, panel flag, `PanelOpenReason`(`New` for a popup) |
-| `UIClosedEvent` | after a panel or popup instance is destroyed. Includes panel cover and immediate close, and for a popup it is after the hidden callback | key, panel flag, `PanelCloseReason`(`Closed` for a popup) |
-| `PanelFlowFinishedEvent` | after a panel transition operation that started a transition ends with success, failure, or cancel and the transition has ended. Not emitted for a call that ended without starting a transition | panel key, open flag(`true` for `open_root_panel`, `open_panel`, `open_panels`), success flag |
+| `UIClosedEvent` | after a panel or popup object is destroyed. Includes panel cover and immediate close, and for a popup it is after the hidden callback | key, panel flag, `PanelCloseReason`(`Closed` for a popup) |
+| `PanelFlowFinishedEvent` | after a panel transition operation that started a transition ends with success, failure, or cancel and the transition has ended. Not published for a call that ended without starting a transition | panel key, open flag(`true` for `open_root_panel`, `open_panel`, `open_panels`), success flag |
 | `ExitConfirmedEvent` | the `[ui_exit_quit]` button callback of the exit confirm | none |
 
-- `UIClosedEvent` is not emitted for an instance for which `UIOpenedEvent` was not emitted. The events one operation emits are in the order closed, opened
-- `UIOpenedEvent` and `UIClosedEvent` are not emitted for system popups
+- `UIClosedEvent` is not published for a panel or popup object for which `UIOpenedEvent` was not published. The events one operation publishes are in the order closed, opened
+- `UIOpenedEvent` and `UIClosedEvent` are not published for system popups
 - Content code and tests wait for the end of a flow with these events. They do not wait by counting frames
 
 ## error
@@ -364,7 +364,7 @@ none
 | duplicate popup, popup request during `close_all_popups` | `Failed` for `open_popup`, `false` for `open_system_popup` | warn |
 | suppress key outside the `<owner>.<name>` rule | `Failed` for `open_popup`, `false` for `is_popup_suppressed`, `suppress_popup` does not save | error |
 | `SystemPopupParam` has 0 buttons or 4 or more, back button index outside the list, body or label translation key does not exist | `false` | error |
-| `close_popup` of an instance that is not an open popup | none | warn |
+| `close_popup` of an object that is not an open popup | none | warn |
 | `hide_loading_icon` with a token that points to no request | none. display unchanged | error |
 | `set_items` with count < 0, no item prefab key, item size ≤ 0, item spacing or cross axis spacing < 0, cross axis count < 1, `Measured` with a cross axis count other than 1 | `false`. no item UI is borrowed | error |
 | `append_items` before `set_items` or with count < 1 | `false`. item count unchanged | error |
@@ -413,16 +413,16 @@ none
 |---|---|---|---|---|
 | `set_test_focus` | UI element | success flag | `false` | `QACore`, core test |
 
-- When the input device is `Gamepad` and the element has `UIButton` attached and is inside the instance of the focus target or among the visible elements of the view focus, `set_test_focus` sets focus on that element and returns `true`. That element becomes the focus element of that instance or view focus. Otherwise it does not change focus and returns `false`
+- When the input device is `Gamepad` and the element has `UIButton` attached and is inside the panel or popup object of the focus target or among the visible elements of the view focus, `set_test_focus` sets focus on that element and returns `true`. That element becomes the focus element of that object or view focus. Otherwise it does not change focus and returns `false`
 - STG and PROD builds do not have `set_test_focus`
 
 ## test
 
 - `is_flow_in_progress` is `true` from `open_popup` until its open flow ends (its open tween and its wait in the popup queue included), from `close_popup` until the close ends, from `open_system_popup` until its open flow ends, and during a panel transition, and `false` when none of these is in progress
-- All UI layers are drawn in the order of the behavior table, and a lower layer does not receive pointer input that a UI element of a higher layer received. During camera shake the screen position of UI elements stays the same
+- All UI layers are drawn in the order of the UI layer table, and a lower layer does not receive pointer input that a UI element of a higher layer received. During camera shake the screen position of UI elements stays the same
 - During a game time pause, a popup `UIButton` still calls its click callback and the open tween finishes
 - Opening B from panel A gives stack A, B, A is destroyed and its scope released, and `on_closed(Covered)` and `on_opened(New)` are each called once
-- Opening a panel whose `prepare` is `false` returns `false`, there is no instance, and the stack and current panel are unchanged
+- Opening a panel whose `prepare` is `false` returns `false`, there is no panel object, and the stack and current panel are unchanged
 - During a panel transition and a popup flow there is a block with reason tag `ui`, and after success, failure, or cancel no block set by UICore remains
 - While the retry popup of a request sent by panel `prepare` stays open for longer than `InputBlockCore.maxDurationMs`, the block with reason tag `ui` is not released by forced release
 - When a request sent by popup `prepare` fails and the retry popup opens, pressing the retry button under the reason tag `ui` block of the popup open flow calls the button callback, and the open flow then continues. The button of a system popup opened during the close tween of `close_popup` can also be pressed
@@ -432,8 +432,8 @@ none
 - In stack A, B, C, when the `prepare` of B is `false`, `close_panel` without force returns `false`, C stays visible, the stack is unchanged, and there is no `on_closed` or event. With force on, B is removed, A receives `prepare(Returned, cache)` and `on_opened(Returned)`, and the stack is A
 - When `prepare(Returned)` of root item R is `false`, a close flow with force on leaves an error log and shows R, and R receives `on_opened(Returned)`
 - `open_panel` of current panel A with a different param: after the `prepare` of the new A succeeds, the previous A receives `on_closed(Closed)` and the stack length is unchanged, and when the `prepare` of the new A is `false`, the previous A and the stack are unchanged. When the root item is opened with the same key, the replaced item is the root item
-- In stack R, A, B, C, after `close_panels_to`(A) the stack is R, A and B has no instance or callback. When the `prepare` of A is `false`, it returns `false` without force and the stack is unchanged. A key not in the stack gives a warn log and `false`, and the key of the current panel gives `true` without a transition
-- In stack R, after `open_panels`(A, B, C) the stack is R, A, B, C, and only C has an instance, `prepare(New, none)`, `on_opened(New)`, and `UIOpenedEvent`. A following `close_panel` gives B `prepare(Returned, none)`, `on_opened(Returned)`, and a `UIOpenedEvent` with reason `Returned`, with no open tween. When the `prepare` of C is `false`, the stack stays R
+- In stack R, A, B, C, after `close_panels_to`(A) the stack is R, A and B has no panel object or callback. When the `prepare` of A is `false`, it returns `false` without force and the stack is unchanged. A key not in the stack gives a warn log and `false`, and the key of the current panel gives `true` without a transition
+- In stack R, after `open_panels`(A, B, C) the stack is R, A, B, C, and only C has a panel object, `prepare(New, none)`, `on_opened(New)`, and `UIOpenedEvent`. A following `close_panel` gives B `prepare(Returned, none)`, `on_opened(Returned)`, and a `UIOpenedEvent` with reason `Returned`, with no open tween. When the `prepare` of C is `false`, the stack stays R
 - In stack R, A with root item R, after `open_panels`(B, C) with clear stack on, the stack is R, B, C and A receives `on_closed(Closed)`. In stack A without a root item, the stack is B, C. With clear stack off, stack R, A becomes R, A, B, C
 - `open_root_panel` when the stack is not empty gives an error log and `false`
 - Calling `reset_panel_stack` during an `open_panel` that waits for `prepare` ends that operation with `false`, and even when `prepare` succeeds later the panel is not visible and the stack is empty
@@ -446,8 +446,8 @@ none
 - `close_popup` of a popup in its open tween stops the open tween, `Opened` of `open_popup` and `UIOpenedEvent` come before `on_closed`, the hidden callback and `UIClosedEvent` each happen once, and afterwards no block set by UICore remains
 - `close_all_popups` ends the `open_popup` of a popup waiting for `prepare` with `Failed`, and that popup has no hidden callback. A popup in its open tween gets `Opened` and one hidden callback, and a popup in its close tween does not get `on_closed` again and gets one hidden callback
 - When a popup is open, it stays open after a panel transition and `reset_panel_stack`
-- A popup instance opened without `PopupSuppress` has no `PopupSuppress`, and an instance opened with one reads the received value
-- After `suppress_popup`(k, `Forever`), `open_popup` with key k is `Suppressed` and there is no instance, hidden callback, or `UIOpenedEvent`. The same holds after `release`, `init`, and user file load. Another key, and the same popup key without `PopupSuppress`, open
+- A popup object opened without `PopupSuppress` has no `PopupSuppress`, and a popup object opened with one reads the received value
+- After `suppress_popup`(k, `Forever`), `open_popup` with key k is `Suppressed` and there is no popup object, hidden callback, or `UIOpenedEvent`. The same holds after `release`, `init`, and user file load. Another key, and the same popup key without `PopupSuppress`, open
 - After `suppress_popup`(k, `Today`), `open_popup` is `Suppressed` at the server time just before the next day boundary of `TimeCore` + `TimeCore.reachMarginMs`, and `Opened` at that time. The same holds when the day boundary is before or after UTC 00:00
 - When `suppress_popup`(k, `Today`) is called at day boundary + `TimeCore.reachMarginMs` − 1, `open_popup` is `Opened` at that day boundary + `TimeCore.reachMarginMs`
 - Before the `user` file load, `open_popup` with a `PopupSuppress` is `Opened`, `suppress_popup` does not save, `is_popup_suppressed` is `false`, and there is no error log of `LocalDataCore`
@@ -502,10 +502,10 @@ none
 - For an element of a panel under an open popup with dim on and modal off, `is_dimmed` is `true` and `is_modal_covered` is `false`, and after that popup closes, `is_dimmed` gives `false`. An element inside that popup and an element of a panel with only popups with dim off above it give `false`. With two popups with dim on open, an element of the lower popup gives `true`. While a panel with dim on is shown, an element of `SceneUI` gives `true` and an element of that panel gives `false`. While a popup with dim on is in `prepare`, an element of the panel below gives `false`, and while that popup plays its close tween, `true`. Under an open system popup built in code, an element of the panel gives `true`, and with two system popups built in code open, an element of the lower one gives `true`
 - A `UIButton` with an action receives one click callback and one `[ui_button_click]` in the frame that action is pressed. When the button is modal covered or not visible, or there is a block that does not pass that action, there is no click. When the accept input of focus and an action click both match in the same frame, there is one click
 - A `UIButton` whose action is `back` or not in the action list leaves an error log and is not clicked by the input of that name
-- `set_test_focus` sets focus on a `UIButton` element of the focus target instance and returns `true` when the input device is `Gamepad`, and returns `false` with focus unchanged for an element outside that instance, an element without `UIButton`, or when the input device is not `Gamepad`
+- `set_test_focus` sets focus on a `UIButton` element of the panel or popup object of the focus target and returns `true` when the input device is `Gamepad`, and returns `false` with focus unchanged for an element outside that object, an element without `UIButton`, or when the input device is not `Gamepad`
 - When the input device is `Touch`, a pressed text input element has engine focus and still has it in the next frame. When the input device becomes `Gamepad`, the focus element of the focus target has focus
-- When text input element E in a popup has engine focus and the keyboard area set with `SafeAreaCore.set_virtual_keyboard` covers the bottom edge of E, that popup root is d higher, and the bottom edge of E + `UICore.keyboardGap` equals the top edge of the keyboard area. After `clear_virtual_keyboard` the popup root is at its original position. When E is on the `SceneUI` layer, the `SceneUI` layer moves
+- When text input element E in a popup has engine focus and the keyboard area set with `SafeAreaCore.set_virtual_keyboard` covers the bottom edge of E, that popup root is d higher, and the bottom edge of E + `UICore.keyboardGap` equals the top edge of the keyboard area. After `SafeAreaCore.clear_virtual_keyboard` the popup root is at its original position. When E is on the `SceneUI` layer, the `SceneUI` layer moves
 - When the keyboard area covers up to the top edge of E + `UICore.keyboardGap`, d is the distance between the top edge of E and the top edge of the safe area. When the keyboard area does not reach the bottom edge of E + `UICore.keyboardGap`, the shift target is at its original position
-- When engine focus moves from E to a text input element of another instance, the shift target of E returns to its original position and the shift target of the new element moves
+- When engine focus moves from E to a text input element of another panel or popup object, the shift target of E returns to its original position and the shift target of the new element moves
 - The extra text of `open_licenses` contains only the components whose `platforms` contains the platform the app runs on, in manifest order, and contains the full text of `texts` once per SPDX license ID. `[ui_licenses_close]` and back input close the screen, and `open_licenses` is `true`. Calling it again while it is open gives `false` and a warn log, and without a manifest it gives `false` and an error log
 - In a system popup whose extra text is longer than the area, when the input device is `Gamepad`, one down direction input moves the scroll position by `UICore.systemPopupScrollStep`, and at the end the scroll position is unchanged

@@ -14,7 +14,7 @@
 
 ## purpose
 
-Estimates server time, judges reach, game day and reset cycle boundaries, and handles the time scale and pause of game time and the app entering and returning from background. DEV code has a step mode that advances game time only by a set amount.
+Estimates server time, judges reach, game day and reset period boundaries, and handles the time scale and pause of game time and the app entering and returning from background. DEV code has a step mode that advances game time only by a set amount.
 
 ## dependency
 
@@ -37,7 +37,7 @@ Estimates server time, judges reach, game day and reset cycle boundaries, and ha
 | `is_same_day` | two times | whether they are in the same game day | `false` | all code |
 | `get_current_day` | none | start of the current game day | 0 | all code |
 | `get_day_number` | time | game day number | 0 | all code |
-| `get_period_start` | `ResetCycle?` element, time | start of the reset cycle that contains that time. 0 when `null` | 0 | all code |
+| `get_period_start` | `ResetCycle?` element, time | start of the reset period that contains that time. 0 when `null` | 0 | all code |
 | `get_next_reset` | `ResetCycle?` element, time | first reset time after that time. 0 when `null` | 0 | all code |
 | `get_game_time` | none | game time (ms) | 0 | all code |
 | `get_game_frame_ms` | none | game time increase of this frame | 0 | all code |
@@ -139,7 +139,7 @@ none
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
 | `TimeCore.reachMarginMs` | integer | core | content | ms added in reach judgements and remaining time, and subtracted in before-end judgements |
-| `TimeCore.jumpThresholdMs` | integer | core | content | smallest server time difference that sends `ServerTimeJumpedEvent` |
+| `TimeCore.jumpThresholdMs` | integer | core | content | smallest server time difference that publishes `ServerTimeJumpedEvent` |
 | `dailyResetOffsetMs` | integer | game | none | ms by which the game day boundary is offset from UTC 00:00 |
 
 ## data
@@ -177,7 +177,7 @@ none
 - When server time = target + margin − 1, `is_reached` is `false` and `get_remaining_ms` is 1. At target + margin they are `true` and 0
 - When server time = target − margin − 1, `is_before_end` is `true`, and at target − margin it is `false`
 - For each case of the core test fixture `reset-time`, `get_day_number`, `get_period_start` and `get_next_reset` equal the expected values
-- `get_day_start`, `get_next_day_boundary` and `is_same_day` match the formulas in behavior for day boundary − 1 and day boundary, with game settings `dailyResetOffsetMs` 0, positive and negative
+- `get_day_start`, `get_next_day_boundary` and `is_same_day` match the day boundary formulas for day boundary − 1 and day boundary, with game settings `dailyResetOffsetMs` 0, positive and negative
 - When server time = day boundary + margin − 1, `get_current_day` is day boundary − 1 day, and at + margin it is day boundary
 - `DayChangedEvent`: not published at the first sync; published once at day boundary + margin, once on a sync that skips 3 days, and once on a sync that goes back before the day boundary
 - When the difference before and after a sync is `TimeCore.jumpThresholdMs`, `ServerTimeJumpedEvent` is published once; when it is 1 less or at the first sync, it is not published
