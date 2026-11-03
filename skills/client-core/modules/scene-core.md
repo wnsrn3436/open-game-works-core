@@ -64,13 +64,13 @@ A transition is in progress from the start of stage 1 until it ends at stage 8. 
 | stage | work |
 |---|---|
 | 1 begin | Sets the transition block. Closes the black box message with `MessageCore.close_black_box`. Does not close toasts. Calls `InputBlockCore.release_all` with `scene` as the reason tag to keep. Turns the panel lock on with `UICore.set_panel_lock` and calls `UICore.close_all_popups`. Shows the loading screen and waits until that ends |
-| 2 exit | When there is a current scene, calls `on_exit` and sends `SceneEndedEvent` |
+| 2 exit | When there is a current scene, calls `on_exit` and publishes `SceneEndedEvent` |
 | 3 unload | Calls `UICore.reset_panel_stack`. Destroys the current scene and its scene UI root, and after the destruction ends, releases that scene's resource scope |
 | 4 load | Creates a resource scope with the new scene key, loads the scene resource with that scope, creates the scene and places it under the scene holder. When there is a scene UI root, before placing the scene under the scene holder, sets the root's position and size equal to the safe area root of the `SceneUI` layer, and sets them equal again on every `SafeAreaCore.SafeAreaChangedEvent` until it is moved at stage 7. This is so that the `SafeAreaCore` parent check of ignore-mark UI elements under it sees a parent within the rules even under the scene holder |
 | 5 preload | With the lists that `on_preload` filled, preloads through `ResourceCore` and fills pools through `PoolCore`. Goes to stage 6 even on failure |
 | 6 prepare | Calls `on_prepare` and waits. When it is `false`, opens the retry popup |
 | 7 start | Turns the panel lock off with `UICore.set_panel_lock`. Makes the new scene visible and receive the per-frame engine callbacks and the input callbacks, moves the scene UI root, when there is one, under the safe area root of the `SceneUI` layer, and makes the new scene the current scene. When there is a root panel key, calls `UICore.open_root_panel` and waits. Calls `on_start` and waits |
-| 8 end | Waits until `SceneCore.loadingMinDisplayMs` passes from the time the loading screen was shown. Hides the loading screen and waits until that ends. Releases the transition block. The transition ends. Sends `SceneStartedEvent`. The result is `true` |
+| 8 end | Waits until `SceneCore.loadingMinDisplayMs` passes from the time the loading screen was shown. Hides the loading screen and waits until that ends. Releases the transition block. The transition ends. Publishes `SceneStartedEvent`. The result is `true` |
 
 - transition block: the block with reason tag `scene` that is set through `InputBlockCore` from stage 1 until hiding the loading screen at stage 8 ends. The pass list is `UICore.get_block_pass_list`. It is released while the retry popup is open
 - Panel opens and closes received after the panel lock is turned off at stage 7 are handled even during the transition. e.g. `on_start` opens a panel on top of the root panel
@@ -99,14 +99,14 @@ A transition is in progress from the start of stage 1 until it ends at stage 8. 
 
 - The popup that SceneCore opens with `UICore.open_system_popup` on `false` at stage 6. The body is `[scene_prepare_failed]` and it has one button. It does not close with back input
 - When the retry count is less than `SceneCore.prepareRetryCount`, the button is `[scene_retry]`. Pressing it sets the transition block again and runs stage 6 again
-- When the retry count reaches `SceneCore.prepareRetryCount`, the button is `[scene_restart]`. Pressing it sends `RestartRequestedEvent`
-- When the popup closes without a button, it sends `RestartRequestedEvent`
+- When the retry count reaches `SceneCore.prepareRetryCount`, the button is `[scene_restart]`. Pressing it publishes `RestartRequestedEvent`
+- When the popup closes without a button, it publishes `RestartRequestedEvent`
 - A transition in which `[scene_restart]` is pressed or the popup closes without a button skips the remaining stages, ends with `false`, and stays in transition until `release`
 
 ### unrecoverable failure
 
 - scene resource cannot be loaded, scene root is not the scene base type, transition block cannot be set, retry popup cannot be opened, `on_prepare` of `boot_change_scene` is `false`, `open_root_panel` is `false`
-- When the transition block is set, it is released, and `FatalErrorRequestedEvent` is sent. The transition stops at that stage and ends with `false`. The loading screen and the panel lock stay as they are, and it stays in transition until `release`
+- When the transition block is set, it is released, and `FatalErrorRequestedEvent` is published. The transition stops at that stage and ends with `false`. The loading screen and the panel lock stay as they are, and it stays in transition until `release`
 
 ### lifecycle
 
@@ -124,7 +124,7 @@ none
 | `SceneEndedEvent` | after `on_exit` is called at stage 2 | `scene_key`: the scene that ends |
 | `SceneStartedEvent` | after the transition ends at stage 8 | `scene_key`: new scene, `duration_ms`: real elapsed time from the start of stage 1 |
 
-- `RestartRequestedEvent` and `FatalErrorRequestedEvent` that SceneCore sends are boot events of `EventCore`, and `BootstrapCore` handles them
+- `RestartRequestedEvent` and `FatalErrorRequestedEvent` that SceneCore publishes are boot events of `EventCore`, and `BootstrapCore` handles them
 
 ## error
 
@@ -169,7 +169,7 @@ none
 - The new scene is not on screen from stage 4 until before stage 7
 - A scene created at stage 4 can use references to its child objects when it receives `on_preload`; from stage 4 until before stage 7 the scene's per-frame engine callbacks are not called, and after stage 7 they are called
 - After a transition to a scene with a scene UI root, after stage 7 the scene UI root is under the SceneCore safe area root of the `SceneUI` layer and its position and size equal the safe area. They also match after `SafeAreaCore.set_virtual_notch`. When stage 3 of the next transition ends, that scene UI root has been destroyed
-- In a build that contains DEV code, when the safe area differs from the visible game area (`SafeAreaCore.set_virtual_notch`), a transition to a scene that has a UI element with an ignore mark directly under the scene UI root gives no `SafeAreaCore` parent rule error log, and after stage 7 that UI element covers the whole visible game area. Even when a `set_virtual_notch` that changes an inset is called during stage 6 and `on_prepare` creates an ignore-mark UI element directly under the scene UI root, there is no error log
+- In the environments that include DEV code, when the safe area differs from the visible game area (`SafeAreaCore.set_virtual_notch`), a transition to a scene that has a UI element with an ignore mark directly under the scene UI root gives no `SafeAreaCore` parent rule error log, and after stage 7 that UI element covers the whole visible game area. Even when a `set_virtual_notch` that changes an inset is called during stage 6 and `on_prepare` creates an ignore-mark UI element directly under the scene UI root, there is no error log
 - A transition to a scene without a scene UI root adds no UI element under the safe area root of the `SceneUI` layer
 - The result is `true` even when preload or pool fill fails
 - A second transition request during a transition gives a warn log and `false` and does not change the transition in progress. `change_scene` before `boot_change_scene` succeeds gives an error log and `false`
@@ -177,15 +177,15 @@ none
 - On a transition to a scene with a root panel key, when `on_start` is called the panel stack is one root item and `current_root_panel_key` is that key. In a scene without a root panel key, when `on_start` is called the panel stack is empty and `current_root_panel_key` is an empty string
 - When `prepare` of the root panel is `false`, `FatalErrorRequestedEvent` comes once without `on_start` and the result is `false`
 - When `on_prepare` is `false`, the `[scene_retry]` retry popup opens without the block with reason tag `scene`, and pressing it sets the block again and then calls `on_prepare` again
-- When `on_prepare` is `false` the first time and all `SceneCore.prepareRetryCount` times, the `[scene_restart]` popup opens, and pressing it sends `RestartRequestedEvent` once. Closing it without a button also sends it once; the result is `false` and `is_transitioning` is `true`
+- When `on_prepare` is `false` the first time and all `SceneCore.prepareRetryCount` times, the `[scene_restart]` popup opens, and pressing it publishes `RestartRequestedEvent` once. Closing it without a button also publishes it once; the result is `false` and `is_transitioning` is `true`
 - The retry popup does not close with back input
-- Calling `change_scene` with a scene key whose scene resource cannot be loaded or with a scene whose root is not the scene base type sends `FatalErrorRequestedEvent` once after the block is released; there are no stages 5 to 8, the result is `false`, and later transition requests are ignored
+- Calling `change_scene` with a scene key whose scene resource cannot be loaded or with a scene whose root is not the scene base type publishes `FatalErrorRequestedEvent` once after the block is released; there are no stages 5 to 8, the result is `false`, and later transition requests are ignored
 - With a loading screen whose root is not the loading screen base type, the transition ends with `true` without a loading screen after an error log
 - Two transitions create the loading screen once, and its resource key is in the global scope
 - The loading screen is under the SceneCore safe area root of the `Loading` layer and its position and size equal the safe area. They also match after `SafeAreaCore.set_virtual_notch`, and the background with an ignore mark covers the whole visible game area. After `release`, that safe area root is not in the `Loading` layer
 - On the test clock, even when the other stages end at once, hiding the loading screen starts `SceneCore.loadingMinDisplayMs` after it was shown
 - The values that `on_progress` receives start at 0, do not decrease, do not exceed 1000, increase per preload item, and are 1000 after `true` of `on_prepare`. The value before `on_preload` returns is 0. It reaches 1000 even when the pool fill list is empty
-- `boot_change_scene` creates no loading screen, ends with `true` while the test clock is stopped, and on `false` of `on_prepare` sends `FatalErrorRequestedEvent` without a popup
+- `boot_change_scene` creates no loading screen, ends with `true` while the test clock is stopped, and on `false` of `on_prepare` publishes `FatalErrorRequestedEvent` without a popup
 - When `SceneStartedEvent` is received, `is_transitioning` is `false` and `duration_ms` equals the test clock elapsed time from the start of stage 1
 - `release` while waiting on any stage leaves no remaining stages and destroys the three scene objects, and `boot_change_scene` and `change_scene` after `init` again satisfy the first test item
 - Whether a transition ends in success, failure or stop, the overlay of the `Transition` channel is transparent

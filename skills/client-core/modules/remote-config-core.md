@@ -26,15 +26,14 @@ Receives and keeps the config values, feature flags and experiment assignments t
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `get_bool` | key ID value | value | `default_value` of that key. `false` for an unknown key | core, content code |
-| `get_int` | key ID value | value (int64) | `default_value` of that key. `0` for an unknown key | core, content code |
-| `get_string` | key ID value | value | `default_value` of that key. Empty string for an unknown key | core, content code |
+| `get_bool` | key ID value | value | `default_value` of that key. `false` for an unknown key | content code |
+| `get_int` | key ID value | value (int64) | `default_value` of that key. `0` for an unknown key | content code |
+| `get_string` | key ID value | value | `default_value` of that key. Empty string for an unknown key | content code |
 | `get_group` | experiment ID value | assigned group name | empty string | content code |
 | `has_received` | none | whether server values were received at least once in this boot | `false` | content code |
 | `refresh` | none | async operation. success flag | `false` | content code |
 
-- key ID value is an ID value of the `remote_config_key` table. Content code gets it through a reserved ID accessor
-- experiment ID value is an ID value of the `experiment` table that server core `remote-config` defines. Content code gets it through a reserved ID accessor
+- key ID value is an ID value of the `remote_config_key` table, and experiment ID value is an ID value of the `experiment` table. Server core [`remote-config`](../../server-core/modules/remote-config.md) defines both tables and how content code gets these values
 
 ## behavior
 
@@ -55,7 +54,7 @@ Receives and keeps the config values, feature flags and experiment assignments t
   - An entry whose `key_id` is not in `remote_config_key` is discarded (when the server uses new data)
   - An entry whose `value.kind` is not the `RemoteConfigValueKind` that corresponds to that key's `type` is discarded. Server core `remote-config` defines the correspondence
   - When the same `key_id` comes twice, the first entry is used
-- When at least one key's value changed by the apply (new value compared with previous value. The previous value is `default_value` before anything is received), raises `RemoteConfigChangedEvent` once. It also raises it when only assignments changed
+- When at least one key's value changed by the apply (new value compared with previous value. The previous value is `default_value` before anything is received), publishes `RemoteConfigChangedEvent` once. It also publishes it when only assignments changed
 
 ### release
 
@@ -92,7 +91,7 @@ none
 
 used table: `remote_config_key`, `experiment`
 
-- `remote_config_key` table, `experiment` table and enum `RemoteConfigType`. Server core `remote-config` defines the headers. The client receives only keys whose `client` is `true`. Client data has only rows whose `client` is `true`, so a getter for a key whose `client` is `false` is a getter for a key not in `remote_config_key`
+- `remote_config_key` table, `experiment` table and enum `RemoteConfigType`. Server core `remote-config` defines the headers. Client data has only rows whose `client` is `true`, so a getter for a key whose `client` is `false` is a getter for a key not in `remote_config_key`
 
 ## DEV
 

@@ -83,13 +83,13 @@ Opens the OS store review request window and share window with a per-platform na
 
 - `capture_screen` returns the screen at the window resolution as PNG after that frame is fully drawn. The `Debug` layer of `UICore` is not included
 - Content code hides the UI to leave out of the screen before calling it
-- In a headless run of `QACore`, it is empty bytes. NativeUiCore reads whether it is headless from the engine without calling `QACore`. The method is in the engine implementation rules
+- In a headless run of `QACore`, it is empty bytes. NativeUiCore reads whether it is headless from the engine without calling `QACore`. The method is in the engine-specific implementation rules
 
 ### clipboard
 
-- `copy_text` puts the text on the OS clipboard. It does not use the adapter and uses the engine's clipboard feature. The engine mapping is in the engine implementation rules
+- `copy_text` puts the text on the OS clipboard. It does not use the adapter and uses the engine's clipboard feature. The engine mapping is in the engine-specific implementation rules
 - When the text is an empty string, the engine does not provide a clipboard on that platform, or it is a headless run of `QACore`, it does not change the clipboard and is `false`. Otherwise it is `true`
-- In the browser runtime, the engine does not provide a clipboard when `navigator.clipboard.writeText` does not exist, the page is not a secure context, or there is no transient user activation. A browser without `navigator.userActivation` is treated as having activation. Even when the browser refuses the write after these conditions pass, `copy_text` is synchronous, so it is `true`
+- `copy_text` is synchronous, so when the platform refuses the write later, it is still `true`
 
 ### release
 
@@ -141,7 +141,7 @@ none
 | `set_fake_review_result` | success flag | none | none | core test |
 
 - fake adapter: supports review and share. `request_review` increases `review_count` by 1 and returns the value of `set_fake_review_result` (default `true`). `share` records the received content and returns the value of `set_fake_share_result` (default `Closed`) in the next frame. It does not show a screen
-- STG·PROD builds do not have the fake adapter and the operations above
+- STG and PROD builds do not have the fake adapter and the operations above
 
 ## test
 
@@ -155,5 +155,5 @@ none
 - The PNG size of `capture_screen` equals the window resolution and there are no elements of the `Debug` layer
 - `get_fake_record` of the fake adapter returns the text and image byte count passed to `share`
 - A `share` during `release` ends with `Failed`, and after `init` again there is no adapter
-- `set_native_adapter` after `init` writes an error log and does not change the adapter
+- `set_native_adapter` after `init` leaves an error log and does not change the adapter
 - In a run that is not a headless run on a platform that provides a clipboard, `copy_text`(`12345`) is `true` and the text of the engine clipboard is `12345`. Empty text gives `false` and an error log, and the clipboard stays the same. In a headless run it gives `false` and a warn log

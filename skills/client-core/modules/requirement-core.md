@@ -40,7 +40,7 @@ Judges conditions defined with the `requirement` table of data (unlock condition
 
 ### condition and combination
 
-- A condition is one row of the `requirement` table. Other tables write conditions as expressions in a column of `requirement` type. The data tool turns the expression into rows of this table, and the column value is the ID value of the top condition. The `data` skill defines the expression grammar
+- A condition is one row of the `requirement` table. Other tables write conditions as expressions in a column of `requirement` type. The `data` skill defines the expression grammar and the rows and column value the data tool makes from an expression
 - requirement ID value 0 is an empty `requirement` cell and has no condition. Judging 0 calls no judge hook and is pass without log, with `failed_requirement_id` 0 and `guide_key` none
 - self judgement: the pass flag that a condition whose `type` is not `None` gets from the judge hook of that type. A condition whose `type` is `None` is a group condition and has no self judgement
 - item: self judgement, then the child conditions of `children`, in this order. Items are judged in order, and nothing after the stop item is judged
@@ -57,7 +57,7 @@ Judges conditions defined with the `requirement` table of data (unlock condition
 ### judge hook
 
 - `register_judge` is once per type. An already registered type and `None` leave an error log and give `false`
-- A judge hook reads only UserState (`UserStateCore`), data (`DataCore`) and `TimeCore` server time. It does not change state, sends no requests, raises no events, and does not call `evaluate`, `watch`, `unwatch`
+- A judge hook reads only UserState (`UserStateCore`), data (`DataCore`) and `TimeCore` server time. It does not change state, sends no requests, publishes no events, and does not call `evaluate`, `watch`, `unwatch`
 - time-dependent type: a type registered with the time-dependent flag `true` in `register_judge`. A type whose judge hook reads `TimeCore` server time or a time-dependent operation of `UserStateCore` is registered as a time-dependent type. These values change with time without a change number
 - When the needed UserState is missing, the judge hook returns `false`
 - The list of UserState kinds it reads is all kinds the judge hook reads
@@ -79,11 +79,11 @@ Judges conditions defined with the `requirement` table of data (unlock condition
 
   | trigger | target | raised when |
   |---|---|---|
-  | `UserStateChanged` | UserState kind. When empty, all kinds the condition looks at | `UserStateCore.UserStateChangedEvent` was raised for that kind |
-  | `RequestCompleted` | request name | `NetworkCore.RequestCompletedEvent` was raised with that name. Success and failure are not distinguished |
-  | `UIOpened` | panel key or popup key | `UICore.UIOpenedEvent` was raised with that key |
-  | `UIClosed` | panel key or popup key | `UICore.UIClosedEvent` was raised with that key |
-  | `ContentEvent` | content event type | a content event of that type was raised through `EventCore` |
+  | `UserStateChanged` | UserState kind. When empty, all kinds the condition looks at | `UserStateCore.UserStateChangedEvent` was published for that kind |
+  | `RequestCompleted` | request name | `NetworkCore.RequestCompletedEvent` was published with that name. Success and failure are not distinguished |
+  | `UIOpened` | panel key or popup key | `UICore.UIOpenedEvent` was published with that key |
+  | `UIClosed` | panel key or popup key | `UICore.UIClosedEvent` was published with that key |
+  | `ContentEvent` | content event type | a content event of that type was published through `EventCore` |
 
 - The event subscription is made once at the first `watch` of that trigger and removed when the last watch of that trigger is deleted
 - When a trigger is raised, the watches with that trigger are only marked as pending evaluation. They are not judged at that time

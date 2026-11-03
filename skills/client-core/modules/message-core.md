@@ -48,7 +48,7 @@ Handles toasts and black box messages, notifications that are shown for a set du
 
 ### resource
 
-- The toast resource and the black box resource are prefabs with a `MessageView` component at the root. `MessageView` points to the UI text element that shows the wording. The engine mapping is in the engine implementation rules. The toast prefab is a manual-return pool object of `PoolCore`
+- The toast resource and the black box resource are prefabs with a `MessageView` component at the root. `MessageView` points to the UI text element that shows the wording. The engine mapping is in the engine-specific implementation rules. The toast prefab is a manual-return pool object of `PoolCore`
 - When a resource key in core settings is an empty string, a screen made by code is used. A toast made by code is white text on a black band whose opacity is `UICore.dimOpacity`, and a black box made by code is white text on a black dim whose opacity is `UICore.dimOpacity` and that covers the visible game area
 - The wording appears in the center of the visible game area
 
@@ -56,8 +56,8 @@ Handles toasts and black box messages, notifications that are shown for a set du
 
 - `prepare` loads the toast resource, the black box resource, and the enter and exit tween presets (kind of `TweenCore.get_preset_kind`) into the global scope, and makes one black box object and keeps it hidden. When the toast resource key is not an empty string, it fills the `PoolCore` pool of the toast prefab in advance; when it is an empty string, it makes one toast object by code and keeps it hidden
 - When it is called again, it closes the same as `close_all`, destroys the previous black box object and the toast object made by code, and reads the core settings again and loads
-- A message request before `prepare` succeeds, after it fails, and before a `prepare` called again ends writes an error log and is ignored
-- `prepare` writes an error log when the sum of the length of the black box enter tween preset, `MessageCore.blackBoxDurationMs`, and the length of the black box exit tween preset is `InputBlockCore.maxDurationMs` or more. The values are used as they are and the result of `prepare` does not change. The length of a tween preset is cycle time × repeat count of `TweenCore`, and 0 when the key is an empty string
+- A message request before `prepare` succeeds, after it fails, and before a `prepare` called again ends leaves an error log and is ignored
+- `prepare` leaves an error log when the sum of the length of the black box enter tween preset, `MessageCore.blackBoxDurationMs`, and the length of the black box exit tween preset is `InputBlockCore.maxDurationMs` or more. The values are used as they are and the result of `prepare` does not change. The length of a tween preset is cycle time × repeat count of `TweenCore`, and 0 when the key is an empty string
 
 ### text
 
@@ -152,7 +152,7 @@ none
 - A toast starts the exit tween only after the enter tween ends and `MessageCore.toastDurationMs` passes, and a black box starts it only after `MessageCore.blackBoxDurationMs` passes
 - Even with game time pause and time scale 2000, the display duration passes in real elapsed time
 - A presentation whose tween preset key is an empty string is skipped and progress continues
-- When the sum of the lengths of the black box enter·exit tween presets and `MessageCore.blackBoxDurationMs` is `InputBlockCore.maxDurationMs`, `prepare` writes one error log and is `true`, and when it is 1 less, there is no such log
+- When the sum of the lengths of the black box enter·exit tween presets and `MessageCore.blackBoxDurationMs` is `InputBlockCore.maxDurationMs`, `prepare` leaves one error log and is `true`, and when it is 1 less, there is no such log
 - A black box after a black box whose exit tween made the opacity 0 appears with the prefab's opacity without an enter tween
 - Three requests of the same kind with different wording appear one at a time in the order received
 - A black box request while a toast is on display and a toast request while a black box is on display appear immediately

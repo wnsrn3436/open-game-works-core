@@ -27,7 +27,7 @@ Receives the notices, banners and maintenance notices of server core `notice` wi
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
 | `wait_maintenance_clear` | none | async operation. none | none | `BootstrapCore`(`Login` stage) |
-| `fetch` | force flag | async operation. success flag | `false` | core, content code |
+| `fetch` | force flag | async operation. success flag | `false` | content code |
 | `is_maintenance` | none | last received `maintenance` | `false` | content code |
 | `list_active` | `NoticeKind`, caller buffer | number filled | `0` | content code |
 | `get_notice` | notice ID | `CoreContract.Notice` | none | content code |
@@ -41,7 +41,7 @@ Receives the notices, banners and maintenance notices of server core `notice` wi
 |---|---|
 | `CoreContract.Notice` | base proto message defined by server core `notice`. `id`, `kind`, `priority`, `start_at`, `end_at`, `title`, `body`, `image_url`, `shortcut_id`, `link_url` |
 | `NoticeKind` | base proto enum. `Notice`, `Banner`, `Maintenance` |
-| image object | 2D texture of the engine. The format is in the engine implementation rules |
+| image object | 2D texture of the engine. The format is in the engine-specific implementation rules |
 | image downloader | an interface with `download(URL, max bytes)` and `cancel()`. `download` sends an HTTP `GET` that does not follow redirects, waits, and returns the result (`Done`, `ConnectionFailed`, `TooLarge`, `Cancelled`), the HTTP status (0 when there is no response), and the body bytes. When the body is more than the max bytes, it stops receiving and the result is `TooLarge`. `cancel()` ends a `download` in progress with `Cancelled` |
 
 ## behavior
@@ -51,7 +51,7 @@ Receives the notices, banners and maintenance notices of server core `notice` wi
 - `fetch` sends `GetNotices` (language = `LocalizationCore.get_language_code`) with `NetworkCore.send_auth` (empty authorization, no signature). It also sends before login and during maintenance
 - When the force flag is `false` and the elapsed time since the last successful fetch is less than `NoticeCore.cacheTtlMs`, it does not send and returns `true`. The elapsed time is the real elapsed time since the last successful fetch plus every `background_ms` of `AppForegroundReturnedEvent` received after it
 - When a fetch is in progress, it does not send again and waits for that result together with it
-- On success, it replaces the whole cache with `maintenance` and `notices` of the response. When the notice list differs from the previous cache (the `id` set, or any field of the same `id`, differs), it emits `NoticesChangedEvent`
+- On success, it replaces the whole cache with `maintenance` and `notices` of the response. When the notice list differs from the previous cache (the `id` set, or any field of the same `id`, differs), it publishes `NoticesChangedEvent`
 - On failure, it keeps the cache and returns `false`. It does not display anything on screen
 - automatic fetch: on receiving `AppForegroundReturnedEvent`, it fetches with force flag `false`
 
@@ -78,15 +78,15 @@ Receives the notices, banners and maintenance notices of server core `notice` wi
   3. Opens the maintenance popup, waits until it closes, then goes to 1. It gets the close through the hidden callback, regardless of whether the button was pressed
 - maintenance popup: `UICore.open_system_popup`. One button `[notice_retry]`. Back input does not close it
 - The body and extra text of the maintenance popup are set from the first notice of `list_active`(`Maintenance`) when the popup opens. When that notice exists, the body is `[notice_maintenance_until]` formatted with `{end_at}` = the `end_at` of that notice, and the extra text is the `title` and `body` of that notice joined with a line break. When there is none, the body is `[notice_maintenance]` and the extra text is an empty string
-- When the maintenance popup cannot be opened, it writes an error log, waits `NoticeCore.maintenanceRetryMs` in real elapsed time, then goes to 1
+- When the maintenance popup cannot be opened, it leaves an error log, waits `NoticeCore.maintenanceRetryMs` in real elapsed time, then goes to 1
 - After login, when another request ends with `MAINTENANCE` and the app restarts through the title button of the `PopupRestart` popup (`[network_error_maintenance]`) of `NetworkCore`, `wait_maintenance_clear` of the new boot opens the maintenance popup
 
 ### image
 
 - `load_image` receives the image with `download`(`image_url` of that notice, `NoticeCore.imageMaxBytes`) of the image downloader and decodes it as PNG or JPEG. It decodes only when the result is `Done` and the HTTP status is 200; otherwise it is a failure
-- A URL that is not `https` is not accepted. A build with DEV code also accepts an `http` URL whose host is `127.0.0.1`. This is for tests that use the loopback HTTP server of `UnitTestCore`
+- A URL that is not `https` is not accepted. The environments that include DEV code also accept an `http` URL whose host is `127.0.0.1`. This is for tests that use the loopback HTTP server of `UnitTestCore`
 - When `download` has not ended in the first frame in which `TimeCore.get_real_time` has increased by `NoticeCore.imageTimeoutMs` or more since `download` started, it calls `cancel()` and fails
-- The image downloader is the one received with `set_image_downloader`, and when none was received, the default image downloader made with the engine HTTP client. The engine mapping is in the engine implementation rules
+- The image downloader is the one received with `set_image_downloader`, and when none was received, the default image downloader made with the engine HTTP client. The engine mapping is in the engine-specific implementation rules
 - Received images are kept in memory per notice ID. When the `image_url` of the same notice changes or the notice leaves the cache, the image is discarded
 
 ### release
@@ -167,7 +167,7 @@ format argument
 - A fetch with force flag `false` within `cacheTtlMs` is `true` without a request, and a fetch after it passes and a fetch with force flag `true` send `GetNotices`. Two fetches called at the same time make one request
 - Even when the real elapsed time after the last successful fetch is less than `cacheTtlMs`, when that plus the background time after it is `cacheTtlMs` or more, the automatic fetch on the return to foreground sends `GetNotices`
 - `GetNotices` goes through `send_auth` without an access token, and its language is the current language `code`
-- Only a fetch that changed the list emits `NoticesChangedEvent`, once. A failed fetch does not change the cache
+- Only a fetch that changed the list publishes `NoticesChangedEvent`, once. A failed fetch does not change the cache
 - When the server time is `start_at` + `TimeCore.reachMarginMs`, the notice is active, and 1 less, it is not. At `end_at` + `TimeCore.reachMarginMs` it is not active, and 1 less, it is active. `list_active` filters by kind and keeps the response order
 - For each active unread `Notice` there is an item under `[notice_badge]`, the item is removed on `mark_read` and in the frame `end_at` is reached, and `Banner` and `Maintenance` have no item
 - An ID marked with `mark_read` has `is_read` `true` after `release`, `init`, and when it leaves the received list, it is deleted from `read_ids`

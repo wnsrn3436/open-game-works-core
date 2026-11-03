@@ -74,7 +74,7 @@ Handles the color overlay that covers the whole visible game area with a solid c
 - A flash raises opacity from 0 to the maximum opacity over the rise duration, holds it for the hold duration, and lowers it to 0 over the fall duration
 - The definition of `play_preset` must be a finite-repeat definition that changes only the overlay's `Color` and `Opacity`. A definition that does not change `Color` plays with the overlay's current color
 - The input check of `play_preset` includes `TweenCore.check_definition` (the definition, that channel's overlay)
-- A request that passes the input check sends `ScreenEffectStartedEvent` when playback starts
+- A request that passes the input check publishes `ScreenEffectStartedEvent` when playback starts
 - Playback runs through `TweenCore` with the `TimeBasis` of the request. With `RealTime`, game time pause and time scale do not change the end time. With `GameTime`, playback holds during a game time pause and advances with game time, so in step mode it advances only with the steps
 - A request whose durations are all 0 applies the end value to the overlay within the operation and ends with `Completed`
 - `skip_to_end` applies the end value and ends with `Completed`

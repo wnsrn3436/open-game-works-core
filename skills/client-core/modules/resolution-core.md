@@ -24,13 +24,13 @@ Calculates game area and scale from the base resolution and the maximum resoluti
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `get_orientation` | none | `Landscape`, `Portrait` | `Landscape` | core, content code |
+| `get_orientation` | none | `Landscape`, `Portrait` | `Landscape` | content code |
 | `get_base_resolution` | none | width and height | all 0 | core, content code |
 | `get_window_size` | none | window size used in the last recalculation (window pixels) | all 0 | core, content code |
 | `get_game_area` | none | game area (game coordinates rectangle) | empty rectangle | core, content code |
 | `get_visible_game_area` | none | visible game area (game coordinates rectangle) | empty rectangle | core, content code |
-| `get_scale` | none | scale | 0 | core, content code |
-| `get_fill_mode` | none | `Crop`, `Letterbox` | `Letterbox` | core, content code |
+| `get_scale` | none | scale | 0 | content code |
+| `get_fill_mode` | none | `Crop`, `Letterbox` | `Letterbox` | content code |
 | `window_to_game` | window pixel position | game coordinates position | game coordinates origin | core, content code |
 | `game_to_window` | game coordinates position | window pixel position | window pixel origin | core, `QACore` |
 | `is_screen_mode_supported` | none | whether supported | `false` | content code |
@@ -91,7 +91,7 @@ Calculates game area and scale from the base resolution and the maximum resoluti
 - Window size changes are received through engine notifications. The window size is not checked each frame
 - When the width or height of the window size is 0, no recalculation runs and the previous result stays. When it is 0 at `init`, the result has all values 0
 - When the recalculation changes at least one of window size, fill mode, game area, visible game area, scale, the result is applied again to the window and the fill area. Rectangles are compared by both position and size
-- When at least one of window size, game area, visible game area, scale changes, `GameAreaChangedEvent` is raised after applying again. The recalculation of `init` does not raise it
+- When at least one of window size, game area, visible game area, scale changes, `GameAreaChangedEvent` is published after applying again. The recalculation of `init` does not publish it
 - The game area drawn in the window before `init` and after `release` is the extended size
 
 ### screen mode
@@ -167,7 +167,7 @@ Common conditions: base resolution 1920x1080 of `set_test_screen`, screen mode s
 - With base resolution 1080x1920, maximum resolution 1440x2400, `Letterbox` and a 1080x2520 window, the orientation is `Portrait` and the game area is (0, 60) 1080x2400
 - With game settings `maxResolution` 1800x1440, each `set_test_screen` with base resolution 1920x1080 leaves one error log, and `Letterbox` with a 2560x1080 window gives game area size 1920x1080. When game settings `baseResolution` is 1920x1080, `init` also leaves one error log
 - With game settings `maxResolution` 2400x1440, `set_test_screen` with base resolution 1080x1920, `Letterbox` and a 1080x2520 window leaves one error log, and the game area is (0, 300) 1080x1920
-- `set_test_screen` that changes the game area raises `GameAreaChangedEvent` once, and calling it again with the same input does not raise it
+- `set_test_screen` that changes the game area publishes `GameAreaChangedEvent` once, and calling it again with the same input does not publish it
 - `set_test_screen` with a 0x1080 window changes neither the results of the `get_*` operations nor events, even when other values are given with it
 - With fill color -1, 128, 300, an error log is left and the fill area color is 0, 128, 255
 - A fill image with a missing resource key leaves the error log of `ResourceCore`, and after the load the fallback resource of `ResourceCore` is visible in the fill area with the fill image placement

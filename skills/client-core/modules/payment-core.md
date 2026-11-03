@@ -144,13 +144,13 @@ The store adapter wraps the store SDK. Handling that differs per store stays onl
 - `BootstrapCore` calls `recover_purchases` at `AfterLogin`, and delivery retry and content code also call it. When there is no store adapter, it does nothing and is `false` without a log. When not in the ready state, it runs `prepare` first, then handles the transactions of `list_unfinished` one by one. When `prepare` and `list_unfinished` succeed, it is `true`. The verify result per transaction does not change the success flag and is counted in `RecoverySummary`. When a `recover_purchases` is in progress, returns that one's result
 - A purchase update notification received after the first call of `recover_purchases` handles that one transaction at once. A notification received before the first call is not handled. That transaction appears in `list_unfinished`
 - When the store is `GOOGLE`, per login session, after the first `recover_purchases` that ends, PaymentCore calls `restore_purchases` once and does not use the result. PaymentCore detects a change of login session from `LoginCompletedEvent` and `SessionEndedEvent`, the same as for the `finish` success list
-- transaction processing: verifies with `RecoverPurchase`(store, receipt data). The failure callback of `RecoverPurchase` returns `true` for every failure (warn log, no screen). That transaction is `Failed` and is handled again at the next recovery
+- transaction processing: verifies with `RecoverPurchase`(store, receipt data). The failure callback of `RecoverPurchase` returns `true` for every failure (no screen. `NetworkCore` leaves the log). That transaction is `Failed` and is handled again at the next recovery
 
   | verify result | `PurchaseRecoveredEvent` | `finish` |
   |---|---|---|
-  | `Granted` | Emitted right after verification, before `finish` | Calls it |
-  | `AlreadyGranted`, `Invalid` | Not emitted | Calls it |
-  | `OtherUser`, `Pending`, `Failed` | Not emitted | Does not call it. Handled again at the next recovery time |
+  | `Granted` | Published right after verification, before `finish` | Calls it |
+  | `AlreadyGranted`, `Invalid` | Not published | Calls it |
+  | `OtherUser`, `Pending`, `Failed` | Not published | Does not call it. Handled again at the next recovery time |
 
 - skipped transaction: a SKU not in the SKU table (error log), an in-flight transaction, a transaction whose `finish` succeeded in the current login session. An in-flight transaction is looked at again at the next recovery time
 - in-flight transaction: a transaction that falls under one of the below
@@ -268,7 +268,7 @@ reserved ID, reserved sound: none
 - When the SKU table is empty, `prepare` is `true` without `query_prices`
 - After a disconnection notification, `get_price` is an empty string, and the next `prepare` calls `connect` once
 - When a disconnection notification arrives during a `prepare` that waits for price fetch, that `prepare` is `false` and not in the ready state even when price fetch succeeds
-- With N unfinished transactions, `RecoverPurchase` is sent N times, and for each verify result the event and `finish` match the recovery table. The event of a `Granted` transaction is emitted once, before `finish`
+- With N unfinished transactions, `RecoverPurchase` is sent N times, and for each verify result the event and `finish` match the recovery table. The event of a `Granted` transaction is published once, before `finish`
 - A purchase update notification before the first call of `recover_purchases` is not verified, and a notification after it is handled at once
 - Even when a purchase update notification arrives for the same transaction as an in-flight transaction, verification happens once
 - A `recover_purchases` called during a `buy` held by `fake_hold_buy`(`true`), and a `recover_purchases` called after `buy` returns and before the `VerifyPurchase` response, do not verify that transaction. The verification request of that transaction is one `VerifyPurchase`, there is no `PurchaseRecoveredEvent`, and `finish` happens once

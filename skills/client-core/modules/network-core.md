@@ -88,7 +88,7 @@ The response envelope is handled in the order below.
 
 1. When the error code is `TOKEN_EXPIRED` and this request was not sent again by this handling, it waits for `SessionProvider.refresh_access_token`. On success, it stops the failure flow and sends again once with the same request ID. When the wait ended outside the session end state and failed: when the error code of the received `RequestFailure` is `SESSION_REPLACED`, it ends as a failure without the failure callback and default handling, and `AuthCore` does the display. Otherwise, it goes from step 2 with that `RequestFailure` when the `FailureKind` of the received `RequestFailure` is `ServerError`, and with `ConnectionFailed` otherwise
 2. When the error code is `SESSION_REPLACED`, it calls `SessionProvider.notify_session_replaced` and ends as a failure. It does not do the failure callback and default handling. `AuthCore` does the display
-3. When the error code is `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED`, it emits `UpdateRequiredEvent` and ends as a failure. It does not do the failure callback and default handling
+3. When the error code is `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED`, it publishes `UpdateRequiredEvent` and ends as a failure. It does not do the failure callback and default handling
 4. When it is a communication failure and this request has not been sent again by this step, it sends again once with the same request ID and body without a screen and stops the failure flow. When the server handled the first request, the saved response arrives
 5. When the request kind is `SilentRetry`, it is a communication failure, and retries remain, it waits for the retry delay without a screen, sends again with the same request ID and body, and stops the failure flow
 6. Calls the failure callback. When it returns `true`, it ends
@@ -101,9 +101,9 @@ The response envelope is handled in the order below.
 | `Silent`, `SilentRetry` | none | none |
 
 - The retry count is the number of times one request was sent again, up to `NetworkCore.retryCount`. The resends of 1 and 4 are not counted
-- `notify_server_error` handles an error code received outside a request (the matchmaker connection of `RealtimeCore`) the same as failure flow steps 2, 3. For `SESSION_REPLACED`, it calls `notify_session_replaced` when there is a `SessionProvider`, and for `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED`, it emits `UpdateRequiredEvent`. Other codes do nothing. It writes no log
+- `notify_server_error` handles an error code received outside a request (the matchmaker connection of `RealtimeCore`) the same as failure flow steps 2, 3. For `SESSION_REPLACED`, it calls `notify_session_replaced` when there is a `SessionProvider`, and for `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED`, it publishes `UpdateRequiredEvent`. Other codes do nothing. It leaves no log
 - retry delay: the duration waited before sending again automatically. The first retry delay of a request is `NetworkCore.retryDelayMs`, and the next retry delay is the smaller of the previous retry delay × `NetworkCore.retryDelayFactorPermille` ÷ 1000 rounded down and `NetworkCore.retryDelayMaxMs`. It is measured in the real elapsed time of `TimeCore`. A request waiting for the retry delay is a request being sent. A retry of the retry popup and the resends of 1 and 4 are sent immediately without a retry delay
-- Every failure writes one log, except a request discarded in the session end state, a request stopped at response processing step 4, and a request that ended with a failure that `SessionProvider` returned in send attempt step 1 or failure flow step 1. The content is `FailureKind`, error code, request name, HTTP status. Failures of `ReportClientErrors`, `ReportAnalyticsEvents`, a `ServerError` for which the failure callback returned `true`, a `ServerError` of `send_auth`, and `SESSION_REPLACED` are warn, and other failures are error. The module that sent the request does not log that failure again
+- Every failure leaves one log, except a request discarded in the session end state, a request stopped at response processing step 4, and a request that ended with a failure that `SessionProvider` returned in send attempt step 1 or failure flow step 1. The content is `FailureKind`, error code, request name, HTTP status. Failures of `ReportClientErrors`, `ReportAnalyticsEvents`, a `ServerError` for which the failure callback returned `true`, a `ServerError` of `send_auth`, and `SESSION_REPLACED` are warn, and other failures are error. The module that sent the request does not log that failure again
 
 `ErrorDisplay` of `ServerError`
 
@@ -126,16 +126,16 @@ Handling of `ErrorDisplayKind`: `None` displays nothing. `Toast` shows a `Messag
 | retry popup | same as error popup | retry | ignored |
 | retry exhausted popup | same as error popup | title | ignored |
 
-- The button texts are confirm `[network_confirm]`, retry `[network_retry]`, title `[network_go_to_title]`. confirm only closes. retry sends again immediately with the same request ID and body. title emits `EventCore.RestartRequestedEvent`
-- Popups are opened with `UICore.open_system_popup`. Toasts and popups get diagnostic wording appended: the error code in STG·PROD builds, and the error name, error code, request name, HTTP status, server detail in a build with DEV code
-- When the retry popup cannot open or closes without retry being pressed, it writes an error log and ends as a failure
+- The button texts are confirm `[network_confirm]`, retry `[network_retry]`, title `[network_go_to_title]`. confirm only closes. retry sends again immediately with the same request ID and body. title publishes `EventCore.RestartRequestedEvent`
+- Popups are opened with `UICore.open_system_popup`. Toasts and popups get diagnostic wording appended: the error code in STG and PROD builds, and the error name, error code, request name, HTTP status, server detail in the environments that include DEV code
+- When the retry popup cannot open or closes without retry being pressed, it leaves an error log and ends as a failure
 
 ### session-bound work
 
 - `AuthCore` passes a `SessionProvider` on login success and none when the session ends
 - On receiving a `SessionProvider`, it registers the sender with `LogCore.set_sender`, and on receiving none, it calls `LogCore.clear_sender`
 - session end state: the state after receiving none following a `SessionProvider`. It ends on receiving the next `SessionProvider` or on `release`
-- When it receives none and enters the session end state, it discards all requests in the queue. When there are discarded requests, it writes one warn log with the number discarded. A request that starts a send attempt in the session end state (including resends), and a request whose wait in send attempt step 1 or failure flow step 1 ended in the session end state, are also discarded without a log
+- When it receives none and enters the session end state, it discards all requests in the queue. When there are discarded requests, it leaves one warn log with the number discarded. A request that starts a send attempt in the session end state (including resends), and a request whose wait in send attempt step 1 or failure flow step 1 ended in the session end state, are also discarded without a log
 - A discarded request ends as a failure without the success callback, failure callback, default handling. `send` is `false` and the success flag of `RequestCompletedEvent` is `false`
 - The sender sends the received `LogBatch` with `send`. When there are `errors` or `dropped_error_count` is greater than 0, it sends core `rpc` `ReportClientErrors` (`errors`, `dropped_error_count`), and when there are `events` or `dropped_event_count` is greater than 0, it sends core `rpc` `ReportAnalyticsEvents` (`events`, `dropped_event_count`). Both `rpc`s are `SilentRetry`. `LogEntry` goes into the same-named fields of base proto `ClientErrorEntry`, `AnalyticsEvent` of `LogCore` into the same-named fields of base proto `AnalyticsEvent`, and `time` goes into `time_at`. One parameter is one `AnalyticsParam`: the name is `key`, and value types int64, float64, string, bool are `kind` `INT`, `DOUBLE`, `STRING`, `BOOL` with `int_value`, `double_value`, `string_value`, `bool_value`
 - After the first sync, on receiving `TimeCore.AppForegroundReturnedEvent`, it sends core `rpc` `Resync` with `send` when there is a `SessionProvider`. `Resync` is `Silent`, its response body is empty, and the envelope holds `server_time_at` and the pending delta. The envelope of a `Resync` whose `full` is `true` holds a `full` delta that has the whole UserState in `user_state`
@@ -156,17 +156,17 @@ Handling of `ErrorDisplayKind`: `None` displays nothing. `Toast` shows a `Messag
 
 - A request ends as a success when it finishes up to the success callback, and as a failure when it finishes the failure flow. A request stopped at response processing step 4 ends as a failure. A request sent again ends with the result of the resend. It does not wait for opened popups and toasts to close. A request that opened a retry popup ends with the result of the resend made by pressing retry
 - It is a success even when there is no success callback or its object is destroyed
-- On ending, it emits `RequestCompletedEvent` once. The output of `send` is the success flag
+- On ending, it publishes `RequestCompletedEvent` once. The output of `send` is the success flag
 
 ### release
 
-- Calls `NetworkTransport.cancel` with every handle being sent, and discards the queue and the requests being handled. Discarded requests do not call callbacks or emit events, and `send` is `false`. Results that arrive after that are discarded
+- Calls `NetworkTransport.cancel` with every handle being sent, and discards the queue and the requests being handled. Discarded requests do not call callbacks or publish events, and `send` is `false`. Results that arrive after that are discarded
 - Releases the block, calls `InputBlockCore.set_timer_hold`(`network`, `false`), and takes down the loading icon. Deletes the values of `set_server_info` and the `SessionProvider`, and calls `LogCore.clear_sender`
 
 ### log
 
 - Access tokens, session signing keys, signatures are not logged at any level
-- Request bodies and response bodies are logged only at debug level in a build with DEV code. The bodies of `send_auth` and `sensitive` requests are not logged
+- Request bodies and response bodies are logged only at debug level in the environments that include DEV code. The bodies of `send_auth` and `sensitive` requests are not logged
 
 ## hook
 
@@ -188,7 +188,7 @@ Handling of `ErrorDisplayKind`: `None` displays nothing. `Toast` shows a `Messag
 | condition | failure value | log |
 |---|---|---|
 | `error_display` hook throws | `Popup`, `[network_error_general]`, the same as when the hook returns a wrong output | error |
-| the base URL of `set_server_info` is not a URL with scheme `https` (a build with DEV code also accepts scheme `http`) or has a query or fragment, the platform is not `android`, `ios`, `web`, `windows`, `macos`, `linux`, the app version is neither an empty string nor `<major>.<minor>.<patch>` | `false`. Not changed | error |
+| the base URL of `set_server_info` is not a URL with scheme `https` (the environments that include DEV code also accept scheme `http`) or has a query or fragment, the platform is not `android`, `ios`, `web`, `windows`, `macos`, `linux`, the app version is neither an empty string nor `<major>.<minor>.<patch>` | `false`. Not changed | error |
 | sending without a base URL | `ConnectionFailed` | error |
 | sending of `send` without a `SessionProvider` when not in the session end state | `ConnectionFailed` | error |
 | request in the session end state | discarded and ends as a failure. No callbacks and no default handling | one warn when there are requests discarded on entering the session end state |
@@ -238,7 +238,7 @@ reserved string: `[network_confirm]`, `[network_retry]`, `[network_go_to_title]`
 - `send_cheat` goes through the same queue, session headers, response processing, delta apply as `send`, and sends a game cheat to `POST <base URL>/cheat/<rpc name>` and a core cheat to `POST <base URL>/core/cheat/<rpc name>`. The request kind is `Interaction`
 - A send started during `force_failure` becomes that failure without the token lookup and `NetworkTransport`
 - During `force_delay`, the result of `NetworkTransport` is treated as received after the delay. The timeout judgement and time sync also use that time
-- A request record holds, for each ended request, the request name, request kind, success flag, last error code, request body, last response body. In a run with DEV code, NetworkCore keeps them from `init` without calls from other modules. The bodies of `send_auth` and `sensitive` requests are empty bytes. It keeps the latest `NetworkCore.devRequestRecordCount` records in the order they ended
+- A request record holds, for each ended request, the request name, request kind, success flag, last error code, request body, last response body. In the environments that include DEV code, NetworkCore keeps them from `init` without calls from other modules. The bodies of `send_auth` and `sensitive` requests are empty bytes. It keeps the latest `NetworkCore.devRequestRecordCount` records in the order they ended
 
 ## test
 
@@ -259,25 +259,25 @@ reserved string: `[network_confirm]`, `[network_retry]`, `[network_go_to_title]`
 - An `Interaction` request whose `refresh_access_token` after `TOKEN_EXPIRED` failed with `MAINTENANCE` is not sent again and fails with `PopupRestart`, `[network_error_maintenance]`. A request whose refresh failed without a `ServerError` does the resend of step 4 with `ConnectionFailed`
 - A request whose `refresh_access_token` after `TOKEN_EXPIRED` failed with `SESSION_REPLACED` ends as a failure without `notify_session_replaced`, failure callback, popup
 - When `set_session_provider`(none) is received while waiting for `refresh_access_token` after `TOKEN_EXPIRED`, that request ends without resend, failure callback, popup, log, and `send` is `false`
-- An update error emits `UpdateRequiredEvent` once, and there is no failure callback and no popup
+- An update error publishes `UpdateRequiredEvent` once, and there is no failure callback and no popup
 - When the failure callback returns `true`, there is no popup and no toast
 - A `ServerError` for which the failure callback returned `true` and a `ServerError` of `send_auth` give one warn log, and an unhandled `ServerError` and a communication failure give one error log
 - An `Interaction` request that ended because `get_access_token`, or `refresh_access_token` after `TOKEN_EXPIRED`, failed with a `MAINTENANCE` `RequestFailure` has 0 failure logs of NetworkCore
 - A request with a communication failure goes again once with the same request ID and body without a screen, and when that resend succeeds, it ends as a success without popup and failure callback. That resend does not count toward the retry count, and a communication failure after it follows the handling of the request kind
 - An `Interaction` request whose token lookup failed with `SESSION_REPLACED` ends as a failure without failure callback and popup
 - `SESSION_REPLACED` of a server response calls `notify_session_replaced` once and ends as a failure without failure callback and popup
-- `notify_server_error`(`SESSION_REPLACED`) calls `notify_session_replaced` once, `APP_UPDATE_REQUIRED` and `DATA_UPDATE_REQUIRED` emit `UpdateRequiredEvent` of that code once, and `BANNED` does nothing. None of the three writes a log
+- `notify_server_error`(`SESSION_REPLACED`) calls `notify_session_replaced` once, `APP_UPDATE_REQUIRED` and `DATA_UPDATE_REQUIRED` publish `UpdateRequiredEvent` of that code once, and `BANNED` does nothing. None of the three leaves a log
 - When `ReportClientErrors`, `ReportAnalyticsEvents` end with a communication failure, it is a warn log and the error queue of `LogCore` does not grow. While there is no connection, a `ReportClientErrors` failure does not go into `errors` of the next `LogBatch`
 - For each request kind and failure of the table, the default handling equals the table. A `Silent` failure has only the callback and the log
-- When a `Retry` request sent again `NetworkCore.retryCount` times fails every time, the retry exhausted popup appears and it ends as a failure, and title emits `RestartRequestedEvent` once. `SilentRetry` sends again the same number of times without a screen and ends as a failure
+- When a `Retry` request sent again `NetworkCore.retryCount` times fails every time, the retry exhausted popup appears and it ends as a failure, and title publishes `RestartRequestedEvent` once. `SilentRetry` sends again the same number of times without a screen and ends as a failure
 - A `SilentRetry` request with a failure callback that returns `true` sends again without a screen on each communication failure, and the failure callback is called once, on the failure after sending again `NetworkCore.retryCount` times. A `ServerError` is not sent again and calls the failure callback once
 - The automatic resend of a `SilentRetry` request happens after the retry delay, and the retry delays are in turn `NetworkCore.retryDelayMs`, then previous value × `NetworkCore.retryDelayFactorPermille` ÷ 1000, and do not exceed `NetworkCore.retryDelayMaxMs`. During the retry delay there is no `NetworkTransport` call and the next request is not sent. The same holds for `send_auth` with a retry option. Retry of the retry popup sends without a retry delay
 - When the retry popup cannot open or closes without retry, there is an error log, a failure, and the start of sending the next request
 - In a popup with a title button, back input does not close the popup
 - A `CoreError` outside the table such as `NICKNAME_TAKEN`, a `GameError`, and a code not in this build are displayed as the result of `error_display`, and without the hook it is `Popup`, `[network_error_general]`. For codes in the table, the hook is not called
 - An `Interaction` request and a `Retry` request that failed with `FEATURE_DISABLED` are not sent again, show one `[network_error_feature_disabled]` toast without hook `error_display`, and have no popup
-- The diagnostic wording in a build with DEV code and in STG·PROD builds equals behavior
-- Logs have no token, signing key, signature, STG·PROD build logs have no body, and the bodies of a request with `sensitive` on and of a `(ogw.sensitive)` request are in no build log
+- The diagnostic wording in the environments that include DEV code and in STG and PROD builds equals behavior
+- Logs have no token, signing key, signature, STG and PROD build logs have no body, and the bodies of a request with `sensitive` on and of a `(ogw.sensitive)` request are in no build log
 - `RequestCompletedEvent` is once per request, and its success flag equals the output of `send`. It is a success even when the callback is missing or destroyed
 - When the `LogBatch` the sender received has only `errors`, it sends one `ReportClientErrors`, and when it has both, it sends both `rpc`s. When `events` is empty and only `dropped_event_count` is greater than 0, `ReportAnalyticsEvents` holds that count
 - `send_auth` does not wait for the queue, attaches `Authorization` and the signature as `AuthSendOptions` says, and has no block and no popup. It passes the delta of the login response to `apply_delta`. It makes the signature with `signing_key` when that is not empty, and with `SessionProvider.get_signing_key` when it is empty. `ServerError.ban` of a `BANNED` error response is in the ban detail of `RequestFailure`
@@ -287,8 +287,8 @@ reserved string: `[network_confirm]`, `[network_retry]`, `[network_go_to_title]`
 - The block of an `Interaction` request for which `get_access_token` waited longer than `InputBlockCore.maxDurationMs` and then `NetworkTransport` gave the result within `NetworkCore.requestTimeoutMs` is not released by forced release. Even when three `Interaction` requests received in a row each take `NetworkCore.requestTimeoutMs` − 1, there is no forced release
 - `send_cheat` keeps the queue order, goes to the cheat path, and passes the delta of the response to `apply_delta`
 - After `set_dev_access`, the `X-Ogw-Dev-Access` of `send_cheat` and `send_auth_cheat` requests is that value, `send` and `send_auth` requests do not have that header, and logs do not have that value
-- `force_failure`, `force_delay`, request records, `send_cheat`, `set_dev_access` equal behavior and do not exist in STG·PROD builds
-- In a build without DEV code, `set_server_info` with an `http` base URL is `false` and writes an error log. A build with DEV code accepts it
+- `force_failure`, `force_delay`, request records, `send_cheat`, `set_dev_access` equal behavior and do not exist in STG and PROD builds
+- In STG and PROD builds, `set_server_info` with an `http` base URL is `false` and leaves an error log. The environments that include DEV code accept it
 - After an `Interaction`, `Silent`, `SilentRetry` request ends with a communication failure, the `Resync` of the return from background and the `Resync` of `resync` go with `full` `true`, and a `Resync` after that `Resync` succeeds is `full` `false`. A `Resync` after a communication failure of a `Retry` request, a `ServerError` failure, or a request discarded in the session end state is `full` `false`
 - A `Resync` after a request stopped at response processing step 4 is `full` `true`. When a `Resync` with `full` `true` ends with a communication failure, the next `Resync` is also `full` `true`
 - After the full resync flag is turned on, when `set_session_provider` is received or `release`, `init` happen, the next `Resync` is `full` `false`

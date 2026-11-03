@@ -147,11 +147,11 @@ none
 |---|---|---|---|---|
 | `list_loaded_resources` | none | key and reference count per resource in the cache | empty list | `QACore` |
 | `list_scopes` | none | list of scopes that are not released | empty list | `QACore` |
-| `set_test_key_list` | list that links resource keys to the engine paths of their resources, variant count of each key whose variant count is 2 or more | none | none | core test |
+| `set_test_key_list` | list that links resource keys to the engine paths of their resources, variant count of each key whose variant count is 2 or more | none | none | core test, `BootstrapCore` |
 
 - `set_test_key_list` is called only before `init`. Called after `init`, it leaves an `error` log and does nothing. `release` deletes the set list. A `release` before `init` also deletes it
 - A core test links test resources to resource keys with `set_test_key_list`. The method is in the engine-specific implementation rules
-- leak check: in a build that contains DEV code, after a resource is removed from the cache, it is a leak when, at the time the engine-specific implementation rules set, a live object that can be found by the method the engine-specific implementation rules set references that resource. For each leak, an `error` log is left with the key and the name of the scope that removed the last reference. Resources that came back into the cache and resources that other resources in the cache reference inside their files are excluded. For an engine on which that method cannot be defined, the engine-specific implementation rules state that there is no leak check, and no leak check is done
+- leak check: in the environments that include DEV code, after a resource is removed from the cache, it is a leak when, at the time the engine-specific implementation rules set, a live object that can be found by the method the engine-specific implementation rules set references that resource. For each leak, an `error` log is left with the key and the name of the scope that removed the last reference. Resources that came back into the cache and resources that other resources in the cache reference inside their files are excluded. For an engine on which that method cannot be defined, the engine-specific implementation rules state that there is no leak check, and no leak check is done
 - `release` and app exit run the leak check on the spot for resources whose time set by the engine-specific implementation rules has passed, and discard resources whose time has not come yet without a leak check
 
 ## test
@@ -172,7 +172,7 @@ none
 - `apply_bundles` after a `load` with the global scope gives an `error` log and `false`, and the bundle's keys are not loaded from the bundle
 - `is_loaded` returns, without a log, `true` for a key and kind in the cache, and `false` for a key not in the cache, a key being loaded and another kind
 - When `release` runs after the frame in which a resource was removed from the cache ends, a leak check `error` log is left for a resource that a live object references
-- In a build that contains DEV code, when another live object references a resource removed from the cache, a leak check `error` log is left. An engine whose engine-specific implementation rules state that there is no leak check has no such test
+- In the environments that include DEV code, when another live object references a resource removed from the cache, a leak check `error` log is left. An engine whose engine-specific implementation rules state that there is no leak check has no such test
 - A ResourceCore that ran `init` after `set_test_key_list` loads the keys of the list as the resources at their paths. `set_test_key_list` after `init` gives an `error` log and the list does not change. After `release` there is no set list
 - Core code has no engine resource load function call outside ResourceCore. The static check before core test checks it
 - Without `set_test_key_list`, when the resource key list file is missing, `init` fails and an `error` log is left
