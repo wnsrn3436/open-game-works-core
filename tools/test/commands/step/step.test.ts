@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { dirname, join } from 'node:path';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { playBudgetDeps } from '../../../src/commands/agent/lib/play-budget.ts';
 import { newMarks } from '../../../src/commands/step/step.ts';
 import { newAgentKey } from '../../../src/lib/agentctx.ts';
 import { jobsDir } from '../../../src/lib/jobs.ts';
@@ -294,6 +295,57 @@ describe('ogw step of a judge agent past the budget of the instance', () => {
       expect.objectContaining({ exit: 0 }) as unknown,
     ]);
     expect(runner.requests('main').slice(before).map((r) => r.command)).toEqual(['key_up']);
+    remove();
+  });
+});
+
+describe('ogw step of an agent whose budget ends during the call', () => {
+  const realNow = playBudgetDeps.now;
+  afterEach(() => {
+    playBudgetDeps.now = realNow;
+  });
+
+  it.each([
+    { role: 'judge', budgetMs: 240_000, passed: () => `the play budget of 240 s of instance ${id} has passed: put in no more input on it` },
+    { role: 'play', budgetMs: 900_000, passed: () => 'the play budget of 900 s since the first input has passed: put in no more input and write the result' },
+  ])('stops --count and a stream line of a $role agent where the budget ends, and reports the steps that passed and the refusal', async ({ role, budgetMs, passed }) => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    const job = `ag${role}crossing`;
+    const key = newAgentKey(job);
+    const remove = await fakeAgentJob(runner.ws.env, job, { role, cliPid: 999_999, keyHash: key.hash });
+    const budgets = join(await jobsDir(runner.ws.env), 'play-budget');
+    const file = role === 'judge' ? join(budgets, `judge-${job}`, id) : join(budgets, job);
+    mkdirSync(dirname(file), { recursive: true });
+    const noted = 1_000_000;
+    writeFileSync(file, String(noted));
+    const env = { OGW_AGENT_KEY: key.value };
+    /** Runs ogw with a clock at which the budget ends as the second step of the call goes in, and returns the run and the steps sent. */
+    const crossing = async (args: string[], stdin?: string): Promise<{ code: number; stdout: string; steps: number }> => {
+      const before = stepCount();
+      playBudgetDeps.now = () => noted + budgetMs - 2 + (stepCount() - before);
+      const run = await ogw(runner.ws, ['step', id, '50', ...args], { env, ...(stdin === undefined ? {} : { stdin }) });
+      return { code: run.code, stdout: run.stdout, steps: stepCount() - before };
+    };
+    const count = await crossing(['--count', '5', '--json']);
+    expect(count).toMatchObject({ code: 1, steps: 2 });
+    const data = JSON.parse(count.stdout) as { steps: { index: number }[]; failed: unknown };
+    expect(data.steps.map((s) => s.index)).toEqual([1, 2]);
+    expect(data.failed).toEqual({ index: 3, errors: [passed()] });
+    const text = await crossing(['--count', '5']);
+    expect(text).toMatchObject({ code: 1, steps: 2 });
+    expect(plain(text.stdout)).toBe(`step 1/5: advanced 50 ms: main: device ms <d>\nstep 2/5: advanced 100 ms: main: device ms <d>\nstep 3/5: ${passed()}\n`);
+    const stream = await crossing(['--stream'], 'step 5\n');
+    expect(stream).toMatchObject({ code: 1, steps: 2 });
+    const line = JSON.parse(stream.stdout) as { exit: number; data: { steps: { index: number }[]; failed: unknown } };
+    expect(line.exit).toBe(1);
+    expect(line.data.steps.map((s) => s.index)).toEqual([1, 2]);
+    expect(line.data.failed).toEqual({ index: 3, errors: [passed()] });
+    // the budget ends between the check of the call and its first step: the call fails as one error
+    const before = runner.requests('main').length;
+    const steps = stepCount();
+    playBudgetDeps.now = () => noted + budgetMs - 1 + (runner.requests('main').length - before);
+    expect(await ogw(runner.ws, ['step', id, '50', '--count', '5'], { env })).toMatchObject({ code: 1, stderr: expect.stringContaining(passed()) as unknown });
+    expect(stepCount()).toBe(steps);
     remove();
   });
 });

@@ -1,6 +1,6 @@
 import { expectPositionals, flag, nonNegativeInt, positional, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { checkPlayBudget } from '../agent/lib/play-budget.ts';
+import { checkPlayBudget, refusePastBudget } from '../agent/lib/play-budget.ts';
 import { captureScreen } from '../capture/capture.ts';
 import { singleInput } from '../input/input.ts';
 import { automationRequest, botControl, type ClientRef } from '../instance/automation.ts';
@@ -172,12 +172,14 @@ async function endedEarly(ctx: Context, plan: Plan, index: number, watch: Watch,
 }
 
 async function runSteps(ctx: Context, plan: Plan): Promise<Outcome> {
+  const budget = await checkPlayBudget(ctx, undefined, plan.id);
   const [main, telemetry] = await Promise.all([state(ctx, plan.id, 'main'), readTelemetry(ctx, plan.id)]);
   let watch: Watch = { main, marks: telemetry.marks };
   const steps: StepRecord[] = [];
   for (let index = 1; index <= plan.count; index++) {
     let result: Advance;
     try {
+      refusePastBudget(budget);
       result = await advance(ctx, plan, index, watch);
     } catch (error) {
       // an error in the first step fails the command as one error; after that the passed steps are still reported
@@ -220,7 +222,6 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
     if (words[0] === 'step' && words.length <= 2) {
       const count = words[1] === undefined ? 1 : /^[0-9]+$/.test(words[1]) ? Number(words[1]) : 0;
       if (count < 1) throw new OgwError(`invalid step count: ${words[1] ?? ''}`);
-      await checkPlayBudget(ctx, undefined, plan.id);
       const outcome = await runSteps(ctx, { ...plan, count });
       return { exit: outcome.failed ? 1 : 0, data: outcome };
     }
@@ -270,7 +271,6 @@ export const step: CommandDef = {
     }
     const count = nonNegativeInt(args, 'count') ?? 1;
     if (count < 1) throw new OgwError(`invalid --count: ${String(count)}`);
-    await checkPlayBudget(ctx, undefined, id);
     const outcome = await runSteps(ctx, { id, ms, count, capture: flag(args, 'capture'), state: flag(args, 'state') });
     return { exitCode: outcome.failed ? 1 : 0, text: outcomeLines(count, outcome).join('\n'), data: outcome };
   },

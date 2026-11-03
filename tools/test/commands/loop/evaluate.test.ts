@@ -412,6 +412,30 @@ describe('ogw loop evaluate', () => {
     expect(measure.collected).toEqual([]);
   });
 
+  it('removes the budget noted for a play job and a judge job when it sees each job end', async () => {
+    const { g } = await loop({ playInstances: 1 });
+    const budgets = join(await jobsDir(g.ws.env), 'play-budget');
+    fake.agentStarting = (id) => {
+      const role = fake.agents.find((a) => a.id === id)?.role;
+      const file = role === 'judge' ? join(budgets, `judge-${id}`, 'i1') : join(budgets, id);
+      mkdirSync(join(file, '..'), { recursive: true });
+      writeFileSync(file, '1000');
+    };
+    // whether the budget of each agent was still there when the agent ended
+    const noted = new Map<string, boolean>();
+    fake.respond = (agent) => {
+      noted.set(agent.id, existsSync(join(budgets, agent.role === 'judge' ? `judge-${agent.id}` : agent.id)));
+      return agent.role === 'play' ? null : judgeText('A', 'A', 'pass');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect(new Set(fake.agents.map((a) => a.role))).toEqual(new Set(['play', 'judge']));
+    expect([...noted.keys()].sort()).toEqual(fake.agents.map((a) => a.id).sort());
+    expect([...noted.values()].every(Boolean)).toBe(true);
+    expect(readdirSync(budgets)).toEqual([]);
+  });
+
   it('fails a judge whose tables cannot be read and skips success judges', async () => {
     const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
     write(g.root, `${R}/measure-1.json`, 'old');

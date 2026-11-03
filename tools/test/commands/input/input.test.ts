@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { parseScript, videoSpanMs } from '../../../src/commands/input/input.ts';
 import { readRecord } from '../../../src/commands/instance/lib/records.ts';
@@ -244,6 +245,20 @@ describe('ogw input', () => {
 
     const commandsSince = (before: number): string[] => runner.requests('main').slice(before).map((r) => r.command);
 
+    /** Runs `test` with `ms` as the budget of a judge agent on an instance. */
+    async function withBudget(ms: number, test: () => Promise<void>): Promise<void> {
+      const file = join(runner.ws.harness, 'settings.json');
+      const text = readFileSync(file, 'utf8');
+      const settings = JSON.parse(text) as { loop: Record<string, unknown> };
+      settings.loop.judgeInstanceBudgetMs = ms;
+      writeFileSync(file, JSON.stringify(settings));
+      try {
+        await test();
+      } finally {
+        writeFileSync(file, text);
+      }
+    }
+
     it('refuses one input past the budget of the instance, without sending it, and puts in a release', async () => {
       const { env, remove } = await judge(0);
       const before = runner.requests('main').length;
@@ -295,6 +310,70 @@ describe('ogw input', () => {
       const script = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }]);
       expect((await ogw(runner.ws, ['input', id, '--script', script], { env })).code).toBe(0);
       expect(existsSync(file)).toBe(true);
+      remove();
+    });
+
+    it('counts the budget from the first step of a script that is not a release, at the time it is sent', async () => {
+      await withBudget(1000, async () => {
+        const { env, file, remove } = await judge(null);
+        const script = scriptOf([{ atMs: 0, command: 'key_up', args: ['A'] }, { atMs: 1000, command: 'tap', args: ['1', '1'] }, { atMs: 1100, command: 'tap', args: ['2', '2'] }, { atMs: 3_000_000, command: 'tap', args: ['3', '3'] }]);
+        const before = runner.requests('main').length;
+        const run = await ogw(runner.ws, ['input', id, '--script', script, '--json'], { env });
+        expect(run.code).toBe(1);
+        const data = JSON.parse(run.stdout) as { steps: { command: string; sentAt: number }[]; notSent: number; refusal: string };
+        expect(data.steps.map((s) => s.command)).toEqual(['key_up', 'tap', 'tap']);
+        expect(data.notSent).toBe(1);
+        expect(data.refusal).toContain('the play budget of 1 s of instance');
+        expect(Number(readFileSync(file, 'utf8'))).toBe(data.steps[1]?.sentAt);
+        expect(commandsSince(before)).toEqual(['get_state', 'key_up', 'tap', 'tap']);
+        remove();
+      });
+    });
+
+    it('starts no budget with a script that the step mode or the video length refuses', async () => {
+      const { env, file, remove } = await judge(null);
+      await ogw(runner.ws, ['step-mode', id, 'on']);
+      const tap = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }]);
+      expect((await ogw(runner.ws, ['input', id, '--script', tap], { env })).stderr).toContain('the client is in step mode');
+      await ogw(runner.ws, ['step-mode', id, 'off']);
+      expect(existsSync(file)).toBe(false);
+      const long = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }, { atMs: 1601, command: 'tap', args: ['1', '1'] }]);
+      expect((await ogw(runner.ws, ['input', id, '--script', long, '--video'], { env })).stderr).toContain('over QACore.videoMaxMs');
+      expect(existsSync(file)).toBe(false);
+      remove();
+    });
+
+    it('does not send the first step of a script when another call started the budget and it passed during the wait', async () => {
+      const { env, file, remove } = await judge(null);
+      const script = scriptOf([{ atMs: 500, command: 'tap', args: ['1', '1'] }]);
+      const before = runner.requests('main').length;
+      const running = ogw(runner.ws, ['input', id, '--script', script, '--json'], { env });
+      await sleep(100);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, String(Date.now() - BUDGET_MS));
+      const run = await running;
+      expect(run.code).toBe(1);
+      expect(JSON.parse(run.stdout)).toMatchObject({ steps: [], notSent: 1, refusal: expect.stringContaining(PASSED) as unknown });
+      expect(commandsSince(before)).toEqual(['get_state']);
+      remove();
+    });
+
+    it('does not send a step written before the end of the budget when an earlier step is answered after the end', async () => {
+      const { env, remove } = await judge(2000);
+      runner.config({ clients: { main: { delayMs: { tap: 2500 } } } });
+      try {
+        const script = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }, { atMs: 100, command: 'tap', args: ['2', '2'] }]);
+        const before = runner.requests('main').length;
+        const run = await ogw(runner.ws, ['input', id, '--script', script, '--json'], { env });
+        expect(run.code).toBe(1);
+        const data = JSON.parse(run.stdout) as { steps: { command: string; ok: boolean }[]; notSent: number; refusal: string };
+        expect(data.steps.map((s) => [s.command, s.ok])).toEqual([['tap', true]]);
+        expect(data.notSent).toBe(1);
+        expect(data.refusal).toContain(PASSED);
+        expect(commandsSince(before)).toEqual(['get_state', 'tap']);
+      } finally {
+        runner.config({ clients: { main: { fail: { tap_anchor: 'anchor not found' } } } });
+      }
       remove();
     });
   });

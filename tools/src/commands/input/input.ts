@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { flag, positional, str, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { readText } from '../../lib/fsx.ts';
-import { checkPlayBudget, notePlayBudget, releasesHeld, type PlayBudget } from '../agent/lib/play-budget.ts';
+import { budgetRule, checkPlayBudget, notedBudget, noteBudget, releasesHeld, type PlayBudget } from '../agent/lib/play-budget.ts';
 import { recordVideo, takesFormat, type VideoCapture, videoDir } from '../capture/capture.ts';
 import { automationRequest } from '../instance/automation.ts';
 import { inputHelp, inputHoldMs, isPlayInput } from '../instance/lib/qa.ts';
@@ -140,25 +140,40 @@ export async function instanceTargetFps(ctx: Context, instanceId: string): Promi
   return fps;
 }
 
-/** Whether `budget` stops a step whose time is unix ms `at`: past it only the release of a held input goes in. */
-function pastBudget(budget: PlayBudget | null, at: number, step: ScriptStep): boolean {
-  return budget !== null && Math.max(at, Date.now()) >= budget.endsAt && !releasesHeld([step.command, ...step.args]);
+/** The refusal when `budget` stops a step whose time is unix ms `at`, else null: past it only the release of a held input goes in. */
+function budgetRefusal(budget: PlayBudget | null, at: number, step: ScriptStep): string | null {
+  return budget !== null && Math.max(at, Date.now()) >= budget.endsAt && !releasesHeld([step.command, ...step.args]) ? budget.refusal : null;
+}
+
+/** The video of a script once it ended, or why it failed. */
+async function endVideo(recording: Promise<VideoCapture> | null): Promise<Pick<ScriptRun, 'video' | 'videoError'>> {
+  if (recording === null) return { video: null, videoError: null };
+  try {
+    return { video: await recording, videoError: null };
+  } catch (error) {
+    return { video: null, videoError: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
- * Puts the steps in at their `atMs` from the start, in real time, without waiting for anyone else. A step `budget` stops
- * is not sent and not waited for, and the steps after it still run: one of them can release a held input.
+ * Puts the steps in at their `atMs` from the start, in real time, without waiting for anyone else. The first step that
+ * is not a release starts the play budget when it is sent. A step the budget stops is not sent and not waited for, and
+ * the steps after it still run: one of them can release a held input.
  */
-export async function runScript(ctx: Context, instanceId: string, steps: readonly ScriptStep[], video: boolean, targetFps: number, budget: PlayBudget | null): Promise<ScriptRun> {
+export async function runScript(ctx: Context, instanceId: string, steps: readonly ScriptStep[], video: boolean, targetFps: number): Promise<ScriptRun> {
   if (await mainStepMode(ctx, instanceId)) throw new OgwError('the client is in step mode; turn it off with ogw step-mode first');
   const prepared = video ? await prepareVideo(ctx, instanceId, steps, targetFps) : null;
+  // found before the script starts, so that the first input is not late by it
+  let unnoted = await budgetRule(ctx, instanceId);
+  let budget = unnoted === null ? null : await notedBudget(unnoted);
   const start = Date.now();
   let recording: Promise<VideoCapture> | null = null;
   const results: StepResult[] = [];
   let refusal: string | null = null;
   for (const step of steps) {
-    if (pastBudget(budget, start + step.atMs, step)) {
-      refusal = budget?.refusal ?? null;
+    const stopped = budgetRefusal(budget, start + step.atMs, step);
+    if (stopped !== null) {
+      refusal = stopped;
       continue;
     }
     const wait = start + step.atMs - Date.now();
@@ -172,6 +187,16 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
       await Promise.race([sent.promise, recording.then(() => null, () => null)]);
     }
     const sentAt = Date.now();
+    if (unnoted !== null && !releasesHeld([step.command, ...step.args])) {
+      budget = await noteBudget(unnoted, sentAt);
+      unnoted = null;
+      // another call can have started the budget while this step waited
+      const late = budgetRefusal(budget, sentAt, step);
+      if (late !== null) {
+        refusal = late;
+        continue;
+      }
+    }
     try {
       const response = await sendInput(ctx, instanceId, step.command, step.args);
       results.push({ ...step, sentAt, ok: response.ok, result: response.result });
@@ -181,12 +206,7 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
       break;
     }
   }
-  if (recording === null) return { results, video: null, videoError: null, refusal };
-  try {
-    return { results, video: await recording, videoError: null, refusal };
-  } catch (error) {
-    return { results, video: null, videoError: error instanceof Error ? error.message : String(error), refusal };
-  }
+  return { results, refusal, ...(await endVideo(recording)) };
 }
 
 /** One input command on the main client, as `ogw input <instance> <command> <argument...>` puts it in. */
@@ -213,9 +233,7 @@ export const input: CommandDef = {
     if (args.positionals.length !== 1) throw new OgwError(`usage: ${this.usage}`);
     const fps = await instanceTargetFps(ctx, instanceId);
     const steps = parseScript(await readText(resolve(ctx.cwd, script)), fps);
-    // a script of releases only starts no play budget
-    const budget = steps.every((s) => releasesHeld([s.command, ...s.args])) ? null : await notePlayBudget(ctx, instanceId);
-    const { results, video, videoError, refusal } = await runScript(ctx, instanceId, steps, flag(args, 'video'), fps, budget);
+    const { results, video, videoError, refusal } = await runScript(ctx, instanceId, steps, flag(args, 'video'), fps);
     const lines = results.map((r) => `${String(r.atMs)} ${String(r.sentAt)} ${r.command} ${r.ok ? 'ok' : 'failed'} ${JSON.stringify(r.result)}`);
     const notSent = steps.length - results.length;
     if (notSent > 0) lines.push(`not sent: ${String(notSent)} steps${refusal === null ? '' : `: ${refusal}`}`);

@@ -66,35 +66,59 @@ export interface PlayBudget {
   refusal: string;
 }
 
-/**
- * Notes the first input or step of the caller and returns its budget: of a play agent harness settings
- * `loop.playBudgetMs` since its first input or step, of a judge agent on `instance` `loop.judgeInstanceBudgetMs` since
- * its first one on that instance. Other callers have none: null.
- */
-export async function notePlayBudget(ctx: Context, instance?: string): Promise<PlayBudget | null> {
-  const agent = await agentContext(ctx.env);
-  const now = playBudgetDeps.now();
-  if (agent?.meta.role === 'judge' && instance !== undefined) {
-    // the instance comes from the agent, and the file of its budget is written outside the agent sandbox
-    checkInstanceId(instance);
-    const budget = (await ctx.settings()).loop.judgeInstanceBudgetMs;
-    const first = await firstCall(join(await judgeFolder(ctx.env, agent.job.id), instance), now);
-    return { endsAt: (first ?? now) + budget, refusal: `the play budget of ${String(Math.round(budget / 1000))} s of instance ${instance} has passed: put in no more input on it` };
-  }
-  if (agent?.meta.role !== 'play') return null;
-  const budget = (await ctx.settings()).loop.playBudgetMs;
-  const first = await firstCall(await startFile(ctx.env, agent.job.id), now);
-  return { endsAt: (first ?? now) + budget, refusal: `the play budget of ${String(Math.round(budget / 1000))} s since the first input has passed: put in no more input and write the result` };
+/** A budget before its start is known: the file that holds the start, its length and the refusal of an input or step past it. */
+export interface BudgetRule {
+  file: string;
+  ms: number;
+  refusal: string;
 }
 
 /**
- * Fails an input or step of the caller past its budget (`notePlayBudget`). An input that releases a held one passes
- * (`releasesHeld` of `input`, the input command and its arguments), so that no input stays held.
+ * The budget rule of the caller: of a play agent harness settings `loop.playBudgetMs` since its first input or step, of
+ * a judge agent on `instance` `loop.judgeInstanceBudgetMs` since its first one on that instance. Other callers have
+ * none: null.
  */
-export async function checkPlayBudget(ctx: Context, input?: readonly string[], instance?: string): Promise<void> {
-  if (input !== undefined && releasesHeld(input)) return;
-  const budget = await notePlayBudget(ctx, instance);
+export async function budgetRule(ctx: Context, instance?: string): Promise<BudgetRule | null> {
+  const agent = await agentContext(ctx.env);
+  if (agent?.meta.role === 'judge' && instance !== undefined) {
+    // the instance comes from the agent, and the file of its budget is written outside the agent sandbox
+    checkInstanceId(instance);
+    const ms = (await ctx.settings()).loop.judgeInstanceBudgetMs;
+    return { file: join(await judgeFolder(ctx.env, agent.job.id), instance), ms, refusal: `the play budget of ${String(Math.round(ms / 1000))} s of instance ${instance} has passed: put in no more input on it` };
+  }
+  if (agent?.meta.role !== 'play') return null;
+  const ms = (await ctx.settings()).loop.playBudgetMs;
+  return { file: await startFile(ctx.env, agent.job.id), ms, refusal: `the play budget of ${String(Math.round(ms / 1000))} s since the first input has passed: put in no more input and write the result` };
+}
+
+/** Notes an input or step put in at unix ms `at` and returns the budget, which counts from the first one noted. */
+export async function noteBudget(rule: BudgetRule, at: number): Promise<PlayBudget> {
+  const first = await firstCall(rule.file, at);
+  return { endsAt: (first ?? at) + rule.ms, refusal: rule.refusal };
+}
+
+/** The budget when a first input or step is noted, without noting one; null otherwise. */
+export async function notedBudget(rule: BudgetRule): Promise<PlayBudget | null> {
+  const first = await notedTime(rule.file);
+  return first === null ? null : { endsAt: first + rule.ms, refusal: rule.refusal };
+}
+
+/** Fails an input or step put in now past `budget`. */
+export function refusePastBudget(budget: PlayBudget | null): void {
   if (budget !== null && playBudgetDeps.now() >= budget.endsAt) throw new OgwError(budget.refusal);
+}
+
+/**
+ * Notes an input or step of the caller, fails it past its budget (`budgetRule`), and returns that budget. An input that
+ * releases a held one passes (`releasesHeld` of `input`, the input command and its arguments), so that no input stays
+ * held: it notes nothing and returns null.
+ */
+export async function checkPlayBudget(ctx: Context, input?: readonly string[], instance?: string): Promise<PlayBudget | null> {
+  if (input !== undefined && releasesHeld(input)) return null;
+  const rule = await budgetRule(ctx, instance);
+  const budget = rule === null ? null : await noteBudget(rule, playBudgetDeps.now());
+  refusePastBudget(budget);
+  return budget;
 }
 
 export async function clearPlayBudget(env: NodeJS.ProcessEnv, agentJob: string): Promise<void> {
