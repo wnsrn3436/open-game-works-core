@@ -32,6 +32,7 @@ const PACKED_OF: Record<string, string> = {
   String: '`PackedStringArray`',
   Vector2: '`PackedVector2Array`',
   Vector3: '`PackedVector3Array`',
+  Vector4: '`PackedVector4Array`',
   Color: '`PackedColorArray`',
 };
 
