@@ -1,7 +1,5 @@
 # server image
 
-Read by the core agent when making the server image rules of a core release, and by the lead agent of `build` when deploying the server.
-
 The DEV, STG and PROD servers run as containers of the server image. The procedure for making and deploying it is set by [`build`](../build/SKILL.md).
 
 - `server.tgz` of a core release contains the `Dockerfile`. `ogw build run` makes the server image with `server/core/Dockerfile`, with the game's `server/` as build context
