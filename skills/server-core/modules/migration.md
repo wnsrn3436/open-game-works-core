@@ -87,7 +87,7 @@ A batch converts, without requests, all users who have items with a low contract
 - When there is no user to pick, changes `status` to `DONE` with a conditional update that writes only to a batch record whose `status` is `RUNNING` and whose `lease_owner` is its own value. When no row changes, it does not change to `DONE`
 - The lease is `lease_owner` and `lease_until_at` of the batch record. A server instance takes the lease with a conditional update in one game transaction that, only when `lease_until_at` ≤ `clock_now`, changes `lease_owner` to a new secure random value and `lease_until_at` to `clock_now` + `migration.batchLeaseMs`. When no row changes, it did not take the lease
 - The step end write is a conditional update that writes only to a batch record whose `lease_owner` is its own value. When no row changes, the lease was lost, and it drops the conversion count, failure count and failed user list of that step and stops. When the server instance holding the lease stops or loses the lease, another server instance continues from `cursor_user_id` of the batch record after the lease ends. So the same user is counted in `failed_count` only once, and conversions committed by a step that lost the lease are not counted in `converted_users`
-- `stop_migration_batch` changes the `status` of the `RUNNING` batch to `STOPPED`. It does not check the lease. When there is no `RUNNING` batch, `not_found`. A step in progress finishes the user it is converting now and stops at the first `status` reread after the stop is committed. In SQLite, a write transaction holds the whole DB, so the stop is committed only after the transaction of the user being converted ends
+- `stop_migration_batch` changes the `status` of the `RUNNING` batch to `STOPPED`. It does not check the lease. When there is no `RUNNING` batch, `not_found`. A step in progress finishes the user it is converting now and stops at the first `status` reread after the stop is committed
 - `get_migration_batch` returns the batch record with the latest `started_at`. `failed_users` is returned as the saved JSON array. When there is no batch, `not_found`
 - A batch follows the same per-user serialization as that user's requests
 
@@ -118,7 +118,7 @@ none
 | user conversion failure during a batch (`FAILED` from `upgrade_user_rows`, `FAILED` from `run_user_transaction`) | that user is rolled back. `failed_count` increases at the step end write | none | `error`. batch ID, user ID |
 | `start_migration_batch` while a `RUNNING` batch exists | `conflict` | none | `audit` |
 | no batch record, `stop_migration_batch` when there is no `RUNNING` batch | `not_found` | none | `audit` |
-| lock wait timeout on `migration_batch` and deadlock in `start_migration_batch` | `internal` | none | `audit` |
+| exceeding the lock wait on `migration_batch` and deadlock in `start_migration_batch` | `internal` | none | `audit` |
 
 Added `CoreError`: none
 
@@ -164,7 +164,7 @@ The contract version of core test data is 1, so converters cannot be declared. S
 - When a converter returns delete, the item is deleted and goes into the delete of the delta
 - When a converter throws, the request is `INTERNAL`, and the bytes and contract version of the item are unchanged
 - A converter that returns a different kind message or a different `id` is `FAILED`
-- Each of the four registration errors blocks server start
+- A kind that is not in `user_state.proto`, `server_state.proto`, `game_state.proto`, a from version less than 1 or not less than the current contract version, the same (kind, from version) registered twice, and a call before `begin_start()` each block server start. A call after `complete_start()` throws
 - A batch converts all users who have low version items and becomes `DONE`. Users whose conversion failed stay in `failed_users`, and the batch continues
 - When the server instance holding the lease is stopped during a batch, another server instance continues from `cursor_user_id`
 - When a step with a user whose conversion failed loses the lease before the step end write and the batch that another server instance continued becomes `DONE`, `failed_users` has no user ID twice and `failed_count` equals the number of users whose conversion failed

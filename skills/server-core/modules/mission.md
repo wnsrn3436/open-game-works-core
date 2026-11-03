@@ -55,7 +55,7 @@ core `rpc` response field
 progress
 
 - Progress is saved in the base proto core UserState kind `MissionProgressUserState`(list kind). Only this module writes it, with `storage.put_core_state` and `delete_core_state`. Fields: `int64 id`(mission ID value), `int64 progress`, `bool claimed`, `int64 reset_at`, `int32 event_round`
-- A mission with no row is `(0, false)`. Client `UserStateCore.get_mission_progress` reads with the same rules as round reset and lazy reset
+- A mission with no row is `(0, false)`
 - `add_progress` changes the progress of each mission that points to that counter and meets all of the following
   1. `live-event.is_in_active_window`(`start_at`, `end_at`, `live_event` of the mission row) is `true`
   2. After round reset and lazy reset, `claimed` is `false` and `progress` < `target`
@@ -63,19 +63,19 @@ progress
   - `Sum`: `progress` + amount
   - `Max`: the larger of `progress` and amount
 - Progress is not accumulated from before `add_progress`. Amounts while outside the active window are dropped
-- `requirement` does not block progress. Progress accumulates even while `passed` of `evaluate_requirement` is `false`, and only the claim is blocked with `MISSION_LOCKED`
+- `requirement` does not block progress. Progress accumulates even while `passed` of `validation.evaluate_requirement` is `false`, and only the claim is blocked with `MISSION_LOCKED`
 - When the handler that calls `add_progress` ends with `GameError`, progress is also rolled back by the rollback of `storage`
 
 lazy reset
 
 - `progress` and `claimed` are read with the lazy reset of `server-time`. Their first values are `progress` 0 and `claimed` `false`
-- The next reset time is `server-time.get_next_reset`(`reset`, request time). When `reset` is `null`, `reset_at` is 0 and the mission does not reset
+- The next reset time is `server-time.get_next_reset`(`reset`, request time). When `reset` is `null`, `reset_at` is 0 and the mission does not reset on a `ResetCycle` period
 - `progress` and `claimed` of a mission with `live_event` also follow the round reset of `live-event`. The first values are the same as in lazy reset
 
 claim. `ClaimMission` processing order. On failure, progress and items are not changed.
 
 1. `MISSION_UNAVAILABLE` when `live-event.is_in_active_window`(`start_at`, `end_at`, `live_event` of the mission row) is `false`
-2. `MISSION_LOCKED` when `passed` of `evaluate_requirement`(`requirement`) is `false`
+2. `MISSION_LOCKED` when `passed` of `validation.evaluate_requirement`(`requirement`) is `false`
 3. `MISSION_ALREADY_CLAIMED` when `claimed` is `true` after round reset and lazy reset
 4. `MISSION_NOT_COMPLETED` when `progress` < `target`
 5. hook `validate_mission_claim`
@@ -108,13 +108,13 @@ none
 | condition | failure value | error code | log |
 |---|---|---|---|
 | outside the active window | `MISSION_UNAVAILABLE` | `MISSION_UNAVAILABLE` | none |
-| `passed` of `evaluate_requirement` is `false` | `MISSION_LOCKED` | `MISSION_LOCKED` | none |
+| `passed` of `validation.evaluate_requirement` is `false` | `MISSION_LOCKED` | `MISSION_LOCKED` | none |
 | `claimed` is `true` | `MISSION_ALREADY_CLAIMED` | `MISSION_ALREADY_CLAIMED` | none |
 | `progress` < `target` | `MISSION_NOT_COMPLETED` | `MISSION_NOT_COMPLETED` | none |
 | reward grant failure (failure of `grant_or_mail`) | `INTERNAL` | `INTERNAL` | error rules of `mailbox` |
 | hook rejection | the hook's `GameError` | the hook's `GameError` | none |
 | a `mission` row with `extra_grant` `true` exists but there is no `grant_mission_extra` | server start failure | none | `error` log |
-| unknown counter, amount less than 1 in `add_progress` | throw | `INTERNAL` | `routing` writes the `error` log |
+| unknown counter, amount less than 1 in `add_progress` | throw | `INTERNAL` | `routing` leaves the `error` log |
 
 Added `CoreError`: `MISSION_UNAVAILABLE`, `MISSION_LOCKED`, `MISSION_ALREADY_CLAIMED`, `MISSION_NOT_COMPLETED`
 
@@ -149,7 +149,6 @@ none
 | `live_event` | `ref<live_event.id>?` | `All` |
 
 - `target` is at least 1 and at most 2^53−1
-- A mission whose `reset` is `null` does not reset on a `ResetCycle` period. When it has `live_event`, it still follows the round reset of `live-event`
 - When there is a row whose `reward` is an empty array and whose `extra_grant` is `false`, the server does not start
 - The game keeps the display order, category tab and shortcut of missions in an extension table
 
@@ -185,7 +184,7 @@ core cheat request field
 - `add_progress` changes only the missions of that counter, `Sum` adds and `Max` keeps the larger value, and both stop at `target`
 - `add_progress` with an amount over 2^53−1 does not throw and gives the same result as `add_progress` with amount 2^53−1
 - `add_progress` for a mission outside the active window or with `claimed` `true` does not change progress
-- `add_progress` for a mission whose `passed` of `evaluate_requirement` is `false` changes progress, and its `ClaimMission` is `MISSION_LOCKED`. `ClaimMission` after `passed` becomes `true` gives the reward with the progress accumulated until then
+- `add_progress` for a mission whose `passed` of `validation.evaluate_requirement` is `false` changes progress, and its `ClaimMission` is `MISSION_LOCKED`. `ClaimMission` after `passed` becomes `true` gives the reward with the progress accumulated until then
 - For a mission whose `requirement` is an empty cell, `add_progress` changes progress and `ClaimMission` gives the reward
 - A `Daily`, `Weekly`, `Monthly` mission keeps its progress just before the reset time and is `(0, false)` at the first read just after it. A mission whose `reset` is `null` does not reset on a `ResetCycle` period
 - `ClaimMission` grants the reward with source `Mission` and changes `claimed` to `true`. Both come in the delta of the same response

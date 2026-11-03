@@ -33,7 +33,7 @@ Sends mail to a user mailbox and lets the client read mail and claim attachments
 | `mail_input_from_json` | JSON value of a mail input | mail input | `INVALID_INPUT` from `MailResult` | `admin-api` |
 | `cancel_mail_by_once_key` | ctx, `once_key` | `ItemAmount` list that joins the `attachments` of the deleted mails in mail ID ascending order | empty list | `iap` |
 | `cancel_broadcast` | game tx, broadcast ID | success flag | `false` | `admin-api` |
-| `on_request_start` | user ID | none | none. A failure leaves an `error` log | `routing`, `auth` |
+| `on_request_start` | user ID | async operation. none | none. A failure leaves an `error` log | `routing`, `auth` |
 | `ReadMail` (core rpc, `retry`). changes: `MailUserState` | mail ID | empty response | `MAIL_NOT_FOUND` | `routing`. Client content code sends it |
 | `ClaimMail` (core rpc, `retry`). changes: `ItemBalanceUserState`, `MailUserState`, `content` | mail ID | claimed `ItemAmount` list | `MAIL_NOT_FOUND`, `MAIL_EXPIRED`, `CoreError` from `item-ledger`, `GameError` from a hook | `routing`. Client content code sends it |
 | `ClaimAllMail` (core rpc, `retry`). changes: `ItemBalanceUserState`, `MailUserState`, `content` | none | claimed mail ID list, claimed `ItemAmount` total list, unclaimed mail count | none | `routing`. Client content code sends it |
@@ -120,7 +120,7 @@ grant or mail
 4. Any other `add_items` result and `INVALID_INPUT` from `send_mail` are returned as they are
 
 - On `Mailed`, adds the base proto message `ItemMail` (`int64 mail_id`, `ItemChangeSource source`, `string ref`, `repeated ItemAmount items`) to ctx with `storage.add_item_mail`. `source` and `ref` are the values of the change source, and `items` is that mail's chunk. One `ItemMail` per sent mail. In a request it goes into `item_mails` of that response, and in an out-of-request change it accumulates together with the pending delta
-- The granted `ItemAmount` list of the caller response is, on `Granted`, the list passed to `add_items` in step 2, unchanged, and on `Mailed` and `AlreadyApplied`, an empty list. The amount that went in, the amount that did not go in because of `max_amount`, and the `Convert` substitute grant are in `ItemChange` of `item_changes`, and the items of `Mailed` are in `ItemMail` of `item_mails`
+- The granted `ItemAmount` list of the caller response is, on `Granted`, the list passed to `add_items` in step 2, unchanged, and on `Mailed` and `AlreadyApplied`, an empty list. The amount that went in, the amount that did not go in because of `max_amount`, and the `Convert` replacement grant are in `ItemChange` of `item_changes`, and the items of `Mailed` are in `ItemMail` of `item_mails`
 - `AlreadyApplied` is the result that changed nothing because a grant with the same `once_key` already exists. The caller treats it as granted
 - `grant_or_mail` leaves no records and logs other than what `add_items` and `send_mail` leave and the `error` log of the `once_key` collision in step 3
 
@@ -133,11 +133,10 @@ cancel
 broadcast
 
 - A broadcast is a mail sent to all users. It is not saved per user but kept as one `mailbox_broadcast` row
-- `broadcast_mail` locks the row with `id` 0 of `mailbox_broadcast_counter` with `storage.lock_game_row` in the game tx, sets the broadcast ID to `last_broadcast_id` + 1 of that row (1 when there is no row), writes it to `last_broadcast_id` and inserts the broadcast row. The ID of a broadcast deleted by expiry is also never issued again
+- `broadcast_mail` locks the row with `id` 0 of `mailbox_broadcast_counter` with `storage.lock_game_row` in the game transaction, sets the broadcast ID to `last_broadcast_id` + 1 of that row (1 when there is no row), writes it to `last_broadcast_id` and inserts the broadcast row. The ID of a broadcast deleted by expiry is also never issued again
 - The `mail` of a broadcast row is the received mail input written as a JSON string, and the type of `args` is the JSON type of the mail input. Its `expire_ms` is the received `expire_ms`, changed to `mailbox.defaultExpireMs` when 0. `expires_at` is `start_at` + that `expire_ms`, and `cancelled` is `false` at first
 - Users created after the broadcast start time also receive it
-- The `once_key` of the mail input that `broadcast_mail` receives is an empty string. When it is not empty, `INVALID_INPUT`
-- `cancel_broadcast` locks that broadcast row with `storage.lock_game_row` in the game tx. When there is no row, `false`; otherwise it writes `cancelled` as `true` and returns `true`. It creates no more mail for users whose mail is not created yet. Mails already created stay
+- `cancel_broadcast` locks that broadcast row with `storage.lock_game_row` in the game transaction. When there is no row, `false`; otherwise it writes `cancelled` as `true` and returns `true`. It creates no more mail for users whose mail is not created yet. Mails already created stay
 
 request start
 

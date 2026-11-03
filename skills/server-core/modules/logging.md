@@ -21,8 +21,6 @@ This module writes server logs, and saves the error logs and analytics events th
 - `storage`
 - `server-time`
 
-logging exports the handlers of the two core `rpc`, and `routing` collects them. logging exports the three admin operations `list_client_errors`, `list_client_events`, `list_server_events`, and `routing` collects them and passes them to `admin-api`.
-
 ## API
 
 | operation | input | output | failure value | caller |
@@ -38,13 +36,13 @@ logging exports the handlers of the two core `rpc`, and `routing` collects them.
 | `track_core_event` | ctx, core analytics event name, param list | none | throws on a rule violation | `auth`, `tutorial`, `iap`, `ads-reward`, `gacha`, `shop`, `mission`, `attendance`, `offer` |
 | `ReportClientErrors` (core rpc, `silent`, `retry`). changes: none | `errors` (list of `ClientErrorEntry`), `dropped_error_count` | empty response | `INVALID_REQUEST`, `RATE_LIMITED` | `routing`. Client `NetworkCore` sends it as the sender of `LogCore` |
 | `ReportAnalyticsEvents` (core rpc, `silent`, `retry`). changes: none | `events` (list of `AnalyticsEvent`), `dropped_event_count` | empty response | `INVALID_REQUEST`, `RATE_LIMITED` | `routing`. Client `NetworkCore` sends it as the sender of `LogCore` |
-| `count_report_request` | user ID | `pass` | `RATE_LIMITED`, `UNAUTHORIZED`, `INTERNAL` | `routing` |
+| `count_report_request` | user ID | async operation. `pass` | `RATE_LIMITED`, `UNAUTHORIZED`, `INTERNAL` | `routing` |
 | `request_analytics_deletion` | ctx | none | none | `auth` |
 | `list_client_errors` | `user_id`(optional), `from_at`, `to_at`, `after_time_at`(optional), `after_user_id`(optional), `after_seq`(optional), `limit` | `entries` | `bad_request` | operator |
 | `list_client_events` | `user_id`(optional), `name`(optional), `from_at`, `to_at`, `after_time_at`(optional), `after_user_id`(optional), `after_seq`(optional), `limit` | `entries` | `bad_request` | operator |
 | `list_server_events` | `user_id`(optional), `name`(optional), `from_at`, `to_at`, `after_time_at`(optional), `after_user_id`(optional), `after_seq`(optional), `limit` | `entries` | `bad_request` | operator |
 
-- log entry: the fields are `kind`, `level`, `message`, `user_id`, `request_id`, `request`, `fields` (object that holds the fields added per `kind` and the fields set by the spec of the module that writes the log). A missing value is `null`, and `write` adds `time`. An entry of `kind` `request` also holds `min_level` (the minimum level of `take_request_log_annotation`), `request_body` (request body bytes. `null` when absent) and `sensitive` (whether the `rpc` has option `(ogw.sensitive)`), and `write` sets that line's level and `request_body` by the `### server log` rules
+- log entry: the fields are `kind`, `level`, `message`, `user_id`, `request_id`, `request`, `fields` (object that holds the fields added per `kind` and the fields set by the spec of the module that writes the log). A missing value is `null`, and `write` adds `time`. An entry of `kind` `request` also holds `min_level` (the minimum level of `take_request_log_annotation`), `request_body` (request body bytes. `null` when absent) and `sensitive` (whether the `rpc` has option `(ogw.sensitive)`), and `write` sets that line's level by the `### server log` rules and its `request_body` by the `## DEV` rules
 - `with_audit_actor` calls the function, and while the function runs, for each `kind` `audit` entry that `write` receives with no `actor` in `fields`, writes that operator name as `actor`
 - `log` writes a `kind` `game` log. The level is `debug`, `info`, `warn` or `error`
 - `annotate_request_log` adds fields to the `request` log that the ctx's request will write and sets the minimum level. Called several times on the same ctx, it merges the fields, the later value wins for the same key, and the minimum level is the highest of the levels received. The level order is `debug`, `info`, `warn`, `error`
@@ -53,6 +51,7 @@ logging exports the handlers of the two core `rpc`, and `routing` collects them.
 - A key of a field object is snake_case and is not a common field name. A value is an integer, string or bool. On a violation, that field is dropped and a `warn` log is written
 - `ClientErrorEntry`, `AnalyticsEvent`, `AnalyticsParam`, `AnalyticsParamKind` are base proto messages and an enum
 - `level` of `ClientErrorEntry` is `warn` or `error`. `AnalyticsParamKind` is `INT`, `DOUBLE`, `STRING`, `BOOL`. In `AnalyticsParam`, only the one value field of its `kind` has a value
+- logging exports the handlers of the two core `rpc`, and `routing` collects them. logging exports the three admin operations `list_client_errors`, `list_client_events`, `list_server_events`, and `routing` collects them and passes them to `admin-api`
 - Field types of the admin operations: `name` is `string`, `after_user_id` is `int64`
 
 core `rpc` request field
@@ -82,7 +81,7 @@ core `rpc` request field
 
 ### server log
 
-- Server logs are written one line at a time to the server instance's log output. The log output is the log line writer override that `routing.create_server` received, or stdout when there is none. The format and common fields follow the log rules of server-core. The deploy of [`build`](../../build/SKILL.md) sets the rotation of container logs, and the host collects and keeps the logs before rotation deletes them
+- Server logs are written one line at a time to the server instance's log output. The log output is the log line writer override that `routing.create_server` received, or stdout when there is none. The format and common fields follow the log rules of server-core
 - STG and PROD do not use the `debug` level
 - Fields added per `kind`
 
@@ -98,7 +97,6 @@ core `rpc` request field
 - The `reason` of a `security` log is snake_case. When the spec of the module that writes the log sets the `reason`, it is that value; otherwise it is the name of the failure's failure value converted to snake_case. When the failure value is an enum element, the element without the enum name and prefix is used. e.g. `SESSION_REPLACED` is `session_replaced`, and `OTHER_USER` of `PurchaseStatus` is `other_user`. For the `security` log of a failure whose failure value has no name (e.g. HTTP status), that spec sets the `reason`
 - `security` logs are grouped into windows per group key and `reason`. The group key is the user ID for a request that identified the user, otherwise the truncated IP. A window starts at the `server-time.clock_now` at which a `security` log is written for a group key and `reason` that have no window, and ends `logging.securityRepeatWindowMs` later. Only the first line of a window is written; the other lines in the window are not written, and their number and truncated IPs are counted. Windows are kept in the server instance's memory
 - At server start, logging sets the job `logging_security_flush` (period `logging.securityRepeatWindowMs`) with `server-time.schedule_job`. For each ended window, when there are lines not written, the job writes one summary `security` log line with `reason` `repeated`, `count` (number of lines not written after the first line) and `ips` (the truncated IPs of those lines. Without duplicates, in first-seen order, at most `logging.maxRepeatedIps`), and it deletes the ended window. The summary line's level is `warn`, its `message` is the `reason` of the grouped lines, and its `user_id` is the group key when the group key is a user ID, otherwise null. Summary lines are not grouped into windows
-- In an environment that includes DEV code, the `request` log adds `request_body` (base64). The `request` log of a request whose `rpc` has option `(ogw.sensitive)` does not add `request_body`, whatever the environment
 - The level of the `request` log is `error` for a request that ended with `INTERNAL` and `info` for any other request. When the minimum level of `annotate_request_log` is higher, it is that level
 
 ### client log collection
@@ -130,11 +128,11 @@ core `rpc` request field
 ### server analytics event
 
 - `track` and `track_core_event` save one analytics event of the ctx user to `logging_server_event` in the ctx's transaction. When the transaction is rolled back, it does not remain
-- A param is `(key, value)`, and the value is one of integer, float, string, bool. In TypeScript, `bigint` and an integer `number` are integers, and any other `number` is a float. On save, each param is converted to an `AnalyticsParam` (the `kind` that matches the value, and that value field). The order of `AnalyticsParam` in `params` is the order of the received params
+- A param is `(key, value)`, and the value is one of integer, real, string, bool. In TypeScript, `bigint` and an integer `number` are integers, and any other `number` is a real. On save, each param is converted to an `AnalyticsParam` (the `kind` that matches the value, and that value field). The order of `AnalyticsParam` in `params` is the order of the received params
 - On a violation of the rules below, it throws and the request ends with `INTERNAL`
   - The event name and param keys are snake_case and at most `logging.maxStringLength`
   - The param count is at most `logging.maxEventParams` and the keys differ from each other
-  - A string value is at most `logging.maxStringLength`, and a float value is not NaN or infinity
+  - A string value is at most `logging.maxStringLength`, and a real value is not NaN or infinity
   - The event name of `track` does not start with `core_`. The name of `track_core_event` is in the core analytics event table below, the params are all the params of that row, and each value is of the table's type
 - analytics consent: when the `ConsentUserState` read with `storage.get_state` does not exist or `analytics_allowed` is `false`, nothing is saved or sent. No log is written
 
@@ -169,7 +167,7 @@ core analytics event. Its name starts with `core_`, and only core modules emit i
 - The adapter's `delete_user_data`(user ID) requests from the provider the deletion of the user's analytics data and returns a success flag
 - `delete_user_data` of `analytics-ga4` calls the Google Analytics User Deletion API `POST https://www.googleapis.com/analytics/v3/userDeletion/userDeletionRequests:upsert` once each with `id.type` `USER_ID` and `CLIENT_ID`, and succeeds when both are HTTP 200. The body is `{"kind": "analytics#userDeletionRequest", "id": {"type": <type>, "userId": <user ID decimal string>}, "propertyId": <property ID>}`, and the property ID is game settings `environments.<ENV>.analyticsGa4.propertyId`. The access token is the value obtained at that token endpoint in exchange for an RS256 JWT whose `iss` is game settings `environments.<ENV>.analyticsGa4.serviceAccountEmail`, `scope` is `https://www.googleapis.com/auth/analytics.user.deletion` and `aud` is `https://oauth2.googleapis.com/token`, signed with the private key of secret `environments.<ENV>.secrets.analyticsServiceAccount`
 - Saved client events and server events are sent after commit with the adapter's `send(events)` through `storage.after_commit`. The time limit is `logging.analyticsSendTimeoutMs`
-- A failed send is not sent again. The DB rows remain. A failure writes a `warn` log; while the same kind of failure continues, only the first failure and a change of kind are logged
+- A failed send is not sent again. The DB rows remain. The kind of a failure is `timeout` (the time limit passed), `communication_failure` (no answer) or `rejected` (the provider refused). A failure writes a `warn` log with the kind as `failure`; while the same kind of failure continues, only the first failure and a change of kind are logged
 - The operation names of the fake adapter controller are `send`, `delete_user_data`. The `input` of `calls()` is the event list for `send` and the user ID for `delete_user_data`. `set_result` sets the success flag of `delete_user_data`, and before it is set the flag is `true`
 
 ### analytics deletion
@@ -177,7 +175,7 @@ core analytics event. Its name starts with `core_`, and only core modules emit i
 - When the current environment has an analytics adapter, `request_analytics_deletion` writes the user's `logging_analytics_deletion` row (`attempts` 0, `created_at` request time) in the ctx's transaction. When the row already exists, it is left as it is. When there is no analytics adapter, it does nothing. When the transaction is rolled back, no row remains
 - `logging_analytics_deletion`: scope `game`, column `user_id`(`int64`), `attempts`(`int32`), `created_at`(`int64`), key `user_id`, index `(created_at)`. The scope is `game` so that the row remains after withdrawal. Registered with `storage.register_table`
 - At server start, logging sets the job `logging_analytics_deletion` (period `logging.analyticsDeletionIntervalMs`) with `server-time.schedule_job`. The job reads up to `logging.analyticsDeletionBatchSize` rows in ascending order of `created_at` with `storage.read_db`, and for each row calls the adapter's `delete_user_data`(user ID) outside a transaction. The time limit is `logging.analyticsSendTimeoutMs`
-- On success, it deletes the row in one `storage.run_game_transaction`. On failure, it increments `attempts` by 1 the same way and writes a `warn` log. When the incremented `attempts` reaches `logging.analyticsDeletionMaxAttempts`, it deletes the row and writes the `user_id` in an `error` log
+- On success, it deletes the row in one `storage.run_game_transaction`. On failure, it increments `attempts` by 1 the same way and writes a `warn` log. When the incremented `attempts` reaches `logging.analyticsDeletionMaxAttempts`, it deletes the row and leaves an `error` log with the `user_id`
 - Two server instances may send the same row at the same time. `delete_user_data` has the same result when called several times for the same user
 
 ### real adapter
@@ -258,7 +256,7 @@ none
 
 ## DEV
 
-- The `request` log of an environment that includes DEV code has `request_body`. The `request` log of an `(ogw.sensitive)` request and the `request` log in STG and PROD do not have it
+- In an environment that includes DEV code, the `request` log adds `request_body` (base64). The `request` log of a request whose `rpc` has option `(ogw.sensitive)` does not add `request_body`, whatever the environment, and the `request` log in STG and PROD does not add it
 
 ## test
 
@@ -288,6 +286,6 @@ none
 - In `track`, a name starting with `core_` and a key that is not snake_case are `INTERNAL`, and so is `track_core_event` with a name not in the table
 - `ReportAnalyticsEvents` with an event name starting with `core_` saves nothing and is `INVALID_REQUEST`
 - `list_server_events` returns only rows in the range `[from_at, to_at)`, up to `limit` of them, in ascending order of `(time_at, user_id, seq)`, and rows past the retention duration are deleted
-- After the `Withdraw` commit, the job `logging_analytics_deletion` calls `delete_user_data` of the fake analytics adapter with that user ID and deletes the row. When `delete_user_data` fails, it is called again in the next run, and after `logging.analyticsDeletionMaxAttempts` failures the row is deleted and an `error` log is written. `Withdraw` in an environment without an analytics adapter and a rolled-back transaction leave no row
+- After the `Withdraw` commit, the job `logging_analytics_deletion` calls `delete_user_data` of the fake analytics adapter with that user ID and deletes the row. When `delete_user_data` fails, it is called again in the next run, and after `logging.analyticsDeletionMaxAttempts` failures the row is deleted and an `error` log is left. `Withdraw` in an environment without an analytics adapter and a rolled-back transaction leave no row
 - The `actor` of an `audit` line written without `actor` in `fields` inside the function of `with_audit_actor` is that operator name, and for a line written outside the function it is `system`
 - The `ip` of a `security` line written without `ip` inside the function of `with_request_ip` is the truncated IP of that client IP, and for a line written outside the function it is null. The same holds for a line written after an async operation that the function awaited

@@ -14,7 +14,7 @@
 
 ## purpose
 
-Handles registration and change of a user's nickname. Judges the length and character rules, the banned word check, the duplicate ban, the change cooldown and the change cost, and takes the operator's forced change and user lookup by nickname.
+Handles registration and change of a user's nickname. Judges the length and character rules, the banned word check, the duplicate ban, the change cooldown and the change cost, and handles the operator's forced change and user lookup by nickname.
 
 ## dependency
 
@@ -112,7 +112,7 @@ processing order. On failure, the nickname and the balance do not change.
 ### find by nickname
 
 - nickname lookup: selects, in ascending order of user ID, the `nickname_name` rows whose `normalized` equals the input normalized with `validation.normalize_text`. Rows of withdrawn users do not appear, because `storage.delete_user` deleted them
-- `find_user_by_nickname` has no `user_target`. In the game tx that `admin-api` opens, returns up to `admin-api.maxSearchRows` rows chosen by nickname lookup as `{user_id, nickname}`. When the input is an empty string or its code point count is more than `nickname.maxLength`, `bad_request`
+- `find_user_by_nickname` has no `user_target`. In the game transaction that `admin-api` opens, returns up to `admin-api.maxSearchRows` rows chosen by nickname lookup as `{user_id, nickname}`. When the input is an empty string or its code point count is more than `nickname.maxLength`, `bad_request`
 - `find_user_ids_by_nickname` only reads, with `storage.db`(ctx)
 
 ### collected data

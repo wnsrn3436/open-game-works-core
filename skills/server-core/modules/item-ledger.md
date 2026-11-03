@@ -33,10 +33,10 @@ As the only path that changes user items, this module owns the transactions and 
 | `amount_limit` | item ID value | amount limit of that item | 0 for an unknown item ID value | core module |
 | `read_amount` | `ItemAmount` | amount. The integer read from the big encoding pair `amount`, `big_amount` | none when `big_amount` is neither an empty string nor a big integer | core module |
 | `make_item_amount` | item ID value, amount | `ItemAmount` that carries the amount in the big encoding pair | none | core module |
-| `check_add_items` | list of `ItemAmount` | `ItemChangeResult.OK` | `INVALID_AMOUNT`, `UNKNOWN_ITEM`, `UNSUPPORTED_ITEM` of `ItemChangeResult` | `mailbox` |
+| `check_add_items` | list of `ItemAmount` | `ItemChangeResult.OK` | `INVALID_AMOUNT`, `UNKNOWN_ITEM`, `UNSUPPORTED_ITEM` of `ItemChangeResult` | `mailbox`, `coupon` |
 | `content_change_source` | ctx, change source passed by content code (optional) | change source whose `source`, `ref`, `once_key` are set by the change source rules below | none | `mailbox` |
 | `has_core_once_key_prefix` | `once_key` | `true` when it starts with a core `once_key` prefix | `false` | `mailbox` |
-| `change_failure_code` | `ItemChangeResult` failure element or `GameError` | failure code that a core module's request responds with. It is the response rule of `## error` below | none | core module |
+| `change_failure_code` | `ItemChangeResult` failure element or `GameError` | failure code that a core module's request responds with | none | core module |
 | `add_items` | ctx, list of `ItemAmount`, change source | `ItemChangeResult.OK` | failure element of `ItemChangeResult` or the hook's `GameError` | content handler, hook, core module |
 | `subtract_items` | ctx, list of `ItemAmount`, change source | `ItemChangeResult.OK` | failure element of `ItemChangeResult` or the hook's `GameError` | content handler, hook, core module |
 | `exchange_items` | ctx, list of `ItemAmount` to subtract, list of `ItemAmount` to add, change source | `ItemChangeResult.OK` | failure element of `ItemChangeResult` or the hook's `GameError` | content handler, hook, core module |
@@ -68,7 +68,7 @@ As the only path that changes user items, this module owns the transactions and 
 | `LIMIT_EXCEEDED` | the balance after adding is more than `max_amount` and the item's `overflow` is `Reject`. The same for a `Convert` replacement grant item |
 | `UNKNOWN_ITEM` | an item ID value that is not in the `item` table |
 | `INVALID_AMOUNT` | the amount is less than 1 or more than the item's amount limit. Or the same item ID value is in the list twice |
-| `UNSUPPORTED_ITEM` | an item that the operation does not handle: a group item in a list to add or revoke and in `set_balance`, a timed item in a list to subtract |
+| `UNSUPPORTED_ITEM` | an item that the operation does not handle: a group item in `add_items`, `revoke_items`, `preview_add_items`, `check_add_items`, `set_balance` and the list to add of `exchange_items`, a timed item in the list to subtract of `subtract_items` and `exchange_items` |
 | `REJECTED` | the validation hook returned a `GameError`. That `GameError` is returned with it |
 
 `ItemAddPreviewRow`: `item_id` (item ID value), `outcome` (`ItemAddPreview`), `applied` (amount that goes into the item), `overflow` (amount that does not fit because of `max_amount`), `replacements` (list of elements, one per `Convert` replacement item, each `item_id` (replacement item ID value), `applied` (amount that goes in), `overflow` (amount that does not fit). In `convert_to` order. An empty list unless `Convert`). `applied`, `overflow` and the `applied`, `overflow` of `replacements` elements are `bigint`
@@ -114,7 +114,7 @@ change order. `add_items`, `subtract_items` and `exchange_items` are handled in 
 - `check_items` is `true` when balance ≥ amount for each item of the list. The balance is the value of `get_balance`. When the list has a group item together with its member item, the group item's balance is the sum, over member items, of the balance minus that member item's amount in the list. `false` when the input meets the `INVALID_AMOUNT` or `UNKNOWN_ITEM` condition
 - `revoke_items` applies the recovery of recovery items first. When the balance is less than the amount to revoke, it sets the balance to 0, returns the missing amount as shortfall and records it in the history. It does not call the validation hook. For each item with a revoked amount of 1 or more, it leaves one `audit` log line through the transaction's `storage.on_commit`. A rolled-back revocation leaves no log. The fields are `user_id`, `item_id` (item ID value), `revoked` (amount revoked), `shortfall` (amount not revoked), `source`, `ref`, `once_key`, and `revoked`, `shortfall` are big integer strings of the contract. `actor` follows the `audit` rule of `logging`
 - The `once_key` of `revoke_items` is handled as in `add_items`. When it is in the same user's `once_key` table, nothing changes and the result is `ALREADY_APPLIED`; otherwise it is saved with the revocation
-- `UNSUPPORTED_ITEM` when the list of `revoke_items` has a group item. A timed item is revoked by the timed item rules below
+- A timed item in the list of `revoke_items` is revoked by the timed item rules
 - After a failed operation, the handler can continue with other changes in the same transaction. When the handler returns a `GameError`, `storage` rolls back the whole transaction
 - Changes of the same user are handled one at a time by the per-user serialization of `storage`. Concurrent requests cannot write the same balance twice
 
@@ -140,7 +140,6 @@ A group item is an item that combines the balances of several member items into 
 - The balance is the sum of the balances of the member items in `members` of `item_group`
 - Subtract: change order step 3 first calculates the items of the list that are not group items, then the group items in list order. The amount a of a group item is subtracted in `members` order, from each member item by min(remaining a, that member item's balance at that point). `NOT_ENOUGH` when not all of it can be subtracted
 - A group item does not appear in `ItemChange`, history rows or the hooks' lists. The subtracted amount is recorded as changes of member items; when the same member item is also in the list, the two are recorded as one combined net change
-- `UNSUPPORTED_ITEM` when a group item is in `add_items`, `revoke_items`, `preview_add_items`, the list to add of `exchange_items`, or `set_balance`
 - Each member item keeps its own balance and history. The balance and spending of paid currency are counted by the balance and history of the paid member item
 
 timed item
@@ -150,7 +149,6 @@ A timed item is an item whose effect lasts until an end time. Amount 1 is an eff
 - The saved value is `ends_at` E of `ItemBalanceUserState`. The remaining duration R is max(0, E − request time). The balance is 1 when R > 0, otherwise 0
 - Add n: k = n when R + n × `duration` ≤ `max_amount` × `duration`. When it is more, `LIMIT_EXCEEDED` when `overflow` is `Reject`; when `Discard`, k = ⌊(`max_amount` × `duration` − R) ÷ `duration`⌋ and n − k is recorded as `overflow`. E becomes request time + R + k × `duration` and `delta` is k. Adding during the effect extends the end time; adding after the effect has ended starts from the request time
 - Revoke n: the revoked duration x = min(R, n × `duration`). E becomes request time + R − x, shortfall is ⌊(n × `duration` − x) ÷ `duration`⌋, and `delta` is −(n − shortfall)
-- `UNSUPPORTED_ITEM` when a timed item is in the list to subtract of `subtract_items` or `exchange_items`. The effect ends at the end time
 - When E after the change ≤ request time, the row is deleted
 - `preview_add_items` sets `applied` and `overflow` with the same k as add
 - `get_ends_at` is E when R > 0, otherwise 0
@@ -224,7 +222,7 @@ Added `CoreError`: `ITEM_NOT_ENOUGH`, `ITEM_LIMIT_EXCEEDED`
 | `max_amount` | `long` | `All` |
 | `overflow` | `enum<ItemOverflow>` | `All` |
 
-- `type` is not used in judgements; content uses it for classification
+- `item-ledger` does not read `type`; content uses it for classification
 - `max_amount` is at least 1 and at most 2^53−1. Outside that range the server does not start
 - A new user's item grant is done by content's new user request with `add_items`. Only the first balance of a recovery item is set by `initial_amount` of `item_recovery`
 

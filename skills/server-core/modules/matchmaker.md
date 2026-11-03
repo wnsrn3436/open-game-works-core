@@ -65,7 +65,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 | `CLOSE` | server → client | `code`: `CoreError` value. After sending `CLOSE`, the server closes the connection with WebSocket close code 4000 and the decimal string of that `code` as the reason |
 | `MATCH_REQUEST` | client → server | `mode_id`: ID value of `match_mode`, `lockstep` |
 | `MATCH_CANCEL` | client → server | none |
-| `MATCH_FAILED` | server → client | `reason`: `MatchFailReason`, `error_code`: when `REJECTED`, the hook's `GameError`, `FEATURE_DISABLED`, `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED` |
+| `MATCH_FAILED` | server → client | `reason`: `MatchFailReason`, `error_code`: when `REJECTED`, the hook's `GameError`, `FEATURE_DISABLED`, `APP_UPDATE_REQUIRED`, `DATA_UPDATE_REQUIRED`, or 0 when the transaction of `prepare_match_request` is `WITHDRAWN` or `FAILED` |
 | `MATCH_FOUND` | server → client | `match_id`, `mode_id`, `players`(`MatchPlayer` list), `my_index`, `seed`(`int64`), `start_at`, `transport`, `lockstep` |
 | `PEER_SIGNAL` | both | `index`, `payload`(bytes) |
 | `MATCH_LEAVE` | client → server | `match_id` |
@@ -99,13 +99,13 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 
 - Only the server instance that received server start argument `--matchmaker` opens `/realtime`. Requests to other server instances and requests that are not a WebSocket upgrade get HTTP 404, and a malformed upgrade request gets HTTP 400. Before the handshake, a new connection over a pre-authentication limit is refused with HTTP 429. Each environment has one server instance that receives that argument. Queues and connections exist only in the memory of that server instance
 - The first frame after the connection opens is `HELLO`. When another frame comes before `HELLO`, the connection is closed
-- `HELLO` handling: when `auth.verify_access_token` or `session.check_current` fails, `CLOSE`(that error) and close. When `admin-api.is_maintenance`, `CLOSE`(`MAINTENANCE`), and when `is_banned`, `CLOSE`(`BANNED`). When the format of `data_version` or `client_version` is wrong, `CLOSE`(`INVALID_REQUEST`). The data version judgement treats `data_version` as `X-Ogw-Data-Version` and `client_version` as `X-Ogw-Client-Version` and works the same as step 7 of the request processing order of `routing` (the core `rpc` exception is not used), and when its result is `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED`, `CLOSE`(that error). On success, `HELLO_ACK`(`server_time_at` is `server-time.clock_now`)
+- `HELLO` handling: when `auth.verify_access_token` or `session.check_current` fails, `CLOSE`(that error) and close. When `admin-api.is_maintenance`, `CLOSE`(`MAINTENANCE`), and when `admin-api.is_banned`, `CLOSE`(`BANNED`). When the format of `data_version` or `client_version` is wrong, `CLOSE`(`INVALID_REQUEST`). The data version judgement treats `data_version` as `X-Ogw-Data-Version` and `client_version` as `X-Ogw-Client-Version` and works the same as step 7 of the request processing order of `routing` (the core `rpc` exception is not used), and when its result is `APP_UPDATE_REQUIRED` or `DATA_UPDATE_REQUIRED`, `CLOSE`(that error). On success, `HELLO_ACK`(`server_time_at` is `server-time.clock_now`)
 - Authentication is once per connection. While the connection is open, the connection is kept even when the access token expires
 - When a new connection of the same user is authenticated, sends `CLOSE`(`SESSION_REPLACED`) to the previous connection and closes it
 - After authentication, `PEER_SIGNAL`, `MATCH_LEAVE`, `MATCH_REJOIN` are passed to `p2p-signaling.handle_frame`. When a connection closes, removes that user from the queue, handles it the same as `ROOM_LEAVE` when the user is in a room, and then calls `p2p-signaling.connection_closed`
 - For each participant change that `handle_frame`, `connection_closed`, `open_match_session` returned, when the match record of that `match_id` is `PENDING`, one game transaction writes `left_at`(`LEFT`) or `disconnected_at`(`DISCONNECTED`) of that index as `clock_now`, and for `REJOINED` writes `disconnected_at` as 0
 - After authentication, a frame that cannot be parsed, a text frame, a frame of a server → client kind, and a second `HELLO` are dropped
-- Before handling `MATCH_REQUEST`, `ROOM_CREATE`, `ROOM_JOIN`, `ROOM_START` after authentication, sends `CLOSE`(`MAINTENANCE`) when `admin-api.is_maintenance` is `true`, or `CLOSE`(`BANNED`) when `is_banned` of the sending user is `true`, and closes the connection. That frame is not handled, and the closed connection is handled the same as a connection close
+- Before handling `MATCH_REQUEST`, `ROOM_CREATE`, `ROOM_JOIN`, `ROOM_START` after authentication, sends `CLOSE`(`MAINTENANCE`) when `admin-api.is_maintenance` is `true`, or `CLOSE`(`BANNED`) when `admin-api.is_banned` of the sending user is `true`, and closes the connection. That frame is not handled, and the closed connection is handled the same as a connection close
 
 ### matching
 
@@ -116,7 +116,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 - `MATCH_REQUEST` processing order of a user outside a room
   1. When that user is in a queue, removes the user
   2. When `admin-api.is_kill_switched` is `true` for `MATCH_REQUEST`, `MATCH_FAILED`(`REJECTED`, `FEATURE_DISABLED`). When `mode_id` is not in `match_mode` or `allow_queue` of that row is `false`, `MATCH_FAILED`(`INVALID_MODE`). When `result_rule` of that row is `ServerReplay` and the replay version check of that connection fails, `MATCH_FAILED`(`REJECTED`, that error code)
-  3. Opens that user's transaction with `storage.run_rollback_transaction` and calls hook `prepare_match_request`. On `WITHDRAWN` or `FAILED`, `MATCH_FAILED`(`REJECTED`, error code 0). On `GameError`, `MATCH_FAILED`(`REJECTED`, that `GameError`). In the same transaction, reads the rating and block list to put in the queue. The rating is the `rating` of `rating.get_rating`(ctx, that rule) when `rating_rule` of `match_mode` is not `null`, and the rating that the hook returned when it is `null`. The block list is `list_blocked_ids`(ctx, that user) when `block-report` is in the server module list, and an empty list otherwise
+  3. Opens that user's transaction with `storage.run_rollback_transaction` and calls hook `prepare_match_request`. On `WITHDRAWN` or `FAILED`, `MATCH_FAILED`(`REJECTED`, error code 0). On `GameError`, `MATCH_FAILED`(`REJECTED`, that `GameError`). In the same transaction, reads the rating and block list to put in the queue. The rating is the `rating` of `rating.get_rating`(ctx, that rule) when `rating_rule` of `match_mode` is not `null`, and the rating that the hook returned when it is `null`. The block list is `block-report.list_blocked_ids`(ctx, that user) when `block-report` is in the server module list, and an empty list otherwise
   4. Puts a queue entry of that one user at the end of the queue
 - `MATCH_CANCEL` and connection close of a user outside a room remove that user from the queue. `MATCH_REQUEST` and `MATCH_CANCEL` of a user in a room follow party handling
 - Only on the server instance that received `--matchmaker`, job `matchmaker_tick`(period `matchmaker.tickMs`), which the matchmaker sets with `server-time.schedule_job` at server start, repeats the following per queue
@@ -135,7 +135,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 - A user is in only one room at a time. Every time a room changes, `ROOM_STATE` is sent to all members
 - `ROOM_KICK` and `ROOM_START` of a user outside a room are `ROOM_NOT_HOST`
 - When the members of the room change while member rating resolution waits for the transaction of each member, nothing is changed and `ROOM_FAILED`(`ROOM_BUSY`. `request` is the `kind` of the host frame that started member rating resolution) is sent to all members
-- When a room frame or party handling fails, the room and the queue are not changed. For a failure outside member rating resolution, `ROOM_FAILED`(that error, `request` is the `kind` of that frame) is sent to the sending user
+- When a room frame or party handling fails, the room and the queue are not changed, except that a member closed with `CLOSE`(`BANNED`) in member rating resolution leaves the room, as a connection close does. For a failure outside member rating resolution, `ROOM_FAILED`(that error, `request` is the `kind` of that frame) is sent to the sending user
 
 | frame | handling |
 |---|---|
@@ -150,7 +150,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
   - `MATCH_REQUEST` of a non-host member is `ROOM_NOT_HOST`, and `MATCH_CANCEL` is dropped
   - host `MATCH_REQUEST`: `ROOM_BUSY` when `Matching`. `FEATURE_DISABLED` when the kill switch is on. `INVALID_REQUEST` when `mode_id` differs from `mode_id` of the room or `allow_queue` of that mode is `false`. That error code when `result_rule` of that mode is `ServerReplay` and the replay version check of the host connection fails. `ROOM_PARTY_TOO_LARGE` when the member count is more than `max_party_size`. Does member rating resolution, puts the party entry at the end of the queue and changes the room to `Matching`
   - host `MATCH_CANCEL`: removes the party entry from the queue and changes the room to `Open`
-  - When the party entry is removed by `TIMEOUT`, changes the room to `Open`. When the party entry becomes a match, changes the room to `Open` after sending the `MATCH_FOUND` of step 3 of `### match creation`
+  - When the party entry is removed by `TIMEOUT`, changes the room to `Open`. When the party entry becomes a match, changes the room to `Open` after sending `MATCH_FOUND`
 - The room and its members stay after a match created through the room
 - When the host leaves the room, the first user of the remaining list is the host
 - When a new connection of the same user is authenticated, the previous connection closes, so that user leaves the room. A user rejoined with `MATCH_REJOIN` is also not in the room
@@ -208,7 +208,7 @@ Let n be the participant count. The same result means the same `result` bytes.
 - When one frame exceeds `matchmaker.maxFrameBytes` or its read duration exceeds `matchmaker.frameReadTimeoutMs`, closes the connection and does not handle that frame
 - The frame count also counts control frames. The last 1000 ms and per-second counts are measured with `server-time.clock_now`, and `matchmaker.helloTimeoutMs` and `matchmaker.frameReadTimeoutMs` with `server-time.network_time_limit`
 - After authentication, when the frame count of the last 1000 ms per user exceeds `matchmaker.framesPerSecond`, closes the connection with `CLOSE`(`RATE_LIMITED`). A new connection of the same user uses the same counter
-- Before authentication, counts per IP the connection accepts per second against `matchmaker.preAuthAcceptsPerSecond`, the frames per second against `matchmaker.preAuthFramesPerSecond`, and the concurrent connections against `matchmaker.preAuthConnections`. A new connection over a limit is closed at once, and a connection over the frame count is closed. An authenticated connection is removed from the concurrent connection count
+- Before authentication, counts per IP the connection accepts per second against `matchmaker.preAuthAcceptsPerSecond`, the frames per second against `matchmaker.preAuthFramesPerSecond`, and the concurrent connections against `matchmaker.preAuthConnections`. A connection over the frame count is closed. An authenticated connection is removed from the concurrent connection count
 - A connection that does not authenticate within `matchmaker.helloTimeoutMs` from connection accept is closed
 - IP judgement is the same as the rate limit rules of `routing`
 - Values that a peer sends are not trusted. Results that change saved state go only through the judgement of this spec
@@ -229,7 +229,7 @@ Let n be the participant count. The same result means the same `result` bytes.
 - `replayed_input_log` of match record input: the `input_log` that the `ServerReplay` judgement passed to `replay_match`. Empty bytes when none was passed
 - `source` of match record input is `MatchSource`(`Queue`, `Room`)
 - `participants` of match record input: a list in index order. Each item is `reported_at`(the `clock_now` when the report was saved. 0 when none), `result`(reported `result` bytes. Empty bytes when none), `input_log`(reported `input_log` bytes. Empty bytes when none), `left_at`(the `clock_now` when the participant left with `MATCH_LEAVE`. 0 when none), `disconnected_at`(the `clock_now` when the matchmaker connection last closed. 0 when rejoined with `MATCH_REJOIN`)
-- `replay_match` does not read or write the DB. The random is `storage.create_random`(`make_purpose_seed`(`match_simulation`, match `seed`)). Client simulation makes the same random with `UtilCore.create_random`(`make_purpose_seed`(`match_simulation`, match seed)). When a `match_mode` row whose `result_rule` is `ServerReplay` exists but there is no `replay_match`, the server does not start
+- `replay_match` does not read or write the DB. The random is `storage.create_random`(`make_purpose_seed`(`match_simulation`, match `seed`)), the same random as the tick simulation of `client-content`. When a `match_mode` row whose `result_rule` is `ServerReplay` exists but there is no `replay_match`, the server does not start
 - `replay_match` checks the participant index, input order and range of `input_log` and calculates the result with game data and `seed`. It does not use the reported `result`
 - `apply_match_result` and `apply_match_mismatch` are called inside `storage.with_hook_change_source`(ctx, `Match`, `match_id`). The change source of item changes inside it is source `Match`, `ref` `match_id`
 
@@ -241,9 +241,9 @@ none
 
 | condition | failure value | error code | log |
 |---|---|---|---|
-| failure of the game transaction of a participant change (lock wait timeout, deadlock, DB failure) | the change is dropped. It is not retried: a retried `DISCONNECTED` could be written after a later `REJOINED` | none | `error` |
+| failure of the game transaction of a participant change (exceeding the lock wait, deadlock, DB failure) | the change is dropped. It is not retried: a retried `DISCONNECTED` could be written after a later `REJOINED` | none | `error` |
 | authentication failure, maintenance and ban at `HELLO` and before handling `MATCH_REQUEST`, `ROOM_CREATE`, `ROOM_JOIN`, `ROOM_START`, a banned member in member rating resolution, format violation of `data_version` and `client_version`, data version judgement failure, authentication of another connection | `CLOSE`(that `CoreError`) and close | that `CoreError` | authentication failure is `security`(`reason` `unauthorized`, `token_expired`, `session_replaced`) |
-| frame size, read duration, frame count, pre-authentication limit, `HELLO` timeout | connection close. Exceeding the frame count is `CLOSE`(`RATE_LIMITED`) | `RATE_LIMITED` for exceeding the frame count, none for the rest | `security`(`reason` `frame_too_large`, `frame_read_timeout`, `rate_limited`, `pre_auth_connection_limit`(accepts per second and concurrent connections), `pre_auth_frame_limit`, `hello_timeout`) |
+| frame size, read duration, frame count, pre-authentication limit, `HELLO` timeout | connection close. Exceeding the frame count is `CLOSE`(`RATE_LIMITED`). A new connection over the limit of accepts per second or of concurrent connections gets HTTP 429 before the handshake | `RATE_LIMITED` for exceeding the frame count, none for the rest | `security`(`reason` `frame_too_large`, `frame_read_timeout`, `rate_limited`, `pre_auth_connection_limit`(accepts per second and concurrent connections), `pre_auth_frame_limit`, `hello_timeout`) |
 | match record save failure | `MATCH_FAILED`(`CREATE_FAILED`) | none | `error` |
 | failure of a room frame and party handling | `ROOM_FAILED`(that error and the `kind` of the failed frame) | `ROOM_NOT_FOUND`, `ROOM_FULL`, `ROOM_BUSY`, `ROOM_NOT_HOST`, `ROOM_NOT_ENOUGH_PLAYERS`, `ROOM_PARTY_TOO_LARGE`, `ROOM_VERSION_MISMATCH`, `INVALID_REQUEST`, `FEATURE_DISABLED`, `APP_UPDATE_REQUIRED`, `DATA_UPDATE_REQUIRED`, `BANNED`, `INTERNAL`, the hook's `GameError` | none |
 | `GameError` of the reporter's apply hook | marks that index. The request succeeds with the judgement status | none | `error` |
@@ -322,7 +322,7 @@ reserved ID, reserved string, reserved sound: none
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `create_test_match` | `mode_id`, `user_ids`(index order), `seed` | `match_id` | throws when `mode_id` is not in `match_mode`, or the count of `user_ids` is less than `min_players` or more than `max_players` | `testing` |
+| `create_test_match` | `mode_id`, `user_ids`(index order), `seed` | async operation. `match_id` | throws when `mode_id` is not in `match_mode`, or the count of `user_ids` is less than `min_players` or more than `max_players` | `testing` |
 
 - `create_test_match` saves, without a queue or connections, the match record of step 1 of match creation with the received `user_ids` and `seed`, `ratings`, `teams`, `parties` all 0, `lockstep` `false`, `data_version` set to the server's `client_data_version`, `client_version` set to an empty string, and `source` set to `Queue`. It does not call `p2p-signaling` and does not send `MATCH_FOUND`
 - STG and PROD builds have no `create_test_match`

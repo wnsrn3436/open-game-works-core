@@ -14,7 +14,7 @@
 
 ## purpose
 
-Gives connection information (STUN, relay) so that match participants make P2P connections with each other, passes signaling frames between participants only within the same match, and takes the rejoin of disconnected participants. Does not handle realtime messages.
+Gives connection information (STUN, relay) so that match participants make P2P connections with each other, passes signaling frames between participants only within the same match, and handles the rejoin of disconnected participants. Does not handle realtime messages.
 
 ## dependency
 
@@ -126,9 +126,9 @@ Added `CoreError`: none
 | `p2p-signaling.sweepIntervalMs` | integer | core | content | match session cleanup interval. 1 or more |
 | `environments.<ENV>.secrets.turn` | string | game | none | secret name in the host secret store that holds the coturn `static-auth-secret` of `turn-coturn` |
 | `environments.<ENV>.turnCoturn.urls` | array<string> | game | none | list of coturn relay URLs. The scheme is `turn` or `turns` |
-| `environments.<ENV>.adapters.turn` | string? | game | none | relay adapter name. When absent, this environment has no relay adapter |
+| `environments.<ENV>.adapters.turn` | string? | game | none | relay adapter name. When `null`, this environment has no relay adapter |
 
-- Key `turn` of the per-environment `adapters` of game settings chooses the relay adapter. The values are `fake` and `turn-coturn`. When the key is absent, the adapter is not called, `relays` is an empty list and no log is left. `turn-coturn` makes, without a network call, TURN REST API style short-lived credentials of a self-operated coturn server. One relay per URL of `environments.<ENV>.turnCoturn.urls`; `username` is `<quotient of expires_at divided by 1000>:<match_id>`, and `credential` is the HMAC-SHA1 of `username` keyed with secret `environments.<ENV>.secrets.turn`, written in standard base64. `fake` returns the relay list set by the `testing.fake` controller, and an empty list when none is set
+- Key `turn` of the per-environment `adapters` of game settings chooses the relay adapter. The values are `fake` and `turn-coturn`. When the key is `null`, the adapter is not called, `relays` is an empty list and no log is left. `turn-coturn` makes, without a network call, TURN REST API style short-lived credentials of a self-operated coturn server. One relay per URL of `environments.<ENV>.turnCoturn.urls`; `username` is `<quotient of expires_at divided by 1000>:<match_id>`, and `credential` is the HMAC-SHA1 of `username` keyed with secret `environments.<ENV>.secrets.turn`, written in standard base64. `fake` returns the relay list set by the `testing.fake` controller, and an empty list when none is set
 - The operation name of the fake adapter controller is `issue_relays`. `set_result` sets a list of `{url, username, credential}` (all strings), and `input` of `calls()` is `{match_id, expires_at}`. p2p-signaling writes the `expires_at` of a relay regardless of the adapter result
 
 ## data
@@ -151,6 +151,6 @@ none
 - `MATCH_REJOIN` sent by a connection bound to another match session is `ok` `false`; that connection stays bound to the session it was bound to, that index of the requested session does not change, and there is no participant change
 - The `turn` adapter is called once per match, the relays that the `fake` controller sets differently per match are the `relays` of that match, and `expires_at` is `start_at` + `max_duration`
 - When the `turn` adapter fails or takes more than `p2p-signaling.turnTimeoutMs`, `prepare_transport` returns a `Transport` with empty `relays` and leaves a `warn` log
-- When there is no `environments.<ENV>.adapters.turn`, `prepare_transport` does not call the adapter, returns a `Transport` with empty `relays` and leaves no log
+- When `environments.<ENV>.adapters.turn` is `null`, `prepare_transport` does not call the adapter, returns a `Transport` with empty `relays` and leaves no log
 - A session that all participants left and a session past its `expires_at` are deleted
 - `MATCH_LEAVE`, a connection close and a successful `MATCH_REJOIN` return a `LEFT`, `DISCONNECTED` and `REJOINED` participant change respectively, and a connection not bound to a session returns none

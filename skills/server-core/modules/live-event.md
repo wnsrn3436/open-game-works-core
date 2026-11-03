@@ -29,7 +29,7 @@ This module judges the schedule of live events defined in data and the active wi
 | `get_active_events` | ctx | list of `{event_id, round, start_at, end_at}` (event ID value, round, start time, end time) of the events active now. In ascending order of event ID value | empty list | content handler, hook, core module |
 | `is_active` | ctx, event ID value | `true` when active | `false`. Also `false` for an unknown event ID value | content handler, hook |
 | `is_in_active_window` | ctx, `start_at`, `end_at`, `live_event` (each value from the data row. none and 0 mean absent) | `true` when inside the active window | `false` | content handler, hook, `shop`, `gacha`, `iap`, `mission`, `attendance`, `offer` |
-| `get_round` | ctx, event ID value | `round`, `start_at` (start time), `end_at` (end time) of the active round. When there is no active round, 0, the start time of the next round and the end time of the next round; when there is no next round either, all three 0 | all three 0 for an unknown event ID value | content handler, hook, `mission`, `shop`, `iap`, `attendance`, `offer` |
+| `get_round` | ctx, event ID value | `round`, `start_at` (start time), `end_at` (end time) of the active round. When there is no active round, 0, the start time of the next round and the end time of the next round; when there is no next round either, all three 0 | all three 0 for an unknown event ID value | content handler, hook, `attendance` |
 | `get_latest_round` | event ID value, time | `round`, `start_at` (start time), `end_at` (end time) of the latest round among the rounds with start time ≤ that time. All three 0 when there is no such round | all three 0 for an unknown event ID value | `ranking` |
 | `round_to_write` | ctx, `live_event` (value from the data row. none and 0 mean absent) | `event_round` to write to a row by the round reset rule | none | `mission`, `shop`, `iap`, `attendance`, `offer` |
 | `is_round_reset` | ctx, `live_event` (value from the data row. none and 0 mean absent), the row's `event_round` | `true` when the round reset rule reads the row as returned to its start | `false` | `mission`, `attendance`, `offer` |
@@ -51,7 +51,6 @@ schedule
 - A round is active when `server-time.is_reached`(start time) is `true` and `is_reached_strict`(end time) is `false`
 - next round: among the rounds whose `is_reached`(start time) is `false`, the round with the earliest start time
 - `get_latest_round` judges by the given time without a ctx and does not use `is_reached`. Among the rounds with start time ≤ that time, it also returns an ended round
-- Client `UserStateCore.get_live_event_round` shows whether a round is active with the same table and the same calculation. The server makes the judgement
 
 active window
 
@@ -62,12 +61,11 @@ active window
 
 round reset
 
-- Round reset is the rule that returns user saved state tied to a data row with a `live_event` column to its start for each round of that event. `mission`, `shop`, `iap`, `attendance` and `offer` use it on their own UserState rows with `round_to_write` and `is_round_reset`
+- Round reset is the rule that returns user saved state tied to a data row with a `live_event` column to its start for each round of that event. `mission`, `attendance` and `offer` use it on their own UserState rows with `round_to_write` and `is_round_reset`. `shop` and `iap` write their purchase count rows with `round_to_write` and read them with `offer.read_purchase_limit`
 - That UserState row has an `int32 event_round` field. When the row is written, the round of `get_round`(`live_event`) is written when the data row has a `live_event`, otherwise 0 (`round_to_write`)
 - When the row is read, if the data row has a `live_event`, the round of `get_round`(`live_event`) is not 0, and it differs from the row's `event_round` (`is_round_reset` is `true`), the fields that the module sets as returning to the start are read as their initial values and `event_round` as that round. When the row has a `reset_at` field, `reset_at` is read as that module's next reset time. The values read this way are saved only when there is a write to that row
 - While the round is 0, the row's values are read as they are
 - Round reset is checked before the lazy reset of `server-time`
-- Client `UserStateCore` applies the same rule with the round of `get_live_event_round`
 
 participation
 
@@ -147,7 +145,7 @@ none. Moving the time in the DEV environment follows the cheat time offset of `s
 - An event without `repeat` becomes active at `start_at` and is not active at `end_at`
 - At a request time earlier than the round start time by less than `server-time.silentMarginMs`, `get_round` of a `silent` request returns that round as active, and `get_round` of a request without `silent` returns round 0 with that round's start time and end time. For both requests the round is active at end time − 1 and not active at the end time
 - In a request without `silent`, `is_in_active_window` is `false` at `start_at` − 1, `true` at `start_at`, `true` at `end_at` − 1 and `false` at `end_at`; it is `false` when given a `live_event` that is not active, and `true` when all three are none
-- The round number and times of an event with `repeat` are correct right before and right after the boundaries, and there is no round after `repeat_until`
+- In a request without `silent`, for an event with `repeat` whose rounds have a gap between them, `get_round` returns, for round n: at its start time − 1, round 0 with the start and end times of round n; at its start time and at its end time − 1, round n with its start and end times; at its end time, round 0 with the start and end times of round n + 1. From the end time of the last round, whose start time is before `repeat_until`, it returns `(0, 0, 0)`
 - The server does not start when a row has `repeat_until` at most `start_at`
 - `join_event` for an event that is not active is `NOT_ACTIVE` and saves nothing
 - Two `join_event` calls in the same round leave one participation
