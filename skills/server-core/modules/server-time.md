@@ -28,7 +28,7 @@ none
 | `is_reached` | ctx, target time | judgement result | Throws on a target violation | content handler, hook, core module |
 | `is_reached_strict` | ctx, target time | `true` when request time ≥ target | Throws on a target violation | content handler, hook, core module |
 | `clock_now` | none | current time of the clock adapter. Unix ms | none | core module |
-| `user_now` | user ID, DB handle | `clock_now` + the cheat time offset of that user | none | `auth`, `session`, `storage`, `routing`, `iap`, `testing` |
+| `user_now` | user ID, DB handle | `clock_now` + the cheat time offset of that user | none | `auth`, `session`, `storage`, `routing`, `testing` |
 | `get_day_number` | time | game day number of that time | none | content handler, hook, core module |
 | `get_period_start` | `ResetCycle?` element, time | start time of the reset period that contains that time. 0 when `null` | none | content handler, hook, core module |
 | `get_next_reset` | `ResetCycle?` element, time | first reset time after that time. 0 when `null` | none | content handler, hook, core module |
@@ -111,6 +111,8 @@ none
 | same name, period less than 1 in `schedule_job` | server start failure | none | `error` log by the server start of `routing` |
 | `schedule_job` after server start | throw | none | none |
 | ms less than 1 in `network_time_limit` | throw | none | none |
+| window length less than 1 in `get_window_start` | throw | none | none |
+| `None` in `get_period_number` | throw | none | none |
 
 Added `CoreError`: none
 
@@ -128,8 +130,6 @@ Added `CoreError`: none
 | type | element |
 |---|---|
 | `ResetCycle` | `Daily`, `Weekly`, `Monthly` |
-
-- The reset period columns of `shop`, `iap`, `ads-reward`, `mission`, `attendance` and `reset-counter`, the season period column of `ranking`, and client `TimeCore` use this enum
 
 ## DEV
 

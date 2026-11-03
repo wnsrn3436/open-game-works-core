@@ -30,7 +30,7 @@ Runs, before the handler, the field validators that the contract tool generated 
 | `is_in_range` | integer, min, max | `true` when it is at least min and at most max | `false` | content handler, hook, core module |
 | `has_table_id` | table name, ID value | `true` when it is in `id` of that table in the server build data | `false` | content handler, hook, core module |
 | `is_unique` | list, key function | `true` when all keys differ | `false` | content handler, hook, core module |
-| `is_plain_text` | string, maximum code point count | `true` when it keeps all plain text conditions below | `false` | content handler, hook, core module |
+| `is_plain_text` | string, maximum code point count | `true` when it keeps all plain text conditions | `false` | content handler, hook, core module |
 | `normalize_text` | string | normalized string | none | content handler, hook, core module |
 | `check_text` | string, maximum code point count, whether line breaks are allowed | `TextCheckResult.OK` | a failure element of `TextCheckResult`. For `BANNED`, together with the matched `banned_word` ID value | content handler, hook, core module |
 | `is_kind_consistent` | message, kind field name, list of field names used per kind element | `true` when all fields other than the kind field and the fields of the selected kind are default values | `false` | content handler, hook, core module |
@@ -47,7 +47,6 @@ Runs, before the handler, the field validators that the contract tool generated 
 
 - Helpers have no state and do not receive ctx. The handler converts a failure into a `GameError`
 - The int64 inputs and outputs of `floor_div`, `floor_mod`, `apply_permille` are `bigint`. The inputs and outputs of `big_floor_div`, `big_apply_permille` are `bigint` without a range limit, used for values that can be outside int64 (the values of a big encoding pair of the contract). `is_in_range` receives the three integers as `number` or `bigint` and compares them as `bigint`
-- The calculations of `floor_div`, `floor_mod`, `apply_permille`, `big_floor_div`, `big_apply_permille` equal the operations of the same name of client `UtilCore`. For the same input, client and server give the same number
 - output of `evaluate_requirement`: `passed` (pass flag), `failed_requirement_id` (ID value of the first failed condition. 0 when `passed` is `true`)
 - TypeScript shape: `check_text` is `{result, banned_word_id}` (`result` is a `TextCheckResult` element, `banned_word_id` is 0 when not `BANNED`), `apply_permille` is `{success, value}`, `parse_version` is `{major, minor, patch}` (`bigint`). The list of field names used per kind element of `is_kind_consistent` is a `ReadonlyMap` keyed by kind value
 - version: a string of the format `<major>.<minor>.<patch>`, where each of the three parts is `0` or a decimal integer that does not start with `0`. App versions and core versions have this format
@@ -92,7 +91,7 @@ Runs, before the handler, the field validators that the contract tool generated 
   - The normalized string is not an empty string
 - `is_kind_consistent` is `false` when the kind field is `_UNSPECIFIED`. A kind element not in the list is also `false`
 - normalization (`normalize_text`): converts to NFKC, applies the locale-independent Unicode lowercase mapping, and deletes all Unicode `White_Space` characters and `Default_Ignorable_Code_Point` characters. Strings that differ in full-width and half-width, upper and lower case, and spacing are equal after normalization
-- `check_text` judges in the order below and returns the first result that applies
+- `check_text` judges in this order and returns the first result that applies
   1. When it violates a plain text condition, `INVALID`. When line breaks are allowed, it judges with U+000A removed from the C0 controls
   2. When the normalized string matches any one `banned_word` row, `BANNED`. When several rows match, the row with the smallest ID value. `Contains` means that the normalized `word` is inside the normalized string, and `Exact` means that the two are equal
 - Only the server does banned word judgement. The client does not receive the banned word list
@@ -133,13 +132,13 @@ Added `CoreError`: `TEXT_INVALID`, `TEXT_BANNED`. Used when a core module that c
 
 ## settings
 
-| key | type | source | owner | meaning |
-|---|---|---|---|---|
-| `supportedLanguages` | array<string> | game | none | list of language tags of the banned word list files that make the `banned_word` rows |
+none
 
 ## data
 
-- The `requirement` table and the `RequirementType` and `RequirementLogic` enums. `RequirementCore` defines the headers and row rules
+used table: `requirement`
+
+- Reads the `requirement` table and the `RequirementType` and `RequirementLogic` enums. `RequirementCore` defines the headers and row rules
 
 `data/tables/banned_word.csv`
 

@@ -32,7 +32,6 @@ core `rpc` request field
   1. When `tutorial_step` has no row whose `id` is `tutorial_id` and whose `step` is the `step` of the request, `INVALID_REQUEST`
   2. When the saved step is the `step` of the request or more, nothing changes and it succeeds
   3. Writes that row of `TutorialProgressUserState` with the `step` of the request, and emits core analytics event `core_tutorial_step` with `logging.track_core_event`
-- Progress only increases. A smaller `step` that arrives out of order does not reduce the saved value
 - A changed row goes into the UserState delta of that response. It is also in the full UserState of the `Login` response
 - This module does not give tutorial rewards. When a reward is needed, the content grants it with its own `rpc`. The rules for that `rpc` are `## handler` of [`server-content`](../../server-content/SKILL.md)
 
@@ -49,6 +48,7 @@ none
 | condition | failure value | error code | log |
 |---|---|---|---|
 | (`tutorial_id`, `step`) not in `tutorial_step` | `INVALID_REQUEST` | `INVALID_REQUEST` | `warn` log |
+| a negative or non-integer tutorial ID value in `get_tutorial_step`, an input violation in `set_tutorial_step` | throw | `INTERNAL` | `error` log by `routing` |
 
 Added `CoreError`: none
 
@@ -76,7 +76,6 @@ reserved ID, reserved string, reserved sound: none
 | `set_tutorial_step` | ctx, tutorial ID value, step | none | an input violation throws | content cheat handler, `testing` |
 
 - `set_tutorial_step` changes the step to that value. It can reduce it. When the value is 0, it deletes that row. When the step is not 0 and is not in `tutorial_step`, it throws
-- STG and PROD builds have no `set_tutorial_step`
 
 ## test
 

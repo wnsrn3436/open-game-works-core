@@ -59,7 +59,7 @@ admin operation. `routing` collects them and passes them to `admin-api`; the pro
 - `salt`: a non-empty string. Changing it changes the group assignment
 - `key_ids`: `key_id` list. 1 or more, no duplicates
 - `groups`: `(name, weight, values)` list. 2 or more and at most `remote-config.maxGroups`. `name` is unique within the experiment, `weight` is an integer of 1 or more, and `values` are values in the same order and number as `key_ids`. Each value follows the `value` rules
-- `start_at` < `end_at`. When another experiment not stopped with `stop_experiment` overlaps in both period and key, `conflict`. A stored experiment that is not in the `experiment` table is excluded from the overlap check. Before the overlap check, locks key 0 of `remote_config_experiment` with `storage.lock_game_row` in the game tx that `admin-api` opened. Experiment ID values are 1 or more, so there is no row with key 0. So the overlap checks and writes of concurrently called `put_experiment` are handled one at a time
+- `start_at` < `end_at`. When another experiment not stopped with `stop_experiment` overlaps in both period and key, `conflict`. A stored experiment that is not in the `experiment` table is excluded from the overlap check. Before the overlap check, locks key 0 of `remote_config_experiment` with `storage.lock_game_row` in the game transaction that `admin-api` opened. Experiment ID values are 1 or more, so there is no row with key 0. So the overlap checks and writes of concurrently called `put_experiment` are handled one at a time
 - field type: `key_id` and `experiment_id` are `int32`, `value` is `json`, `salt` is `string`, `key_ids` is `array<int32>`, and `groups` is `array<object{name: string, weight: int32, values: array<json>}>`
 - `overrides` of `list_remote_config` is the row list of the `remote_config_override` table, and `experiments` is the row list of the `remote_config_experiment` table. Keys are ID values. The values of `value` and `groups` are JSON values
 - `stop_experiment` is `not_found` for an `experiment_id` that is not in the `experiment` table or has no saved experiment
@@ -128,7 +128,7 @@ Added `CoreError`: none
 | `default_value` | `string` | `All` |
 | `client` | `bool` | `All` |
 
-- `default_value` is read by `type`: `Bool` is `true` or `false`, `Int` is a `long` integer, and `String` is a string. A violation is data check `value_type`. When the `default_value` of a `String` key exceeds `remote-config.maxStringBytes`, the server does not start
+- `default_value` is read by `type`: `Bool` is `true` or `false`, `Int` is a `long` integer, and `String` is a string. A violation is data check `value_type`, which fails the binary build. The `default_value` of a `String` key is at most `remote-config.maxStringBytes`. Server start checks this rule, not the data check, and a violation fails server start
 - Only keys whose `client` is `true` are sent to the client. A row whose `client` is `false` goes only into build target `Server` and is not in client data. A value that the client must not know (e.g. a judgement criterion value) gets `false`
 
 `data/tables/experiment.csv`

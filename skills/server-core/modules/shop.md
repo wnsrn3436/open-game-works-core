@@ -31,7 +31,7 @@ Lets users buy and sell products defined in data with in-game items, and handles
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `BuyShopProduct` (core rpc, `retry`). changes: `ItemBalanceUserState`, `MailUserState`, `ShopPurchaseUserState`, `content` | product ID value, quantity, `accept_loss` | list of granted `ItemAmount`, whether granted by mail | `SHOP_PRODUCT_UNAVAILABLE`, `SHOP_PRODUCT_LOCKED`, `SHOP_LIMIT_REACHED`, `SHOP_OVERFLOW_LOSS`, `INVALID_REQUEST`, `CoreError` of `item-ledger`, `GameError` of the hook | `routing`. Sent by client content code |
+| `BuyShopProduct` (core rpc, `retry`). changes: `ItemBalanceUserState`, `MailUserState`, `ShopPurchaseUserState`, `content` | product ID value, quantity, `accept_loss` | `items` (`ItemAmount` list), `mailed` (whether granted by mail) | `SHOP_PRODUCT_UNAVAILABLE`, `SHOP_PRODUCT_LOCKED`, `SHOP_LIMIT_REACHED`, `SHOP_OVERFLOW_LOSS`, `INVALID_REQUEST`, `CoreError` of `item-ledger`, `GameError` of the hook | `routing`. Sent by client content code |
 | `get_purchase_count` | ctx, product ID value | purchase count within the current limit period | none. 0 for an unknown product | content handler, hook |
 
 - When `accept_loss` is `true`, the user buys even when some reward is discarded because it exceeds `max_amount`
@@ -61,13 +61,13 @@ purchase order. On failure, does not change items or the purchase count.
 4. hook `validate_shop_purchase`
 5. When `cost` is not an empty array, `item-ledger.subtract_items`: the list is the `cost` bundle × quantity, source `Shop`, `ref` the decimal string of the product ID value
 6. When `reward` is not an empty array, `item-ledger.preview_add_items`(`reward` bundle × quantity). When there is a `Discarded` row and `accept_loss` is `false`, `SHOP_OVERFLOW_LOSS`
-7. When `reward` is not an empty array, `mailbox.grant_or_mail`: the list is the `reward` bundle × quantity, source `Shop`, `ref` the decimal string of the product ID value, `once_key` `shop:<request ID>`, template reserved ID `[shop_grant_mail]`, `args` an empty list. When the result is `Mailed`, sets whether granted by mail to `true`. `items` of the response is the list of granted `ItemAmount` of `grant_or_mail`
+7. When `reward` is not an empty array, `mailbox.grant_or_mail`: the list is the `reward` bundle × quantity, source `Shop`, `ref` the decimal string of the product ID value, `once_key` `shop:<request ID>`, template reserved ID `[shop_grant_mail]`, `args` an empty list. When the result is `Mailed`, sets whether granted by mail to `true`. `items` of the response is the `reward` bundle × quantity when the result is `Granted`, and an empty list otherwise. An amount that `accept_loss` lets `max_amount` discard stays in `items`, and `overflow` of `ItemChange` has it
 8. When `extra_grant` is `true`, hook `grant_shop_extra`
 9. Saves the purchase count
 10. after hook `on_shop_bought`
 11. Emits core analytics event `core_shop_bought` with `logging.track_core_event`
 
-- When `cost` is an empty array, the product is free; when `reward` is an empty array, there is no item reward. When there is a row whose `reward` is an empty array and `extra_grant` is `false`, the server does not start
+- When `cost` is an empty array, the product is free; when `reward` is an empty array, there is no item reward. A row whose `reward` is an empty array and `extra_grant` is `false` is data check `out_of_range`, which fails the binary build
 - Exceeding `max_amount` does not block the purchase. `grant_or_mail` sends by mail a grant in which a `Reject` item overflows or that a validation hook rejected. An amount sent by mail is not a discarded amount
 - The cost subtracted in step 5 is reflected in the preview balance of step 6. On a failure after step 5, the rollback of `storage` also reverts the cost subtraction of step 5
 - `BuyShopProduct` sent again with the same request ID returns the response that `idempotency` saved, in the request processing order of `routing`, so the user does not buy twice
@@ -174,5 +174,5 @@ none
 - `on_shop_bought` is called once per successful purchase with that product ID value and quantity, and the changes inside it come in the delta of the same response. It is not called for a failed purchase. When the hook throws, the purchase is `INTERNAL` and the cost, reward and purchase count stay unchanged
 - When the cost and the reward have the same item, overflow is judged with the balance after the cost is subtracted
 - A purchase sent again with the same request ID applies only once
-- When a row violates the data rules, the server does not start
+- A `shop_product` row that violates a rule of `## data`, or whose `reward` is an empty array and `extra_grant` is `false`, is data check `out_of_range`
 - When there is a `shop_product` row whose `extra_grant` is `true` and content does not register `grant_shop_extra`, the server does not start and an `error` log is left

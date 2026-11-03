@@ -164,7 +164,7 @@ season reward
   1. Decides the reward with hook `ranking_season_reward`. When the hook throws or its output format is wrong, the change function throws and that handling is `FAILED`
   2. When the reward is not empty, calls `mailbox.send_mail` for each chunk made by splitting the attachment list in order into groups of `mailbox.maxAttachments`. When the attachment list is empty, there is one empty chunk. The template is the board's `reward_mail`, `args` is integer `MailArg`s `rank` and `season`, `attachments` is that chunk, and `extra_id` is the hook's `extra_id` for the first chunk and 0 otherwise. The `once_key` of chunk k is `ranking:<board ID value>:<season>` when k is 1 and `ranking:<board ID value>:<season>:<k>` when k is 2 or more. `ALREADY_SENT` from `send_mail` counts as success; on `INVALID_INPUT`, the change function returns `CoreError` `INTERNAL` and that handling is `REJECTED`
 - The result of the handling for one user is the result of `run_user_transaction`. On `REJECTED`, leaves an `error` log and adds 1 to `failed_count`. On `FAILED`, leaves an `error` log, and when `ranking.rewardRetryMaxAttempts` is 1 or more, inserts a retry row (`attempts` 0, `next_attempt_at` `clock_now` + `ranking.rewardRetryInitialMs`) with an insert that writes nothing on a key conflict; when it is 0, adds 1 to `failed_count`. Then goes to the next user
-- guild handling: in a game tx opened with `storage.run_game_transaction`, reads `guild.list_member_ids`(game tx, guild ID) and does the handling for one user for each member. Its `RankingEntry` is the entry of that guild. Each time it handles one member, in one game transaction, only when `lease_owner` is its own value, writes the retry rows that the handling inserts and extends `lease_until_at` to `clock_now` + `ranking.seasonJobLeaseMs`; when it is not its own value, stops handling that season. After handling all members, it does step 4 and adds in step 4 the number that the member handling of that guild adds to `failed_count`. When it stops during the handling, the next handling does that guild again from the first member
+- guild handling: in a game transaction opened with `storage.run_game_transaction`, reads `guild.list_member_ids`(game tx, guild ID) and does the handling for one user for each member. Its `RankingEntry` is the entry of that guild. Each time it handles one member, in one game transaction, only when `lease_owner` is its own value, writes the retry rows that the handling inserts and extends `lease_until_at` to `clock_now` + `ranking.seasonJobLeaseMs`; when it is not its own value, stops handling that season. After handling all members, it does step 4 and adds in step 4 the number that the member handling of that guild adds to `failed_count`. When it stops during the handling, the next handling does that guild again from the first member
 - The members of guild handling are the members at the time of handling. Reward eligibility (e.g. only members who joined before the season end time) is decided by hook `ranking_season_reward`. Because `once_key` is the same per user, a member who moved to another guild during handling also receives the mail once
 - reward retry: the handling done in step 2 for a season whose `status` is `Retrying`. Among that season's retry rows, the rows with `next_attempt_at` ≤ `clock_now` are taken one by one in `user_id` ascending order, and the handling for one user is done again with that row's `entry` as the `RankingEntry`. Each time it handles one row, in one game transaction, only when `lease_owner` is its own value, writes the following and extends `lease_until_at` to `clock_now` + `ranking.seasonJobLeaseMs`. When it is not its own value, writes nothing and stops handling that season
   - `COMMITTED`, `WITHDRAWN`: deletes that row
@@ -202,8 +202,9 @@ none
 | board `entity` mismatch in `submit_score`, `submit_guild_score` | `ENTITY_MISMATCH` | set by content | `error` log |
 | guild that does not exist in `submit_guild_score` | `UNKNOWN_GUILD` | set by content | `warn` log |
 | submission outside the active round of an event board | `SEASON_CLOSED` | set by content | none |
-| guild row lock wait timeout in `submit_guild_score` | throw | `INTERNAL` | `error` log by `routing` |
+| exceeding the guild row lock wait in `submit_guild_score` | throw | `INTERNAL` | `error` log by `routing` |
 | a guild board exists and `guild` is not in the server module list | server start failure | none | `error` log |
+| a `ranking_reward` row whose `reward` has more elements than `mailbox.maxAttachments` | server start failure | none | `error` log |
 
 Added `CoreError`: none
 
@@ -215,7 +216,7 @@ Added `CoreError`: none
 | `ranking.aroundCount` | integer | core | content | number of entries before me and after me each in `GetRankingAround` |
 | `ranking.topCacheMs` | integer | core | content | cache duration of the `GetRankingTop` result |
 | `ranking.maxDisplayBytes` | integer | core | content | byte length limit of the display |
-| `ranking.seasonCheckIntervalMs` | integer | core | content | period of job `ranking_season` |
+| `ranking.seasonCheckIntervalMs` | integer | core | content | period of job `ranking_season`. 1 or more |
 | `ranking.seasonJobLeaseMs` | integer | core | content | DB lease duration of job `ranking_season` |
 | `ranking.rewardRetryInitialMs` | integer | core | content | interval until the first retry of a season reward |
 | `ranking.rewardRetryFactorPermille` | integer | core | content | multiplier of the season reward retry interval. permille |
@@ -224,7 +225,6 @@ Added `CoreError`: none
 | `ranking.seasonRetentionMs` | integer | core | content | duration for which the scores of an ended season are kept |
 | `mailbox.maxAttachments` | integer | core | content | limit on the number of `reward` elements of `ranking_reward` and the number of attachments in one season reward mail |
 | `nickname.maxLookupCount` | integer | core | content | number of users passed to one call of `get_nicknames` |
-| `dailyResetOffsetMs` | integer | game | none | ms by which the game day boundary is offset from UTC 00:00. The `Weekly` and `Monthly` season boundaries follow it |
 
 ## data
 
@@ -263,8 +263,8 @@ format argument
 - `id` is an ID name of `ranking_board`. When it is not there, `ref_missing`
 - 1 ≤ `rank_from` ≤ `rank_to` ≤ the board's `size`, and the ranges of the same board do not overlap
 - When the board's `reward_mail` is `null`, that board's `ranking_reward` rows are `out_of_range`
-- The number of `reward` elements is at most `mailbox.maxAttachments`. Server start checks this rule, not the data check
-- When a row violates the rules of `ranking_board` or `ranking_reward`, the server does not start
+- The number of `reward` elements is at most `mailbox.maxAttachments`. Server start checks this rule, not the data check, and a violation fails server start
+- A violation of another rule of `ranking_board` or `ranking_reward` is a data check ERROR (`out_of_range`, or `ref_missing` for `id`), which fails the binary build
 
 `data/enums.csv`
 
@@ -281,7 +281,6 @@ format argument
 | `close_season_now` | ctx, board ID value | none | none | content cheat handler, `testing` |
 
 - On a board that has `cycle`, `close_season_now`, in ctx's transaction, locks that board's `ranking_season_shift` row with `storage.lock_game_row`, inserts or changes the current season's `ranking_season` row to `status` `Closing` and `end_at` `clock_now`, takes the lease (`lease_owner` a new secure random value, `lease_until_at` `clock_now` + `ranking.seasonJobLeaseMs`), and adds 1 to the season shift. For the reward, the handling called with `storage.after_commit` after commit handles that season with that lease through steps 3 to 5 of job `ranking_season`. When that handling stops, job `ranking_season` continues after the lease ends. The next season starts with empty scores, and its end time stays the calculated value. On a board whose `cycle` is `null`, changes nothing and leaves a `warn` log
-- STG·PROD builds do not have `close_season_now`
 
 ## test
 
@@ -296,7 +295,7 @@ format argument
 - After the nickname is changed with `SetNickname` or `rename_user`, the `nickname` of that user's `RankingEntry` in `GetRankingAround` is the new nickname, and `GetRankingTop` has the new nickname after `ranking.topCacheMs`. The display of the `ranking_score` row stays the same
 - `submit_score` with an empty display is `OK`
 - A submission just before a season boundary goes into the previous season, and a submission just after it goes into the new season
-- The season of a `Weekly` board changes at the start of a game day whose date is a Monday, and the season of a `Monthly` board at the start of a game day whose date is the 1st. Both follow game settings `dailyResetOffsetMs`, and the numbers of two consecutive seasons differ by 1
+- The season of a `Weekly` board changes at the start of a game day whose date is a Monday, and the season of a `Monthly` board at the start of a game day whose date is the 1st. Both follow the game day of `server-time`, and the numbers of two consecutive seasons differ by 1
 - The rewards of an ended season go by mail once each according to the `ranking_reward` ranges, and even when the job is stopped midway and started again, they do not go twice to the same user
 - The `args` of the reward mail are integer `MailArg`s `rank` and `season`
 - When the `ranking_season_reward` hook is registered, the reward is sent with its result
@@ -304,8 +303,9 @@ format argument
 - After `remove_user`, that user is not in query results or season rewards, and that user has no retry rows
 - An out-of-range score and an out-of-range `Sum` total are `OUT_OF_RANGE`, and the score stays the same
 - A season past the retention duration is deleted, and a `previous` query returns an empty list
-- When a row violates the data rules, the server does not start
-- A `ranking_reward` row of a board whose `reward_mail` is `null` is data check `out_of_range`, and the server does not start
+- A `ranking_reward` row whose `reward` has more elements than `mailbox.maxAttachments` fails server start and is not a data check finding
+- A row that violates another rule of `ranking_board` or `ranking_reward` is data check `out_of_range`, or `ref_missing` for `id`
+- A `ranking_reward` row of a board whose `reward_mail` is `null` is data check `out_of_range`
 - `close_season_now` called by `testing.call_dev` with a user ID does not throw. After `wait_background`, the rewards of the closed season go out, the current season starts with empty scores, and a `previous` query returns the closed season. The end time of the current season stays the same
 - When the transaction that called `close_season_now` is rolled back, the season shift and the season state stay the same, and no rewards go out
 - `close_season_now` on a board whose `cycle` is `null` does not change scores or seasons and leaves a `warn` log
@@ -316,19 +316,19 @@ format argument
 - When retries keep being `FAILED`, the `next_attempt_at` interval grows from `ranking.rewardRetryInitialMs` by the g rule and does not exceed `ranking.rewardRetryMaxIntervalMs`. When `ranking.rewardRetryMaxAttempts` retries are `FAILED`, the retry row is deleted, `failed_count` goes up by 1, the season is `Closed`, and an `error` log is left
 - A user whose reward handling is `REJECTED` is counted in `failed_count` without a retry row
 - Even when the server instance is stopped before a season with scores ends and `restart_test_server` is run several seasons later with `set_time`, the reward goes once per user for each ended season with scores
-- When job `ranking_season` of two server instances started with `testing.start_peer_server` take the lease of the same season at the same time, only one takes it, and the reward goes once per user. After the lease ends and another instance takes it, the earlier instance stops without writing the cursor
+- When job `ranking_season` of two server instances started with `testing.start_peer_server` take the lease of the same season at the same time, only one takes it, and the reward goes once per user. After the lease ends and another server instance takes it, the earlier server instance stops without writing the cursor
 - When a season closed with `close_season_now` is queried with `previous`, the season end time is the time it was closed, and that season's scores are deleted by the job after closing time + `ranking.seasonRetentionMs` is reached
 - The season end time of a query on a board whose `cycle` and `live_event` are `null` is 0
 - The season number of an event board is the number of the round that last started at that time. A submission within a round goes into that round's season, and `submit_score` and `submit_guild_score` before the first round, at a round end time and between rounds are `SEASON_CLOSED`, and the score stays the same
 - The job after the round end time of an event board sends that season's rewards according to the `ranking_reward` ranges, and `GetRankingTop` between rounds returns the ended round as `season` and that round's end time as `season_ends_at`. A submission in the next round goes into a new season with empty scores, and a `previous` query returns the previous round
 - `close_season_now` on an event board does not change scores or seasons and leaves a `warn` log
-- A `ranking_board` row that has both `cycle` and `live_event` is data check `out_of_range`, and the server does not start
+- A `ranking_board` row that has both `cycle` and `live_event` is data check `out_of_range`
 - `get_my_entry` with a board ID value not in `ranking_board` throws, and the request is `INTERNAL`
 - For a user with a cheat time offset, the `season` and `season_ends_at` of `GetRankingTop` and `GetRankingAround` are the number and end time that `get_season` returned at the same time
 - `admin-api.export_personal_data` includes that user's `ranking_score` rows
 - `submit_guild_score` on a guild board adds for `Sum` and applies only a better score for `Best`. `Sum` scores that two members submit concurrently to the same guild are all applied
 - `submit_guild_score` on a user board and `submit_score` on a guild board are `ENTITY_MISMATCH`, `submit_guild_score` for a guild that does not exist is `UNKNOWN_GUILD`, and the score stays the same
-- When a lock wait timeout occurs while another transaction holds the guild row lock, `submit_guild_score` throws, the request is `INTERNAL`, and the score stays the same
+- On exceeding the lock wait while another transaction holds the guild row lock, `submit_guild_score` throws, the request is `INTERNAL`, and the score stays the same
 - A `GetRankingTop` entry of a guild board carries `guild_id`, `guild_name` that is the current guild name, and `user_id` 0, and for the same score, the guild that reached it first comes first. `GetRankingAround` is based on my guild, and when I am not a guild member, my entry is rank 0 and the before and after list is empty
 - After a guild is disbanded, there are no `ranking_guild_score` rows of that guild in any season
 - The guild board rewards of an ended season go by mail once to each member at the time of handling, and hook `ranking_season_reward` receives that guild entry and the season end time. Even when the job is stopped in the middle of the member handling of a guild and started again, mail goes once per member

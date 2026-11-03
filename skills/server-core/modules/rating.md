@@ -31,12 +31,12 @@ Stores a user's rating per rating rule defined in data, updates it with an Elo c
 |---|---|---|---|---|
 | `RefreshRating` (core rpc, `silent`, `retry`). changes: `MailUserState`, `RatingUserState` | none | empty response | none | `routing`. Client content code sends it |
 | `get_rating` | ctx, rule ID value | `RatingView` | Throws when the rule ID value is not in `rating_rule` | content handler, hook, `matchmaker` |
-| `apply_match_outcome` | ctx, match record from `matchmaker`, participant index, placement list (integers in participant index order) | `result` (`RatingResult.OK`), `change` (`RatingChange`) | failure element of `RatingResult` | content handler, hook |
+| `apply_match_outcome` | ctx, match record from `matchmaker`, participant index, match rank list (integers in participant index order) | `result` (`RatingResult.OK`), `change` (`RatingChange`) | failure element of `RatingResult` | content handler, hook |
 
 - rule ID value: an ID value of the `rating_rule` table
 - `RatingView`: `rating`, `tier_id` (tier ID value. 0 when there is no tier), `season`, `season_games`, `placement` (`true` when `season_games` < `placement_matches`)
 - `RatingChange`: `before`, `after` (the rating before and after applying), `tier_before`, `tier_after`
-- placement: the participant's rank. Smaller is ahead, and equal is a draw. e.g. for a 1v1 win and loss, the winning participant is 0 and the losing participant is 1
+- match rank: the participant's rank in the match. Smaller is ahead, and equal is a draw. e.g. for a 1v1 win and loss, the winning participant is 0 and the losing participant is 1
 - match record: the match record input that the `matchmaker` hooks `apply_match_result` and `apply_match_mismatch` received. `rating` reads its `mode_id`, `user_ids`, `ratings` and `teams`. The number of participants is the number of `user_ids`
 
 `RatingResult`
@@ -45,7 +45,7 @@ Stores a user's rating per rating rule defined in data, updates it with an Elo c
 |---|---|
 | `OK` | Applied |
 | `NO_RATING` | The `rating_rule` of the `match_mode` row that is the `mode_id` of the match record is `null` |
-| `INVALID_INPUT` | The participant index is outside the number of participants, or the ctx user is not the user of that index, or the number of placements differs from the number of participants, or there is a negative placement |
+| `INVALID_INPUT` | The participant index is outside the number of participants, or the ctx user is not the user of that index, or the number of match ranks differs from the number of participants, or there is a negative match rank |
 
 ## behavior
 
@@ -79,12 +79,12 @@ When a row is read and its `season` differs from the current season, it is read 
 1. `INVALID_INPUT` when the input meets an `INVALID_INPUT` condition. The rule is the `rating_rule` of the `match_mode` row of the match record's `mode_id`; when it is `null`, `NO_RATING`
 2. Reads the ctx user's row with settle applied
 3. opponents: when `team_size` of `match_mode` is 0, all participants except that participant; otherwise, the participants whose team in the match record's `teams` differs from that participant's. Let m be the number of opponents. When m is 0, does not change the rating and skips 4 and 5
-4. For each opponent j, S is 1000 when that participant's placement is less than j's, 500 when equal, and 0 when greater. E is 1000 ÷ (1 + 10^((R_j − R_i) ÷ `scale`)) calculated as a 64-bit float and rounded to the nearest integer. 0.5 rounds up. R is the value at that index of the match record's `ratings`. Floating-point calculation is used only for E
+4. For each opponent j, S is 1000 when that participant's match rank is less than j's, 500 when equal, and 0 when greater. E is 1000 ÷ (1 + 10^((R_j − R_i) ÷ `scale`)) calculated as a 64-bit float and rounded to the nearest integer. 0.5 rounds up. R is the value at that index of the match record's `ratings`. Floating-point calculation is used only for E
 5. K is `placement_k_factor` when `season_games` < `placement_matches`, and `k_factor` otherwise. Σ is the sum of S − E over the opponents. Δ = `validation.floor_div`(2 × K × Σ + 1000 × m, 2000 × m). The new rating is the current rating + Δ; when it is less than `min_rating`, it is `min_rating`
 6. Adds 1 each to `season_games` and `total_games`, sets `tier_id` to the tier of the new rating and writes the row
 
 - Δ is calculated from the match record's `ratings` (the ratings when the match was made), so it is the same regardless of the order in which the participants are applied. `matchmaker` guarantees that apply happens once per participant
-- Content code calls it inside `matchmaker.apply_match_result` and `apply_match_mismatch`. Content code decides the placement from `MatchResult` and the match record's `participants`
+- Content code calls it inside `matchmaker.apply_match_result` and `apply_match_mismatch`. Content code decides the match rank from `MatchResult` and the match record's `participants`
 
 ## hook
 
@@ -103,6 +103,7 @@ none
 | `apply_match_outcome` for a match mode whose `rating_rule` is `null` | `NO_RATING` | set by content | `error` log |
 | `INVALID_INPUT` from season reward `send_mail` | throw | `INTERNAL` | error rule of `mailbox` |
 | failure of `validation.apply_permille` in step 2 of season settle | throw | `INTERNAL` | `error` log by `routing` |
+| a `rating_tier` row whose `season_reward` has more elements than `mailbox.maxAttachments` | server start failure | none | `error` log |
 
 Added `CoreError`: none
 
@@ -158,8 +159,8 @@ format argument
 
 - Rows of the same `rule` have different `min_rating` values
 - For a row whose `season_reward` is not an empty array, `season_board` and `reward_mail` of its rule are not `null`
-- The number of `season_reward` elements is at most `mailbox.maxAttachments`. Server start checks this rule, not the data check
-- When a row violates the rules of `rating_rule` or `rating_tier`, the server does not start
+- The number of `season_reward` elements is at most `mailbox.maxAttachments`. Server start checks this rule, not the data check, and a violation fails server start
+- A violation of another rule of `rating_rule` or `rating_tier` is a data check ERROR (`out_of_range`, `duplicate` or `empty_required`), which fails the binary build
 
 reserved ID, reserved string, reserved sound: none
 
@@ -170,7 +171,6 @@ reserved ID, reserved string, reserved sound: none
 | `set_rating` | ctx, rule ID value, rating | none | Throws when the rule ID value is not in `rating_rule` | content cheat handler, `testing` |
 
 - `set_rating` writes the rating of the row with settle applied as that value, and `tier_id` as the tier of that rating. The season reward goes by the settle rules
-- STG·PROD builds do not have `set_rating`
 
 ## test
 
@@ -186,7 +186,8 @@ reserved ID, reserved string, reserved sound: none
 - For a row whose `season_games` before settle is less than `reward_min_games`, `RefreshRating` writes settle and does not send the season reward mail. When it equals `reward_min_games`, it sends it. The next season's settle of a row made with `set_rating` without matches (`season_games` 0) does not send the reward
 - A rule whose `season_board` is `null` has no settle
 - `INVALID_INPUT` and `NO_RATING` do not change the row
-- When a row violates the data rules, the server does not start
+- A `rating_tier` row whose `season_reward` has more elements than `mailbox.maxAttachments` fails server start
+- A row that violates another rule of `rating_rule` or `rating_tier` is data check `out_of_range`, `duplicate` or `empty_required`
 - The change made by `apply_match_outcome` called inside `matchmaker.apply_match_result` goes as a pending delta to participants other than the reporter
 - After `set_rating`, the rating and `tier_id` of `RatingUserState` are that value and that tier
 - After `Withdraw`, that user has no `RatingUserState`
