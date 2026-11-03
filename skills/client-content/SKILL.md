@@ -1,6 +1,6 @@
 ---
 name: client-content
-description: Holds the rules of client content code for folder structure, feature boundary, core usage, role split with server, shared formula, deterministic simulation, tick simulation, scene and prefab, DEV code, automation channel connection, bot playtest scenario and save fixture, row simulation and client regression test, and the per-engine content rules. Read when writing or fixing client content code, when doing client hardening, when the server hardening agent looks at `## role split with server`, and when the core agent writes per-engine content rules or writes the scenario of a benchmark game
+description: Holds the rules of client content code for folder structure, feature boundary, core usage, role split with server, shared formula, deterministic simulation, tick simulation, scene and prefab, DEV code, automation channel connection, bot playtest scenario and save fixture, row simulation and client regression test, and the engine-specific implementation rules. Read when writing or fixing client content code, when doing client hardening, when the server hardening agent looks at `## role split with server`, and when the core agent writes engine-specific implementation rules or writes the scenario of a benchmark game
 ---
 
 # client content
@@ -9,7 +9,7 @@ Per-engine rules: [godot](engines/godot.md)
 
 ## folder
 
-The folders below are logical folders. A logical folder and a path under it that harness documents write mean the actual path in the engine project, and the per-engine rules `## project` set the actual path.
+The folders below are logical folders. A logical folder and a path under it that harness documents write mean the actual path in the engine project, and the engine-specific implementation rules `## project` set the actual path.
 
 | logical folder | contents | writer |
 |---|---|---|
@@ -30,7 +30,7 @@ The folders below are logical folders. A logical folder and a path under it that
 - A feature does not reference the code, scenes or prefabs of another feature. Notification between features uses content events of `EventCore`
 - Code that several features use goes in `client/common/`
 - Screen navigation uses `SceneCore`, `UICore` and `ShortcutCore`
-- Static check `feature boundary` blocks references across feature boundaries. The per-engine rules set which references it checks
+- Static check `feature boundary` blocks references across feature boundaries. The engine-specific implementation rules set which references it checks
 
 ## core usage
 
@@ -74,7 +74,7 @@ The folders below are logical folders. A logical folder and a path under it that
 - When there is an amount that grows as time passes, before a core request that uses that item as a cost (e.g. `BuyShopProduct`, `DrawGacha`) is sent, the content request that adds that amount is sent first and its success response received. The advance check of that core request uses the balance of `UserStateCore` with the delta of that response applied
 - Content code judges whether an end time has not passed yet with `TimeCore.is_before_end` ([`TimeCore`](../client-core/modules/time-core.md) `### reach` names those end times), not by whether `TimeCore.is_reached`(end time) is `false`
 - A formula that client and server both calculate, and the judgement of a `RequirementType` element for which content registers a judge hook on either the client or the server, are shared formulas. Each shared formula gets a name. A formula is `<feature>.<formula>`, a `RequirementType` element is `requirement.<element in snake_case>`, and each part is snake_case
-- The line right above the client function and the server function of a shared formula is a one-line comment `ogw:shared <name>`. On the server it is `// ogw:shared <name>`, and the per-engine rules set the comment format of the client. There is one in `client/` and one in `server/`
+- The line right above the client function and the server function of a shared formula is a one-line comment `ogw:shared <name>`. On the server it is `// ogw:shared <name>`, and the engine-specific implementation rules set the comment format of the client. There is one in `client/` and one in `server/`
 - Each shared formula has a fixture `data/fixtures/<name>.json`. Its format is `{"cases": [{"name": "<case>", "input": <JSON value>, "expected": <JSON value>}, ...]}`, with one or more cases. The client regression test reads that fixture with `UnitTestCore.read_shared_fixture`, and the server regression test with the `testing` operation `read_shared_fixture`, and they check per case that the function result equals `expected`
 - Static check `shared formula` blocks violations of the shared formula rules
 - A screen that calls paid random (probability disclosure of `server-content`) has a probability screen that the user can open before that request. Probabilities are calculated only as `numerator / denominator` of the `GetGachaRates` or `GetLootRates` response
@@ -89,7 +89,7 @@ The folders below are logical folders. A logical folder and a path under it that
 
 - deterministic simulation: a client simulation that must give the same result when run again with the same input on another device or on the server. Tick simulation and the client simulation whose result the `play-session` hook `verify_play_session` recalculates are deterministic simulations.
 
-- Its code goes in `client/features/<feature>/sim/` and `client/common/sim/` and keeps the rules below. The per-engine rules set the code it can call. Static check `determinism` blocks violations
+- Its code goes in `client/features/<feature>/sim/` and `client/common/sim/` and keeps the rules below. The engine-specific implementation rules set the code it can call. Static check `determinism` blocks violations
   - Integers only. Division and remainder use `UtilCore.floor_div` and `UtilCore.floor_mod`, and scaling uses `UtilCore.apply_permille`
   - Random is one random instance made with `UtilCore.create_random`(`UtilCore.make_purpose_seed`(purpose name, base)). The confirmed state of a tick simulation uses purpose name `match_simulation` and the match seed, and the simulation of `play-session` uses `play_session_simulation` and the simulation seed held in `loadout`
   - A simulation that uses time advances in fixed-length ticks, and the time is tick number × tick length. The tick length goes in a content table. `TimeCore` and frame elapsed time are not used
@@ -123,7 +123,7 @@ At build, the client hardening agent finds and fixes the items below based on th
 - Requests sent without an advance check
 - A core request that uses an item as a cost without first sending the content request that adds the amount of that item that grows as time passes
 - DEV code outside `client/dev/`
-- Constants in the client's constants file (per-engine rules `## feature folder`) that are game data values
+- Constants in the client's constants file (engine-specific implementation rules `## feature folder`) that are game data values
 - Values set by data, the server or code that are embedded in the source text of text the client shows ([`data`](../data/SKILL.md) `### format`)
 - Code that puts text entered by another user (nickname, chat message, guild name) into a text element that interprets markup without escaping. e.g. BBCode of Godot `RichTextLabel`
 - Code that opens a URL not in data. Code that opens a URL that came from user input or a server response

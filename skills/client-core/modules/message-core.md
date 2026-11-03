@@ -26,7 +26,7 @@ Handles toasts and black box messages, notifications that are shown for a set du
 |---|---|---|---|---|
 | `prepare` | none | async operation. success flag | `false` | `BootstrapCore`(`Prepare` stage) |
 | `show_toast` | translation key, `FormatArgs` of `LocalizationCore` (optional), extra text (core only) | none | none | core, content code |
-| `show_black_box` | translation key, `FormatArgs` (optional) | none | none | core, content code |
+| `show_black_box` | translation key, `FormatArgs` (optional) | none | none | content code |
 | `close_black_box` | none | none | none | `SceneCore` |
 | `close_all` | none | none | none | `BootstrapCore`(restart, update reboot) |
 

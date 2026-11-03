@@ -27,7 +27,7 @@ export async function freePort(): Promise<number> {
   return port;
 }
 
-/** Secret values a LOCAL server takes as server start arguments (server-core `## adapter`), new for each instance. */
+/** Secret values a LOCAL server takes as server start arguments (server-core `## server start`), new for each instance. */
 export interface LocalSecrets {
   accessTokenKey: string;
   updateSigningKey: string;

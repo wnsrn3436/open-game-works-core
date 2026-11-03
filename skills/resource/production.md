@@ -62,7 +62,7 @@ The order for `trellis2` follows.
 
 ## sprite animation
 
-- The default method of `sprite_animation` is `sprite-gen-codex`. `sprite-gen-grok` is used only when `ogw generation methods` does not give `sprite-gen-codex`
+- The default method of `sprite_animation` is `sprite-gen-codex`. `sprite-gen-grok` is used only when `ogw generation methods` does not give `sprite-gen-codex` or gives it with the line `not installed`
 - A sprite-gen method is run only through the `cli` that `ogw generation methods` gave, with the commands below in this order
   1. `gen --provider <provider of that method>`: one base image. One target, full body, rest pose
   2. `prepare` with that base image in `--base-image`. The state names of its `--request` file are the `animations` names of `spec`

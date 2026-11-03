@@ -5,7 +5,7 @@ description: The procedure by which the lead agent of the `create game` and `upd
 
 # game loop
 
-The lead agent runs the `ogw` commands below and acts on what they print. What the commands compute and the formats of the files they write are defined in [`ogw`](../../tools/ogw.md); the lead agent does not need that document to run them.
+The lead agent runs the `ogw` commands of this document and acts on what they print. What the commands compute and the formats of the files they write are defined in [`ogw`](../../tools/ogw.md); the lead agent does not need that document to run them.
 
 ## start
 
@@ -45,10 +45,11 @@ An iteration is a fun iteration or a completeness iteration (AGENTS.md `## loop`
 4. Step 4 runs inside `ogw loop evaluate`, and the lead agent does nothing in it. Judge agents play in new contexts, and the tool counts their votes. The loop iteration record holds the result: `vs baseline` (`better`, `worse`, `indistinguishable`, or none without a baseline game) and `vs reference` (`pass`, `fail`, `unknown`, or none in a fun iteration)
 5. `ogw loop findings <game>` writes the finding file, and the lead agent fills in each finding as `## defect list` says
 6. The lead agent runs `ogw loop record <game>`. The tool merges the findings into the defect list, changes `status`, and writes and commits the loop iteration record `records/loops/<run>/iteration-<n>.md`. When `## temporary resources` of that record is not `none`, the lead agent tells the human those keys, that the temporary method made them (the report of the resource job gives the cause), and that the next `update game` makes them again. It does not wait for an answer
-7. No command: `ogw loop evaluate` and `ogw loop variants` decide the baseline game of the next iteration from the loop iteration records. `ogw loop baseline <game>` prints that commit when the lead agent needs it
+7. No command: `ogw loop evaluate` and `ogw loop variants` decide the baseline game of each iteration from the loop iteration records before it. `ogw loop baseline <game>` prints the baseline game of the current iteration
 8. `ogw loop verdict <game>` prints the stop reason and the evidence for the judgement, or `continue` or `confirm`. If the loop stops, the lead agent goes to `## end`. If the loop does not stop, the lead agent waits for `ogw loop sync <game> --background` with `ogw job wait <id>` and goes to the next iteration
 
 - During the loop, the lead agent does not wait for the human
+- The lead agent writes an assumption in `records/loops/<run>/assumptions.md` in the format of `### assumption` of [`game-design`](../game-design/SKILL.md)
 - If harness settings `useLocalCore` is `true`, `ogw loop next` does not raise the number and exits with a nonzero code. The lead agent then stops without closing the run and tells the human
 - If the core version of the game is not the core version of the harness, `ogw loop next` does not raise the number and exits with a nonzero code. The lead agent closes the run with `ogw loop end <game>` and tells the human the two ways out that the output names
 - If the content agent fails, the lead agent calls it again with `ogw agent retry <id> --background` and waits with `ogw agent wait <id>`. If `ogw agent retry` reaches `backgroundRetryLimit` and exits with a nonzero code, the lead agent stops without closing the run and reports to the human
@@ -105,7 +106,7 @@ When the human says to continue a run that is not closed, the lead agent runs `o
 
 A sub-agent is called with `ogw agent <role> --game <game> --input <file> --background`, and in the loop the lead agent calls only the content agent: `ogw loop variants` calls variant agents, `ogw loop dispatch` calls resource sub-agents and translation sub-agents, and `ogw loop evaluate` calls play agents and judge agents. `ogw agent status <id>` returns one of `running`, `done`, `failed`, and `ogw agent wait <id>` waits until the job ends and then returns the result file path. `ogw agent stop <id>` ends that job as `failed` and stops the jobs and instances that agent started.
 
-- The loop does not wait for resource sub-agents and translation sub-agents. `ogw loop sync` merges finished work and reassigns work that failed or could not be merged, up to harness settings `backgroundRetryLimit`. `ogw loop sync` is not run while the content agent works
+- The loop does not wait for resource sub-agents and translation sub-agents. `ogw loop sync` merges finished work and reassigns work that failed, hit a conflict while merging or whose `ogw data` failed, up to harness settings `backgroundRetryLimit`. `ogw loop sync` is not run while the content agent works
 - When `ogw loop dispatch` prints `install failed <method>: ...`, the lead agent tells the human that line in its report
 
 ## video

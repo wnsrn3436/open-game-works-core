@@ -19,13 +19,13 @@ You are the core agent of open-game-works. The first line of the input file, `co
 - Do not add a public API, hook, event or core settings key that is not in the spec. Do not guess and write what is needed, or what is not known because the spec cannot settle it; write it in `## spec proposals` of the report
 - Write core settings values only to `core-settings.json`, with `ogw settings set core`
 - In git, only commit to the branch of that worktree. Do not switch branches or rewrite history
-- When the input gives the absolute harness path of an engine-specific implementation rules document, write to that path and make `ogw docs check` pass. Do not commit that document. Do not edit other files of the harness. When that document is the only target of the input, skip steps 2 and 3
+- When the input gives the absolute harness path of an engine-specific implementation rules document, or names `## <engine> build` of `tools/ogw.md`, write to that path or that section (`## godot build` shows its form) and make `ogw docs check` pass. Do not commit them. Do not edit other files of the harness. When they are the only target of the input, skip steps 2 and 3
 
 ## report
 
 Write it to `output`.
 
-- `## done`: the modules and tools made, and the paths of the engine-specific implementation rules documents written
+- `## done`: the modules and tools made, the paths of the engine-specific implementation rules documents written, and whether `## <engine> build` of `tools/ogw.md` was written
 - `## spec proposals`: spec change proposals
 - `## review`: for each finding id of the input, `fixed` (the fixed file:line and the added test) or `disputed` (evidence). `none` when there is no review file
 - `## unverified`: what could not be checked

@@ -62,7 +62,10 @@ interface DeviceRun {
   external: ExternalClient;
 }
 
-/** `## device performance` 4–5 with the exported apk: install, port reverse, launch, the `performance` verdict, uninstall. */
+/**
+ * ogw.md `### device performance` 4–5 with the exported apk: install, port reverse, launch, the `performance` verdict,
+ * uninstall.
+ */
 async function onDevice(d: DeviceRun, apk: string): Promise<BuildCheck> {
   const { ctx } = d.input;
   const ports = [new URL(d.instance.serverUrl).port, String(d.external.automationPort)];
@@ -89,8 +92,8 @@ async function onDevice(d: DeviceRun, apk: string): Promise<BuildCheck> {
 }
 
 /**
- * `## device performance` 2: whether UDP from the device reaches this host (`ogw env check`); null when the device
- * could not be asked (`adb shell` did not run, ended with another code or gave no answer in time).
+ * ogw.md `### device performance` 2: whether UDP from the device reaches this host (`ogw env check`); null when the
+ * device could not be asked (`adb shell` did not run, ended with another code or gave no answer in time).
  */
 async function udpReachesHost(ctx: Context, serial: string): Promise<boolean | null> {
   const address = lanAddress();

@@ -141,7 +141,7 @@ Content code registers hooks in core: functions that take over game-specific dec
 - Core receives the text it shows to humans as reserved strings and the sounds it plays as reserved sounds. Naming rules and table format follow [`data`](../data/SKILL.md)
 - The general tables core defines are in `data/tables/`. e.g. the tutorial step table. The enum elements and invariants core sets are written in `## data` of the spec
 - The rules for putting the reserved names, table headers, enum elements and invariants written in `## data` of a spec into game data and checking them follow core data in [`data`](../data/SKILL.md)
-- The rules for table rows, cell values and reserved rows written in `## data` of a spec are data checks. The binary build fails on a data check ERROR, and then `ogw instance start`, `ogw check` and `ogw build run` stop and do not start a server with that data. When a spec writes `the server does not start` in a data rule, it means this result. A server module does not check those rules again at server start, and the `## test` items of those rules are checked with data tool tests
+- The rules for table rows, cell values and reserved rows written in `## data` of a spec are data checks. The binary build fails on a data check ERROR, and then `ogw instance start`, `ogw check` and `ogw build run` stop and do not start a server with that data. When a spec writes `the server does not start` in a data rule, it means this result. A server module does not check those rules again at server start, except a rule whose spec line says that server start checks it, and the `## test` items of those rules are checked with data tool tests
 
 ## collected data
 

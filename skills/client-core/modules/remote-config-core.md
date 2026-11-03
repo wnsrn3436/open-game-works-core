@@ -33,7 +33,7 @@ Receives and keeps the config values, feature flags and experiment assignments t
 | `has_received` | none | whether server values were received at least once in this boot | `false` | content code |
 | `refresh` | none | async operation. success flag | `false` | content code |
 
-- key ID value is an ID value of the `remote_config_key` table, and experiment ID value is an ID value of the `experiment` table. Server core [`remote-config`](../../server-core/modules/remote-config.md) defines both tables and how content code gets these values
+- key ID value is an ID value of the `remote_config_key` table, and experiment ID value is an ID value of the `experiment` table. Server core [`remote-config`](../../server-core/modules/remote-config.md) defines both tables. Content code gets both through a reserved ID accessor
 
 ## behavior
 

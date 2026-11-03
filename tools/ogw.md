@@ -1,6 +1,6 @@
 # ogw
 
-Defines the internal behavior of the harness tool `ogw` that the agents calling its commands do not use, and the procedure for fixing `ogw`. The lead agent of `update harness tool` and the agent that fixes `ogw` read it.
+Defines the internal behavior of the harness tool `ogw` that the agents calling its commands do not use, and the procedure for fixing `ogw`. The lead agent of `update harness tool`, the agent that fixes `ogw` and a review agent whose target is an `ogw` command read it.
 
 - update harness tool
 - agent
@@ -490,7 +490,7 @@ The behavior of `ogw instance start`.
 
 What the harness tool writes in the engine project of a game. The renderer table is in `## engine settings` of [`client-content` Godot rules](../skills/client-content/engines/godot.md), because content runs on it.
 
-- The harness tool, the data tool and the contract tool set the actual path with the per-engine rules of game settings `engine`.
+- The harness tool, the data tool and the contract tool set the actual path with the engine-specific implementation rules of game settings `engine`.
 - The harness tool writes `client/.gitignore`, which ignores `addons/`, `android/`, `ios/plugins/` and `.godot/`. `.gitignore` of the game repo root ignores `build/`
 - In `project.godot`, `rendering/rendering_device/fallback_to_opengl3` is `true`
 - In `project.godot`, the harness tool writes the source text of reserved string `[app_name]` to `application/config/name`, its translation per supported language to `application/config/name_localized` (the source text for a missing translation; the key is the language `code` with `-` replaced by `_`), the file of resource `app_icon/main` to `application/config/icon`, and the file of resource `splash/main` to `application/boot_splash/image`
@@ -513,7 +513,7 @@ What the harness tool writes in the engine project of a game. The renderer table
 
 ## telemetry compare
 
-The tool counts an `input_latency_ms` difference of 17 ms or less as no difference. `--from-a`, `--to-a` are the ms interval counted from when the `A` instance started, and `--from-b`, `--to-b` the ms interval counted from when the `B` instance started. When comparing a moment, give for each instance the interval in which that moment was played. The start of the interval is the `device ms` that `ogw step` printed for the last step before that moment, and the end is the `device ms` it printed for the last step of that moment. In a scene played in `free` or `script` mode, read the start and end as `device ms` of `ogw telemetry <instance> --summary` right before and right after playing that moment. When there is no `B`, read with `ogw telemetry <instance>`.
+The tool counts an `input_latency_ms` difference of 17 ms or less as no difference.
 
 ## game init
 
@@ -568,11 +568,11 @@ The versions to get are all those written in the `engine.json` of the core relea
 - The stages (resolution, length) and the test inputs are fixed in the tool per method. Stages run from the lowest
 - Per stage, the result (`ok`, `failed`, `timeout`) and the duration taken are written. When a stage exceeds the `safetyTimeoutMs` of that method, it is cut off and is `timeout`
 - When `failed` or `timeout` comes out, the higher stages are not run
-- The tool gives the peak memory and the result file path per stage, and for a `failed` or `timeout` stage also the last 20 lines of stderr of the stopped call (`error`). These three are not put in harness settings
+- The tool gives the peak memory and the output folder (`output`) per stage, and for a `failed` or `timeout` stage also the last 20 lines of stderr of the stopped call (`error`). These three are not put in harness settings. It prints the result file once (`result`)
 - Among `procedural` methods, the methods other than `blender` and `rig-2d` have no standard test task. One `ok` stage without resolution and length is written
 - For `rig-2d`, one `ok` stage is written when `flux2-klein` has an `ok` stage (the result measured in this measurement; when this measurement did not measure it, the result in the result file; when it could not be measured, harness settings `measured`) and `ogw resource rig-split`, `rig-check`, `rig-mesh` pass the fixtures fixed in the tool, and otherwise one `failed` stage is written
 - When the sandbox blocked an access, it is written in the result
-- An `external-service` method not in `--allow` is not called, and that fact is written in the result. The result of such a method holds the duration taken and the cost; memory is not measured
+- An `external-service` method not in `--allow` is not called, and that fact is written in the result. The result of an `external-service` method that was called holds the duration taken and the cost; memory is not measured
 - An `external-service` method without `provider` has no standard test call, so it is not called, and that fact is written in the result
 - For a method with `provider`, the cost in the result is 0 for every billing
 - `catalog` methods have no standard test task. When the files that `ogw generation install` fetched are the same as the pinned information, one `ok` stage without resolution and length is written
@@ -642,7 +642,7 @@ Before the platform build, `ogw build run` makes the store privacy disclosure in
 
 - The answers are set per store data type by collecting the declaration rows that become that store data type by the tables below. linked, tracking and shared are `true` when any collected row has `true`, optional is `true` when all collected rows have `true`, and purpose is the union of the collected rows' purposes mapped by the table below. Per store data type, the draft writes these values and the `description` and `source` of the rows they come from. When there are no declaration rows, it writes that no data is collected
 - When game settings `consent.trackingRequest` is `false`, `app-store.md` and `PrivacyInfo.xcprivacy` treat `tracking` of every row as `false`. In a game that does not ask for tracking permission, the ads SDK does not track
-- `PrivacyInfo.xcprivacy`: `NSPrivacyTracking` is whether there is a store data type whose tracking is `true`, `NSPrivacyTrackingDomains` is an empty list, and `NSPrivacyCollectedDataTypes` has one item per store data type holding `NSPrivacyCollectedDataType`, `NSPrivacyCollectedDataTypeLinked`, `NSPrivacyCollectedDataTypeTracking`, `NSPrivacyCollectedDataTypePurposes`. The per-engine build method sets the required reason API items and how to include the file in the ios build
+- `PrivacyInfo.xcprivacy`: `NSPrivacyTracking` is whether there is a store data type whose tracking is `true`, `NSPrivacyTrackingDomains` is an empty list, and `NSPrivacyCollectedDataTypes` has one item per store data type holding `NSPrivacyCollectedDataType`, `NSPrivacyCollectedDataTypeLinked`, `NSPrivacyCollectedDataTypeTracking`, `NSPrivacyCollectedDataTypePurposes`. `## <engine> build` sets the required reason API items and how to include the file in the ios build
 - Along with the store data type answers, `google-play.md` writes the following: encrypted in transit is `Yes` because all transfer is HTTPS, users can request that data be deleted is `Yes`, and the account deletion URL is PROD `serverUrl` followed by `/account/deletion`. That address is the web account deletion page of [`auth`](../skills/server-core/modules/auth.md)
 
 data type mapping
@@ -1121,7 +1121,7 @@ How `ogw loop evaluate` calculates `ogw measure`. The same calculation can also 
 - `ogw measure <game> --collected <file>...`: calculates from files that `--collect` wrote. The telemetry of the files is checked by the same conditions
 - `ogw measure <game> <instance id>...`: collects the raw data of each instance and calculates right away
 - The calculation runs only when the game has an open run, no instance appears twice, and all instances have the same commit. One instance is one sample. The result file is `records/loops/<run>/measure-<iteration>.json` of that run, and the targets are read from `design.md` of the game repo. The free scenes of the metrics are read from `play-guide.md` of the instance commit; when that commit has none, no scene is a free scene
-- `ogw measure` writes the result file `records/loops/<run>/measure-<iteration>.json`. The format is `{"commit": "<sha>", "targets": [<target>, ...]}`, and `commit` is the commit of the measured instance. `<target>` is `{"metric": "<metric name>", "min": <integer>, "max": <integer>, "value": <number or null>, "result": "<in|out|unknown>", "data": "<table>.<column>" or null}` for each row of the `## feel targets` and `## tuning targets` tables of `design.md`. `value` is `null` when there is no value, and `data` is `null` when the `data` cell of that row is empty
+- `ogw measure` writes the result file `records/loops/<run>/measure-<iteration>.json`. The format is `{"commit": "<sha>", "targets": [<target>, ...]}`, and `commit` is the commit of the measured instance. `<target>` is `{"metric": "<metric name>", "min": <number>, "max": <number>, "value": <number or null>, "result": "<in|out|unknown>", "data": "<table>.<column>" or null}` for each row of the `## feel targets` and `## tuning targets` tables of `design.md`. `value` is `null` when there is no value, and `data` is `null` when the `data` cell of that row is empty
 - When the number of values is even, the median is the smaller of the two middle values
 - The scene at a time is the `scene_key` of the last `scene_loads` whose `at` is at or before that time.
 - The free scene time of a span is the device time of the span during which the scene is a free scene.

@@ -98,7 +98,7 @@ export async function withCheckInstance<T>(
   }
 }
 
-/** Launch values of `## device performance` 3 and `## web smoke` 2. */
+/** Launch values of ogw.md `### device performance` 3 and `### web smoke` 2. */
 export function launchValuesOf(instance: InstanceInfo, external: ExternalClient, platform: string): LaunchValues {
   return {
     OGW_SERVER_URL: `http://127.0.0.1:${new URL(instance.serverUrl).port}`,

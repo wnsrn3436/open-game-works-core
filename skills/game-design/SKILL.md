@@ -1,13 +1,13 @@
 ---
 name: game-design
-description: Holds the format of the documents the content agent writes (brief.md, design.md, play-guide.md, core proposal, assumption in the loop) and the criteria for deciding without asking the human. Read when designing the game or editing documents in the loop of `create game` and `update game`, and when the lead agent of `update core` looks at the core proposal format
+description: Holds the format of the documents the content agent writes (brief.md, design.md, play-guide.md, core proposal, assumption in the loop) and the criteria for deciding without asking the human. Read when designing the game or editing documents in the loop of `create game` and `update game`, when the lead agent of `update core` looks at the core proposal format, and when the lead agent of `create game`, `update game` or `build` writes an assumption
 ---
 
 # game design
 
 ## brief
 
-`brief.md` has the headings below in this order. In `create game`, `ogw loop start` writes a draft that has every heading and fills the name and path in `## reference game` and the original request text in `## request`. The content agent fills the rest. When the work branch already has `brief.md`, there is no draft, and the content agent edits that `brief.md` to match `request.md` in iteration 1.
+`brief.md` has the headings below in this order. In `create game`, `ogw loop start` writes a draft that has every heading and fills the name and path in `## reference game` and the original request text in `## request`. The content agent fills the rest. In `create game`, when the work branch already has `brief.md`, there is no draft, and the content agent edits that `brief.md` to match `request.md` in iteration 1.
 
 | heading | contents |
 |---|---|

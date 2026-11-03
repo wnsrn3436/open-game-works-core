@@ -38,7 +38,7 @@ function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-/** `performance` `## host load`: reads the host every `intervalMs` until `stop`. */
+/** ogw.md `### host load`: reads the host every `intervalMs` until `stop`. */
 export class HostLoadSampler {
   private readonly probe: HostProbe;
   private readonly timer: NodeJS.Timeout;

@@ -56,7 +56,7 @@ The definition and calculation of the contract version and the rules for changin
   - the same (kind, from version) is registered twice
   - the (kind, from version) is not in `GameContract.CONVERTERS`
   - when `register` ends, a (kind, from version) of `GameContract.CONVERTERS` is not registered
-  - it is called before `begin_start()` or after `complete_start()`
+  - it is called before `begin_start()`. A call after `complete_start()` does not stop server start: it throws
 
 ### convert_item
 

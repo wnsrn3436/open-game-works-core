@@ -32,7 +32,7 @@ export interface LoopOptions {
   db?: 'postgresql';
   /** Polling interval of instance state. */
   pollMs: number;
-  /** Host load sampling interval (`performance` `## host load`: 1000 ms). */
+  /** Host load sampling interval (ogw.md `### host load`: 1000 ms). */
   sampleMs: number;
   probe?: HostProbe;
 }

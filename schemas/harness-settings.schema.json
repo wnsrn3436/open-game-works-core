@@ -207,7 +207,7 @@
       }
     },
     "loop": {
-      "description": "Values of the loop iteration kinds and the step 4 judges. `## loop next` and `## loop evaluate` of `tools/ogw.md` define their meaning",
+      "description": "Values of the loop iteration kinds and the step 4 judges. `## loop next`, `## loop variants` and `## loop evaluate` of `tools/ogw.md` define their meaning",
       "x-scope": "local",
       "type": "object",
       "additionalProperties": false,

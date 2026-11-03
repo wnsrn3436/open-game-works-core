@@ -455,12 +455,15 @@ export function missingGdextensionLibraries(output: string): string[] {
   return output.split(/\r?\n/).filter((line) => /No "[^"]+" library found for GDExtension/.test(line)).map((line) => line.trim());
 }
 
-/** Launch values of the DEV export of check `device performance` or `web smoke` (`## device performance`, `## web smoke`). */
+/**
+ * Launch values of the DEV export of check `device performance` or `web smoke` (ogw.md `### device performance`,
+ * `### web smoke`).
+ */
 export type LaunchValues = Record<string, string>;
 
 /**
- * Engine, data binaries, core settings, plugins and android build files of the build workspace (`## export` 1). Returns
- * the engine and the `[config] name` of the ios plugins.
+ * Engine, data binaries, core settings, plugins and android build files of the build workspace (ogw.md `### export` 1).
+ * Returns the engine and the `[config] name` of the ios plugins.
  */
 async function prepareWorkspace(ctx: Context, input: PlatformBuildInput, platform: string, root: string): Promise<{ godot: string; iosPlugins: string[] }> {
   const meta = await engineJson(ctx, input.game, 'godot');
@@ -483,8 +486,8 @@ async function prepareWorkspace(ctx: Context, input: PlatformBuildInput, platfor
 }
 
 /**
- * The steps of `## export` 7 after the Godot export, while the keychain of `## signing` exists: the web service worker,
- * the localized iOS tracking text, and the macOS signing after the export.
+ * The steps of ogw.md `### export` 7 after the Godot export, while the keychain of `### signing` exists: the web service
+ * worker, the localized iOS tracking text, and the macOS signing after the export.
  */
 async function afterExport(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string, options: Record<string, unknown>, signing: Signing): Promise<void> {
   // an export that made no page is reported by the output check of the caller
@@ -499,7 +502,7 @@ async function afterExport(ctx: Context, input: PlatformBuildInput, platform: st
 }
 
 /**
- * `## export` 2–7 in the build workspace. With `launchValues` it is the DEV export of a build-time check:
+ * ogw.md `### export` 2–7 in the build workspace. With `launchValues` it is the DEV export of a build-time check:
  * `generated/launch_values.json` instead of `generated/build_info.json`, and `generated/launch_values.json`
  * taken out of `exclude_filter`.
  */
