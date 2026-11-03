@@ -1,6 +1,6 @@
 {
   "target": "loop",
-  "nextId": 3,
+  "nextId": 4,
   "items": [
     {
       "id": "D1",
@@ -13,6 +13,12 @@
       "location": "tools/src/commands/loop/lib/record.ts:118",
       "problem": "`ogw loop record` crashes on a play that has no result file. `launchPlay` (tools/src/commands/loop/lib/evaluate.ts:416) writes the play entry `{\"result\": \"\", \"status\": \"failed\"}` when the save fixture of a judge moment does not start, which `## loop evaluate` of tools/ogw.md allows and tools/test/commands/loop/evaluate.test.ts:347 asserts. `playsOf` then calls `readGameText(game, \"\")`, whose path is the game repo root, so `exists` is true and `readFile` throws `EISDIR`. Reproduced in a temporary copy: `iterationOne()` of tools/test/commands/loop/record.test.ts plus that play entry makes `ogw loop findings` pass and `ogw loop record` exit 1 with `EISDIR: illegal operation on a directory`. No iteration record is written, so `ogw loop verdict` also refuses and the iteration cannot end. A moment whose fixture is missing at the work branch HEAD (e.g. an unwritten `memorable_moment.json`) is enough to reach it. Both lines are the same at the start of the range",
       "foundBy": "loop round 1"
+    },
+    {
+      "id": "D3",
+      "location": "tools/src/commands/input/input.ts:168",
+      "problem": "No test fails when `runScript` no longer reads an already noted budget before the script starts. The range added this line, so that a step the budget stops is `not sent and not waited for` (input.ts:158-160) before its first input. In a temporary copy I replaced it with `let budget: PlayBudget | null = null;` and ran `test/commands/input`, `test/commands/step`, `test/commands/agent/play-budget.test.ts` and `test/commands/agent/play-budget-overlap.test.ts`. The only failure was the broker sandbox test of `play-budget.test.ts`, which also fails in that copy without the change. The behavior does change. With a judge agent whose budget has passed, a script with one `tap` at `atMs` 3000 ends in 52 ms at HEAD and in 3041 ms with the change, and `--video` with a `tap` at `atMs` 0 sends no `capture_video` and returns no video at HEAD, while with the change it sends `capture_video` and returns a video of a script that put in no input. Exit code 1 and `notSent` 1 are the same in both, so only a test that asserts the time or the `capture_video` request catches it. The code belongs to the `ogw input` target",
+      "foundBy": "loop round 2"
     }
   ]
 }
