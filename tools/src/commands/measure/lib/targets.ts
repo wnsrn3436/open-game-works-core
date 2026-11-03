@@ -65,6 +65,7 @@ export function rowProblems(row: TargetRow): string[] {
   const maxOk = shape.test(row.max);
   if (!minOk) out.push(`min \`${row.min}\` of \`${row.metric}\` is not ${kind}`);
   if (!maxOk) out.push(`max \`${row.max}\` of \`${row.metric}\` is not ${kind}`);
-  if (minOk && maxOk && Number(row.min) > Number(row.max)) out.push(`min ${row.min} of \`${row.metric}\` is greater than max ${row.max}`);
+  // an integer value can be above 2^53, where a Number no longer tells two integers apart
+  if (minOk && maxOk && (decimal ? Number(row.min) > Number(row.max) : BigInt(row.min) > BigInt(row.max))) out.push(`min ${row.min} of \`${row.metric}\` is greater than max ${row.max}`);
   return out;
 }

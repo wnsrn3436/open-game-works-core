@@ -144,6 +144,16 @@ describe('build run', () => {
     expect(out.stdout).toContain('server image ghcr.io/example/game-server:dev-0.1.0@sha256:pushed');
   });
 
+  it('builds the STG server image for STG: the image it pushes holds no DEV code', async () => {
+    const ws = makeWorkspace();
+    const { dir, env, log } = prepare(ws, { privacy: { contentData: [] } });
+    await openBuildRun(ws, dir, { env: 'STG', version: '0.2.0', platforms: ['linux'] });
+    expect((await ogw(ws, ['build', 'run', 'g'], { env })).stderr).toBe('');
+    expect(result(dir, 'stg-0.2.0').serverImage).toEqual({ name: 'ghcr.io/example/game-server', tag: 'stg-0.2.0', digest: 'sha256:pushed' });
+    const context = readFileSync(join(ws.root, 'fake-bin', 'server_context'), 'utf8').trim();
+    expect(readFileSync(log, 'utf8')).toContain(`docker buildx build --platform linux/amd64 --file ${join(context, 'core/Dockerfile')} --build-arg OGW_ENV=STG --label ogw.compat_client_data_version= --tag ghcr.io/example/game-server:stg-0.2.0 --push ${context}`);
+  });
+
   it('stops before building when a check fails, and records human checks', async () => {
     const ws = makeWorkspace();
     const settings = gameSettings();

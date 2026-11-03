@@ -3,16 +3,19 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseProtoErrors } from '../../../src/commands/core/lib/base-proto-check.ts';
-import { godotDataVariable, renderDeps } from '../../../src/commands/core/lib/godot.ts';
+import { godotDataVariable, renderDeps, type ModuleOutcome } from '../../../src/commands/core/lib/godot.ts';
 import { serverCoreStaticCheck } from '../../../src/commands/core/lib/core-server-static-check.ts';
 import { readTestRecords, SCREEN_LOCKED_SKIP } from '../../../src/commands/core/lib/test-records.ts';
 import { serverModuleTest } from '../../../src/commands/core/lib/server-tests.ts';
 import { runToolTest } from '../../../src/commands/core/lib/tool-test.ts';
 import { writeCoreSpec } from '../../../src/commands/core/spec-api.ts';
-import { parallelismOf, recordTarget, testSummary } from '../../../src/commands/core/test.ts';
+import { parallelismOf, recordTarget, runResult, testSummary } from '../../../src/commands/core/test.ts';
 import type { ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
 import { toolProgram } from '../../../src/commands/env/api.ts';
+import { newAgentKey } from '../../../src/lib/agentctx.ts';
+import { jobsDir } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, sh } from '../../helpers/workspace.ts';
+import { fakeAgentJob } from '../instance/agents.ts';
 import { writeFiles } from './helpers.ts';
 import { specModule } from './impl-fixture.ts';
 import { setup } from './test-fixture.ts';
@@ -113,6 +116,31 @@ describe('ogw core test godot', () => {
       commit: sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim(), target: 'godot', modules: { LogCore: 'pass', UICore: 'skipped' },
       skips: { UICore: SCREEN_LOCKED_SKIP }, recordedAt: expect.any(Number) as number,
     }]);
+  });
+
+  it('has screenLocked in the summary and the run log only when every module passed or left its render pass out for the lock', async () => {
+    const { ws, env } = setup();
+    renderDeps.screenLocked = () => Promise.resolve(true);
+    // a failed module on a locked screen
+    const failed = JSON.parse((await ogw(ws, ['core', 'test', 'godot', '--json'], { env: { ...env, FAKE_FAIL: 'log_core' } })).stdout) as object;
+    expect(failed).toMatchObject({ modules: { LogCore: 'fail', UICore: 'skipped' } });
+    expect(failed).not.toHaveProperty('screenLocked');
+    const locked = JSON.parse((await ogw(ws, ['core', 'test', 'godot', '--json'], { env })).stdout) as { tests: number; passed: number; screenLocked?: boolean };
+    expect(locked.screenLocked).toBe(true);
+    expect(locked.passed).toBe(locked.tests);
+    // the run log summary is what `ogw agent merge` reads
+    const key = newAgentKey('agcore1');
+    const remove = await fakeAgentJob(ws.env, 'agcore1', { role: 'core', cliPid: 999_999, keyHash: key.hash });
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env: { ...env, OGW_AGENT_KEY: key.value } })).code).toBe(1);
+    remove();
+    const log = JSON.parse(readFileSync(join(await jobsDir(ws.env), 'agcore1-runs.json'), 'utf8')) as { runs: unknown[] };
+    expect(log.runs).toEqual([{ command: 'ogw core test godot', startedAt: expect.any(Number) as number, exitCode: 1, summary: { tests: locked.tests, passed: locked.tests, screenLocked: true } }]);
+    // every module passed, and a `skipped` of another reason
+    const target = { kind: 'server' } as const;
+    const pass = { tests: 1, passed: 1, failures: [] };
+    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass']]), new Map<string, ModuleOutcome>([['a', pass]])).summary).toEqual({ tests: 1, passed: 1 });
+    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass'], ['b', 'skipped']]), new Map<string, ModuleOutcome>([['a', pass], ['b', { ...pass, skipped: 'another reason' }]])).summary).toEqual({ tests: 2, passed: 2 });
+    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass'], ['b', 'skipped']]), new Map<string, ModuleOutcome>([['a', pass]])).summary).toEqual({ tests: 2, passed: 1 });
   });
 
   it('runs the dependents of a failed module with their own result, fails, and records each result of the clean checkout', async () => {

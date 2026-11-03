@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { flag, positional, str, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { readText } from '../../lib/fsx.ts';
-import { checkPlayBudget } from '../agent/lib/play-budget.ts';
+import { checkPlayBudget, notePlayBudget, releasesHeld, type PlayBudget } from '../agent/lib/play-budget.ts';
 import { recordVideo, takesFormat, type VideoCapture, videoDir } from '../capture/capture.ts';
 import { automationRequest } from '../instance/automation.ts';
 import { inputHelp, inputHoldMs, isPlayInput } from '../instance/lib/qa.ts';
@@ -129,6 +129,8 @@ export interface ScriptRun {
   video: VideoCapture | null;
   /** Why the video failed; null when it did not fail or there is no video. */
   videoError: string | null;
+  /** The refusal of the steps the play budget stopped; null when it stopped none. */
+  refusal: string | null;
 }
 
 /** Game settings `targetFps` in the play access of the instance: the client frame rate the script times `text` with. */
@@ -138,14 +140,27 @@ export async function instanceTargetFps(ctx: Context, instanceId: string): Promi
   return fps;
 }
 
-/** Puts the steps in at their `atMs` from the start, in real time, without waiting for anyone else. */
-export async function runScript(ctx: Context, instanceId: string, steps: readonly ScriptStep[], video: boolean, targetFps: number): Promise<ScriptRun> {
+/** Whether `budget` stops a step whose time is unix ms `at`: past it only the release of a held input goes in. */
+function pastBudget(budget: PlayBudget | null, at: number, step: ScriptStep): boolean {
+  return budget !== null && Math.max(at, Date.now()) >= budget.endsAt && !releasesHeld([step.command, ...step.args]);
+}
+
+/**
+ * Puts the steps in at their `atMs` from the start, in real time, without waiting for anyone else. A step `budget` stops
+ * is not sent and not waited for, and the steps after it still run: one of them can release a held input.
+ */
+export async function runScript(ctx: Context, instanceId: string, steps: readonly ScriptStep[], video: boolean, targetFps: number, budget: PlayBudget | null): Promise<ScriptRun> {
   if (await mainStepMode(ctx, instanceId)) throw new OgwError('the client is in step mode; turn it off with ogw step-mode first');
   const prepared = video ? await prepareVideo(ctx, instanceId, steps, targetFps) : null;
   const start = Date.now();
   let recording: Promise<VideoCapture> | null = null;
   const results: StepResult[] = [];
+  let refusal: string | null = null;
   for (const step of steps) {
+    if (pastBudget(budget, start + step.atMs, step)) {
+      refusal = budget?.refusal ?? null;
+      continue;
+    }
     const wait = start + step.atMs - Date.now();
     if (wait > 0) await sleep(wait);
     if (prepared !== null && recording === null) {
@@ -166,11 +181,11 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
       break;
     }
   }
-  if (recording === null) return { results, video: null, videoError: null };
+  if (recording === null) return { results, video: null, videoError: null, refusal };
   try {
-    return { results, video: await recording, videoError: null };
+    return { results, video: await recording, videoError: null, refusal };
   } catch (error) {
-    return { results, video: null, videoError: error instanceof Error ? error.message : String(error) };
+    return { results, video: null, videoError: error instanceof Error ? error.message : String(error), refusal };
   }
 }
 
@@ -190,24 +205,26 @@ export const input: CommandDef = {
     if (flag(args, 'help')) return { text: inputHelp(), data: { help: inputHelp() } };
     const instanceId = positional(args, 0, 'instance');
     const script = str(args, 'script');
-    await checkPlayBudget(ctx, script === undefined ? args.positionals.slice(1) : undefined, instanceId);
     if (script === undefined) {
+      await checkPlayBudget(ctx, args.positionals.slice(1), instanceId);
       if (flag(args, 'video')) throw new OgwError('--video goes with --script');
       return singleInput(ctx, instanceId, positional(args, 1, 'input command'), args.positionals.slice(2));
     }
     if (args.positionals.length !== 1) throw new OgwError(`usage: ${this.usage}`);
     const fps = await instanceTargetFps(ctx, instanceId);
     const steps = parseScript(await readText(resolve(ctx.cwd, script)), fps);
-    const { results, video, videoError } = await runScript(ctx, instanceId, steps, flag(args, 'video'), fps);
+    // a script of releases only starts no play budget
+    const budget = steps.every((s) => releasesHeld([s.command, ...s.args])) ? null : await notePlayBudget(ctx, instanceId);
+    const { results, video, videoError, refusal } = await runScript(ctx, instanceId, steps, flag(args, 'video'), fps, budget);
     const lines = results.map((r) => `${String(r.atMs)} ${String(r.sentAt)} ${r.command} ${r.ok ? 'ok' : 'failed'} ${JSON.stringify(r.result)}`);
     const notSent = steps.length - results.length;
-    if (notSent > 0) lines.push(`not sent: ${String(notSent)} steps`);
+    if (notSent > 0) lines.push(`not sent: ${String(notSent)} steps${refusal === null ? '' : `: ${refusal}`}`);
     if (video) lines.push(`video: ${video.dir}`);
     if (videoError !== null) lines.push(`video failed: ${videoError}`);
     return {
       exitCode: results.every((r) => r.ok) && notSent === 0 && videoError === null ? 0 : 1,
       text: lines.join('\n'),
-      data: { steps: results, notSent, video: video ? { path: video.dir, frames: video.frames, result: video.result } : null, videoError },
+      data: { steps: results, notSent, refusal, video: video ? { path: video.dir, frames: video.frames, result: video.result } : null, videoError },
     };
   },
 };

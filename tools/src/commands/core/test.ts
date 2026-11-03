@@ -348,6 +348,28 @@ async function keepPassed(
   }
 }
 
+/** The result of a run: `screenLocked` when every module that did not pass only left its render pass out for the screen lock. */
+export function runResult(target: Target, results: Map<string, ModuleResult>, outcomes: Map<string, ModuleOutcome>): CommandResult {
+  const ok = [...results.values()].every((r) => r === 'pass');
+  const screenLocked = !ok && [...results].every(([m, r]) => r === 'pass' || (r === 'skipped' && outcomes.get(m)?.skipped === SCREEN_LOCKED_SKIP));
+  const summary = { ...testSummary(results, outcomes), ...(screenLocked ? { screenLocked } : {}) };
+  return {
+    exitCode: ok ? 0 : 1,
+    text: summaryText(results, outcomes),
+    data: {
+      target: recordTarget(target),
+      modules: Object.fromEntries(results),
+      failures: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.failures])),
+      counts: Object.fromEntries([...outcomes].map(([m, o]) => [m, { tests: o.tests, passed: o.passed, ran: o.ran !== false }])),
+      durationsMs: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.durationMs ?? null])),
+      skipped: Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.skipped === undefined ? [] : [[m, o.skipped]]))),
+      reused: [...outcomes].filter(([, o]) => o.reused === true).map(([m]) => m),
+      ...summary,
+    },
+    summary,
+  };
+}
+
 /** `ogw core test <engine|server|tools> [<module>...] [--web]`. */
 export const testCommand: CommandDef = {
   name: ['core', 'test'],
@@ -403,24 +425,7 @@ export const testCommand: CommandDef = {
       } finally {
         await start.release();
       }
-      const ok = [...results.values()].every((r) => r === 'pass');
-      const screenLocked = !ok && [...results].every(([m, r]) => r === 'pass' || (r === 'skipped' && outcomes.get(m)?.skipped === SCREEN_LOCKED_SKIP));
-      const summary = { ...testSummary(results, outcomes), ...(screenLocked ? { screenLocked } : {}) };
-      return {
-        exitCode: ok ? 0 : 1,
-        text: summaryText(results, outcomes),
-        data: {
-          target: recordTarget(target),
-          modules: Object.fromEntries(results),
-          failures: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.failures])),
-          counts: Object.fromEntries([...outcomes].map(([m, o]) => [m, { tests: o.tests, passed: o.passed, ran: o.ran !== false }])),
-          durationsMs: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.durationMs ?? null])),
-          skipped: Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.skipped === undefined ? [] : [[m, o.skipped]]))),
-          reused: [...outcomes].filter(([, o]) => o.reused === true).map(([m]) => m),
-          ...summary,
-        },
-        summary,
-      };
+      return runResult(target, results, outcomes);
     } finally {
       await rm(work, { recursive: true, force: true });
     }

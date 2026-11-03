@@ -11,7 +11,7 @@ import { lineReader, STDIN_REQUEST, STDIN_STREAM_REQUEST, type BrokerMessage, ty
 import { createContext } from '../../../lib/command.ts';
 import { killTree, spawnTracked } from '../../../lib/proc.ts';
 import type { CliCommand } from './cli-command.ts';
-import { brokerBudgetRefusal } from './play-budget.ts';
+import { brokerBudgetRefusal } from './broker-budget.ts';
 
 /**
  * The broker commands (ogw.md `## agent`): the only commands a broker runs, with their `--help`. The commands the

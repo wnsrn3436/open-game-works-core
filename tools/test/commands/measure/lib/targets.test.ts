@@ -11,4 +11,9 @@ describe('rowProblems', () => {
     expect(rowProblems(row('feedback_share', 'x', '1'))).toEqual(['min `x` of `feedback_share` is not a number']);
     expect(rowProblems(row('goal_interval_ms', '0.5', '10'))).toEqual(['min `0.5` of `goal_interval_ms` is not an integer']);
   });
+
+  it('tells two integers apart above 2^53', () => {
+    expect(rowProblems(row('content.gold', '9007199254740993', '9007199254740992'))).toEqual(['min 9007199254740993 of `content.gold` is greater than max 9007199254740992']);
+    expect(rowProblems(row('content.gold', '9007199254740992', '9007199254740993'))).toEqual([]);
+  });
 });

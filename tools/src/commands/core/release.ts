@@ -7,6 +7,7 @@ import { commitPaths, currentBranch, git, gitRaw, head, revParse, statusLines, t
 import { LIMITS } from '../../lib/limits.ts';
 import type { HarnessSettings } from '../../lib/settings.ts';
 import { clearReviews } from '../review/api.ts';
+import { leftLines } from '../review/lib/left.ts';
 import { remoteReleaseVersions } from './api.ts';
 import { buildAssets } from './lib/assets.ts';
 import { assetUrl, createRelease, releaseExists } from './lib/github.ts';
@@ -169,8 +170,8 @@ export const releaseCommand: CommandDef = {
       const left = await clearReviews(ctx, 'core');
       const harnessLine = `harness tag ${harnessCoreTag(version)} at ${harness.head}`;
       return {
-        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...untested, ...debt, ...left].join('\n'),
-        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), untested, debt },
+        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...untested, ...debt, ...leftLines(left)].join('\n'),
+        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), untested, debt, ...left },
       };
     } finally {
       await rm(out, { recursive: true, force: true });

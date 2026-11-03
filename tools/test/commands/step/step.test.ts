@@ -1,8 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { newMarks } from '../../../src/commands/step/step.ts';
+import { newAgentKey } from '../../../src/lib/agentctx.ts';
+import { jobsDir } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
+import { fakeAgentJob } from '../instance/agents.ts';
 import { setupRunner, startFor, stopAll, type Runner } from '../instance/runner.ts';
 
 vi.mock('../../../src/commands/generate/api.ts', async () => (await import('../instance/mocks/apis.ts')).generate);
@@ -267,6 +270,31 @@ describe('ogw step --stream', () => {
     runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
     expect(await ogw(runner.ws, ['step', id, '50', '--stream'], { stdin: 'step\nstep 3\n' })).toMatchObject({ code: 0, stderr: '' });
     expect((await ogw(runner.ws, ['step', id, '50', '--stream', '--count', '2'], { stdin: 'step\n' })).stderr).toContain('--count does not go with --stream');
+  });
+});
+
+describe('ogw step of a judge agent past the budget of the instance', () => {
+  it('refuses a step and the step and input lines of a stream without sending them, and puts in a release', async () => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    const key = newAgentKey('agjudgestep1');
+    const remove = await fakeAgentJob(runner.ws.env, 'agjudgestep1', { role: 'judge', cliPid: 999_999, keyHash: key.hash });
+    const folder = join(await jobsDir(runner.ws.env), 'play-budget', 'judge-agjudgestep1');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, id), String(Date.now() - 240_000));
+    const env = { OGW_AGENT_KEY: key.value };
+    const passed = `the play budget of 240 s of instance ${id} has passed: put in no more input on it`;
+    const before = runner.requests('main').length;
+    expect(await ogw(runner.ws, ['step', id, '50'], { env })).toMatchObject({ code: 1, stderr: expect.stringContaining(passed) as unknown });
+    expect(runner.requests('main').slice(before)).toEqual([]);
+    const run = await ogw(runner.ws, ['step', id, '50', '--stream'], { env, stdin: 'step\ninput tap 1 1\ninput key_up A\n' });
+    expect(run.code).toBe(1);
+    expect(run.stdout.trimEnd().split('\n').map((line) => JSON.parse(line) as unknown)).toEqual([
+      { exit: 1, error: passed },
+      { exit: 1, error: passed },
+      expect.objectContaining({ exit: 0 }) as unknown,
+    ]);
+    expect(runner.requests('main').slice(before).map((r) => r.command)).toEqual(['key_up']);
+    remove();
   });
 });
 

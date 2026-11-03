@@ -128,7 +128,7 @@ describe('broker', () => {
       const file = join(await jobsDir(ws.env), 'play-budget', 'agplay1');
       writeFileSync(file, String(Date.now() - 900_000));
       started.length = 0;
-      for (const argv of [['step', 'instp1', '50', '--state'], ['input', 'instp1', 'key_down', 'a'], ['input', 'instp1', '--script', 's.txt']]) {
+      for (const argv of [['step', 'instp1', '50', '--state'], ['input', 'instp1', 'key_down', 'a']]) {
         const refused = await forward(socket, argv, env);
         expect(refused).toMatchObject({ code: 1, stdout: '' });
         expect(refused.stderr).toContain('the play budget of 900 s since the first input has passed');
@@ -139,6 +139,57 @@ describe('broker', () => {
       expect((await forward(socket, ['input', 'instp1', 'pad_axis', 'left_x', '1'], env)).code).toBe(1);
       expect(await forward(socket, ['capture', 'instp1'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
       expect(started).toEqual([['input', 'instp1', 'key_up', 'a'], ['input', 'instp1', 'pad_axis', 'left_x', '0'], ['capture', 'instp1']]);
+      // the command checks each step of a script and each line of a stream
+      started.length = 0;
+      for (const argv of [['input', 'instp1', '--script', 's.txt'], ['step', 'instp1', '50', '--stream']]) {
+        expect(await forward(socket, argv, env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      }
+      expect(started).toEqual([['input', 'instp1', '--script', 's.txt'], ['step', 'instp1', '50', '--stream']]);
+    } finally {
+      await broker.close();
+      remove();
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses the step or input of a judge agent past the budget of that instance, and a name that is no instance id, before it starts a command', async () => {
+    const ws = jobWorkspace();
+    const folder = await newTempFolder('ogw-broker-');
+    const input = join(folder, 'input.json');
+    writeFileSync(input, JSON.stringify({ A: { instance: 'insta', playGuide: '/x' }, B: null, fixtures: [] }));
+    const key = newAgentKey('agjudge1');
+    const remove = await fakeAgentJob(ws.env, 'agjudge1', { role: 'judge', cliPid: 999_999, keyHash: key.hash, input, folder });
+    const socket = join(folder, 'b', 's');
+    const started: string[][] = [];
+    const broker = await startBroker({
+      socket,
+      key: key.value,
+      command: (argv) => {
+        started.push([...argv]);
+        return { cmd: process.execPath, args: ['-e', "process.stdout.write('ran\\n')"] };
+      },
+      env: { ...ws.env, OGW_AGENT_KEY: key.value },
+    });
+    const budgets = join(await jobsDir(ws.env), 'play-budget');
+    try {
+      const env = { OGW_AGENT_KEY: key.value };
+      for (const name of ['../../escaped/made', '']) {
+        expect(await forward(socket, ['step', name, '50'], env)).toMatchObject({ code: 1, stdout: '', stderr: `ogw broker: invalid instance id: ${name}\n` });
+      }
+      expect(started).toEqual([]);
+      expect(existsSync(budgets)).toBe(false);
+      expect(existsSync(join(budgets, '..', 'escaped'))).toBe(false);
+      expect(await forward(socket, ['step', '--count', '6', 'insta', '50'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      writeFileSync(join(budgets, 'judge-agjudge1', 'insta'), String(Date.now() - 240_000));
+      started.length = 0;
+      const refused = await forward(socket, ['step', '--count', '6', 'insta', '50'], env);
+      expect(refused).toMatchObject({ code: 1, stdout: '' });
+      expect(refused.stderr).toContain('the play budget of 240 s of instance insta has passed');
+      expect((await forward(socket, ['input', 'insta', 'tap', '1', '1'], env)).code).toBe(1);
+      expect(started).toEqual([]);
+      for (const argv of [['step', '--count', '6', 'instb', '50'], ['input', 'insta', 'key_up', 'a'], ['step', 'insta', '50', '--stream']]) {
+        expect(await forward(socket, argv, env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      }
     } finally {
       await broker.close();
       remove();

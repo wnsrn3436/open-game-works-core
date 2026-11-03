@@ -18,7 +18,7 @@ import { writeImpl } from './impl-fixture.ts';
 
 vi.mock('../../../src/commands/core/spec-api.ts', () => ({ buildCoreSpec: vi.fn(), writeCoreSpec: vi.fn() }));
 vi.mock('../../../src/commands/code/api.ts', () => ({ runCodeCheck: vi.fn() }));
-vi.mock('../../../src/commands/review/api.ts', () => ({ lastReviewResults: vi.fn(), changedSinceDone: vi.fn(), clearReviews: vi.fn(() => Promise.resolve([] as string[])) }));
+vi.mock('../../../src/commands/review/api.ts', () => ({ lastReviewResults: vi.fn(), changedSinceDone: vi.fn(), clearReviews: vi.fn(() => Promise.resolve({ notRemoved: [] as string[], discarded: [] as string[] })) }));
 vi.mock('../../../src/commands/core/lib/undefined.ts', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isServerCoreTest: (rel: string) => rel.includes('/tests/'),
@@ -103,13 +103,14 @@ describe('ogw core release', () => {
   it('releases when every condition holds', async () => {
     const { ws, env, gh } = await setup();
     // what the clear of the core reviews could not remove is in the output
-    vi.mocked(clearReviews).mockResolvedValueOnce(['not removed: /w/_core/agent-x', 'not removed: agent/x']);
+    const left = { notRemoved: ['/w/_core/agent-x', 'agent/x'], discarded: ['agent/y: 2 commits not in main, last abc'] };
+    vi.mocked(clearReviews).mockResolvedValueOnce(left);
     const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
     const harnessHead = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
-    expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nharness tag core-v1.2.0 at ${harnessHead}\nnot removed: /w/_core/agent-x\nnot removed: agent/x\n`);
+    expect(run.stdout).toBe(`released 1.2.0: tag v1.2.0 at ${head}\nharness tag core-v1.2.0 at ${harnessHead}\nnot removed: /w/_core/agent-x\nnot removed: agent/x\ndiscarded: agent/y: 2 commits not in main, last abc\n`);
     // the harness commit whose specs the core was made from
     expect(sh(ws.harness, 'git', ['rev-parse', 'core-v1.2.0^{commit}']).trim()).toBe(harnessHead);
     expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%s']).trim()).toBe('core release 1.2.0: plugin URLs and SHA-256');
@@ -129,6 +130,36 @@ describe('ogw core release', () => {
     expect(runCodeCheck).toHaveBeenCalledWith(expect.anything(), 'core', ws.coreImpl);
     expect(baseProtoBreaks).toHaveBeenCalledWith(expect.anything(), ws.coreImpl, '1.1.0');
     expect(sh(ws.coreImpl, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('carries what the clear of the core reviews left in --json', async () => {
+    const { ws, env } = await setup();
+    const left = { notRemoved: ['/w/_core/agent-x', 'agent/x'], discarded: ['agent/y: 2 commits not in main, last abc'] };
+    vi.mocked(clearReviews).mockResolvedValueOnce(left);
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES, '--json'], { env });
+    expect(run.code).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject(left);
+  });
+
+  it('names in each review line the command that goes on from the result of that target', async () => {
+    const { ws, env } = await setup();
+    vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'limit'], ['data-tool', 'blocked'], ['contract-tool', 'escalate'], ['routing', 'done']]));
+    const item = { id: 'M1', severity: 'high', location: 'a.ts:1', problem: 'p', foundBy: 'x' };
+    writeFiles(ws.coreImpl, {
+      'records/review-must-fix/routing.json': { target: 'routing', nextId: 2, items: [item] },
+      'records/review-must-fix/spec-UICore.json': { target: 'spec UICore', nextId: 2, items: [item] },
+    });
+    commitAll(ws.coreImpl, 'lists');
+    await recordAllPass(ws.coreImpl);
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES, '--json'], { env });
+    const { violations } = (JSON.parse(run.stdout) as { data: { violations: string[] } }).data;
+    expect(violations).toEqual(expect.arrayContaining([
+      'review LogCore: last round result is limit; run ogw review run core LogCore --continue',
+      'review data-tool: last round result is blocked; run ogw review run core data-tool --respec',
+      'review contract-tool: last round result is escalate; run ogw review run core contract-tool',
+      'review must fix routing: M1 high a.ts:1: p; fix it, then run ogw review run core routing --reopen',
+      'review must fix spec UICore: M1 high a.ts:1: p; fix it, then run ogw review spec core UICore --since <harness commit before the fix>',
+    ]));
   });
 
   it('lists every violated condition and changes nothing', async () => {
@@ -162,9 +193,9 @@ describe('ogw core release', () => {
       'core-spec/NewCore.json is missing',
       'core-spec/notes.md is not a module',
       'core-spec/routing.json is not a module',
-      'review LogCore: last round result is fix',
-      'review data-tool: last round result is none',
-      'review contract-tool: last round result is running',
+      'review LogCore: last round result is fix; run ogw review run core LogCore',
+      'review data-tool: last round result is none; run ogw review run core data-tool',
+      'review contract-tool: last round result is running; run ogw review run core contract-tool',
       'review UICore: changed since its done round 2; run ogw review run core UICore --reopen',
       'review routing: changed since v1.1.0 and has no review state; run ogw review run core routing --since v1.1.0',
       'ogw code check core: lint fail\n  a.gd:1 x\n  b.gd:2 y',
@@ -196,7 +227,7 @@ describe('ogw core release', () => {
     await recordAllPass(ws.coreImpl);
     const refused = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES, '--json'], { env });
     expect(refused.code).toBe(1);
-    expect((JSON.parse(refused.stdout) as { data: { violations: string[] } }).data.violations).toEqual(['review must fix routing: M1 high server/core/routing/a.ts:3: p']);
+    expect((JSON.parse(refused.stdout) as { data: { violations: string[] } }).data.violations).toEqual(['review must fix routing: M1 high server/core/routing/a.ts:3: p; fix it, then run ogw review run core routing --since <main commit before the fix>']);
     writeFiles(ws.coreImpl, { 'records/review-must-fix/routing.json': { target: 'routing', nextId: 2, items: [] } });
     commitAll(ws.coreImpl, 'fixed');
     await recordAllPass(ws.coreImpl);
@@ -220,7 +251,7 @@ describe('ogw core release', () => {
     ]);
     vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'done'], ['data-tool', 'done']]));
     sh(ws.coreImpl, 'git', ['tag', '--delete', 'v1.1.0']);
-    expect(await violations()).toEqual(['review targets since v1.1.0: tag v1.1.0 is not in open-game-works-core-impl/']);
+    expect(await violations()).toEqual(['review targets since v1.1.0: tag v1.1.0 is not in open-game-works-core-impl/; fetch it, then run ogw review run core <target> --since v1.1.0 for each target of ogw core review-targets --since v1.1.0']);
     sh(ws.coreImpl, 'git', ['tag', 'v1.1.0', 'HEAD~1']);
     expect((await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env })).code).toBe(0);
   });

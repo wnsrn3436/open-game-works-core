@@ -15,6 +15,20 @@ import { CORE_STUBS, lines, memContext, sorted } from './helpers.ts';
 const gd = (body: string): string => body.replace(/^\n/, '');
 
 describe('forbidden GDScript API', () => {
+  it('names the Packed array of each value element type', async () => {
+    const sc = memContext({
+      ...CORE_STUBS,
+      'client/features/shop/lists.gd': 'extends Node\nvar a: Array[float] = []\nvar b: Array[Vector2] = []\nvar c: Array[Vector3] = []\nvar d: Array[Vector4] = []\nvar e: Array[Color] = []\n',
+    });
+    expect(lines(await forbiddenApi.run(sc))).toEqual(sorted([
+      'client/features/shop/lists.gd:2 | forbidden GDScript API: `Array[float]`; use `PackedFloat32Array` or `PackedFloat64Array`',
+      'client/features/shop/lists.gd:3 | forbidden GDScript API: `Array[Vector2]`; use `PackedVector2Array`',
+      'client/features/shop/lists.gd:4 | forbidden GDScript API: `Array[Vector3]`; use `PackedVector3Array`',
+      'client/features/shop/lists.gd:5 | forbidden GDScript API: `Array[Vector4]`; use `PackedVector4Array`',
+      'client/features/shop/lists.gd:6 | forbidden GDScript API: `Array[Color]`; use `PackedColorArray`',
+    ]));
+  });
+
   it('finds forbidden notations, APIs and annotations in content code', async () => {
     const sc = memContext({
       ...CORE_STUBS,

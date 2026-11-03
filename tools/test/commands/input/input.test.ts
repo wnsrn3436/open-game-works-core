@@ -1,9 +1,12 @@
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { parseScript, videoSpanMs } from '../../../src/commands/input/input.ts';
 import { readRecord } from '../../../src/commands/instance/lib/records.ts';
+import { newAgentKey } from '../../../src/lib/agentctx.ts';
+import { jobsDir } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
+import { fakeAgentJob } from '../instance/agents.ts';
 import { setupRunner, startFor, stopAll, type Runner } from '../instance/runner.ts';
 
 vi.mock('../../../src/commands/generate/api.ts', async () => (await import('../instance/mocks/apis.ts')).generate);
@@ -212,6 +215,88 @@ describe('ogw input', () => {
     const run = await ogw(runner.ws, ['input', id, '--script', script]);
     expect(run.stderr).toContain('the client is in step mode');
     await ogw(runner.ws, ['step-mode', id, 'off']);
+  });
+
+  describe('as a judge agent', () => {
+    const BUDGET_MS = 240_000;
+    const PASSED = 'the play budget of 240 s of instance';
+    let jobs = 0;
+
+    /** A judge agent whose budget on the instance has `leftMs` left, or which put in no input on it when null. */
+    async function judge(leftMs: number | null): Promise<{ env: NodeJS.ProcessEnv; file: string; remove: () => void }> {
+      const job = `agjudgeinput${String(++jobs)}`;
+      const key = newAgentKey(job);
+      const remove = await fakeAgentJob(runner.ws.env, job, { role: 'judge', cliPid: 999_999, keyHash: key.hash });
+      const folder = join(await jobsDir(runner.ws.env), 'play-budget', `judge-${job}`);
+      const file = join(folder, id);
+      if (leftMs !== null) {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(file, String(Date.now() + leftMs - BUDGET_MS));
+      }
+      return { env: { OGW_AGENT_KEY: key.value }, file, remove };
+    }
+
+    function scriptOf(steps: unknown[]): string {
+      const script = join(runner.ws.root, 'budget.json');
+      writeFileSync(script, JSON.stringify({ steps }));
+      return script;
+    }
+
+    const commandsSince = (before: number): string[] => runner.requests('main').slice(before).map((r) => r.command);
+
+    it('refuses one input past the budget of the instance, without sending it, and puts in a release', async () => {
+      const { env, remove } = await judge(0);
+      const before = runner.requests('main').length;
+      expect(await ogw(runner.ws, ['input', id, 'tap', '1', '1'], { env })).toMatchObject({ code: 1, stderr: expect.stringContaining(PASSED) as unknown });
+      expect(commandsSince(before)).toEqual([]);
+      expect(await ogw(runner.ws, ['input', id, 'key_up', 'A'], { env })).toMatchObject({ code: 0 });
+      expect(commandsSince(before)).toEqual(['key_up']);
+      remove();
+    });
+
+    it('does not send the steps of a script from where the budget ends, and does not wait for them', async () => {
+      const { env, remove } = await judge(30_000);
+      const script = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }, { atMs: 100, command: 'key_down', args: ['A'] }, { atMs: 3_000_000, command: 'tap', args: ['1', '1'] }]);
+      const before = runner.requests('main').length;
+      const run = await ogw(runner.ws, ['input', id, '--script', script, '--json'], { env });
+      expect(run.code).toBe(1);
+      const data = JSON.parse(run.stdout) as { steps: { command: string }[]; notSent: number; refusal: string };
+      expect(data.steps.map((s) => s.command)).toEqual(['tap', 'key_down']);
+      expect(data.notSent).toBe(1);
+      expect(data.refusal).toContain(PASSED);
+      expect(commandsSince(before)).toEqual(['get_state', 'tap', 'key_down']);
+      remove();
+    });
+
+    it('puts in only the release steps of a script past the budget, and says why the others are not sent', async () => {
+      const { env, remove } = await judge(0);
+      const script = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }, { atMs: 50, command: 'key_up', args: ['A'] }, { atMs: 100, command: 'pad_axis', args: ['left_x', '0'] }, { atMs: 150, command: 'pad_axis', args: ['left_x', '1'] }]);
+      const before = runner.requests('main').length;
+      const run = await ogw(runner.ws, ['input', id, '--script', script], { env });
+      expect(run.code).toBe(1);
+      expect(run.stdout).toContain(`not sent: 2 steps: ${PASSED} ${id} has passed`);
+      expect(commandsSince(before)).toEqual(['get_state', 'key_up', 'pad_axis']);
+      remove();
+    });
+
+    it('runs a script of releases past the budget, and starts no budget with one', async () => {
+      const script = scriptOf([{ atMs: 0, command: 'key_up', args: ['A'] }]);
+      const past = await judge(0);
+      expect((await ogw(runner.ws, ['input', id, '--script', script], { env: past.env })).code).toBe(0);
+      past.remove();
+      const fresh = await judge(null);
+      expect((await ogw(runner.ws, ['input', id, '--script', script], { env: fresh.env })).code).toBe(0);
+      expect(existsSync(fresh.file)).toBe(false);
+      fresh.remove();
+    });
+
+    it('starts the budget of the instance with a script', async () => {
+      const { env, file, remove } = await judge(null);
+      const script = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }]);
+      expect((await ogw(runner.ws, ['input', id, '--script', script], { env })).code).toBe(0);
+      expect(existsSync(file)).toBe(true);
+      remove();
+    });
   });
 
   // last: the client main crashes

@@ -1,10 +1,12 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { agentContext } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { isNotFound } from '../../../lib/fsx.ts';
 import { jobsDir } from '../../../lib/jobs.ts';
+import { checkInstanceId } from '../../instance/lib/records.ts';
 
 export const playBudgetDeps = { now: (): number => Date.now() };
 
@@ -18,15 +20,36 @@ async function judgeFolder(env: NodeJS.ProcessEnv, agentJob: string): Promise<st
   return join(await jobsDir(env), 'play-budget', `judge-${agentJob}`);
 }
 
-/** Notes the first call on `file` and returns null, or returns the time of the first call. */
-async function firstCall(file: string, now: number): Promise<number | null> {
+/** The time a budget file holds; null when there is no file or no time in it. */
+async function notedTime(file: string): Promise<number | null> {
   try {
-    return Number(await readFile(file, 'utf8'));
+    const text = await readFile(file, 'utf8');
+    const time = text === '' ? Number.NaN : Number(text);
+    return Number.isFinite(time) ? time : null;
   } catch (error) {
-    if (!isNotFound(error)) throw error;
-    await mkdir(join(file, '..'), { recursive: true });
-    await writeFile(file, String(now));
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Notes the first call on `file` and returns null, or returns the time of the first call. The file appears whole and
+ * only once (a hard link fails when the name exists), so calls that overlap read one time, that of the first of them.
+ */
+async function firstCall(file: string, now: number): Promise<number | null> {
+  const noted = await notedTime(file);
+  if (noted !== null) return noted;
+  await mkdir(dirname(file), { recursive: true });
+  const temp = `${file}.tmp-${randomBytes(4).toString('hex')}`;
+  await writeFile(temp, String(now));
+  try {
+    await link(temp, file);
     return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    return await notedTime(file);
+  } finally {
+    await rm(temp, { force: true });
   }
 }
 
@@ -36,50 +59,45 @@ export function releasesHeld(input: readonly string[]): boolean {
   return command?.endsWith('_up') === true || (command === 'pad_axis' && Number(value) === 0);
 }
 
+export interface PlayBudget {
+  /** Unix ms when it ends. */
+  endsAt: number;
+  /** The refusal of an input or step past it. */
+  refusal: string;
+}
+
 /**
- * Fails an input or step of a play agent once harness settings `loop.playBudgetMs` has passed since its first input or
- * step, and of a judge agent on `instance` once `loop.judgeInstanceBudgetMs` has passed since its first one on that
- * instance; notes the time of the first one. Other callers pass, and so does an input that releases a held one
+ * Notes the first input or step of the caller and returns its budget: of a play agent harness settings
+ * `loop.playBudgetMs` since its first input or step, of a judge agent on `instance` `loop.judgeInstanceBudgetMs` since
+ * its first one on that instance. Other callers have none: null.
+ */
+export async function notePlayBudget(ctx: Context, instance?: string): Promise<PlayBudget | null> {
+  const agent = await agentContext(ctx.env);
+  const now = playBudgetDeps.now();
+  if (agent?.meta.role === 'judge' && instance !== undefined) {
+    // the instance comes from the agent, and the file of its budget is written outside the agent sandbox
+    checkInstanceId(instance);
+    const budget = (await ctx.settings()).loop.judgeInstanceBudgetMs;
+    const first = await firstCall(join(await judgeFolder(ctx.env, agent.job.id), instance), now);
+    return { endsAt: (first ?? now) + budget, refusal: `the play budget of ${String(Math.round(budget / 1000))} s of instance ${instance} has passed: put in no more input on it` };
+  }
+  if (agent?.meta.role !== 'play') return null;
+  const budget = (await ctx.settings()).loop.playBudgetMs;
+  const first = await firstCall(await startFile(ctx.env, agent.job.id), now);
+  return { endsAt: (first ?? now) + budget, refusal: `the play budget of ${String(Math.round(budget / 1000))} s since the first input has passed: put in no more input and write the result` };
+}
+
+/**
+ * Fails an input or step of the caller past its budget (`notePlayBudget`). An input that releases a held one passes
  * (`releasesHeld` of `input`, the input command and its arguments), so that no input stays held.
  */
 export async function checkPlayBudget(ctx: Context, input?: readonly string[], instance?: string): Promise<void> {
   if (input !== undefined && releasesHeld(input)) return;
-  const agent = await agentContext(ctx.env);
-  const now = playBudgetDeps.now();
-  if (agent?.meta.role === 'judge' && instance !== undefined) {
-    const budget = (await ctx.settings()).loop.judgeInstanceBudgetMs;
-    const first = await firstCall(join(await judgeFolder(ctx.env, agent.job.id), instance), now);
-    if (first !== null && Number.isFinite(first) && now - first >= budget) {
-      throw new OgwError(`the play budget of ${String(Math.round(budget / 1000))} s of instance ${instance} has passed: put in no more input on it`);
-    }
-    return;
-  }
-  if (agent?.meta.role !== 'play') return;
-  const budget = (await ctx.settings()).loop.playBudgetMs;
-  const first = await firstCall(await startFile(ctx.env, agent.job.id), now);
-  if (first !== null && Number.isFinite(first) && now - first >= budget) {
-    throw new OgwError(`the play budget of ${String(Math.round(budget / 1000))} s since the first input has passed: put in no more input and write the result`);
-  }
+  const budget = await notePlayBudget(ctx, instance);
+  if (budget !== null && playBudgetDeps.now() >= budget.endsAt) throw new OgwError(budget.refusal);
 }
 
 export async function clearPlayBudget(env: NodeJS.ProcessEnv, agentJob: string): Promise<void> {
   await rm(await startFile(env, agentJob), { force: true });
   await rm(await judgeFolder(env, agentJob), { recursive: true, force: true });
-}
-
-/**
- * The refusal the broker gives a forwarded `ogw step` or `ogw input` (`checkPlayBudget`) before it starts the command,
- * so that a refused call costs no command start; null to run it.
- */
-export async function brokerBudgetRefusal(ctx: Context, argv: readonly string[]): Promise<string | null> {
-  if (argv[0] !== 'step' && argv[0] !== 'input') return null;
-  if (argv.includes('--help')) return null;
-  const input = argv[0] === 'input' && !argv.some((a) => a === '--script' || a.startsWith('--script=')) ? argv.filter((a) => !a.startsWith('--')).slice(2) : undefined;
-  try {
-    await checkPlayBudget(ctx, input, argv.filter((a) => !a.startsWith('--'))[1]);
-    return null;
-  } catch (error) {
-    if (error instanceof OgwError) return error.message;
-    throw error;
-  }
 }

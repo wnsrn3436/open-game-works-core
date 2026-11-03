@@ -1,8 +1,9 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { newTempFolder } from '../../../src/commands/agent/lib/files.ts';
+import { brokerBudgetRefusal } from '../../../src/commands/agent/lib/broker-budget.ts';
 import { cliToRun } from '../../../src/commands/agent/lib/launch.ts';
 import { checkPlayBudget, clearPlayBudget, playBudgetDeps } from '../../../src/commands/agent/lib/play-budget.ts';
 import { createContext } from '../../../src/lib/command.ts';
@@ -119,5 +120,117 @@ describe('judge play budget', () => {
       judge.remove();
       await rm(folder, { recursive: true, force: true });
     }
+  });
+
+  /** A judge agent with a fake clock, for one test. */
+  async function judgeAt(name: string, test: (judge: { ctx: ReturnType<typeof createContext>; env: NodeJS.ProcessEnv; ws: ReturnType<typeof jobWorkspace>; folder: string; budget: number; passed: (instance: string) => string; pass: () => void }) => Promise<void>): Promise<void> {
+    const ws = jobWorkspace();
+    const tmp = await newTempFolder('ogw-judge-');
+    const judge = await agent(ws.env, 'judge', name, tmp);
+    const env = { ...ws.env, OGW_AGENT_KEY: judge.key };
+    const ctx = createContext({ cwd: ws.root, env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const budget = (await ctx.settings()).loop.judgeInstanceBudgetMs;
+    let now = 1_000_000;
+    playBudgetDeps.now = () => now;
+    try {
+      await test({
+        ctx,
+        env,
+        ws,
+        folder: join(await jobsDir(ws.env), 'play-budget', `judge-${name}`),
+        budget,
+        passed: (instance) => `the play budget of ${String(Math.round(budget / 1000))} s of instance ${instance} has passed: put in no more input on it`,
+        pass: () => {
+          now += budget;
+        },
+      });
+    } finally {
+      judge.remove();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  }
+
+  it('refuses a name that is no instance id and writes nothing, from the broker and in the command', async () => {
+    await judgeAt('agentjudge3', async ({ ctx, ws, env, folder }) => {
+      const jobs = await jobsDir(ws.env);
+      for (const name of ['../../escaped/made', '../../instance-releases/otherjob/instz', join(ws.root, 'outside', 'made'), '', '.']) {
+        await expect(checkPlayBudget(ctx, undefined, name)).rejects.toThrow(`invalid instance id: ${name}`);
+        expect(await brokerBudgetRefusal(ctx, ['step', name, '50'])).toBe(`invalid instance id: ${name}`);
+        expect(await brokerBudgetRefusal(ctx, ['input', name, 'tap', '1', '1'])).toBe(`invalid instance id: ${name}`);
+        expect((await ogw(ws, ['step', name, '50'], { env })).stderr).toContain(`invalid instance id: ${name}`);
+      }
+      expect(existsSync(join(jobs, 'escaped'))).toBe(false);
+      expect(existsSync(join(jobs, 'instance-releases'))).toBe(false);
+      expect(existsSync(join(ws.root, 'outside'))).toBe(false);
+      expect(existsSync(folder)).toBe(false);
+    });
+  });
+
+  it('reads the instance of a forwarded call as the command does', async () => {
+    await judgeAt('agentjudge4', async ({ ctx, folder, passed, pass }) => {
+      expect(await brokerBudgetRefusal(ctx, ['step', '--count', '6', 'insta', '50'])).toBeNull();
+      expect(await brokerBudgetRefusal(ctx, ['input', '--script=a.json', 'instb'])).toBeNull();
+      expect(readdirSync(folder)).toEqual(['insta']);
+      pass();
+      // the first step on another instance, with the same option before it
+      expect(await brokerBudgetRefusal(ctx, ['step', '--count', '6', 'instb', '50'])).toBeNull();
+      expect(await brokerBudgetRefusal(ctx, ['step', '--count', '6', 'insta', '50'])).toBe(passed('insta'));
+      expect(await brokerBudgetRefusal(ctx, ['step', '--json', '--state', 'insta', '50'])).toBe(passed('insta'));
+      expect(await brokerBudgetRefusal(ctx, ['input', '--json', 'insta', 'tap', '1', '1'])).toBe(passed('insta'));
+      expect(await brokerBudgetRefusal(ctx, ['input', 'insta', 'key_up', 'a'])).toBeNull();
+      // what does not parse is the command's to refuse, and the help is no input
+      expect(await brokerBudgetRefusal(ctx, ['step', '--nope', 'insta', '50'])).toBeNull();
+      expect(await brokerBudgetRefusal(ctx, ['step', 'insta', '50', '--help'])).toBeNull();
+      expect(await brokerBudgetRefusal(ctx, ['capture', 'insta'])).toBeNull();
+      expect(readdirSync(folder).sort()).toEqual(['insta', 'instb']);
+    });
+  });
+
+  it('neither starts nor refuses a stream when it opens: only its lines go through the budget', async () => {
+    await judgeAt('agentjudge5', async ({ ctx, folder, pass, passed, ws, env }) => {
+      const open = ['step', 'insta', '50', '--stream'];
+      expect(await brokerBudgetRefusal(ctx, open)).toBeNull();
+      expect(existsSync(folder)).toBe(false);
+      await checkPlayBudget(ctx, undefined, 'insta');
+      pass();
+      expect(await brokerBudgetRefusal(ctx, open)).toBeNull();
+      const run = await ogw(ws, open, { env, stdin: 'step\ninput tap 1 1\ninput key_up a\n' });
+      const lines = run.stdout.trimEnd().split('\n').map((line) => JSON.parse(line) as { exit: number; error: string });
+      expect(lines.slice(0, 2)).toEqual([{ exit: 1, error: passed('insta') }, { exit: 1, error: passed('insta') }]);
+      expect(lines[2]?.error).toContain('insta is not running');
+    });
+    // a play agent the same way
+    const ws = jobWorkspace();
+    const tmp = await newTempFolder('ogw-play-');
+    const play = await agent(ws.env, 'play', 'agentplay3', tmp);
+    const ctx = createContext({ cwd: ws.root, env: { ...ws.env, OGW_AGENT_KEY: play.key }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    try {
+      expect(await brokerBudgetRefusal(ctx, ['step', 'instp1', '50', '--stream'])).toBeNull();
+      expect(existsSync(join(await jobsDir(ws.env), 'play-budget', 'agentplay3'))).toBe(false);
+    } finally {
+      play.remove();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses ogw step and ogw input past the budget of that instance only, and lets a release through', async () => {
+    await judgeAt('agentjudge6', async ({ ctx, ws, env, passed, pass }) => {
+      await checkPlayBudget(ctx, undefined, 'insta');
+      pass();
+      for (const argv of [['step', 'insta', '50'], ['step', '--count', '2', 'insta', '50'], ['input', 'insta', 'tap', '1', '1']]) {
+        expect(await ogw(ws, argv, { env })).toMatchObject({ code: 1, stderr: expect.stringContaining(passed('insta')) as unknown });
+      }
+      for (const argv of [['input', 'insta', 'key_up', 'a'], ['step', 'instb', '50'], ['input', 'instb', 'tap', '1', '1']]) {
+        expect(await ogw(ws, argv, { env })).toMatchObject({ code: 1, stderr: expect.not.stringContaining('play budget') as unknown });
+      }
+    });
+  });
+
+  it('reads a budget file without a time as no time', async () => {
+    await judgeAt('agentjudge7', async ({ ctx, folder }) => {
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'insta'), '');
+      await checkPlayBudget(ctx, undefined, 'insta');
+    });
   });
 });

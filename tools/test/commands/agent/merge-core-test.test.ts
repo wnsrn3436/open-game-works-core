@@ -1,7 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addTestRecord } from '../../../src/commands/core/lib/test-records.ts';
+import type { ModuleOutcome } from '../../../src/commands/core/lib/godot.ts';
+import { addTestRecord, SCREEN_LOCKED_SKIP, type ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
+import { runResult } from '../../../src/commands/core/test.ts';
 import { ogw, commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { fakeAgentCli, runAgent } from './helpers.ts';
 import { coreJob, coreSpec, PASSED } from './merge-core-fixture.ts';
@@ -62,7 +64,11 @@ describe('ogw agent merge: core worktrees', () => {
   it('merges a core job whose last core test only left render passes out because the screen is locked', async () => {
     const ws = makeWorkspace();
     coreSpec(ws, { routing: [], storage: [] });
-    const locked = await coreJob(ws, 'routing', [{ ...PASSED, exitCode: 1, summary: { tests: 2, passed: 2, screenLocked: true } }]);
+    // what `ogw core test` gives for such a run
+    const pass = { tests: 1, passed: 1, failures: [] };
+    const result = runResult({ kind: 'engine', engine: 'godot', web: false }, new Map<string, ModuleResult>([['LogCore', 'pass'], ['UICore', 'skipped']]), new Map<string, ModuleOutcome>([['LogCore', pass], ['UICore', { ...pass, skipped: SCREEN_LOCKED_SKIP }]]));
+    expect(result.exitCode).toBe(1);
+    const locked = await coreJob(ws, 'routing', [{ ...PASSED, exitCode: result.exitCode, summary: result.summary }]);
     const notAllPassed = await coreJob(ws, 'storage', [{ ...PASSED, exitCode: 1, summary: { tests: 2, passed: 1, screenLocked: true } }]);
     const run = await ogw(ws, ['agent', 'merge', locked, notAllPassed]);
     expect(run.stdout.split('\n')).toContain(`merged ${locked}`);

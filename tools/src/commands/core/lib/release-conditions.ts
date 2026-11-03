@@ -98,6 +98,12 @@ function lowerRelease(version: string, released: readonly string[]): string | un
   return released.filter((v) => compareVersions(v, version) < 0).sort(compareVersions).at(-1);
 }
 
+/** The `ogw review run` command that goes on from the last result of a target (`core` command.md `## review and code check`). */
+function reviewRunCommand(target: string, result: string | null): string {
+  const options: Record<string, string> = { limit: ' --continue', blocked: ' --respec', done: ' --reopen' };
+  return `ogw review run core ${target}${options[result ?? ''] ?? ''}`;
+}
+
 /**
  * The review conditions (ogw.md `## core release`): each target with review state has a judged
  * `done` last round and did not change since it started, and each review target of the changes since the tag of the
@@ -114,7 +120,7 @@ export async function reviewViolations(
   const violations: string[] = [];
   const results = await lastReviewResults(ctx, 'core');
   for (const [target, result] of results) {
-    if (result !== 'done') violations.push(`review ${target}: last round result is ${result ?? 'none'}`);
+    if (result !== 'done') violations.push(`review ${target}: last round result is ${result ?? 'none'}; run ${reviewRunCommand(target, result)}`);
   }
   for (const [target, round] of await changedSinceDone(ctx, 'core')) {
     violations.push(`review ${target}: changed since its done round ${String(round)}; run ogw review run core ${target} --reopen`);
@@ -123,7 +129,7 @@ export async function reviewViolations(
   if (lower === undefined) return violations;
   const tag = releaseTag(lower);
   if ((await revParse(implDir, tag, { env: ctx.env })) === null) {
-    return [...violations, `review targets since ${tag}: tag ${tag} is not in open-game-works-core-impl/`];
+    return [...violations, `review targets since ${tag}: tag ${tag} is not in open-game-works-core-impl/; fetch it, then run ogw review run core <target> --since ${tag} for each target of ogw core review-targets --since ${tag}`];
   }
   const found = await reviewTargetsSince(ctx, implDir, new Map(modules.map((m) => [m.name, m])), tag, commit);
   for (const target of [...found.modules, ...found.tools].sort(byteCompare)) {
@@ -132,10 +138,19 @@ export async function reviewViolations(
   return violations;
 }
 
+/** The command that reviews the fix of a must-fix item of a list (`core` command.md `## review and code check`, `## spec review`). */
+function mustFixCommand(target: string, results: ReadonlyMap<string, string | null>): string {
+  const module = /^spec (.+)$/.exec(target)?.[1];
+  if (module !== undefined) return `ogw review spec core ${module} --since <harness commit before the fix>`;
+  if (!results.has(target)) return `ogw review run core ${target} --since <main commit before the fix>`;
+  return reviewRunCommand(target, results.get(target) ?? null);
+}
+
 /** The items of the must-fix lists of `implDir` (`core` command.md `## review lists`): each refuses the release. */
-export async function reviewDebtViolations(implDir: string): Promise<string[]> {
+export async function reviewDebtViolations(ctx: Context, implDir: string): Promise<string[]> {
+  const results = await lastReviewResults(ctx, 'core');
   return (await readAllLists(implDir, 'must fix')).flatMap((list) => list.items
-    .map((item) => `review must fix ${list.target}: ${item.id} ${item.severity ?? 'high'} ${item.location}: ${item.problem}`));
+    .map((item) => `review must fix ${list.target}: ${item.id} ${item.severity ?? 'high'} ${item.location}: ${item.problem}; fix it, then run ${mustFixCommand(list.target, results)}`));
 }
 
 /** The release output line of each debt list of `implDir` with items: `review debt <target>: <n>`. */
@@ -221,7 +236,7 @@ export async function releaseViolations(
     ...(await testRecordViolations(implDir, commit, modules)),
     ...(await coreSpecViolations(ctx, implDir)),
     ...(await reviewViolations(ctx, implDir, commit, modules, version, released)),
-    ...(await reviewDebtViolations(implDir)),
+    ...(await reviewDebtViolations(ctx, implDir)),
     ...(await codeCheckViolations(ctx, implDir)),
     ...constraintViolations(await readCoreSettings(implDir), await implementedConstraints(implDir, modules)),
     ...(await pluginBuildViolations(implDir)),

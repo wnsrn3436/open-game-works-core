@@ -214,6 +214,10 @@ describe('size', () => {
     expect(checkSize([doc('skills/a/ref.md', `# R\n\n- one\n- two\n\n${body.slice(5)}`)])).toEqual([]);
     expect(checkSize([doc('skills/a/short.md', '# R\n')])).toEqual([]);
     expect(checkSize([doc('agents/long.md', body)])).toEqual([]);
+    expect(checkSize([doc('tools/ogw.md', body)])).toEqual([
+      { item: 'size', where: 'tools/ogw.md', reason: 'reference file has 104 lines and no table of contents at the top' },
+    ]);
+    expect(checkSize([doc('tools/ogw.md', `# R\n\n- one\n- two\n\n${body.slice(5)}`)])).toEqual([]);
   });
 
   it('reads a table of contents of ## and ### titles in order', () => {

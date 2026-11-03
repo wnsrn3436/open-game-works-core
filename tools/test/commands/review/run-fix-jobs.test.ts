@@ -80,23 +80,28 @@ describe('ogw review run', () => {
     sh(ws.coreImpl, 'git', ['update-ref', `refs/heads/agent/${failed}`, extra]);
     const notMerged = sh(ws.coreImpl, 'git', ['rev-parse', `agent/${unmerged}`]).trim();
     const notMergedCount = sh(ws.coreImpl, 'git', ['rev-list', '--count', `main..agent/${unmerged}`]).trim();
-    const firstClear = await ogw(ws, ['review', 'clear', 'core']);
+    const firstClear = await ogw(ws, ['review', 'clear', 'core', '--json']);
     expect(firstClear.code).toBe(0);
-    expect(firstClear.stdout.split('\n').sort()).toEqual(['', 'cleared core review state', `discarded: agent/${failed}: 1 commits not in main, last ${extra}`, `discarded: agent/${unmerged}: ${notMergedCount} commits not in main, last ${notMerged}`].sort());
+    const firstData = JSON.parse(firstClear.stdout) as { cleared: string; notRemoved: string[]; discarded: string[] };
+    expect(firstData.notRemoved).toEqual([]);
+    expect([...firstData.discarded].sort()).toEqual([`agent/${failed}: 1 commits not in main, last ${extra}`, `agent/${unmerged}: ${notMergedCount} commits not in main, last ${notMerged}`].sort());
     expect([existsSync(tree(failed)), existsSync(tree(running))]).toEqual([false, true]);
     const branches = sh(ws.coreImpl, 'git', ['branch', '--format=%(refname:short)']);
     expect([failed, unmerged, running].map((id) => branches.includes(`agent/${id}`))).toEqual([false, false, true]);
     expect(sh(ws.coreImpl, 'git', ['worktree', 'list'])).not.toContain(`agent-${unmerged}`);
     await ogw(ws, ['agent', 'stop', running]);
-    // a branch checked out in a worktree outside the agent worktrees cannot be removed: it is named
+    // a branch checked out in a worktree outside the agent worktrees cannot be removed: it is named, and its commits
+    // that are not in main are not reported as discarded, as the branch still has them
     const elsewhere = join(ws.root, 'elsewhere');
     sh(ws.coreImpl, 'git', ['worktree', 'add', '--force', elsewhere, `agent/${running}`]);
+    sh(elsewhere, 'git', ['commit', '--allow-empty', '--no-verify', '-qm', 'not in main']);
     // a folder at an agent worktree path that git does not list is no worktree to remove: it is named
     mkdirSync(tree(failed), { recursive: true });
     writeFileSync(join(tree(failed), 'x'), '');
     const cleared = await ogw(ws, ['review', 'clear', 'core']);
     expect(cleared.code).toBe(0);
     expect(cleared.stdout.split('\n').sort()).toEqual(['', 'cleared core review state', `not removed: ${tree(failed)}`, `not removed: agent/${running}`].sort());
+    expect(sh(ws.coreImpl, 'git', ['branch', '--format=%(refname:short)'])).toContain(`agent/${running}`);
     expect(existsSync(tree(running))).toBe(false);
   });
 
