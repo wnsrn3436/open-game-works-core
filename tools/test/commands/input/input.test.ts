@@ -283,6 +283,20 @@ describe('ogw input', () => {
       remove();
     });
 
+    it('does not wait for the far step of a script when the budget ended before the script', async () => {
+      const { env, remove } = await judge(0);
+      const script = scriptOf([{ atMs: 3_000_000, command: 'tap', args: ['1', '1'] }]);
+      const before = runner.requests('main').length;
+      const run = await ogw(runner.ws, ['input', id, '--script', script, '--json'], { env });
+      expect(run.code).toBe(1);
+      const data = JSON.parse(run.stdout) as { steps: { command: string }[]; notSent: number; refusal: string };
+      expect(data.steps).toEqual([]);
+      expect(data.notSent).toBe(1);
+      expect(data.refusal).toContain(PASSED);
+      expect(commandsSince(before)).toEqual(['get_state']);
+      remove();
+    });
+
     it('puts in only the release steps of a script past the budget, and says why the others are not sent', async () => {
       const { env, remove } = await judge(0);
       const script = scriptOf([{ atMs: 0, command: 'tap', args: ['1', '1'] }, { atMs: 50, command: 'key_up', args: ['A'] }, { atMs: 100, command: 'pad_axis', args: ['left_x', '0'] }, { atMs: 150, command: 'pad_axis', args: ['left_x', '1'] }]);
