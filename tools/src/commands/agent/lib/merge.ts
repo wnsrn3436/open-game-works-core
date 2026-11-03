@@ -249,7 +249,7 @@ async function checkCoreTest(repo: string, id: string, meta: AgentMeta): Promise
   // a tool job while an engine's client core has not passed: `ogw core test tools` leaves that round trip out, `skipped`
   const toolsLeftOut = notPassed.length > 0 && meta.modules.length > 0 && meta.modules.every((module) => (TOOLS as readonly string[]).includes(module));
   const last = (toolsLeftOut ? runs.filter((run) => run.command.startsWith('ogw core test tools')) : runs).at(-1);
-  if (last === undefined || !(toolsLeftOut || last.exitCode === 0) || !allPassed(last.summary)) {
+  if (last === undefined || !(toolsLeftOut || last.exitCode === 0 || screenLocked(last.summary)) || !allPassed(last.summary)) {
     throw new MergeStop('no core test', `the run log has no passing ogw core test as its last one: call the agent again with the same input`);
   }
 }
@@ -289,6 +289,11 @@ async function clientModulesOnly(repo: string, id: string, meta: AgentMeta): Pro
     if (sideOf(bytes) !== 'client') return false;
   }
   return true;
+}
+
+/** A `ogw core test` run log summary of a run that only left render passes out, because the screen is locked. */
+function screenLocked(value: unknown): boolean {
+  return (value as { screenLocked?: unknown } | null | undefined)?.screenLocked === true;
 }
 
 /** A `ogw core test` run log summary with one test or more, all passed. */

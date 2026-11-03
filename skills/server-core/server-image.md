@@ -2,7 +2,7 @@
 
 The DEV, STG and PROD servers run as containers of the server image. The procedure for making and deploying it is set by [`build`](../build/SKILL.md).
 
-- `server.tgz` of a core release contains the `Dockerfile`. `ogw build run` makes the server image with `server/core/Dockerfile`, with the game's `server/` as build context
+- `server.tgz` of a core release contains the `Dockerfile`. `ogw build run` makes the server image with `server/core/Dockerfile`, with the game's `server/` as build context and the environment as build argument `OGW_ENV`. Outside `DEV`, the image holds no DEV code
 - The base image is pinned by digest. The Node major of the base image equals the Node major that `ogw core test server` ran on: requests to servers that require HTTP/2 (e.g. APNs) go over HTTP/2 because the global `fetch` of that Node picks `h2` through ALPN, and the core tests of `routing` check this. The container process runs as the user with UID 10001 and GID 10001
 - The server image contains the server code, the files of `server/build/data/`, the contract generated code, the merged core settings and the game settings values that core reads (for an item whose path has `<ENV>`, only the value of the environment of that build), and contains no secrets
 - The label `ogw.compat_client_data_version` of the server image is the value of `server/build/data/compat_client_data_version`. When that file does not exist, it is an empty string

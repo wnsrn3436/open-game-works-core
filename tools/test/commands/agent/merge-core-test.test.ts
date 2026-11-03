@@ -59,6 +59,16 @@ describe('ogw agent merge: core worktrees', () => {
     for (const id of [none, failed, vitest, exit1, running]) expect(run.stdout).toContain(`not merged ${id}: no core test:`);
   });
 
+  it('merges a core job whose last core test only left render passes out because the screen is locked', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { routing: [], storage: [] });
+    const locked = await coreJob(ws, 'routing', [{ ...PASSED, exitCode: 1, summary: { tests: 2, passed: 2, screenLocked: true } }]);
+    const notAllPassed = await coreJob(ws, 'storage', [{ ...PASSED, exitCode: 1, summary: { tests: 2, passed: 1, screenLocked: true } }]);
+    const run = await ogw(ws, ['agent', 'merge', locked, notAllPassed]);
+    expect(run.stdout.split('\n')).toContain(`merged ${locked}`);
+    expect(run.stdout).toContain(`not merged ${notAllPassed}: no core test:`);
+  });
+
   it('does not take an ogw core test run of one test file (--file) as the last ogw core test', async () => {
     const ws = makeWorkspace();
     coreSpec(ws, { routing: [], storage: [], auth: [] });

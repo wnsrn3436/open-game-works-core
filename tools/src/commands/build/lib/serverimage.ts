@@ -68,7 +68,7 @@ export async function serverImageDevCode(ctx: Context, game: GameRepo, settings:
     const image = join(dir, 'image.tar');
     await runOk(
       'docker',
-      ['buildx', 'build', '--platform', platform, '--file', join(server, 'core', 'Dockerfile'), '--output', `type=tar,dest=${image}`, server],
+      ['buildx', 'build', '--platform', platform, '--file', join(server, 'core', 'Dockerfile'), '--build-arg', `OGW_ENV=${env}`, '--output', `type=tar,dest=${image}`, server],
       { env: ctx.env, timeoutMs: LIMITS.programMs },
     );
     const entries: string[] = [];
@@ -92,6 +92,7 @@ export async function buildServerImage(ctx: Context, game: GameRepo, settings: G
         'buildx', 'build',
         '--platform', platform,
         '--file', join(server, 'core', 'Dockerfile'),
+        '--build-arg', `OGW_ENV=${env}`,
         '--label', `ogw.compat_client_data_version=${compat}`,
         '--tag', `${repository}:${tag}`,
         '--push',

@@ -133,7 +133,7 @@ describe('build run', () => {
     const context = readFileSync(join(fakeDir, 'server_context'), 'utf8').trim();
     expect(context).toMatch(/ogw-server-image-[^/]+\/server$/);
     expect(existsSync(context)).toBe(false);
-    expect(calls).toContain(`docker buildx build --platform linux/amd64 --file ${join(context, 'core/Dockerfile')} --label ogw.compat_client_data_version= --tag ghcr.io/example/game-server:dev-0.1.0 --push ${context}`);
+    expect(calls).toContain(`docker buildx build --platform linux/amd64 --file ${join(context, 'core/Dockerfile')} --build-arg OGW_ENV=DEV --label ogw.compat_client_data_version= --tag ghcr.io/example/game-server:dev-0.1.0 --push ${context}`);
     expect(JSON.parse(readFileSync(join(fakeDir, 'server_core_settings.json'), 'utf8'))).toEqual({ a: 1, 'environments.DEV.serverUrl': 'd', environments: { DEV: 1 } });
     expect(readFileSync(join(fakeDir, 'server_ls'), 'utf8').split('\n').filter(Boolean)).toEqual(['build', 'core', 'generated']);
     // DEV keeps the prepared modules of `ogw generate`: the DEV module cheat stays
@@ -345,7 +345,7 @@ describe('build run', () => {
     expect(out.code).toBe(1);
     expect(result(dir, 'stg-0.2.0').checks.find((c) => c.name === 'DEV code')).toEqual({ name: 'DEV code', result: 'fail', details: ['server image holds DEV code: server/dev/cheat.ts'] });
     expect(buildPlatforms).not.toHaveBeenCalled();
-    expect(readFileSync(join(ws.root, 'fake-bin', 'calls.log'), 'utf8')).toMatch(/docker buildx build --platform linux\/amd64 --file \S+\/core\/Dockerfile --output type=tar,dest=\S+\/image\.tar \S+\/server\n/);
+    expect(readFileSync(join(ws.root, 'fake-bin', 'calls.log'), 'utf8')).toMatch(/docker buildx build --platform linux\/amd64 --file \S+\/core\/Dockerfile --build-arg OGW_ENV=STG --output type=tar,dest=\S+\/image\.tar \S+\/server\n/);
     // the STG build context has the core settings file and server module list of the used modules, without DEV modules
     expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_core_settings.json'), 'utf8'))).toEqual({ b: 2, 'environments.STG.serverUrl': 's' });
     expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_server_modules.json'), 'utf8'))).toEqual(['routing']);

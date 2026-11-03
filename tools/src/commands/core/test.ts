@@ -24,7 +24,7 @@ import { startPostgres } from './lib/postgres.ts';
 import { runModulePool } from './lib/ready-queue.ts';
 import { specDirErrors } from './lib/spec-dir-check.ts';
 import { buildTestData, testGameSettings } from './lib/test-data.ts';
-import { addTestRecord, type ModuleResult } from './lib/test-records.ts';
+import { addTestRecord, SCREEN_LOCKED_SKIP, type ModuleResult } from './lib/test-records.ts';
 import { keepResult, keptResult, moduleKeys, type KeptResult } from './lib/test-reuse.ts';
 import { godotCoreStaticCheck } from './lib/core-static-check.ts';
 import { serverInternalImports } from './lib/core-server-imports.ts';
@@ -403,8 +403,9 @@ export const testCommand: CommandDef = {
       } finally {
         await start.release();
       }
-      const summary = testSummary(results, outcomes);
       const ok = [...results.values()].every((r) => r === 'pass');
+      const screenLocked = !ok && [...results].every(([m, r]) => r === 'pass' || (r === 'skipped' && outcomes.get(m)?.skipped === SCREEN_LOCKED_SKIP));
+      const summary = { ...testSummary(results, outcomes), ...(screenLocked ? { screenLocked } : {}) };
       return {
         exitCode: ok ? 0 : 1,
         text: summaryText(results, outcomes),
