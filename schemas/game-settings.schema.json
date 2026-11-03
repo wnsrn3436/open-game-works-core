@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "game-settings.schema.json",
   "title": "game settings",
-  "description": "When the x-owner of an item is content, the content agent can edit it in the loop. Humans and the harness tool edit the other items",
+  "description": "When the x-owner of an item is content, the content agent can edit it in the loop. The lead agent, humans and the harness tool edit the other items",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -138,7 +138,7 @@
       "maxItems": 2
     },
     "maxResolution": {
-      "description": "Maximum resolution of the game area. [width, height] in game coordinates units",
+      "description": "Maximum resolution of the game area. [width, height] in game coordinate units",
       "type": "array",
       "items": {
         "type": "integer",
@@ -201,7 +201,7 @@
       }
     },
     "uiQuality": {
-      "description": "The numbers of the UI quality check (`qa-core` UI quality check)",
+      "description": "The numbers of the `QACore` UI quality check",
       "type": "object",
       "additionalProperties": false,
       "properties": {

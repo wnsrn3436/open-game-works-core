@@ -124,7 +124,7 @@
           "type": "string"
         },
         "worktrees": {
-          "description": "The folder of the game repo worktrees that the harness tool creates. Kept outside games",
+          "description": "The folder of the game repo and core worktrees that the harness tool creates. Kept outside games",
           "type": "string"
         }
       }
@@ -442,7 +442,7 @@
           "default": 12
         },
         "testDevices": {
-          "description": "The android devices connected to this host that the check device performance at build uses for android builds",
+          "description": "The android devices connected to this host that build-time check `device performance` uses for android builds",
           "type": "array",
           "items": {
             "type": "object",
@@ -472,7 +472,7 @@
           "default": "flux2-klein"
         },
         "measured": {
-          "description": "Results per method and per step that `ogw generation measure` measured on this host. The key is the method `name` of `resourceGeneration`. Steps go from the lowest, and stop at the step that fails or exceeds the safety limit. A method that is not present is a method not measured on this host. Only `ogw env propose --apply` writes it",
+          "description": "Results per method and per stage that `ogw generation measure` measured on this host. The key is the method `name` of `resourceGeneration`. Stages go from the lowest, and stop at the stage that fails or exceeds the safety limit. A method that is not present is a method not measured on this host. Only `ogw env propose --apply` writes it",
           "type": "object",
           "x-owner": "tool",
           "additionalProperties": {
@@ -569,7 +569,7 @@
           "type": "string"
         },
         "safetyTimeoutMs": {
-          "description": "When one standard trial task of `update env` exceeds this duration, it is cut off and recorded as `timeout`",
+          "description": "When one standard test task of `update env` exceeds this duration, it is cut off and recorded as `timeout`",
           "type": "integer",
           "minimum": 1
         }
@@ -840,7 +840,7 @@
           "minimum": 1
         },
         "jobMs": {
-          "description": "The duration that one standard trial task took (ms)",
+          "description": "The duration that one standard test task took (ms)",
           "type": "integer",
           "minimum": 0
         },
