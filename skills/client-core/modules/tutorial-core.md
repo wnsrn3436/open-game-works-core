@@ -42,35 +42,36 @@ Runs the tutorial steps written in a data table in order, and does screen highli
 - completed tutorial: a tutorial whose progress step is at least the last `step` of that tutorial
 - `is_completed` of a tutorial ID value not in the `tutorial` table leaves an error log and is `false`
 - progress step save: sends the core rpc `SaveTutorialProgress`(tutorial ID value, `step`) of server `tutorial` with `NetworkCore.send`. Goes to the next step without waiting. The failure callback returns `true` and there is no screen display. On failure the progress step of this run stays as it is, and the next save or resend sends a `step` of that value or more
-- When the `step` to send is at most the value of `TutorialProgressUserState`, it is not sent. The server accepts only a `step` larger than the saved value
+- When the `step` to send is at most the value of `TutorialProgressUserState`, it is not sent. The server changes nothing for such a `step`
 - when it saves: when a step whose `save` is `true` is finished, when the last step is finished, when skipped (sends the last `step`)
 - resend: before choosing candidates, the start check sends `SaveTutorialProgress` with that `step` for each tutorial whose largest `step` saved in this run (a step whose `save` is `true`, the last step, the last `step` of a skip) is larger than the value of `TutorialProgressUserState`, when there is no `SaveTutorialProgress` of that tutorial waiting for a response
 
 ### tutorial state
 
-- active tutorial: a tutorial started in this run and not finished or skipped. Each active tutorial has one of the two states below
+- active tutorial: a tutorial started in this run and not finished or skipped. Each active tutorial has one of the two states `Shown` and `Paused`
   - `Shown`: step progress from 3 to 5. Only the `Shown` tutorial has the tutorial view and the block of reason tag `tutorial`. There is at most one `Shown` tutorial
   - `Paused`: step progress 1 or 2, or step progress has stopped. There can be several
 - current tutorial: the `Shown` tutorial. When there is none, the `Paused` tutorial with the smallest `order`
-- step screen condition: when `panel` is not null, `UICore.get_current_panel_key` is `panel` and `UICore.get_open_popups` is an empty list. When `popup` is not null, the last element of `get_open_popups` is `popup`. When both are null, it always holds
+- step screen condition: when `panel` is not null, `UICore.get_current_panel_key` is `panel` and `UICore.get_open_popups` is an empty list. When `popup` is not null, the last element of `UICore.get_open_popups` is `popup`. When both are null, it always holds
 - anchor lookup: the result of `UICore.get_anchor_rect`(`anchor`, `anchor_key`) for a step whose `anchor` is not an empty string. When `anchor_key` is null, it is called without an anchor key. The anchor rectangle, `AnchorResult` and `element` in this document are those of the anchor lookup
 - step anchor condition: `anchor` is an empty string, or `visible` of the anchor lookup is `true` and, when `panel` or `popup` is not null, `owner` of `AnchorResult` is that value
+- When the `anchor` of a step whose `panel` or `popup` is not null is not in the prefab of that panel or popup, static check `anchor reference` blocks it
 - show condition: the step screen condition and the step anchor condition of the current step both hold
 
 ### start
 
 - The start check runs on `SceneCore.SceneStartedEvent`, on `UserStateCore.UserStateChangedEvent`, on the start watch callback, at tutorial end, when the `Shown` tutorial becomes `Paused`, and on a `check_start` call
-- start watch: at the first start check after login, sets `RequirementCore.watch`(that requirement ID, one `UserStateChanged` trigger with an empty target, a callback that runs the start check) for each non-zero `start_requirement` of an unfinished tutorial. Only one is set per requirement ID. When all tutorials that have that ID as `start_requirement` are finished or skipped, it calls `unwatch`. For a time-dependent condition, `RequirementCore` judges again by time and calls the callback
+- start watch: at the first start check after login, sets `RequirementCore.watch`(that requirement ID, one `UserStateChanged` trigger with an empty target, a callback that runs the start check) for each non-zero `start_requirement` of a tutorial that is not completed. Only one is set per requirement ID. When all tutorials that have that ID as `start_requirement` are completed, it calls `RequirementCore.unwatch`. For a time-dependent condition, `RequirementCore` judges again by time and calls the callback
 - In these cases the start check does not run and is `false`: not logged in (`AuthCore.is_logged_in`), there is a `Shown` tutorial, `SceneCore` is in transition
-- candidate: among tutorials that are not finished and not active, a tutorial whose `start_requirement` is 0 (empty cell) or has `passed` `true` in its `RequirementCore.evaluate`, and for which the `can_start_tutorial` hook returned `true`
+- candidate: among tutorials that are not completed and not active, a tutorial whose `start_requirement` is 0 (empty cell) or has `passed` `true` in its `RequirementCore.evaluate`, and for which the `can_start_tutorial` hook returned `true`
 - Starts the candidate with the smallest `order`. The start step is the smallest step among steps whose `step` is larger than the progress step. A started tutorial does step progress 1 as `Paused`. When the show condition of the start step does not hold at that time, this repeats with the remaining candidates
 - The start check is `true` when it starts one or more tutorials
 - A tutorial that fails the step check is not started and is removed from the candidates. It is not checked again in the same run
-- step check: applies the `tutorial_step` data check conditions of `## data` again to the steps of that tutorial
+- step check: applies the `tutorial_step` data check conditions again to the steps of that tutorial
 
 ### step progress
 
-1. Emits `TutorialStepStartedEvent`
+1. Publishes `TutorialStepStartedEvent`
 2. Checks the show condition each frame. In a frame with no `Shown` tutorial, among the tutorials in 2 whose show condition holds, the tutorial that was last `Shown` goes to 3 (`Shown`) when there is one, otherwise the tutorial with the smallest `order` does. When the duration in which the step screen condition holds while the step anchor condition does not hold reaches `TutorialCore.anchorWaitWarnMs` without a break in `TimeCore` real elapsed time, it leaves a warn log once for that step and keeps waiting
 3. Shows the tutorial view: the text in the speech bubble when there is `text`, the highlight (a dim that covers the outside of the anchor rectangle) when there is `anchor`, the hand pointer at the center of the anchor rectangle when `pointer` is `true`. The highlight, hand pointer and speech bubble follow the anchor rectangle each frame
 4. When `restrict_input` is `true`, waits for the condition of 5 with `InputBlockCore.run_blocked`(reason tag `tutorial`). Pass list: `element` of the `AnchorResult` the anchor lookup gave, the advance button and skip button of the tutorial view, the system popup root of `UICore.get_block_pass_list`
@@ -80,25 +81,25 @@ Runs the tutorial steps written in a data table in order, and does screen highli
 |---|---|
 | `Advance` | click of the advance button of the tutorial view |
 | `AnchorTap` | one pointer received through `InputCore.set_ui_pointer_observer` is pressed inside the anchor rectangle and released inside the anchor rectangle, or the accept callback of the view focus is called with the anchor `element`. The rectangle is the anchor lookup value at press and at release. The input also goes to the UI element of the anchor unchanged |
-| `Requirement` | `passed` of the `RequirementCore.evaluate` result of `complete_requirement` is `true`. Calls `evaluate` right after setting the requirement watch, and after that judges by `passed` of the `RequirementResult` the requirement watch callback received |
+| `Requirement` | `passed` of the `RequirementCore.evaluate` result of `complete_requirement` is `true`. Calls `RequirementCore.evaluate` right after setting the requirement watch, and after that judges by `passed` of the `RequirementResult` the requirement watch callback received |
 | `Cue` | the value `notify_cue` received equals `cue` |
 
 - `AnchorTap` end order: when a release meets the condition, the step is not finished inside the observer callback; it is finished after the handling in which `InputCore` passes that release to the UI element ends, before the next frame. So when that release becomes a `UIButton` click of the anchor element, that click callback is called before the step ends. `UICore` calls the accept callback after the click callback, so the step is finished inside the accept callback. From meeting the condition until finishing the step there is no pause judgement, and when that tutorial is skipped or `release` is called in between, the step is not finished. The engine mapping is in the engine-specific implementation rules
 - A step that is not `Advance` hides the advance button. A tutorial whose `skippable` is `false` hides the skip button
 - view focus: when showing the tutorial view in 3, makes the advance button the initial focus element when `complete` is `Advance`, and `element` of `AnchorResult` when it is `AnchorTap` and that `element` has a `UIButton` attached, and passes that element and the visible skip button as the focus element list to `UICore.set_view_focus`(`Tutorial`). The accept callback receives the condition of `AnchorTap`. A step with another `complete` sets no view focus. When the tutorial view is hidden or destroyed, deletes it with an empty list. While hidden because of a system popup, it stays as it is
-- When game settings `gamepadSupported` is `true` and the `AnchorResult` `element` of an `AnchorTap` step has no `UIButton` attached, leaves an error log (anchor name, anchor key) when showing the tutorial view in 3. When a UI element in the scenes and prefabs of the content with a `UIAnchor` of that anchor name attached has no `UIButton`, static check `anchor reference` blocks it
-- When a step is finished, saves if it is one of the times when it saves, then does the next step from 1 when there is a next step, otherwise finishes the tutorial. At tutorial end, emits `TutorialCompletedEvent` and runs the start check
-- On receiving `SceneEndedEvent`, hides the tutorial view of the `Shown` tutorial, releases the block and stops the step progress of all active tutorials (`Paused`). While stopped, it does not receive the condition of `complete`. On receiving `SceneStartedEvent`, each active tutorial does its current step again from 2
+- When game settings `gamepadSupported` is `true` and the `AnchorResult` `element` of an `AnchorTap` step has no `UIButton` attached, leaves an error log (anchor name, anchor key) when showing the tutorial view in 3. When `gamepadSupported` is `true` and a UI element in the scenes and prefabs of the content with a `UIAnchor` of that anchor name attached has no `UIButton`, static check `anchor reference` blocks it
+- When a step is finished, saves if it is one of the times when it saves, then does the next step from 1 when there is a next step, otherwise finishes the tutorial. At tutorial end, publishes `TutorialCompletedEvent` and runs the start check
+- On receiving `SceneCore.SceneEndedEvent`, hides the tutorial view of the `Shown` tutorial, releases the block and stops the step progress of all active tutorials (`Paused`). While stopped, it does not receive the condition of `complete`. On receiving `SceneCore.SceneStartedEvent`, each active tutorial does its current step again from 2
 - `AnchorTap` and `Cue` that happened in the previous scene are not passed to the next step
 - pause: from 3 to 5, checks the show condition each frame. When it does not hold, or in a step with `anchor` the `element` differs from the element received in 3, hides the tutorial view, releases the block and returns to 2 of the same step (`Paused`). The pass list of 4 done again uses the new `element`
 - From 3 to 5, checks `UICore.is_system_popup_visible` each frame. While it is `true`, hides the tutorial view, and shows it again when it becomes `false`. The block, step progress and condition judgement stay as they are. In a frame where it is `true`, there is no pause judgement and no `Shown` transition of 2
 - The conditions of `Requirement` and `Cue` are received from 2. When the condition is met in 2, does 5 without doing 3 and 4. The conditions of `Advance` and `AnchorTap` are received from 3
-- `notify_cue` finishes the step of each active tutorial from 2 to 5 whose current step `cue` equals the received value
-- requirement watch: when 2 of a `Requirement` step starts, sets `RequirementCore.watch`(`complete_requirement`, one `UserStateChanged` trigger with an empty target, callback). When the step ends, the step progress stops, or the tutorial is skipped, calls `unwatch`
+- `notify_cue` finishes the step of each active tutorial from 2 to 5 whose current step has `complete` `Cue` and a `cue` equal to the received value
+- requirement watch: when 2 of a `Requirement` step starts, sets `RequirementCore.watch`(`complete_requirement`, one `UserStateChanged` trigger with an empty target, callback). When the step ends, the step progress stops, or the tutorial is skipped, calls `RequirementCore.unwatch`
 
 ### skip
 
-- When `skippable` of the `Shown` tutorial is `true` and a skip button click or `skip` is received, hides the tutorial view of that tutorial, releases the block, sets the `step` finished in this run of that tutorial to the last `step`, saves the last `step`, emits `TutorialCompletedEvent`(`skipped` = `true`), and runs the start check
+- When `skippable` of the `Shown` tutorial is `true` and a skip button click or `skip` is received, hides the tutorial view of that tutorial, releases the block, sets the `step` finished in this run of that tutorial to the last `step`, saves the last `step`, publishes `TutorialCompletedEvent`(`skipped` = `true`), and runs the start check
 - When there is no `Shown` tutorial or its `skippable` is `false`, `skip` is `false`
 
 ### tutorial view
@@ -107,7 +108,7 @@ Runs the tutorial steps written in a data table in order, and does screen highli
 - TutorialCore attaches the `SafeAreaCore` ignore mark to the dim so that the dim covers the whole visible game area. The positions of the highlight and hand pointer are the game coordinates of the anchor rectangle regardless of the safe area
 - speech bubble position: in a step with `anchor`, TutorialCore puts the speech bubble on the side of the anchor rectangle, above or below, with the larger remaining height inside the view root. When equal, below. The edge of the speech bubble on the anchor side touches the edge of the anchor rectangle on that side, and the horizontal center of the speech bubble is the horizontal center of the anchor rectangle. When it goes beyond the view root at that position, it is moved into the view root by the amount it goes beyond. When moved vertically, the speech bubble can overlap the anchor rectangle. The speech bubble size is its size in the tutorial view resource. A step without `anchor` puts the speech bubble at the position set in the tutorial view resource
 - The tutorial view component on the view root, defined in the engine-specific implementation rules, points to the dim, speech bubble, text element, hand pointer, advance button and skip button. A button without the `UIButton` of `UICore` attached counts as missing
-- view check: the view root is a UI element, the component exists, and all parts the component points to exist. On failure, destroys the created instance, leaves an error log and proceeds without the tutorial view until `release`. When proceeding without the tutorial view, an `Advance` step ends right after 3 and sets no block
+- view check: the view root is a UI element, the component exists, and all parts the component points to exist. On failure, destroys the created tutorial view, leaves an error log and proceeds without the tutorial view until `release`. When proceeding without the tutorial view, an `Advance` step ends right after 3 and sets no block
 - speech bubble text: when showing the tutorial view in 3 of a step with `text`, binds it with `LocalizationCore.bind_text`(text element, `text`), and unbinds it with `LocalizationCore.unbind_text` when hiding the tutorial view. While hidden because of a system popup, it stays as it is
 - skip button text: when creating a tutorial view that passed the view check, binds it with `LocalizationCore.bind_text`(skip button, `[tutorial_skip]`)
 - The dim, speech bubble, text element and hand pointer of the tutorial view do not receive pointer input. Only the advance button and skip button receive it
@@ -130,7 +131,7 @@ Runs the tutorial steps written in a data table in order, and does screen highli
 
 | event | when | payload |
 |---|---|---|
-| `TutorialStepStartedEvent` | step progress 1. Also emitted for a `Paused` tutorial | `tutorial_id`, `step` |
+| `TutorialStepStartedEvent` | step progress 1. Also published for a `Paused` tutorial | `tutorial_id`, `step` |
 | `TutorialCompletedEvent` | when a tutorial is finished or skipped | `tutorial_id`, `skipped`: bool |
 
 ## error
@@ -196,7 +197,6 @@ Runs the tutorial steps written in a data table in order, and does screen highli
 - `panel` is a panel key and `popup` is a popup key. When `panel` and `popup` are both not null, it is `out_of_range`
 - When `popup` is not null and `restrict_input` is `false`, it is `out_of_range`
 - resume start step: the first step of a tutorial, and the step right after a step whose `save` is `true`. When `popup` of a resume start step is not null, it is `out_of_range`
-- When the `anchor` of a step whose `panel` or `popup` is not null is not in the prefab of that panel or popup, static check `anchor reference` blocks it
 
 `data/enums.csv`
 
@@ -226,7 +226,7 @@ none
 
 ## test
 
-- When two unfinished tutorials are candidates, the tutorial with the smaller `order` starts and `TutorialStepStartedEvent` is emitted with its first step
+- When two tutorials that are not completed are candidates, the tutorial with the smaller `order` starts and `TutorialStepStartedEvent` is published with its first step
 - A tutorial whose `start_requirement` has `passed` `false` or whose `can_start_tutorial` is `false` does not start
 - When the progress step is k, it starts from the smallest step whose `step` is larger than k. When the progress step is the last `step`, `is_completed` is `true` and it does not start
 - `check_start` during a `SceneCore` transition and while there is a `Shown` tutorial is `false`
@@ -245,27 +245,27 @@ none
 - When a step shows with `SafeAreaCore.set_virtual_notch` set, the position and size of the view root equal the safe area, the speech bubble, advance button and skip button are inside the safe area, the dim covers the whole visible game area, and the highlight and hand pointer are at the game coordinates position of the anchor rectangle
 - When a system popup opens while a step shows, the tutorial view is not visible in the next frame, the block of reason tag `tutorial` and `Shown` stay as they are even when the anchor is under the system popup, and the buttons of the system popup receive presses. When the system popup closes, the tutorial view of the same step shows again in the next frame
 - While waiting for the anchor, `notify_cue` of a `Cue` step is `true` and the step ends without the tutorial view. A `Requirement` step ends when `passed` becomes `true` during that time
-- A `Requirement` step whose `complete_requirement` is a condition of a time-dependent type that reads server time ends when, without a delta, server time reaches the pass time of that condition and then the test clock advances by `RequirementCore.timeRecheckMs`. A tutorial that has the same condition as `start_requirement` starts the same way, with no `SceneStartedEvent`, `UserStateChangedEvent` or `check_start` until then
+- A `Requirement` step whose `complete_requirement` is a condition of a time-dependent type that reads server time ends when, without a delta, server time reaches the pass time of that condition and then the test clock advances by `RequirementCore.timeRecheckMs`. A tutorial that has the same condition as `start_requirement` starts the same way, with no `SceneCore.SceneStartedEvent`, `UserStateCore.UserStateChangedEvent` or `check_start` until then
 - In a step whose `restrict_input` is `true`, a tap outside the anchor rectangle does not reach UI elements, and a tap inside becomes a click of the anchor UI element. The buttons of a system popup receive presses
 - In an `AnchorTap` step, a tap that the anchor UI element consumes finishes the step and also becomes a click of that element. Pressing inside the anchor rectangle and releasing outside does not finish the step
-- In an `AnchorTap` step, `current` called inside the `UIButton` click callback of the anchor element is that step, and the `TutorialStepStartedEvent` of the next step is emitted after that click callback and before the next frame. The same holds for accept input when the input device is `Gamepad`. When `skip` is called inside the click callback, only one `TutorialCompletedEvent`(`skipped` = `true`) is emitted and there is no `TutorialStepStartedEvent` of the next step
+- In an `AnchorTap` step, `current` called inside the `UIButton` click callback of the anchor element is that step, and the `TutorialStepStartedEvent` of the next step is published after that click callback and before the next frame. The same holds for accept input when the input device is `Gamepad`. When `skip` is called inside the click callback, only one `TutorialCompletedEvent`(`skipped` = `true`) is published and there is no `TutorialStepStartedEvent` of the next step
 - With anchor keys 7 and 9 on two visible `UIAnchor` elements named a, the highlight and hand pointer of a step whose `anchor` is a, `anchor_key` is 9 and `restrict_input` is `false` are on the anchor rectangle of key 9, and a tap inside the anchor of key 7 does not finish an `AnchorTap` step. When the anchor of key 9 is hidden, there is no tutorial view even when the anchor of key 7 is visible. A step whose `anchor_key` is null uses the one of the two anchors drawn on top
 - When the input device is `Gamepad`, in an `Advance` step the advance button has focus and accept input finishes the step. In an `AnchorTap` step, the anchor UI element with a `UIButton` attached has focus and accept input is one click of that element and the step end. When the anchor UI element has no `UIButton`, only the visible skip button is a focus element; when `gamepadSupported` is `false` there is no error log, and when `true` an error log with the anchor name is left. When `skippable` is `true`, direction input moves focus to the skip button and accept input skips. In `Requirement` and `Cue` steps there is no `Tutorial` view focus
 - For each `complete`, the step ends only on the condition in the table. `notify_cue` with another value is `false` and the step stays as it is
 - Finishing a step whose `save` is `true` sends `SaveTutorialProgress` once with that `step`, and a step where it is `false` sends nothing unless it is the last step
 - Finishing the last step sends `SaveTutorialProgress` with the last `step`, and the next candidate starts after `TutorialCompletedEvent`(`skipped` = `false`)
 - When `SaveTutorialProgress` fails, the next step still proceeds, and the next save sends a larger `step`
-- After `SaveTutorialProgress` of the last step fails, the start check of `SceneStartedEvent` sends `SaveTutorialProgress` once with the last `step`. A start check while waiting for that response and a start check after the UserState delta of the success response do not send it
+- After `SaveTutorialProgress` of the last step fails, the start check of `SceneCore.SceneStartedEvent` sends `SaveTutorialProgress` once with the last `step`. A start check while waiting for that response and a start check after the UserState delta of the success response do not send it
 - While `SaveTutorialProgress` is being sent, there is no block of reason tag `network` and no loading icon, and the anchor tap of the next step reaches the anchor UI element
 - After a progress step is given with the UserState delta of a fake response, `release` and `init` make it start from the step after that
-- When `skippable` is `true`, skip saves the last `step` of the `Shown` tutorial, emits `TutorialCompletedEvent`(`skipped` = `true`), releases the block and starts the next candidate. When `false`, there is no skip button and `skip` is `false`
-- Even after a skip whose `SaveTutorialProgress` failed, `is_completed` is `true`, and after that `SceneStartedEvent` and `check_start` do not start that tutorial again
-- When the scene changes during step progress, on `SceneEndedEvent` the block and tutorial view disappear and all active tutorials are `Paused`; before `SceneStartedEvent` it does not show again even when the anchor is visible, and when the anchor is visible after that, the same step shows again
+- When `skippable` is `true`, skip saves the last `step` of the `Shown` tutorial, publishes `TutorialCompletedEvent`(`skipped` = `true`), releases the block and starts the next candidate. When `false`, there is no skip button and `skip` is `false`
+- Even after a skip whose `SaveTutorialProgress` failed, `is_completed` is `true`, and after that `SceneCore.SceneStartedEvent` and `check_start` do not start that tutorial again
+- When the scene changes during step progress, on `SceneCore.SceneEndedEvent` the block and tutorial view disappear and all active tutorials are `Paused`; before `SceneCore.SceneStartedEvent` it does not show again even when the anchor is visible, and when the anchor is visible after that, the same step shows again
 - When proceeding without the tutorial view, an `Advance` step ends right after 3 and there is no block of reason tag `tutorial`
 - With a tutorial view resource whose view root is not a UI element, an error log is left and it proceeds without the tutorial view, and later steps do not load the tutorial view resource again
 - In a step whose `restrict_input` is `false`, a tap on the dim, speech bubble or hand pointer becomes a click of the UI element under it
 - While a step whose `text` contains an input prompt token shows, changing the input device with `InputCore.set_test_device` rewrites the text element with the input prompt of the new input device, and an input device change after that step ends does not change the text element. The skip button text is the translation of `[tutorial_skip]`
-- `SceneStartedEvent` and `check_start` before login do not start a tutorial
+- `SceneCore.SceneStartedEvent` and `check_start` before login do not start a tutorial
 - When the `step` to send is at most the `TutorialProgressUserState` value, `SaveTutorialProgress` is not sent
 - For each condition of the `tutorial_step` data check, a tutorial with a step that violates that condition does not start and an error log is left
 - After `release`, there is no tutorial view and no block, and no further `SaveTutorialProgress` is sent

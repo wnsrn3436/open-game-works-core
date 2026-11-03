@@ -36,7 +36,7 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
 | `get_state` | none | `VirtualPadState`. `Hidden` when there is no virtual pad | `Hidden` | content code |
 
 - `VirtualPadState`: `Active`(draws and holds pointers), `Inactive`(draws but does not hold pointers), `Hidden`(does not draw and does not hold pointers)
-- VirtualPadCore does not give pointers and direction values to content code. Content code gets input through `InputCore.is_pressed`, `is_just_pressed`, `is_just_released`, `get_strength`, `get_vector`
+- VirtualPadCore does not give pointers and direction values to content code. Content code gets input through `InputCore.is_pressed`, `InputCore.is_just_pressed`, `InputCore.is_just_released`, `InputCore.get_strength`, `InputCore.get_vector`
 
 ## behavior
 
@@ -98,7 +98,7 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
 - A pointer pressed outside the element areas and a pointer pressed when not `Active` are not consumed. While not `Active`, pointer moves and releases are not consumed
 - release handling: the element drops its pointer. A button injects a release, and a joystick injects the direction value (0, 0) and puts the base at its default position. A dropped pointer is held by no element until it is released
 - Every inject made with a pointer that an element holds, including the injects of release handling, passes the pointer ID of that pointer to `InputCore.inject_action` along with it
-- Release handling runs for every element that holds a pointer at these times: a change from `Active` to another state, `close_layout`, an input cancel of `InputCore` (checked each frame by whether `get_cancel_count` changed), receiving `SafeAreaChangedEvent`
+- Release handling runs for every element that holds a pointer at these times: a change from `Active` to another state, `close_layout`, an input cancel of `InputCore` (checked each frame by whether `InputCore.get_cancel_count` changed), receiving `SafeAreaCore.SafeAreaChangedEvent`
 
 ### open and close
 
@@ -121,13 +121,13 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
   | otherwise | `Active` |
 
 - Touch support is judged once in `init`
-- The state is set again when: the virtual pad is created (the input device, the cancel count and the number of open popups are read again at this time), `InputDeviceChangedEvent` is received, whether the number of open popups is 0 changes (`UICore.get_open_popup_count` is checked each frame). When there is no virtual pad, these are not checked
+- The state is set again when: the virtual pad is created (the input device, the cancel count and the number of open popups are read again at this time), `InputCore.InputDeviceChangedEvent` is received, whether the number of open popups is 0 changes (`UICore.get_open_popup_count` is checked each frame). When there is no virtual pad, these are not checked
 
 ### safe area
 
 - In `init`, VirtualPadCore creates one safe area root of `SafeAreaCore` inside `UICore.get_layer(VirtualPad)`. `open_layout` creates the virtual pad under this safe area root
 - Element areas are kept inside the safe area. When an area with user settings applied goes outside the safe area, it is moved back in along the axis where it goes outside. On an axis where the area is longer than the safe area, the area center is aligned to the safe area center
-- When `SafeAreaChangedEvent` is received, release handling runs and then all elements are placed again
+- When `SafeAreaCore.SafeAreaChangedEvent` is received, release handling runs and then all elements are placed again
 
 ### user settings
 
@@ -148,7 +148,7 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
 ### lifecycle
 
 - `release`: runs `close_layout`, drops an `open_layout` waiting for a load, and then destroys the safe area root in the `VirtualPad` layer. Saved user settings are not changed
-- From receiving a pointer to calling `inject_action`, no memory is allocated. Logs are excluded
+- From receiving a pointer to calling `InputCore.inject_action`, no memory is allocated. Logs are excluded
 
 ## hook
 
@@ -200,7 +200,7 @@ none
 
 Common conditions: touch supported, input device `Touch`, no open popup, dead zone 0, sensitivity 1000, all user settings at default. Pointers are put in with `InputCore.inject_device_input`
 
-- On a `Fixed` joystick, `get_vector` is (0.5, 0) at 0.5 times the radius to the right of the base center, and (0, −1) at 2 times the radius upward. The error is at most 0.001
+- On a `Fixed` joystick, `InputCore.get_vector` is (0.5, 0) at 0.5 times the radius to the right of the base center, and (0, −1) at 2 times the radius upward. The error is at most 0.001
 - With dead zone 200, r 0.2 gives (0, 0) and no direction action is pressed, and the size at r 0.6 is 0.5
 - With sensitivity 2000, the size at r 0.3 is 0.6 and the size at r 0.8 is 1
 - Each condition of the error table gives the result and log of the table, and a failed set does not change the get result or the saved value
@@ -210,7 +210,7 @@ Common conditions: touch supported, input device `Touch`, no open popup, dead zo
 - On `Following`, a move of 3 times the radius to the right puts the base center 2 times the radius to the right of the pressed point, and the value is (1, 0)
 - The handle is 0.5 times the radius away at r 0.5, and 1 times the radius away at r 2
 - Pressing a button area makes its action pressed with strength 1, the action stays pressed when the pointer moves out of the area, and it is not pressed after the release
-- Under a block made by `InputBlockCore.block` whose pass list has only the joystick element, pressing the joystick area and moving out of the area makes a direction action pressed and changes `get_vector`, and after the release no direction action is pressed. Under the same block, when a popup opens while the joystick is pressed, no direction action is pressed. Under the same block, a press on a button area does not change its action
+- Under a block made by `InputBlockCore.block` whose pass list has only the joystick element, pressing the joystick area and moving out of the area makes a direction action pressed and changes `InputCore.get_vector`, and after the release no direction action is pressed. Under the same block, when a popup opens while the joystick is pressed, no direction action is pressed. Under the same block, a press on a button area does not change its action
 - When the joystick and a button are pressed together with different pointers, both are pressed, and releasing one leaves the other as it is
 - Pressing, moving and releasing another pointer in the area of an element that holds a pointer leaves the action of that element as it is, and UI and gestures do not receive that pointer
 - Pressing an overlapping area presses only the action of the later element
