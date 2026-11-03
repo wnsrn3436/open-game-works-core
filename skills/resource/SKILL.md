@@ -32,10 +32,10 @@ description: Holds the resource key format, the resource list file, the `spec` f
 - The resource keys of the platform types are only `app_icon/main` and `splash/main`. `ogw resource sync` adds the two rows as `placeholder` when they are not in `resources.csv`. In `spec`, `app_icon/main` has `size=1024x1024`, and `splash/main` has a `size` equal to the size of game settings `baseResolution`. The build converts them to the size and format that each platform needs
 - A file is put at `resource/<resource key>.<extension>`. One resource key has one file. As an exception, a row whose `spec` has `variants` of 2 or more has one file `resource/<resource key>.<n>.<extension>` per variant, with `<n>` from 1 to `variants`
 - A final `sprite_animation` row and a final `rig_animation_2d` row have attached rows that `ogw resource finalize` writes. `sprite_animation/<name>` has one sheet row `sprite_sheet/<name>`, and `rig_animation_2d/<name>` has a part image row `image/<name>/<part>` per part. The content agent does not add rows with the resource keys of attached rows
-- Per type, the `<extension>`, the file content and the `ResourceCore` resource kind are defined by `## resource type` of the per-engine implementation rules of `client-core` for game settings `engine`: [Godot](../client-core/engines/godot.md)
+- Per type, the `<extension>`, the file content and the `ResourceCore` resource kind are defined by `## resource type` of the engine-specific implementation rules of `client-core` for game settings `engine`: [Godot](../client-core/engines/godot.md)
 - After the first PROD build, resource keys that went out to PROD are not changed or deleted. When a key that was in `resources.csv` of the PROD data tag of [`data`](../data/SKILL.md) is not in the current `resources.csv`, the data tool blocks it with `prod_change`
 - Code loads resources only through the resource key constants that the harness tool made or the `reskey` values of data. Resource key strings and file paths are not written in code
-- There is one resource key constant per resource key of `resources.csv`. Its name is the resource key in uppercase with `/` changed to `__`. e.g. `prefab/enemy/slime` → `PREFAB__ENEMY__SLIME`. In the client it is in the class that the per-engine implementation rules of `client-core` for game settings `engine` define ([Godot](../client-core/engines/godot.md): `ResourceKey.PREFAB__ENEMY__SLIME`), and in the server it is an export of the module that `## generated code` of [`server-core`](../server-core/SKILL.md) defines
+- There is one resource key constant per resource key of `resources.csv`. Its name is the resource key in uppercase with `/` changed to `__`. e.g. `prefab/enemy/slime` → `PREFAB__ENEMY__SLIME`. In the client it is in the class that the engine-specific implementation rules of `client-core` for game settings `engine` define ([Godot](../client-core/engines/godot.md): `ResourceKey.PREFAB__ENEMY__SLIME`), and in the server it is an export of the module that `## generated code` of [`server-core`](../server-core/SKILL.md) defines
 
 ## resource list
 
@@ -87,18 +87,11 @@ A `spec` cell is items `<name>=<value>` joined with `;` without spaces. An item 
 ## placeholder resource
 
 - When the content agent needs a resource, it adds a row to `resources.csv` as `placeholder` and runs `ogw resource placeholder <game>`. The tool makes the placeholder resource as `spec` says
-  - `image`, `sprite_sheet`, `texture_atlas`, `icon`, `background`, `nine_slice`, `texture`, `skybox`, `tileset`, `app_icon`, `splash`: a solid-color PNG of the `spec` size with the last word of the resource key in it as text
-  - `sfx`, `bgm`, `voice`: silence of the `spec` length, one file per variant
-  - `model`: a box of the `spec` size
-  - `haptic`: a haptic pattern JSON with one segment of the `spec` length (`delay_ms` 0, `intensity` 1000)
-  - `font`: harness settings `tools.placeholderFont`
-  - `rig`, `material`, `sprite_animation`, `rig_animation_2d`, `animation_3d`, `particle`, `shader`: the placeholder resource that `## resource type` of the engine defines
 - Placeholder resources are not drawn or edited by hand
-- A sound effect that is heard repeatedly (hits, footsteps, UI presses) gets `variants` of 2 or more in `spec`
+- A sound effect that is heard many times a minute (hits, pickups, footsteps, UI presses) gets `variants` of 2 or more and `level=quiet` in `spec`, and a sound effect of a rare event that the player must notice (level up, boss arrival, death) gets `level=loud`
 - The long side of `size` of a `nine_slice` is 256 or more, so that a stretched frame keeps its detail. When a `nine_slice` row whose `status` is `placeholder` or `requested` has a smaller one, static check `nine slice size` blocks it
-- A game with UI art adds `image/ui_kit` (`spec` `size=1024x1024`) and requests it before its first `nine_slice` and `icon` keys, which are requested with `--see image/ui_kit`
+- A game with UI art adds `image/ui_kit` (`spec` `size=1024x1024`) and names it in one request with its first `nine_slice` and `icon` keys, without `--see`. A later `nine_slice` or `icon` key is requested with `--see image/ui_kit` when `image/ui_kit` is `final`, and without `--see` while it is `requested`, because `--see` takes only `final` keys
 - When the UI style of `## art direction` changes, or the final `image/ui_kit` fails a check of `## qualities of every resource` or `## UI screens` of [commercial quality](../game-design/commercial-quality.md) (e.g. a bevel, a gloss or an ornate frame that the world's characters do not have, or a slab of a heavy material where the presentation game's screens have none), the content agent requests `image/ui_kit` again in one request with the `nine_slice` and `icon` keys made from it
-- A sound effect that is heard many times a minute (hits, pickups, footsteps, UI presses) gets `level=quiet`, and a sound effect of a rare event that the player must notice (level up, boss arrival, death) gets `level=loud`
 
 ## resource request
 
@@ -127,11 +120,6 @@ How the resource sub-agent makes final resources, and their post-processing, are
 - Collected resources use only `CC0-1.0` and `CC-BY-4.0`. Fonts also use `OFL-1.1`
 - The rights of a made resource follow the license of the generation method and the licenses of the inputs. The license of a method whose commercial use is not confirmed is `unknown`
 - When a method makes its resources from output of another method that is not put in as a resource row of its own (so it is not in `--inputs` of `ogw resource finalize`), its `license` also holds the `license` of that other method. e.g. the part images of `rig-2d` and the source illustration of `trellis2` are `flux2-klein` output
-- The license references in the `license` of the methods of harness settings `resourceGeneration` mean the following
-  - `LicenseRef-OpenAI-Output`: output of OpenAI models, the license of a method whose `provider` is `codex`. The [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) (personal ChatGPT account) and the [OpenAI Services Agreement](https://openai.com/policies/services-agreement/) (ChatGPT Business, ChatGPT Enterprise, API key) give the ownership of the output to the user, so commercial use is allowed
-  - `LicenseRef-xAI-Output`: output of xAI models, the license of a method whose `provider` is `grok`. The [xAI Terms of Service - Consumer](https://x.ai/legal/terms-of-service) (Grok login) and the [xAI Terms of Service - Enterprise](https://x.ai/legal/terms-of-service-enterprise) (`XAI_API_KEY`) give the ownership of the output to the user, so commercial use is allowed. The same terms have a clause on attributing the output to the service, as the [xAI Brand Guidelines](https://x.ai/legal/brand-guidelines) describe, so a method whose `provider` is `grok` has `attribution` `Created with Grok`, the wording those guidelines give for made images
-  - `LicenseRef-game-owned`: what the game's own procedural generation made: a program, script or shader that an agent wrote, and its output. It is part of the content of the game and is under the license of that content. It is the license of the `procedural` methods
-  - `LicenseRef-DINOv3`: the DINOv3 License of Meta, in `LICENSE.md` of the hf pin `facebook/dinov3-vitl16-pretrain-lvd1689m` of `trellis2`
 - The screens, resources, names and text of the reference game are not used as generation input or reference images
 - A composited resource follows the license conditions and attribution of every original. `ogw resource finalize` calculates `license` and `attribution` from the originals
-- Agents do not install or run external download tools
+- Agents do not install or run a program outside `ogw` that downloads resources. e.g. a video downloader, a site scraper, an asset store client
