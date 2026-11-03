@@ -109,7 +109,7 @@ Sets the current language, turns translation keys into text of that language, ma
 - When any font of the chain is loaded as a fallback resource, it writes an error log and returns `false`. It applies the chain with the fallback resource in that position
 - When it is called while a `load_fonts` is in progress, it writes an error log and returns `false`
 - Content code does not set a font on a UI text element separately. It picks the heading font only by the text style. Decorative lettering is made as an image resource
-- `release` reverts the default font and heading font application
+- `release` reverts the default font and heading font application, and keeps a style that the theme of `load_fonts` bases on the `heading` text style. That style draws with the heading font again after the next `load_fonts`
 
 ### text scale
 
@@ -258,7 +258,7 @@ Reads the `icon` column of the `input_prompt` table (`InputCore`)
 - With `LocalizationCore.headingFontWeight` 1000 and a font whose `wght` axis range is 100 to 900, after `load_fonts` the heading font draws that font at weight 900, and there is one warn log for it
 - With both font weights 0, after `load_fonts` the default font and the heading font draw every font of the chain at its default weight, and there is no warn log
 - A UI text element in the `heading` text style draws with the heading font, and an element whose text style was not set draws with the default font. The character lookup order of the heading font equals the font chain. After `release`, an element in the `heading` text style draws with the default font of before `init`
-- A style that the project theme bases on the `heading` text style, after `release` and another `init` and `load_fonts`, still draws with the heading font
+- With a project theme that has a default font and a style based on the `heading` text style, and `load_fonts`, that style draws with the heading font after `release` and another `init` and `load_fonts`
 - After `set_text_scale`(1500), the font size of a UI text element set to size 20 is 30, an element made after that is the same, and after `release` it is 20. 0 gives an error log and no change
 - The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string
 - `get_text` with inline icon height 0 of text with an input prompt token gives the display name of the input prompt of `InputCore`, and calling it again after changing the input device with `InputCore.set_test_device` gives the display name for that device. When there is no `input_prompt` row, it is prompt input
