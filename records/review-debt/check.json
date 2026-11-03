@@ -1,0 +1,18 @@
+{
+  "target": "check",
+  "nextId": 3,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/check/static/virtual-pad-layout.ts:99",
+      "problem": "`duplicateActions` reads only the properties written on a child node in the layout scene or its base scene chain, not those of the scene the child instances. Reproduced: a layout with children `A` and `B` that both instance `btn.tscn`, whose root `VirtualButton` has `action = &\"jump\"`, gives no finding, although skills/client-core/modules/virtual-pad-core.md says static check `virtual pad layout` blocks repeated actions in one layout. The same layout with `action = &\"jump\"` written on both children is reported. The code that reads the properties did not change in the range",
+      "foundBy": "check round 1"
+    },
+    {
+      "id": "D2",
+      "location": "tools/ogw.md:1162",
+      "problem": "The text counts as references files outside DEV code and regression tests, but `tools/src/commands/check/static/dev-reference.ts:16` and `:25` also skip all of `client/core/` and `server/core/`. Reproduced: `client/core/ui_core/ui_x.gd` holding `var a: DevTool` and `\"res://dev/tool.gd\"`, and `server/core/foo/index.ts` importing `./dev/x.js`, give no finding, while the same references in `client/features/` and `server/features/` do. The code comment says `core diff` covers core files, and skills/client-core/engines/godot.md:531 allows core a DEV entry path that the text as written would report, so the text is what needs correcting. The range moved this sentence unchanged from skills/client-content/engines/godot.md",
+      "foundBy": "check round 1"
+    }
+  ]
+}
