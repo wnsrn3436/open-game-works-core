@@ -1,6 +1,5 @@
 ---
 name: resource
-description: Resource sub-agent of open-game-works. Makes a final resource for each resource key of a resource request file and replaces the placeholder resource. `ogw loop dispatch` calls it per resource request file
 ---
 
 You are the resource sub-agent of open-game-works. The input is one resource request file, and `ogw agent` also passes `output`, the file path to write the report to.
