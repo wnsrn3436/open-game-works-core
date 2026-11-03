@@ -104,7 +104,7 @@ The transport handles the matchmaker connection and the connections between part
 - RealtimeCore judges time limits. The transport does not
 - The transport does not raise peer connected or peer lost for a participant index closed with `close_peer` until `close` or `disconnect`
 - Connection addresses and NAT traversal information stay only inside the transport. They are not put in `MatchInfo`, events or logs
-- RealtimeCore calls `poll` once per frame and handles the received notifications in the order received. It also calls it during `TimeCore` pause. When `MatchState` becomes `None` inside `poll`, the remaining notifications are discarded
+- RealtimeCore calls `poll` once per frame and handles the received notifications in the order received. It also calls it during `TimeCore` pause. When `MatchState` becomes `None` inside `poll`, the remaining notifications are discarded, except room updated, which still changes `RoomInfo` and publishes `RoomChangedEvent`
 - RealtimeCore passes `false` as the lockstep flag of `start_matching` and `open_room`. The lockstep transport changes that value
 - `lockstep_time` of the P2P transport is always none
 
@@ -180,7 +180,7 @@ A room is a room of server `matchmaker`. It is used to enter the same match with
 - room failed is received by the in-progress async operation its `RoomRequest` points to. `Open` is the in-progress `create_room`, `join_room`; `Start` is the `Matching` this client started with `start_room`; `Match` is the `Matching` this client started with `join_match` in a room. room failed with no operation to receive it only leaves a warn log and does not change `MatchState` or `RoomInfo`. e.g. room failed of `Kick`, room failed of `Start` that a non-host member received because member rating resolution failed in the host's `start_room`
 - `start_room`: when not in a room, not the host, or `MatchState` is not `None`, leaves a warn log and is `Failed` at once. Otherwise changes to `Matching` and calls transport `start_room`. The steps and failures after that are the same as steps 3 to 5 and the failures of `join_match`
 - `join_match` of a host in a room enters the queue as a party. When the match mode differs from the match mode of `RoomInfo`, leaves a warn log and is `Failed` at once. `join_match` of a non-host member and `join_match` while waiting for `create_room`, `join_room` are also a warn log and `Failed` at once
-- host: on receiving room updated with `RoomStatus` `Open` in `Matching`, changes to `None`, and the `status` of the pending `join_match` is `Cancelled`
+- host in the `Matching` of `join_match`: on receiving room updated with `RoomStatus` `Open` after it received room updated with `RoomStatus` `Matching` for that `join_match`, changes to `None`, and the `status` of the pending `join_match` is `Cancelled`. An `Open` received before that only changes `RoomInfo`. A host in the `Matching` of `start_room` stays `Matching` on `Open`, because `ROOM_START` does not change the room to `Matching`
 - non-host member: on receiving room updated with `RoomStatus` `Matching` while `MatchState` is `None`, changes to `Matching` and publishes `RoomMatchStartedEvent`. On receiving match found in `None` or `Matching`, publishes `RoomMatchStartedEvent` when it has not been published yet, and runs steps 3 to 5 of `join_match`. On receiving room updated with `RoomStatus` `Open` in `Matching`, changes to `None`, and the `status` of the pending `wait_match` is `Cancelled`. match failed and matchmaker lost are the same as a `join_match` failure
 - `wait_match`: when `MatchState` is not `Matching` or `Connecting`, leaves a warn log and is `Failed` at once. Otherwise waits for the result of the current match. `Success` on becoming `Playing`, `Failed` on a failure the same as a `join_match` failure, `Cancelled` on cancellation
 - `room_info` returns `RoomInfo` when in a room, otherwise an empty `RoomInfo` without log
@@ -383,6 +383,8 @@ DEV lockstep makes participants with `TimeCore` step mode on stop the match time
 
 Every test other than the P2P transport tests passes the fake realtime transport of `UnitTestCore` with `set_transport`.
 
+- A host in the `Matching` of `join_match` that received room updated with `Matching` gets `Cancelled` on room updated with `Open`. An `Open` received before that only changes `RoomInfo`, and the state stays `Matching`. A host in the `Matching` of `start_room` stays `Matching` on `Open`
+- When match failed and room updated come in one `poll`, the `join_match` ends `Failed` with that reason, and the room updated still changes `RoomInfo` and publishes `RoomChangedEvent`
 - After match found and all peer connected, `join_match` is `Success`, `Playing`, and `match_info` equals the notified `MatchInfo`. The states before that are `Matching`, `Connecting` in turn
 - In `Connecting` and `Playing`, `peer_state`(own index) is `Connected` without log
 - match failed (`REJECTED`, error code) gives `Failed` with that `fail_reason` and `error_code`

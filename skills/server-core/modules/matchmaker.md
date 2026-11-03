@@ -86,7 +86,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 - The elements of `MatchmakerFrameKind`(base proto enum) are the kinds of the frame table in table order
 - `MatchPlayer`(base proto message): `int64 user_id`, `int32 index`, `int32 team`, `int32 party`
 - `MatchFailReason`(base proto enum): `TIMEOUT`, `INVALID_MODE`, `REJECTED`, `CREATE_FAILED`
-- `RoomStatus`(base proto enum): `Open`(not in the queue as a party), `Matching`(in the queue as a party)
+- `RoomStatus`(base proto enum): `Open`(not in the queue as a party), `Matching`(in the queue as a party, or its party entry is becoming a match)
 - `team` of `MatchPlayer`: 0 when `team_size` of `match_mode` is 0, otherwise the team number counted from 0. `party`: 0 for a user who entered the queue alone, and for a user who entered through a room, the party number counted from 1 within that match
 - `lockstep`: the DEV lockstep flag
 - `transport` is the value that `p2p-signaling.prepare_transport` makes
@@ -141,7 +141,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 |---|---|
 | `ROOM_CREATE` | `ROOM_BUSY` when in a room or queue. `FEATURE_DISABLED` when `admin-api.is_kill_switched` is `true` for `MATCH_REQUEST`. `INVALID_REQUEST` when `mode_id` is not in `match_mode` or that mode is not a mode that can open a room. Otherwise creates an `Open` room with only that user |
 | `ROOM_JOIN` | `ROOM_BUSY` when in a room or queue. `ROOM_NOT_FOUND` when no room has that code. `ROOM_VERSION_MISMATCH` when `data_version` or `client_version` of the room differs from the `HELLO` value of that user's connection. `ROOM_BUSY` when the room is `Matching`. `ROOM_FULL` when the member count is the room capacity. The room capacity is `max_players` when `allow_room` of that mode is `true`, and `max_party_size` when it is `false`. Otherwise adds the user at the end of the member list |
-| `ROOM_LEAVE` | Dropped when not in a room. When the room is `Matching`, removes the party entry from the queue and changes the room to `Open`. Removes that user from the member list. When there is no member left, deletes the room |
+| `ROOM_LEAVE` | Dropped when not in a room. When the room is `Matching` and has a party entry, removes the party entry from the queue and changes the room to `Open`. A room whose party entry became a match stays `Matching`, until `MATCH_FOUND` is sent. Removes that user from the member list. When there is no member left, deletes the room |
 | `ROOM_KICK` | `ROOM_NOT_HOST` when not the host. `INVALID_REQUEST` when `user_id` is the sender or not a member. Sends `ROOM_KICKED` to the target and handles it the same as the target's `ROOM_LEAVE` |
 | `ROOM_START` | `ROOM_NOT_HOST` when not the host. `ROOM_BUSY` when `Matching`. `FEATURE_DISABLED` when the kill switch is on. `INVALID_REQUEST` when `allow_room` of the room's mode is `false`. That error code when `result_rule` of that mode is `ServerReplay` and the replay version check of the host connection fails. `ROOM_NOT_ENOUGH_PLAYERS` when the member count is less than `min_players`. Does member rating resolution and creates a match with the members |
 
@@ -393,6 +393,7 @@ reserved ID, reserved string, reserved sound: none
 - On failure of `ROOM_CREATE`, `ROOM_JOIN`, `ROOM_KICK`, only the sending user gets `ROOM_FAILED` with the `kind` of that frame as `request`
 - The host's `MATCH_REQUEST` puts in one party entry, the room becomes `Matching`, and the rating of the party entry is the largest of the member ratings. In the match that the party is in, the indexes of the members are consecutive and their `party` is the same
 - `MATCH_REQUEST` of a room whose member count is more than `max_party_size` is `ROOM_PARTY_TOO_LARGE`, and `MATCH_REQUEST` of a non-host member is `ROOM_NOT_HOST`. When a member leaves during `Matching`, the party entry is removed from the queue and the room is `Open`
+- When a member leaves while the match of its party is created, the other members get `ROOM_STATE`(`Matching`), then `MATCH_FOUND`, then `ROOM_STATE`(`Open`). When a party entry reaches `TIMEOUT`, its members get `MATCH_FAILED`(`TIMEOUT`), then `ROOM_STATE`(`Open`)
 - `MATCH_REQUEST` outside a room in a mode whose `allow_queue` is `false` is `MATCH_FAILED`(`INVALID_MODE`) and does not enter the queue. In a room of that mode, the host's `MATCH_REQUEST` is `ROOM_FAILED`(`INVALID_REQUEST`, `MATCH_REQUEST`)
 - In a room of a mode whose `allow_room` is `false`, the host's `ROOM_START` is `ROOM_FAILED`(`INVALID_REQUEST`, `ROOM_START`) and there is no match. `ROOM_CREATE` of a mode whose `allow_room` is `false` and `max_party_size` is 1 is `ROOM_FAILED`(`INVALID_REQUEST`, `ROOM_CREATE`) and there is no room
 - `source` of the match record of a match that `ROOM_START` created, and of the match record that the apply hook received, is `Room`, and for a match that queue matching (including party entries) created, it is `Queue`
