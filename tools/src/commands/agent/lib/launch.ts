@@ -57,15 +57,18 @@ export const PRE_COMMIT_COMMAND = 'meta sync core --staged';
 export async function ensurePreCommitHook(repo: string, env: NodeJS.ProcessEnv): Promise<void> {
   const hooks = resolve(repo, await gitLine(repo, ['rev-parse', '--git-path', 'hooks']));
   const hook = join(hooks, 'pre-commit');
-  const line = `env OGW_HARNESS_ROOT="${harnessRoot(env)}" "${process.execPath}" "${cliEntry()}" ${PRE_COMMIT_COMMAND}`;
+  // a shell assignment, not `env`: the hook runs nothing from PATH, and `env` would take a path holding `=` for one
+  const root = `OGW_HARNESS_ROOT="${harnessRoot(env)}"`;
+  const command = `"${process.execPath}" "${cliEntry()}" ${PRE_COMMIT_COMMAND}`;
   if (exists(hook)) {
     const current = await readFile(hook, 'utf8');
     if (current.includes(PRE_COMMIT_COMMAND)) return;
     const [first, ...rest] = current.split('\n');
-    const text = first?.startsWith('#!') ? [first, `${line} || exit 1`, ...rest].join('\n') : `${line} || exit 1\n${current}`;
+    const line = `${root} ${command} || exit 1`;
+    const text = first?.startsWith('#!') ? [first, line, ...rest].join('\n') : `${line}\n${current}`;
     await writeFileAtomic(hook, text);
   } else {
-    await writeFileAtomic(hook, `#!/bin/sh\nexec ${line}\n`);
+    await writeFileAtomic(hook, `#!/bin/sh\n${root} exec ${command}\n`);
   }
   await chmod(hook, 0o755);
 }

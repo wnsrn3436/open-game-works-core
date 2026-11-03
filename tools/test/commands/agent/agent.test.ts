@@ -1,3 +1,4 @@
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,7 +11,7 @@ import { createContext } from '../../../src/lib/command.ts';
 import { startAgentJob } from '../../../src/commands/agent/api.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { privateTempDir } from '../../../src/lib/secret-files.ts';
-import { ogw, commitAll, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
+import { ogw, commitAll, gitEnv, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
@@ -452,6 +453,22 @@ describe('ogw agent: core and review', () => {
     expect(hook.split('\n')[0]).toBe('#!/bin/sh');
     expect(hook.match(/meta sync core --staged/g)?.length).toBe(1);
     expect(hook).toContain('echo mine');
+  });
+
+  it('runs the core pre-commit hook in the workspace of its harness with nothing from PATH but what git adds', async () => {
+    const ws = makeWorkspace();
+    const { ensurePreCommitHook } = await import('../../../src/commands/agent/lib/launch.ts');
+    await ensurePreCommitHook(ws.coreImpl, ws.env);
+    writeFileSync(join(ws.coreImpl, 'x.txt'), 'x');
+    const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    // no OGW_HARNESS_ROOT: the commit names no harness
+    const env = { ...gitEnv, PATH: '/nonexistent' };
+    execFileSync(git, ['add', 'x.txt'], { cwd: ws.coreImpl, env });
+    // git gives the hook's output to stderr
+    const commit = spawnSync(git, ['commit', '-m', 'x'], { cwd: ws.coreImpl, env, encoding: 'utf8' });
+    expect(commit).toMatchObject({ status: 0 });
+    expect(commit.stderr).toContain('no staged engine resource');
+    expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%s'])).toBe('x\n');
   });
 
   it('commits the core review file in the worktree', async () => {
