@@ -1,6 +1,6 @@
 {
   "target": "core",
-  "nextId": 7,
+  "nextId": 8,
   "items": [
     {
       "id": "D1",
@@ -37,6 +37,12 @@
       "location": "tools/src/commands/game/init.ts:41",
       "problem": "`test evidence`: skills/game-setup/SKILL.md step 2 gives the draft `coreVersion` the core version of the harness; no test makes a tagged harness for `ogw game init`, so changing the line back to the highest release fails no test that refers to `core-v`",
       "foundBy": "core round 6"
+    },
+    {
+      "id": "D7",
+      "location": "tools/src/commands/review/clear.ts:13",
+      "problem": "`data.notRemoved` of `ogw review clear` now holds the whole report lines of `clearReviews`, because commit 2a63664 moved the prefixes into `removeLeftAgentWorktrees`. With `--json`, a job branch with commits not in main puts `discarded: agent/<id>: ...` in `notRemoved` although that branch was removed, and a real leftover appears as `not removed: <what>` instead of `<what>`. Found by reading the code; `tools/test/commands/review/run-fix-jobs.test.ts` checks only stdout",
+      "foundBy": "core round 1"
     }
   ]
 }
