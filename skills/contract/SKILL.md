@@ -33,7 +33,6 @@ The base proto is two files under the import path root.
 | `ogw/options.proto` | `ogw` | core option declarations |
 | `ogw/core.proto` | `ogw.core` | all of the base proto other than core options. Includes `service Core`, `service CoreCheat` and their messages |
 
-- The contract tool and the data tool also put protobuf's `google/protobuf/descriptor.proto` on the import path
 - A game contract file adds `import "ogw/options.proto";` when it uses a core option, and `import "ogw/core.proto";` when it uses a message or enum of the base proto. A base proto type is written as `ogw.core.<name>`
 - `ogw/core.proto` follows the writing rules except the package rule. The field numbers of a base proto message whose fields this document sets as a `<type> <field>` list (`ResponseEnvelope`, `ServerError`, `UserStateDelta`, `UserStateEntry`) start at 1 in list order. A new field is added at the end of the list
 - `ogw/options.proto` holds only option declarations and is not a target of the writing rules. Its content is exactly as below. The fields of `FieldRules` are proto2 `optional` so that whether an option was written can be told apart
@@ -170,7 +169,7 @@ Input constraints are declared in field option `(ogw.v)`. The contract tool gene
 | `unique` | `repeated` | no duplicate elements |
 
 - The fields of request messages, `MatchResult`, `MatchInputLog`, `PlaySessionResult`, `PlaySessionStartOptions`, `PlaySessionContinueOptions` and the messages reachable from them declare the options below. When one is missing, the contract tool blocks with an error
-  - `string`: `max_len` or `max_chars`
+  - `string`: `max_chars` for text a person types, otherwise `max_len`
   - `bytes`: `max_len`
   - `repeated`: `max_count`
   - integer: `min` and `max`, or `table`
@@ -239,6 +238,6 @@ After the first PROD build, compatibility is kept by comparing with the contract
 The contract tool is in the core release, and the harness tool `ogw contract <game>` calls it with the core version of game settings. The generated code is written to `client/generated/contract/`, `server/generated/contract/`, and to `client/dev/generated/contract/`, `server/dev/generated/contract/`, which are DEV code. The generated code is committed and not edited by hand.
 
 - The generated code puts the types of the base proto in the `CoreContract` namespace, the types of the game contract in `GameContract`, the base proto types of the DEV generation target in `CoreCheatContract`, and the types of `cheat.proto` in `GameCheatContract`. e.g. `CoreContract.LoginRequest`. So types of the base proto and the game contract do not collide even when they have the same name
-- The namespaces, types, and methods of the generated code are set by `### generated code` of the per-engine implementation rules of [`client-core`](../client-core/SKILL.md) for the client, and by `## generated code` of [`server-core`](../server-core/SKILL.md) for the server
+- The namespaces, types, and methods of the generated code are set by `### generated code` of the engine-specific implementation rules of [`client-core`](../client-core/SKILL.md) for the client, and by `## generated code` of [`server-core`](../server-core/SKILL.md) for the server
 - When the contract is edited, the generated code goes in the same commit. When the generated code differs from the contract, the automated check blocks it
 - The contents per generation target, the checks before generation, and the CLI are in [tool.md](tool.md)

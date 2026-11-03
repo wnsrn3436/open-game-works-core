@@ -1,6 +1,6 @@
 ---
 name: data
-description: Holds the game data file layout, CSV format, type, ID name and ID value, ID registry, system table, enum, invariant, core data, translation, glossary, the code and binary the data tool generates, data version, and data check. Read when writing or fixing a data table, when filling translations, when making core read data, when reviewing the data tool, and when judging game data values of content code in hardening
+description: Holds the game data file layout, CSV format, type, ID name and ID value, ID registry, system table, enum, invariant, core data, translation, glossary, the code and binary the data tool generates, data version, and data check. Read when writing or fixing a data table, when filling translations, when making core read data, when making, fixing or reviewing the data tool, and when judging game data values of content code in hardening
 ---
 
 # data
@@ -123,8 +123,7 @@ A `requirement` cell writes a condition, such as an unlock condition or a start 
 - The same ID name is the same ID value in every table
 - An ID value is an `int32` of 1 or more. 0 means there is no target
 - The game repo keeps the ID registry as the single file `id_registry.json` on its `id-registry` branch. It is a JSON object from ID name to ID value, and its keys are in byte order
-  - Only the data tool reads and writes this branch. Other agents and the content agent do not check out or edit this branch
-  - An issued mapping is not changed or deleted. It is kept even when a branch is discarded or the ID name is deleted from data
+  - The data tool reads and writes this branch, and the harness tool creates and reads it (`ogw game init`, `ogw build run`). Agents do not check out or edit this branch
 - When an ID name is changed, the new ID name gets a new ID value. After the first PROD build, an ID name that went out to PROD is not changed
 - ID names are not put in the built client data
 
@@ -235,7 +234,7 @@ A `requirement` cell writes a condition, such as an unlock condition or a start 
   - every key: sets `source` and `current_hash` to the current values
   - removed key: deletes the row
 - missing translation: a row whose `text` is empty in a translation file, and an empty `<language>` cell in the glossary. A stale translation is a row whose `text` is not empty and whose `source_hash` differs from `current_hash`
-- Only the translation sub-agent writes the `text` of missing translations and stale translations and the `<language>` cells of the glossary. Only `ogw translation done` writes `source_hash` of translation files, and only the data tool writes `current_hash` of translation files and `source_hash` of the glossary. Other agents do not change these
+- Apart from the source language file and the glossary alignment of the data tool, only the translation sub-agent writes the `text` of missing translations and stale translations and the `<language>` cells of the glossary, and only `ogw translation done` writes `source_hash` of translation files. Only the data tool writes `current_hash` of translation files and `source_hash` of the glossary. Other agents do not change these
 - In the translation binary, the `text` of a key that is a missing translation is the source text
 - `ogw translation todo <game> <language>`: after running `ogw data <game>`, outputs the glossary rows whose cell of that language is empty (line number, `source`, `id_name`, `note`) and the missing translation and stale translation rows of the translation file of that language (`key`, `source`, the current `text` when stale, and for each glossary row that matches that source text, `source` and that language cell). It changes nothing else
 - `ogw translation done <game> <language> [--keep <key>...]`: after running `ogw data <game>`, sets `source_hash` of the rows below in the translation file of that language to the `current_hash` of that row, and outputs the remaining missing translation and stale translation rows and the data check lines of the translation file of that language and of the glossary. When `ogw data` fails, it does not change `source_hash`, outputs those data check lines, and fails
@@ -317,7 +316,7 @@ binary build: `ogw instance start` (including the worktree of `--commit`) and `o
 
 - The `client/` paths of location are paths under the logical folder of `## folder` of [`client-content`](../client-content/SKILL.md)
 - Generated code (`<Table>` is the table name in PascalCase): per table, the row type `<Table>Row`, the empty row whose fields are all default values, and the container `<Table>Table` that holds all rows and finds rows by ID value; enum types; the accessors `GameSetting`, `ReservedId`, `ReservedString` (client and server), `ReservedSound` (client); the load entry point that loads the built binaries into containers and accessors; the functions that find rows and key column values by table name and column name when client `DataCore` makes a derived container. Row types, `<Table><Column>Item`, containers, and enum types are in the `GameData` namespace
-- The namespaces, types, and methods of the generated code are set by `### generated code` of the per-engine implementation rules of [`client-core`](../client-core/SKILL.md) for the client, and by `## generated code` of [`server-core`](../server-core/SKILL.md) for the server
+- The namespaces, types, and methods of the generated code are set by `### generated code` of the engine-specific implementation rules of [`client-core`](../client-core/SKILL.md) for the client, and by `## generated code` of [`server-core`](../server-core/SKILL.md) for the server
 - A container gives the list of all rows in table binary order. For a table whose first column is `id(key)`, it finds the one row of an ID value and returns the empty row when there is none; for a table whose first column is `id`, it finds the list of rows of an ID value in table binary order and returns an empty list when there is none. The returned rows and lists are objects that the container holds and are not made anew per call. The caller does not change them. The empty row is the same object per table
 - accessor: one per key, and its name is the ID name without the brackets. `ReservedId` returns the ID value, `ReservedString` the built translation key, and `ReservedSound` the resource key
 - The generated code holds the tables, enums, and reserved rows of every module in `core-spec.json`, regardless of whether the game uses the module, because the core code that goes into a game also has code of modules the game does not use. Of those, what is not in data is not put in data and is made as below
