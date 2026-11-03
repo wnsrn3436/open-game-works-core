@@ -52,14 +52,15 @@ export const PRE_COMMIT_COMMAND = 'meta sync core --staged';
 
 /**
  * Installs a pre-commit hook running `ogw meta sync core --staged` in the repo's hook folder when there is none. The
- * hook names the harness of `env`, so that it syncs in that harness's workspace whatever environment commits.
+ * hook runs the `ogw` of this code, which finds node in PATH, so that no node upgrade removes what it runs, and names
+ * the harness of `env`, so that it syncs in that harness's workspace whatever environment commits.
  */
 export async function ensurePreCommitHook(repo: string, env: NodeJS.ProcessEnv): Promise<void> {
   const hooks = resolve(repo, await gitLine(repo, ['rev-parse', '--git-path', 'hooks']));
   const hook = join(hooks, 'pre-commit');
-  // a shell assignment, not `env`: the hook runs nothing from PATH, and `env` would take a path holding `=` for one
+  // a shell assignment, not `env`, which would take a path holding `=` for one
   const root = `OGW_HARNESS_ROOT="${harnessRoot(env)}"`;
-  const command = `"${process.execPath}" "${cliEntry()}" ${PRE_COMMIT_COMMAND}`;
+  const command = `"${join(ogwBinFolder(), 'ogw')}" ${PRE_COMMIT_COMMAND}`;
   if (exists(hook)) {
     const current = await readFile(hook, 'utf8');
     if (current.includes(PRE_COMMIT_COMMAND)) return;
@@ -311,9 +312,14 @@ function backgroundWaitEnv(agent: AgentSettings): NodeJS.ProcessEnv {
   return agentCli(agent) === 'claude-code' ? { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(CLAUDE_BACKGROUND_WAIT_MS) } : {};
 }
 
+/** The folder of the `ogw` wrapper of this code: the harness `tools/bin`. */
+function ogwBinFolder(): string {
+  return resolve(dirname(cliEntry()), '..', 'bin');
+}
+
 /** The environment with the harness `tools/bin` first on `PATH`, so the agent's shell finds `ogw` by name. */
 export function withOgwOnPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const bin = resolve(dirname(cliEntry()), '..', 'bin');
+  const bin = ogwBinFolder();
   const rest = (env.PATH ?? '').split(delimiter).filter((dir) => dir !== '' && dir !== bin);
   return { ...env, PATH: [bin, ...rest].join(delimiter) };
 }
