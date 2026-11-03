@@ -292,6 +292,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - A list names every item it knows. When a list cannot be complete, define the criterion and give the list as examples under it. Do not end a list with a word that stands for the items not named
 - Do not use words that cannot be judged: properly, appropriately, as much as possible, as far as possible, sufficiently, if possible
 - Write only the current design. Do not mention previous designs or what was removed
+- Do not write where a rule came from: surveys, sample counts, the games studied, experiments, ratings. Write the rule and what an agent needs to apply it
 - Do not write the same content in two places. Do not write sentences that point to a position within the same document
 - Put each piece of content only in the documents read by the agents that need it
 - When the same mistake happens twice, do not add a sentence; make it an automated check
