@@ -28,12 +28,12 @@ Handles notification permission, server registration of the push device token, l
 |---|---|---|---|---|
 | `set_push_adapter` | push adapter or none. Called before `init` | none | none | `BootstrapCore`(`InitModules`) |
 | `set_notification_adapter` | notification adapter or none. Called before `init` | none | none | `BootstrapCore`(`InitModules`) |
-| `get_permission` | none | `PermissionStatus` | `Undetermined` | core, content code |
+| `get_permission` | none | `PermissionStatus` | `Undetermined` | content code |
 | `request_permission` | none | async operation. `PermissionStatus` | `Undetermined` | content code |
 | `schedule_local` | ID value of `local_push` | success flag | `false` | content code |
 | `schedule_local_after` | ID value of `local_push`, delay ms | success flag | `false` | content code |
 | `cancel_local` | ID value of `local_push` | none | none | content code |
-| `cancel_all_local` | none | none | none | core, content code |
+| `cancel_all_local` | none | none | none | content code |
 | `take_launch_push` | none | message ID value of the remote push that opened the app. `0` when there is none | `0` | content code |
 | `get_push_consent` | none | `PushConsentInfo` | `PushConsentInfo` with both values `CONSENT_CHOICE_UNSPECIFIED` | content code |
 | `set_push_consent` | `push_ad`, `push_night`(`ConsentChoice`) | async operation. success flag | `false` | content code |
@@ -207,7 +207,7 @@ format argument
 | `simulate_push` | message ID value, whether it was opened by a tap | none | none | core test, `QACore` |
 | `set_fake_launch_push` | message ID value | none. Sets the launch push the fake push adapter gives next | none | core test |
 
-- `simulate_push` emits the same `PushReceivedEvent` or `PushOpenedEvent` as when the fake push adapter receives a remote push
+- `simulate_push` publishes the same `PushReceivedEvent` or `PushOpenedEvent` as when the fake push adapter receives a remote push
 
 ## test
 
@@ -225,6 +225,6 @@ format argument
 - The scheduled title and body are text of the language at scheduling time
 - `release` does not delete OS schedules. Each `SessionEndedEvent` with `Logout`, `Switch`, `Withdraw`, `AgeBlocked` gives one `cancel_all_local`, and `Rejected` gives none
 - After `set_fake_launch_push`, even across `release` and `init`, `take_launch_push` returns that message ID value once, and the next call and a call after another `release` and `init` are `0`
-- `simulate_push` emits the event, and STG·PROD builds have no DEV operation, fake push adapter or fake notification adapter
+- `simulate_push` publishes the event, and STG and PROD builds have no DEV operation, fake push adapter or fake notification adapter
 - `get_push_consent` gives the two values of `AuthCore.get_consent`, and `set_push_consent` calls `AuthCore.update_push_consent` once and returns its result
-- PushCore gets the push token and receives remote notifications through the APNs adapter and FCM adapter it was given
+- PushCore gets the device token and receives remote pushes through the APNs adapter and FCM adapter it was given

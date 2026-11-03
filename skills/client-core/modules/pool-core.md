@@ -45,7 +45,7 @@ Provides an object pool that keeps instances made from a prefab without destroyi
 - A pool object is an instance the pool made. The component objects are the pool object and the objects that were under it when the pool made that instance
 - An instance made and destroyed 2 or more times within one scene is borrowed from a pool. e.g. effect, projectile, damage text, scroll cell. Scenes, panels, popups and instances made only once within one scene are not put in a pool
 - A pool object implements two functions: `on_borrow` (right before lending), `on_return` (on return, before common cleanup). The two functions restore the state that common cleanup does not restore
-- The return mode is set by the auto-return flag member of the pool object. The default is manual-return. PoolCore reads this value once when it makes the instance and uses that value until the instance is destroyed. The member name is in the per-engine implementation rules
+- The return mode is set by the auto-return flag member of the pool object. The default is manual-return. PoolCore reads this value once when it makes the instance and uses that value until the instance is destroyed. The member name is in the engine-specific implementation rules
   - auto-return: an instance with a set end. e.g. an effect played once, damage text. When it ends, it calls `notify_finished` and PoolCore takes it back
   - manual-return: an instance that is not auto-return. The borrower calls `give_back`
   - The borrower can also `give_back` an auto-return instance before it ends
@@ -55,12 +55,12 @@ Provides an object pool that keeps instances made from a prefab without destroyi
 - `borrow` ends without waiting
 - Borrowing from a pool that does not exist creates the pool. The prefab is obtained by `ResourceCore.get_loaded` with the pool scope
 - When there is no in-pool instance, PoolCore makes a new one and lends it
-- Right before lending, PoolCore restores the instance's visibility to the value at creation and calls `on_borrow`. For an auto-return instance, it emits `EffectSpawnedEvent` after `on_borrow`
+- Right before lending, PoolCore restores the instance's visibility to the value at creation and calls `on_borrow`. For an auto-return instance, it publishes `EffectSpawnedEvent` after `on_borrow`
 - The borrower attaches the borrowed instance to a parent
 
 ### handle
 
-- generation number: an integer kept per pool object. It goes up by 1 on return. An instance whose generation number is the maximum in the per-engine implementation rules is destroyed on return instead of kept in the pool
+- generation number: an integer kept per pool object. It goes up by 1 on return. An instance whose generation number is the maximum in the engine-specific implementation rules is destroyed on return instead of kept in the pool
 - A handle is the borrowed instance and the generation number at lending. An empty handle points to no instance
 - valid handle: the instance is not destroyed and the handle's generation number equals the current generation number
 - The borrower keeps a pool object in a field or callback only as a handle. A local variable within one function can hold the instance
@@ -76,7 +76,7 @@ Provides an object pool that keeps instances made from a prefab without destroyi
   5. Runs common cleanup
   6. When the in-pool instance count, not counting the returned instance, is `PoolCore.maxPoolSize` or more, destroys the instance. Otherwise keeps it in the pool
 - common cleanup order: `ResourceCore.end_owner_scope` per component object → return cleaners per component object in registration order → `EventCore.unsubscribe_all` per component object → hide the instance → detach it from the parent → set the position to the value at creation
-- The double return check also runs in STG·PROD builds
+- The double return check also runs in STG and PROD builds
 
 ### owner-bound borrow
 
@@ -90,7 +90,7 @@ Provides an object pool that keeps instances made from a prefab without destroyi
 ### direct destroy
 
 - A pool object is not destroyed outside PoolCore
-- A pool object destroyed outside PoolCore is removed from the pool. When it was a borrowed instance, the borrowed count goes down by 1. The detection method is in the per-engine implementation rules
+- A pool object destroyed outside PoolCore is removed from the pool. When it was a borrowed instance, the borrowed count goes down by 1. The detection method is in the engine-specific implementation rules
 
 ### size
 
@@ -99,7 +99,7 @@ Provides an object pool that keeps instances made from a prefab without destroyi
 - Even when an item fails, the remaining items are filled
 - When the pool scope of an item is released while waiting for the prefab, that item fails without a log and creates no pool
 - `SceneCore` fills the pools of the scene scope in the preload step of a scene transition. For any other pool, the code that borrows fills it before borrowing
-- On a memory warning, PoolCore destroys, in every pool, the in-pool instances beyond the prefill count. How the warning is received is in the per-engine implementation rules
+- On a memory warning, PoolCore destroys, in every pool, the in-pool instances beyond the prefill count. How the warning is received is in the engine-specific implementation rules
 
 ### scope and lifecycle
 
@@ -148,24 +148,24 @@ none
 
 ## DEV
 
-- When there is no in-pool instance and a new one is made and lent, a build with DEV code leaves a `warn` log
-- leak check: in a build with DEV code, when after common cleanup `EventCore.count_subscriptions` counts 1 or more subscriptions whose subscriber is a component object, or a return cleaner returns 1 or more items left, PoolCore leaves an `error` log
+- When there is no in-pool instance and a new one is made and lent, it leaves a `warn` log in the environments that include DEV code
+- leak check: in the environments that include DEV code, when after common cleanup `EventCore.count_subscriptions` counts 1 or more subscriptions whose subscriber is a component object, or a return cleaner returns 1 or more items left, PoolCore leaves an `error` log
 
 ## test
 
 - `is_valid` returns `true` for a handle before it is given back, and `false` for the previous handle after giving back and for an empty handle, without a log
 - A returned instance has no parent, is hidden, has the position value at creation, has no subscription whose subscriber is a component object, and the return cleaner was called once per component object
-- In a build with DEV code, when a return cleaner returns 1 item left, a leak check `error` log is written
-- Releasing a pool scope with borrowed instances writes an `error` log and calls `on_return` per borrowed instance, and after the release every pool object is destroyed and there is no pool
-- Destroying a borrowed instance and an in-pool instance outside PoolCore writes an `error` log for each, and they drop out of `get_pool_state`
+- In the environments that include DEV code, when a return cleaner returns 1 item left, a leak check `error` log is left
+- Releasing a pool scope with borrowed instances leaves an `error` log and calls `on_return` per borrowed instance, and after the release every pool object is destroyed and there is no pool
+- Destroying a borrowed instance and an in-pool instance outside PoolCore leaves an `error` log for each, and they drop out of `get_pool_state`
 - For an owner-bound instance that is not a descendant of the owner object, destroying the owner object calls `on_return` and takes the instance back. A descendant instance leaves the pool without an `error` log, and `on_return` is not called
 - Giving back an instance to which another instance, owner-bound borrowed with a component object as owner, is attached takes the attached instance back without destroying it
 - Prefilling an empty pool gives an in-pool instance count of the prefill count, `PoolCore.defaultPrefillCount` when the count is omitted, and `PoolCore.maxPoolSize` when the count exceeds it. Prefilling a pool that has more does not reduce the count
-- When borrowing from a pool that does not exist and the prefab is in the cache, the pool is created and a build with DEV code writes a `warn` log. When the prefab is not in the cache, the result is an empty handle and there is no pool, and the log is one `error` from `ResourceCore` and no log from PoolCore
+- When borrowing from a pool that does not exist and the prefab is in the cache, the pool is created and, in the environments that include DEV code, it leaves a `warn` log. When the prefab is not in the cache, the result is an empty handle and there is no pool, and the log is one `error` from `ResourceCore` and no log from PoolCore
 - Giving back to a pool whose in-pool instance count is `PoolCore.maxPoolSize` destroys that instance and leaves the count unchanged. Giving back to a pool at `PoolCore.maxPoolSize` − 1 keeps the instance in the pool, and the count becomes `PoolCore.maxPoolSize`
 - An auto-return instance is taken back by its `notify_finished`
 - A pool object whose auto-return flag member is not changed is manual-return. Changing the member after the instance is made leaves the return mode of that instance unchanged
-- Each `borrow` of an auto-return instance emits `EffectSpawnedEvent` once, and a `borrow` of a manual-return instance or with an empty handle emits none
+- Each `borrow` of an auto-return instance publishes `EffectSpawnedEvent` once, and a `borrow` of a manual-return instance or with an empty handle publishes none
 - After a memory warning, the in-pool instance count of every pool is at most the prefill count
 - Releasing the pool scope while prefill waits for the prefab gives `false` without a log, and `get_pool_state` is 0, 0
 - After `release`, every pool object is destroyed and there is no pool, and there is no `error` log even with borrowed instances

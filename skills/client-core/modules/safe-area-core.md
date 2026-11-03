@@ -14,7 +14,7 @@
 
 ## purpose
 
-Calculates, in game coordinates, the safe area that the notch, punch hole, home indicator and rounded corners do not cover, and places UI elements to fit the safe area. Also reports, in game coordinates, the keyboard area that the screen keyboard covers.
+Calculates, in game coordinates, the safe area that the notch, punch hole, home indicator and rounded corners do not cover, and places UI elements to fit the safe area. Also reports, in game coordinates, the keyboard area that the on-screen keyboard covers.
 
 ## dependency
 
@@ -49,10 +49,10 @@ Calculates, in game coordinates, the safe area that the notch, punch hole, home 
 - safe area root: a UI element whose position and size SafeAreaCore keeps equal to the safe area. It receives no input
   - UI elements of a UI layer that has a safe area root are placed under the safe area root. Exception: the color filter of `AccessibilityCore` is placed outside the safe area root in the `LoadingIcon` layer and covers the whole visible game area
   - `UILayer` values that have a safe area root: `SceneUI`, `VirtualPad`, `Panel`, `Cutscene`, `Loading`, `Popup`, `Tutorial`, `LoadingIcon`. The side that uses the layer places it
-  - `UILayer` values that do not have a safe area root: `WorldEffect`, `CutsceneEffect`, `TransitionEffect`, `Message`, `Debug`
+  - `UILayer` values that do not have a safe area root: `WorldEffect`, `CutsceneEffect`, `TransitionEffect`, `Message`, `Fatal`, `Debug`
 - ignore mark: a mark attached to a UI element. A UI element with it is placed with its anchors calculated against the visible game area instead of its parent. e.g. dim, a panel background that fills to the screen edges
   - Full-screen backgrounds inside panel and popup prefabs get an ignore mark
-  - The parent of a UI element with an ignore mark is a safe area root or a UI element with the same position and size as a safe area root. In a build that contains DEV code, a violation leaves an error log, and the element is still placed against the visible game area
+  - The parent of a UI element with an ignore mark is a safe area root or a UI element with the same position and size as a safe area root. In the environments that include DEV code, a violation leaves an error log, and the element is still placed against the visible game area
 - Safe area roots and UI elements with an ignore mark are placed by the current safe area when they are created
 
 ### recalculation
@@ -60,16 +60,16 @@ Calculates, in game coordinates, the safe area that the notch, punch hole, home 
 - It calculates in `init` and sends no event. When the width or height of the window size is 0, it does not calculate, leaves no log and keeps a result with all values 0
 - recalculation times: `GameAreaChangedEvent` received, device rotated 180 degrees, `set_virtual_notch` and `clear_virtual_notch` of DEV code
 - For the 180-degree rotation, on `android` and `ios` it reads the OS safe area every `SafeAreaCore.rotationCheckIntervalMs` and recalculates when it differs from the previous value
-- A recalculation that arises while `SafeAreaChangedEvent` is being sent runs after that publish returns
-- When the safe area and insets from a recalculation all equal the previous ones, it does nothing. When any one of them changes, it places the safe area roots and UI elements with an ignore mark again and then sends `SafeAreaChangedEvent`
+- A recalculation that arises while `SafeAreaChangedEvent` is being published runs after that publish returns
+- When the safe area and insets from a recalculation all equal the previous ones, it does nothing. When any one of them changes, it places the safe area roots and UI elements with an ignore mark again and then publishes `SafeAreaChangedEvent`
 
 ### keyboard area
 
-- OS keyboard height: the height that the screen keyboard takes from the bottom side of the window, in window pixels. `android` and `ios` use the OS value; on other platforms it is 0. The engine mapping is in the engine-specific implementation rules
+- OS keyboard height: the height that the on-screen keyboard takes from the bottom side of the window, in window pixels. `android` and `ios` use the OS value; on other platforms it is 0. The engine mapping is in the engine-specific implementation rules
 - keyboard area: an empty rectangle when the OS keyboard height h is 0. Otherwise, the overlap of the visible game area and the rectangle made by converting with `ResolutionCore.window_to_game` the top-left and bottom-right corners of the window pixel rectangle (x 0, y window height − h, width window width, height h)
 - It calculates in `init` and sends no event
 - Times it calculates again: on `android` and `ios`, the OS keyboard height read every frame differs from the previous value; `GameAreaChangedEvent` received; `set_virtual_keyboard` and `clear_virtual_keyboard` of DEV code. The per-frame read allocates no memory
-- When the recalculated keyboard area differs from the previous one, it sends `KeyboardAreaChangedEvent`. When one `GameAreaChangedEvent` changes both the safe area and the keyboard area, `SafeAreaChangedEvent` is sent first
+- When the recalculated keyboard area differs from the previous one, it publishes `KeyboardAreaChangedEvent`. When one `GameAreaChangedEvent` changes both the safe area and the keyboard area, `SafeAreaChangedEvent` is published first
 
 ### lifecycle
 
@@ -85,7 +85,7 @@ none
 | event | when | payload |
 |---|---|---|
 | `SafeAreaChangedEvent` | after a recalculation changes the safe area or an inset and the layout is redone | `inset_left`, `inset_top`, `inset_right`, `inset_bottom`: inset of each side |
-| `KeyboardAreaChangedEvent` | after the keyboard area changes | `area`: keyboard area. An empty rectangle means there is no screen keyboard |
+| `KeyboardAreaChangedEvent` | after the keyboard area changes | `area`: keyboard area. An empty rectangle means there is no on-screen keyboard |
 
 ## error
 
@@ -93,7 +93,7 @@ none
 |---|---|---|
 | width or height of the safe area 0 or less | all insets 0 | error |
 | value that is not a side in `get_inset` | 0 | error |
-| in a build that contains DEV code, the parent of a UI element with an ignore mark is outside the rules | placed against the visible game area | error |
+| in the environments that include DEV code, the parent of a UI element with an ignore mark is outside the rules | placed against the visible game area | error |
 | negative value in `set_virtual_notch` | ignored | error |
 | negative value in `set_virtual_keyboard` | ignored | error |
 
@@ -130,12 +130,12 @@ Common conditions: the OS safe area is set with a virtual notch, and the window 
 - The position and size of a safe area root equal the safe area. A safe area root created after `set_virtual_notch` also matches
 - The position and size of an ignore-mark UI element anchored to the whole safe area root equal the visible game area
 - The position, relative to the visible game area, of an ignore-mark UI element anchored to the top-left of the safe area root equals its position relative to the safe area root without the ignore mark
-- A `set_virtual_notch` that changes an inset sends `SafeAreaChangedEvent` once; a `set_virtual_notch` with the same values and `init` do not send it. When a subscriber receives it, the layout has the new values and the payload equals `get_inset`
+- A `set_virtual_notch` that changes an inset publishes `SafeAreaChangedEvent` once; a `set_virtual_notch` with the same values and `init` do not publish it. When a subscriber receives it, the layout has the new values and the payload equals `get_inset`
 - With a virtual notch set, a `set_test_screen` that changes the visible game area places the safe area root again and sends the event
 - After `clear_virtual_notch`, the safe area and insets equal those before `set_virtual_notch`
 - Before and after `set_virtual_notch`, the game coordinates position and size of UI elements outside the safe area root and of the world are the same
-- In a build that contains DEV code, an ignore-mark UI element under a parent outside the rules leaves an error log and is placed against the visible game area
-- When a `SafeAreaChangedEvent` subscriber calls a `set_virtual_notch` that changes an inset, the event is sent once more after that publish returns, and the two payloads equal `get_inset` at each publish
+- In the environments that include DEV code, an ignore-mark UI element under a parent outside the rules leaves an error log and is placed against the visible game area
+- When a `SafeAreaChangedEvent` subscriber calls a `set_virtual_notch` that changes an inset, the event is published once more after that publish returns, and the two payloads equal `get_inset` at each publish
 - Setting a virtual keyboard height h makes `get_keyboard_area` the rectangle of the two corners of the h band at the bottom of the window converted with `window_to_game`; `KeyboardAreaChangedEvent` comes once and its payload equals `get_keyboard_area`. Setting the same height again sends no event
 - In a `Letterbox` window, when h is at most the bottom fill area band, the keyboard area is an empty rectangle
 - On a platform other than `android` and `ios`, `clear_virtual_keyboard` after setting a virtual keyboard makes the keyboard area an empty rectangle with one `KeyboardAreaChangedEvent`

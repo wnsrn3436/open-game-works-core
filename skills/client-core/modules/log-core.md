@@ -31,7 +31,7 @@ Writes diagnostic logs to the log file, and collects error logs and analytics ev
 | `clear_sender` | none | none | none | `NetworkCore` |
 | `set_analytics_allowed` | whether analytics events may be collected | none | none | `AuthCore` |
 
-- sender: a function that receives one `LogBatch` and returns no result. `NetworkCore` registers it after login, and it sends the received `LogBatch` to the server's `logging` module with core `rpc` `ReportClientErrors`, `ReportAnalyticsEvents`
+- sender: a function that receives one `LogBatch` and returns no result
 - `LogBatch`: `errors` (list of `LogEntry`, in insertion order), `dropped_error_count`, `events` (list of `AnalyticsEvent`, in insertion order), `dropped_event_count`
 - `LogEntry`: `time`(Unix ms), `level`, `tag`, `message`, `stack_trace`
 - `AnalyticsEvent`: `name`, `time`(Unix ms), `params` (parameter list)
@@ -49,7 +49,7 @@ Writes diagnostic logs to the log file, and collects error logs and analytics ev
 | `error` | a failure in which an operation did not achieve its purpose |
 
 - A log operation ends without waiting and is called only on the main thread
-- STG·PROD builds have no `log_debug` calls and no calculation of their arguments. The method is in the engine implementation rules. Arguments of `log_debug`, `log_info`, `log_warn` do not use expressions with side effects
+- STG and PROD builds have no `log_debug` calls and no calculation of their arguments. The method is in the engine-specific implementation rules. Arguments of `log_debug`, `log_info`, `log_warn` do not use expressions with side effects
 - `time` is the device time. LogCore reads the device time and monotonic time directly from the device without going through `TimeCore`, and measures a duration as a difference of monotonic time
 - The tag is the name of the code that wrote the log: the module name for core, and a feature name of `client/features/` or `common`, `boot`, `dev` for content code
 - The message is in English. Tags, messages, event parameters do not contain secrets, tokens, raw receipt text, personal information, text the user entered
@@ -59,7 +59,7 @@ Writes diagnostic logs to the log file, and collects error logs and analytics ev
 
 - A log line joins `time`, `level`, `tag`, `message`, `stack_trace` in this order with tabs and ends with LF. `time` is a decimal integer
 - `\`, tab, LF, CR, U+0000 in tag, message, `stack_trace` are replaced with `\\`, `\t`, `\n`, `\r`, `\0`
-- A build with DEV code writes log lines to the console. STG·PROD builds do not write to the console
+- In the environments that include DEV code, it writes log lines to the console. STG and PROD builds do not write to the console
 
 ### log file
 
@@ -101,12 +101,12 @@ Writes diagnostic logs to the log file, and collects error logs and analytics ev
 ### abnormal exit
 
 - On `init` and `notify_app_state(foreground)`, it creates the `log/running` marker file. On `release`, `notify_app_state(background)`, `notify_app_state(quit)`, it deletes it. When there is no marker file to delete, it is treated as deleted
-- When the marker file already exists at `init`, the previous run exited abnormally. After creating the marker anew, it writes an `error` log with tag `LogCore`, message `abnormal exit`
+- When the marker file already exists at `init`, the previous run exited abnormally. After creating the marker anew, it leaves an `error` log with tag `LogCore`, message `abnormal exit`
 
 ### lifecycle
 
 - `release` flushes, then deletes the sender, queues, dropped counts, and sets the analytics allowed state to `false`
-- Log operations before `init` and after `release` write only to the console of a build with DEV code. `track_event` returns `false`. `notify_app_state`, `set_sender`, `clear_sender` do nothing
+- Log operations before `init` and after `release` write only to the console, and only in the environments that include DEV code. `track_event` returns `false`. `notify_app_state`, `set_sender`, `clear_sender` do nothing
 
 ## hook
 
@@ -118,7 +118,7 @@ none
 
 ## error
 
-A failure whose log is LogCore failure is not written with a log operation. A LogCore failure is written as an `error` line with tag `LogCore` to the console of a build with DEV code, and passed to the listener registered with `set_log_listener`.
+A failure whose log is LogCore failure is not written with a log operation. A LogCore failure is written as an `error` line with tag `LogCore` to the console in the environments that include DEV code, and passed to the listener registered with `set_log_listener`.
 
 | condition | failure value | log |
 |---|---|---|
@@ -167,13 +167,13 @@ none
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `set_log_listener` | listener: a function that receives level, tag, message. When it is a custom `Callable` (lambda, `bind()`), it is not registered and an `error` line with tag `LogCore` goes to the console | none | none | `UnitTestCore`, `BootstrapCore` |
+| `set_log_listener` | listener: a function that receives level, tag, message. When it is a lambda or a function with bound arguments, it is not registered and an `error` line with tag `LogCore` goes to the console | none | none | `UnitTestCore`, `BootstrapCore` |
 | `set_test_clock` | test clock | none | none | `UnitTestCore`, `BootstrapCore` |
 | `list_log_files` | none | list of log file paths. In ascending order of `<n>`. It flushes before listing | empty list | `QACore` |
 
 - `set_log_listener` can be called before and after `init`. The listener is called before `warn`, `error` log operations return. There is one listener, and registering again replaces it. `release` deletes it
 - The test clock is the same object as the test clock of `TimeCore`. When there is a test clock, LogCore reads the device time and monotonic time from the test clock instead of the device. `set_test_clock` is called only before `init`. `release` deletes it
-- STG·PROD builds do not have the operations above
+- STG and PROD builds do not have the operations above
 
 ## test
 
@@ -189,12 +189,12 @@ none
 - `track_event` returns `false` and does not put in the event for a name that is not snake_case, a name starting with `core_`, duplicate parameter names, a parameter name longer than `LogCore.eventParamNameMaxLength`, a parameter count and string over the limit, NaN. Failures of the same name give one `error` log
 - `message` of the `LogBatch` is cut to `LogCore.sendTextMaxLength` code points, and `tag` to `LogCore.sendTagMaxLength` code points
 - When the log folder cannot be created, `init` returns `true`, and the item with tag `LogCore` and later `error` logs are passed to the sender
-- When `init` runs after an exit without `release`, one `abnormal exit` `error` log is written, and when `init` runs after `release`, it is not written
+- When `init` runs after an exit without `release`, one `abnormal exit` `error` log is left, and when `init` runs after `release`, it is not left
 - When `release` is called after `notify_app_state(quit)`, there is no `log/running` and no LogCore failure. The same holds for `release` after `notify_app_state(background)`
 - Log operations before `init` and after `release` pass nothing to the log file and the sender. `init` of an `init`ed LogCore is `false`, and the log file and queues do not change
 - When `init` runs after `release`, the previous sender and listener are not called and the previous queue items are not in the `LogBatch`
 - A listener passed with `set_log_listener` before `init` receives `warn` logs after `init`
 - `track_event` before `set_analytics_allowed(true)` and after `false` is `false` without a log, and there is no event in the `LogBatch`. When it changes to `false`, the events that were in the queue are not in later `LogBatch` values. Error logs are in the `LogBatch` regardless of the allowed state
 - The listener is called for each `warn`, `error` before the operation returns, and is not called for `debug`, `info`
-- Every `log_debug` call of core code is in the `log_debug` removal form of the engine implementation rules. The static check before the core test checks it
+- Every `log_debug` call of core code is in the `log_debug` removal form of the engine-specific implementation rules. The static check before the core test checks it
 - The log line `time` of a LogCore `init`ed after `set_test_clock` is the device time of the test clock, and `LogCore.fileWriteIntervalMs` and `LogCore.sendIntervalMs` are judged by the monotonic time of the test clock

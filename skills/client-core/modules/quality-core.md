@@ -26,7 +26,7 @@ Sets the graphics quality level, applies render scale, shadow and frame limit of
 |---|---|---|---|---|
 | `apply_saved_level` | none | none | none | `BootstrapCore`(`InitModules` stage) |
 | `get_level` | none | current `QualityLevel` | `Medium` | core, content code |
-| `get_profile` | none | `QualityProfile` of the current level | `QualityProfile` with `render_scale_permille` and `effect_density_permille` 1000, `shadow` `High`, `frame_limit_fps` 0 | core, content code |
+| `get_profile` | none | `QualityProfile` of the current level | `QualityProfile` with `render_scale_permille` and `effect_density_permille` 1000, `shadow` `High`, `frame_limit_fps` 0 | content code |
 | `is_override` | none | whether the level the user picked is in use | `false` | content code |
 | `set_level` | `QualityLevel` | success flag | `false` | content code |
 | `clear_override` | none | none | none | content code |
@@ -49,11 +49,11 @@ Sets the graphics quality level, applies render scale, shadow and frame limit of
   - shadow: maps the engine's shadow option to `ShadowQuality`. `Off` draws no shadow
   - frame limit: sets the engine's maximum frame rate to `frame_limit_fps`
 - Effect density is not applied to the engine. Code that makes repeated effects (particles, debris, damage text) reduces the count it makes to `effect_density_permille` ÷ 1000 times. An effect whose reduced count becomes 0 makes 1. e.g. an effect of 40 particles makes 20 at density 500
-- When `set_level`, `clear_override` or auto downgrade changes the level, the module applies it and then raises `QualityChangedEvent`. For the same level it does not apply and raises no event
+- When `set_level`, `clear_override` or auto downgrade changes the level, the module applies it and then publishes `QualityChangedEvent`. For the same level it does not apply and publishes no event
 
 ### initial level
 
-`apply_saved_level` is called after `LocalDataCore.load_device_file` and applies the profile of the first matching level below, even when it equals the current level. It does not raise `QualityChangedEvent`.
+`apply_saved_level` is called after `LocalDataCore.load_device_file` and applies the profile of the first matching level below, even when it equals the current level. It does not publish `QualityChangedEvent`.
 
 1. That level when `QualityCore.override_level` in the `device` file is a `QualityLevel` element name. The module enters the override state
 2. That level when `QualityCore.auto_level` in the `device` file is a `QualityLevel` element name
