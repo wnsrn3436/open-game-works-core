@@ -1,11 +1,11 @@
 ---
 name: client-core
-description: Holds the list of client core modules, the spec per module, and the implementation rules per engine. Read when making, fixing or reviewing client core, and when looking up a core module's spec before client content code uses that module
+description: Holds the list of client core modules, the spec per module, and the engine-specific implementation rules. Read when making, fixing or reviewing client core, and when looking up a core module's spec before client content code uses that module
 ---
 
 # client core
 
-The common rules (spec format, lifecycle, hook, event, error handling, core settings) follow [`core`](../core/SKILL.md).
+The common rules follow [`core`](../core/SKILL.md).
 
 ## module
 
@@ -62,13 +62,12 @@ The common rules (spec format, lifecycle, hook, event, error handling, core sett
 
 ## engine
 
-| engine | implementation rules |
+| engine | engine-specific implementation rules |
 |---|---|
 | Godot | [godot](engines/godot.md) |
 
-- The implementation rules per engine map the operations, hooks, events and failure values of the specs to the names, types and way of running of that engine. They add no behavior that is not in the spec
-- `### generated code` of the implementation rules per engine sets the client core type names. The client core type names are the set of client core names that the contract tool and the data tool check for collisions with generated type names
-- When a module chooses its behavior by platform, the platform is the build info `platform` that `BootstrapCore` set in `InitModules` 1. The platform is not determined directly from the OS. How other modules read that value is set by the implementation rules per engine
-- When a module chooses its behavior by whether the build contains DEV code, the judgement is whether the build has the DEV entry of `BootstrapCore`. How other modules read that value is set by the implementation rules per engine
-- Object destruction in the specs and the way to detect it are set by the implementation rules per engine. When the engine has no object destruction or no notification of it (e.g. Three.js), those rules set a core destroy function, and core code and content code destroy objects only with that function. The static check `object destroy` blocks violations
-- The client core implementation is kept in `open-game-works-core-impl/client/<engine>/`
+- The engine-specific implementation rules map the operations, hooks, events and failure values of the specs to the names, types and way of running of that engine. They add no behavior that is not in the spec
+- `### generated code` of the engine-specific implementation rules sets the client core type names. The client core type names are the set of client core names that the contract tool and the data tool check for collisions with generated type names
+- When a module chooses its behavior by platform, the platform is the build info `platform` that `BootstrapCore` set in `InitModules` 1. The platform is not determined directly from the OS. How other modules read that value is set by the engine-specific implementation rules
+- When a module chooses its behavior by whether the build contains DEV code, the judgement is whether the build has the DEV entry of `BootstrapCore`. How other modules read that value is set by the engine-specific implementation rules
+- Object destruction in the specs and the way to detect it are set by the engine-specific implementation rules. When the engine has no object destruction or no notification of it (e.g. Three.js), those rules set a core destroy function, and core code and content code destroy objects only with that function. The static check `object destroy` blocks violations
