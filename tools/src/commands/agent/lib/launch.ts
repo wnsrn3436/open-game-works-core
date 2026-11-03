@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, lstatSync, openSync, realpathSync } from 'node:fs';
 import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
-import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey, runLogPath } from '../../../lib/agentctx.ts';
+import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey } from '../../../lib/agentctx.ts';
 import type { CommandResult, Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
@@ -82,10 +82,9 @@ async function linkReferenceVideos(checkout: string, worktree: string): Promise<
   }
 }
 
-/** Makes the agent's worktree and sets the folder, result file path and run log path in the job meta. */
+/** Makes the agent's worktree and sets the folder and result file path in the job meta. */
 async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<AgentMeta> {
   const place = meta.place;
-  const runLog = await runLogPath(id, ctx.env);
   let worktree: string | null = null;
   if (place.kind === 'game-worktree') {
     worktree = join(place.worktrees, meta.game as string, `agent-${id}`);
@@ -112,7 +111,6 @@ async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<Age
         if (place.kind !== 'tool-worktree') m.branch = `agent/${id}`;
       }
       if (m.outputRel !== null && worktree !== null) m.output = join(worktree, m.outputRel);
-      m.runLog = runLog;
     });
   } catch (error) {
     if (place.kind === 'tool-worktree' && toolWorktree !== null) await removeToolWorktree(place.harness, toolWorktree, ctx.env);

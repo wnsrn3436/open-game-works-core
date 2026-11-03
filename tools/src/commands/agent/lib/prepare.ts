@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { agentContext, markAgentRunning } from '../../../lib/agentctx.ts';
+import { agentContext, markAgentRunning, runLogPath } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, readText } from '../../../lib/fsx.ts';
@@ -131,6 +131,9 @@ async function agentTimeLimitMs(ctx: Context, role: Role): Promise<number> {
 
 async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<string> {
   const caller = await agentContext(ctx.env);
+  const jobId = id ?? newId();
+  // the record holds the run log from its start: a job without one is no agent to `agentContext` and the index of running agents
+  meta.runLog = await runLogPath(jobId, ctx.env);
   return startJob({
     argv: ['agent', '__run'],
     cwd: ctx.cwd,
@@ -141,7 +144,7 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
     meta,
     env: ctx.env,
     logFolder: AGENT_LOG_FOLDER,
-    ...(id === undefined ? {} : { id }),
+    id: jobId,
   });
 }
 
