@@ -1,6 +1,6 @@
 {
   "target": "measure",
-  "nextId": 5,
+  "nextId": 6,
   "items": [
     {
       "id": "D1",
@@ -25,6 +25,12 @@
       "location": "tools/test/commands/measure/measure.test.ts:96",
       "problem": "No test goes through the `ogw.md` `## measure` condition \"the calculation runs only when the game has an open run\". The `beforeAll` of `ogw measure` always opens a run, and no test under `tools/test/commands/measure` asserts `no open run for game`",
       "foundBy": "measure round 1"
+    },
+    {
+      "id": "D5",
+      "location": "tools/src/commands/measure/api.ts:41",
+      "problem": "`parseTargets` converts `min` and `max` with `Number`, so a row that `rowProblems` accepts loses precision above 2^53, and this line is unchanged in the range. Run at HEAD: a `content.gold` row with min and max `9007199254740993` gives `min` and `max` `9007199254740992`, and `measureTargets` with `QAState` `content.gold` `9007199254740992` returns result `in`, although that value is below the `min` of the row. `measure-<iteration>.json` then also holds a `min` and `max` other than those of `design.md`",
+      "foundBy": "measure round 2"
     }
   ]
 }
