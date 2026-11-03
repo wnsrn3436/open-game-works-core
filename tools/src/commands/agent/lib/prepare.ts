@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { agentContext, markAgentRunning, runLogPath } from '../../../lib/agentctx.ts';
+import { agentContext, markAgentRunning } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, readText } from '../../../lib/fsx.ts';
@@ -241,7 +241,6 @@ async function startPlayJudge(
           ? checkRunPlace(game, run as RunState, given.runPlace)
           : await runPlace(ctx, game, role, run as RunState, meta);
     meta.output = join(folder, basename(place.output));
-    meta.runLog = runLogPath(meta.output);
     meta.finalOutput = place.output;
     meta.evidence = place.evidence;
     id = await launchJob(ctx, meta);
@@ -350,7 +349,6 @@ async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request
     meta.place = { kind: 'checkout', dir: game.root };
     meta.folder = game.root;
     meta.output = join(game.root, 'records', 'loops', run.name, `content-${String(run.iteration)}.md`);
-    meta.runLog = runLogPath(meta.output);
     meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
     return launchJob(ctx, meta);
   }
@@ -399,7 +397,6 @@ async function startCoreOrReview(ctx: Context, role: Role, meta: AgentMeta, base
   }
   meta.place = { kind: 'tool-worktree', harness: ws.harness, baseCommit: baseCommit ?? (await head(ws.harness, { env: ctx.env })) };
   meta.output = join(await newPrivateTempFolder('ogw-review-file-', ctx.env), name);
-  meta.runLog = runLogPath(meta.output);
   return launchJob(ctx, meta);
 }
 

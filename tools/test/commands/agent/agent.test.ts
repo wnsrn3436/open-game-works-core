@@ -11,7 +11,7 @@ import { startAgentJob } from '../../../src/commands/agent/api.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { privateTempDir } from '../../../src/lib/secret-files.ts';
 import { ogw, commitAll, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
-import { fakeAgentCli, gameWithRun, runAgent, WRITE_OUTPUT } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
 
@@ -135,9 +135,10 @@ describe('ogw agent: content', () => {
     expect((await readJob(id, ws.env)).meta).toMatchObject({ agent: { cli: 'codex', model: 'gpt-x', effort: 'low' }, session: null });
   });
 
-  it('starts the CLI in the game checkout with the prompt, writes and commits the run log', async () => {
+  it('starts the CLI in the game checkout with the prompt, and writes the run log in the jobs folder, not the checkout', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'records/loops/r1/content-input-1.md': '## request\nnone\n' });
+    const before = sh(root, 'git', ['rev-parse', 'loop/r1']);
     const fake = fakeAgentCli(ws, `try { ${RUN_OGW} } catch {} ${WRITE_OUTPUT}`);
     const input = join(root, 'records/loops/r1/content-input-1.md');
     const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', input], fake.env, root);
@@ -151,21 +152,23 @@ describe('ogw agent: content', () => {
     expect(call?.cwd).toBe(root);
     expect(call?.prompt).toContain('## purpose');
     expect(call?.prompt).toContain(`- input: ${input}\n- output: ${output}\n- run: r1\n- iteration: 1\n`);
-    const runLog = JSON.parse(log(root, 'loop/r1', 'records/loops/r1/content-1-runs.json')) as { runs: { command: string; exitCode: number }[] };
-    expect(runLog.runs).toEqual([{ command: 'ogw job status nojob', startedAt: expect.any(Number) as number, exitCode: 1, summary: null }]);
+    expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw job status nojob', startedAt: expect.any(Number) as number, exitCode: 1, summary: null }] });
+    const jobs = await jobsDir(ws.env);
     const job = await readJob(id, ws.env);
-    expect(job.meta).toMatchObject({ role: 'content', output, runLog: join(root, 'records/loops/r1/content-1-runs.json'), game: 'g', run: 'r1', iteration: 1 });
+    expect(job.meta).toMatchObject({ role: 'content', output, runLog: join(jobs, 'run-logs', `${id}.json`), game: 'g', run: 'r1', iteration: 1 });
+    // the checkout has only the result file the agent wrote: no run log, no commit
+    expect(sh(root, 'git', ['rev-parse', 'loop/r1'])).toBe(before);
+    expect(sh(root, 'git', ['status', '--porcelain', '--untracked-files=all'])).toBe('?? records/loops/r1/content-1.md\n');
     expect(typeof job.meta.cliPid).toBe('number');
     expect(typeof job.meta.cliPidStartedAt).toBe('string');
     expect(await ogw(ws, ['agent', 'status', id])).toMatchObject({ code: 0, stdout: 'done\n' });
-    const jobs = await jobsDir(ws.env);
     expect([`${id}.cli.log`, `${id}.stdout`, `${id}.stderr`].map((name) => existsSync(join(jobs, 'agent-logs', name)))).toEqual([true, true, true]);
     expect(existsSync(join(jobs, `${id}.stdout`))).toBe(false);
   });
 
   it('commits after the agent CLI with no fsmonitor or hook the agent set in git config, as the identity from before the CLI', async () => {
     const ws = makeWorkspace();
-    const { root } = await gameWithRun(ws, { 'records/loops/r1/content-input-1.md': '## request\nnone\n' });
+    writeFileSync(join(ws.root, 'core-input.md'), 'command: create server core\n- module: routing\n');
     const globalConfig = join(ws.root, 'gitconfig');
     writeFileSync(globalConfig, '[user]\n\tname = Global Person\n\temail = global@example.com\n');
     const marks = join(ws.root, 'marks');
@@ -182,10 +185,9 @@ describe('ogw agent: content', () => {
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const env = { ...fake.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_AUTHOR_NAME: undefined, GIT_AUTHOR_EMAIL: undefined, GIT_COMMITTER_NAME: undefined, GIT_COMMITTER_EMAIL: undefined };
-    const input = join(root, 'records/loops/r1/content-input-1.md');
-    const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', input], env, root);
+    const { id, waited } = await runAgent(ws, ['core', '--module', 'routing', '--input', join(ws.root, 'core-input.md')], env);
     expect(waited.code).toBe(0);
-    expect(sh(root, 'git', ['log', '-1', '--format=%an <%ae> %cn <%ce> %s', 'loop/r1'])).toMatch(/^Global Person <global@example\.com> Global Person <global@example\.com> ogw agent \w+: run log\n$/);
+    expect(sh(ws.coreImpl, 'git', ['log', '-1', '--format=%an <%ae> %cn <%ce> %s', `agent/${id}`])).toMatch(/^Global Person <global@example\.com> Global Person <global@example\.com> ogw agent \w+: result file\n$/);
     expect(existsSync(marks)).toBe(false);
   });
 
@@ -194,7 +196,6 @@ describe('ogw agent: content', () => {
     const { root } = await gameWithRun(ws, { 'in.md': 'x' });
     const behavior = [
       `const job = execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'check', 'nogame', '--background'], { encoding: 'utf8' }).trim();`,
-      "const runLog = output.replace(/\\.md$/, '-runs.json');",
       'for (let i = 0; i < 300; i++) {',
       "  const entry = JSON.parse(fs.readFileSync(runLog, 'utf8')).runs.find((e) => e.job === job);",
       '  if (entry && entry.exitCode !== null) break;',
@@ -203,11 +204,10 @@ describe('ogw agent: content', () => {
       "fs.writeFileSync(output, job);",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
-    const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
+    const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
     expect(waited.code).toBe(0);
     const job = readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8');
-    const runLog = JSON.parse(log(root, 'loop/r1', 'records/loops/r1/content-1-runs.json')) as { runs: unknown[] };
-    expect(runLog.runs).toEqual([{ command: 'ogw check nogame', startedAt: expect.any(Number) as number, exitCode: 1, summary: null, job }]);
+    expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw check nogame', startedAt: expect.any(Number) as number, exitCode: 1, summary: null, job }] });
   });
 
   it('fails without a result file and reports why', async () => {
@@ -281,7 +281,9 @@ describe('ogw agent: worktree roles', () => {
     expect(waited.stdout).toBe(`${join(worktree, 'records/loops/r1/resource-requests/hero-result.md')}\n`);
     expect(fake.calls()[0]?.cwd).toBe(worktree);
     expect(sh(worktree, 'git', ['branch', '--show-current']).trim()).toBe(`agent/${id}`);
-    expect(log(worktree, `agent/${id}`, 'records/loops/r1/resource-requests/hero-result-runs.json')).toBe('{\n  "runs": []\n}\n');
+    expect(await readRunLog(ws, id)).toEqual({ runs: [] });
+    // the agent committed nothing, and neither did `ogw agent`
+    expect(sh(root, 'git', ['rev-parse', `agent/${id}`])).toBe(sh(root, 'git', ['rev-parse', 'loop/r1']));
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
   });
 
@@ -331,8 +333,7 @@ describe('ogw agent: worktree roles', () => {
     const { id, waited } = await runAgent(ws, ['translation', '--game', 'g', '--input', join(root, 'records/loops/r1/translation-input-ko-123.md')], fake.env, root);
     const worktree = join(ws.worktrees, 'g', `agent-${id}`);
     expect(waited.stdout).toBe(`${join(worktree, 'records/loops/r1/translation-ko-123.md')}\n`);
-    const runLog = JSON.parse(log(worktree, `agent/${id}`, 'records/loops/r1/translation-ko-123-runs.json')) as unknown;
-    expect(runLog).toEqual({ runs: [], translation: { ko: { text: 2, glossary: 1 } } });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ko: { text: 2, glossary: 1 } } });
   });
 
   it('reads the translation counts with git that reads no global config the agent wrote', async () => {
@@ -357,13 +358,12 @@ describe('ogw agent: worktree roles', () => {
     const env = { ...fake.env, GIT_CONFIG_GLOBAL: globalConfig };
     const { id, waited } = await runAgent(ws, ['translation', '--game', 'g', '--input', join(root, 'records/loops/r1/translation-input-ko-1.md')], env, root);
     expect(waited.code).toBe(0);
-    const worktree = join(ws.worktrees, 'g', `agent-${id}`);
-    expect(JSON.parse(log(worktree, `agent/${id}`, 'records/loops/r1/translation-ko-1-runs.json'))).toEqual({ runs: [], translation: { ko: { text: 1, glossary: 0 } } });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ko: { text: 1, glossary: 0 } } });
     const traced = existsSync(trace) ? readFileSync(trace, 'utf8') : '';
     expect(traced).not.toMatch(/ls-tree|git show|rev-parse HEAD/);
   });
 
-  it('leaves out the counts of a language whose CSV it cannot read, and still commits the run log and takes the result', async () => {
+  it('leaves out the counts of a language whose CSV it cannot read, and still writes the run log and takes the result', async () => {
     const ws = makeWorkspace();
     const head = 'key,source,source_hash,current_hash,text\n';
     const { root } = await gameWithRun(ws, {
@@ -383,7 +383,7 @@ describe('ogw agent: worktree roles', () => {
     const { id, waited } = await runAgent(ws, ['translation', '--game', 'g', '--input', join(root, 'records/loops/r1/translation-input-ko-1.md')], fake.env, root);
     const worktree = join(ws.worktrees, 'g', `agent-${id}`);
     expect(waited).toMatchObject({ code: 0, stdout: `${join(worktree, 'records/loops/r1/translation-ko-1.md')}\n` });
-    expect(JSON.parse(log(worktree, `agent/${id}`, 'records/loops/r1/translation-ko-1-runs.json'))).toEqual({ runs: [], translation: { ja: { text: 1, glossary: 0 } } });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ja: { text: 1, glossary: 0 } } });
   });
 
   it('rejects a translation input that does not hold one language', async () => {

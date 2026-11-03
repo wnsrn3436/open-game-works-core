@@ -140,7 +140,7 @@ describe('ogw agent merge: core worktrees', () => {
     commitAll(ws.coreImpl, 'spec');
     const multiJob = async (modules: string[], runs: unknown[], file: string): Promise<string> => {
       writeFileSync(join(ws.root, 'in-multi.md'), 'command: create server core\n');
-      const fake = fakeAgentCli(ws, `fs.mkdirSync(${JSON.stringify(file.slice(0, file.lastIndexOf('/')))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(file)}, 'x'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'multi', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(output.replace(/\\.md$/, '-runs.json'), JSON.stringify({ runs: ${JSON.stringify(runs)} }));`);
+      const fake = fakeAgentCli(ws, `fs.mkdirSync(${JSON.stringify(file.slice(0, file.lastIndexOf('/')))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(file)}, 'x'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'multi', '--no-verify']); fs.writeFileSync(output, 'r'); fs.writeFileSync(runLog, JSON.stringify({ runs: ${JSON.stringify(runs)} }));`);
       const { id, waited } = await runAgent(ws, ['core', ...modules.flatMap((m) => ['--module', m]), '--input', join(ws.root, 'in-multi.md')], fake.env);
       expect(waited.code).toBe(0);
       return id;

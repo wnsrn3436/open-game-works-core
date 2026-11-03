@@ -36,7 +36,8 @@ export interface ReviewOf {
 
 /**
  * Everything `ogw agent` keeps in the job `meta`. `role`, `cliPid`, `output` and `runLog` are the
- * foundation's `AgentJobMeta`; `output` and `runLog` are set once the result file path is known.
+ * foundation's `AgentJobMeta`; `output` is set once the result file path is known, and `runLog` when the job makes
+ * its place.
  */
 export interface AgentMeta {
   role: Role;

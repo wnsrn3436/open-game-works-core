@@ -452,10 +452,8 @@ describe('files', () => {
     expect(extensionOf('/v/clip')).toBe('');
   });
 
-  it('names the run log after the result file with the same extension rule', () => {
-    expect(runLogPath('/r/content-1.md')).toBe('/r/content-1-runs.json');
-    expect(runLogPath('/r/.md')).toBe('/r/.md-runs.json');
-    expect(runLogPath('/r.d/out')).toBe('/r.d/out-runs.json');
+  it('puts the run log of an agent job in the jobs folder, named by the job id', async () => {
+    expect(await runLogPath('j1', { OGW_JOBS_DIR: '/jobs' })).toBe('/jobs/run-logs/j1.json');
   });
 
   it('moves files into new folders', async () => {
@@ -608,7 +606,7 @@ describe('commitInCheckout', () => {
     const dir = makeGame(ws, 'g1', { 'a.txt': 'a' });
     writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n');
     chmodSync(join(dir, '.git', 'hooks', 'pre-commit'), 0o755);
-    const record = join(dir, 'records', 'r-runs.json');
+    const record = join(dir, 'records', 'r.md');
     mkdirSync(join(dir, 'records'));
     writeFileSync(record, '{}');
     writeFileSync(join(dir, 'other.txt'), 'not committed');
@@ -623,7 +621,7 @@ describe('commitInCheckout', () => {
     await held;
     await committing;
     expect(sh(dir, 'git', ['log', '-1', '--format=%s']).trim()).toBe('records');
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim()).toBe('records/r-runs.json');
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim()).toBe('records/r.md');
     expect(sh(dir, 'git', ['status', '--porcelain']).trim()).toBe('?? other.txt');
   });
 
@@ -631,10 +629,10 @@ describe('commitInCheckout', () => {
     const ws = makeWorkspace();
     const dir = makeGame(ws, 'g1', { 'server/a.ts': 'a', 'records/.keep': '' });
     writeFileSync(join(dir, 'server', 'a.ts'), 'uncommitted change');
-    const link = join(dir, 'records', 'r-runs.json');
+    const link = join(dir, 'records', 'r.md');
     symlinkSync(join(dir, 'server'), link);
-    await commitInCheckout(dir, [link], 'run log', { env: ws.env, noVerify: true });
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim()).toBe('records/r-runs.json');
+    await commitInCheckout(dir, [link], 'result file', { env: ws.env, noVerify: true });
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim()).toBe('records/r.md');
     expect(sh(dir, 'git', ['status', '--porcelain']).trim()).toBe('M server/a.ts');
   });
 });

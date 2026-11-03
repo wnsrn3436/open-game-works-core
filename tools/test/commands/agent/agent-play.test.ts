@@ -13,35 +13,36 @@ import { newTempFolder } from '../../../src/commands/agent/lib/files.ts';
 import { ogw, makeGame, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { startAgentJob } from '../../../src/commands/agent/api.ts';
-import { fakeAgentCli, gameWithRun, runAgent, WRITE_OUTPUT } from './helpers.ts';
-
-function log(root: string, rev: string, path: string): string {
-  return sh(root, 'git', ['show', `${rev}:${path}`]);
-}
+import { fakeAgentCli, gameWithRun, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () => {
-  it('runs play in a sandboxed temp folder, then moves the result, captures and run log', async () => {
+  it('runs play in a sandboxed temp folder, then moves the result and captures; its run log is in the jobs folder, out of its reach', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n', 'secret.txt': 'hidden' });
+    const before = sh(root, 'git', ['rev-parse', 'loop/r1']);
     const evidenceDir = join(root, 'records/loops/r1/evidence');
     const behavior = [
       `let blocked = 'no'; try { fs.readFileSync(${JSON.stringify(join(root, 'secret.txt'))}); } catch { blocked = 'yes'; }`,
+      "let forged = 'no'; try { fs.writeFileSync(runLog, '{\"runs\": []}'); forged = 'yes'; } catch {}",
       "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png');",
       'const guide = JSON.parse(fs.readFileSync(input, \'utf8\')).playGuide;',
-      "fs.writeFileSync(output, 'blocked ' + blocked + '\\nguide ' + fs.readFileSync(guide, 'utf8') + 'capture ' + process.cwd() + '/captures/shot.png\\n');",
+      "fs.writeFileSync(output, 'blocked ' + blocked + '\\nrun log written ' + forged + '\\nguide ' + fs.readFileSync(guide, 'utf8') + 'capture ' + process.cwd() + '/captures/shot.png\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
     const { id, waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
     const final = join(root, 'records/loops/r1/play-1-1.md');
     expect(waited).toMatchObject({ code: 0, stdout: `${final}\n` });
-    expect(readFileSync(final, 'utf8')).toBe(`blocked yes\nguide # guide\ncapture ${join(evidenceDir, 'play-1-1')}/shot.png\n`);
+    expect(readFileSync(final, 'utf8')).toBe(`blocked yes\nrun log written no\nguide # guide\ncapture ${join(evidenceDir, 'play-1-1')}/shot.png\n`);
     expect(readFileSync(join(evidenceDir, 'play-1-1', 'shot.png'), 'utf8')).toBe('png');
     const call = fake.calls()[0];
     expect(existsSync(call?.cwd as string)).toBe(false);
     expect(call?.prompt).not.toContain('## purpose');
     expect(call?.prompt).toContain(`- input: ${call?.cwd as string}/input/input.json`);
-    expect(log(root, 'loop/r1', 'records/loops/r1/play-1-1-runs.json')).toBe('{\n  "runs": []\n}\n');
+    expect(await readRunLog(ws, id)).toEqual({ runs: [] });
+    // nothing is committed, and the checkout has only the result file and the evidence
+    expect(sh(root, 'git', ['rev-parse', 'loop/r1'])).toBe(before);
+    expect(sh(root, 'git', ['status', '--porcelain', '--untracked-files=all']).split('\n').filter((line) => line !== '' && !line.startsWith('?? records/loops/r1/evidence/'))).toEqual(['?? records/loops/r1/play-1-1.md']);
     expect((await readJob(id, ws.env)).meta).toMatchObject({ instances: ['inst1'], k: 1, output: final });
     expect((await readJob(id, ws.env)).timeLimitMs).toBe(2_700_000);
     const second = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
@@ -63,7 +64,8 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(readFileSync(output, 'utf8')).toBe(`capture ${evidence}/shot.png\n`);
     expect(readFileSync(join(evidence, 'shot.png'), 'utf8')).toBe('png');
     expect(fake.calls()[0]?.prompt).not.toContain('- run:');
-    expect(log(root, 'main', 'records/calibration/5/judge-null-1-1-runs.json')).toBe('{\n  "runs": []\n}\n');
+    expect(await readRunLog(ws, id)).toEqual({ runs: [] });
+    expect(sh(root, 'git', ['ls-files', 'records/calibration'])).toBe('');
     expect((await readJob(id, ws.env)).meta).toMatchObject({ run: null, iteration: null, k: null });
     expect((await readJob(id, ws.env)).timeLimitMs).toBe(3_600_000);
     const outside = startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output: join(root, 'records/loops/x.md'), evidence } });
@@ -148,7 +150,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(readFileSync(contentLogs[0] as string, 'utf8')).toContain('content agent read design.md');
   });
 
-  it('keeps play from writing git and agent CLI config in home, and still commits its run log', async () => {
+  it('keeps play from writing git and agent CLI config in home', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n' });
     // the job and the agent use the workspace as their temp folder (the fake CLI records its calls there); home is
@@ -167,7 +169,6 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(waited).toMatchObject({ code: 0 });
     expect(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8')).toBe('blocked blocked blocked blocked\n');
     for (const path of targets) expect(existsSync(path)).toBe(false);
-    expect(log(root, 'loop/r1', 'records/loops/r1/play-1-1-runs.json')).toBe('{\n  "runs": []\n}\n');
   });
 
   it('blocks a session folder that a process outside the sandbox makes after play started, under a symlinked config folder', async () => {
@@ -234,28 +235,19 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('keep');
   });
 
-  it('fails play whose result file or run log is a symlink, and commits and copies nothing it points to', async () => {
+  it('fails play whose result file is a symlink, and commits and copies nothing it points to', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n', 'brief.md': 'the brief\n', 'server/a.ts': 'a\n' });
     // a change the content agent has not committed
     writeFileSync(join(root, 'server', 'a.ts'), 'uncommitted\n');
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
     const before = sh(root, 'git', ['rev-parse', 'loop/r1']).trim();
-    const cases = [
-      { link: "output.replace(/\\.md$/, '-runs.json')", target: join(root, 'server'), problem: 'the run log is not a regular file', writes: WRITE_OUTPUT },
-      { link: 'output', target: join(root, 'brief.md'), problem: 'the result file is not a regular file', writes: '' },
-    ];
-    for (const [i, { link, target, problem, writes }] of cases.entries()) {
-      const behavior = [writes, `fs.rmSync(${link}, { force: true }); fs.symlinkSync(${JSON.stringify(target)}, ${link});`].join('\n');
-      const fake = fakeAgentCli(ws, behavior);
-      const { waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
-      expect(waited.code, problem).toBe(1);
-      expect(waited.stdout).toContain(`failed: ${problem}`);
-      const final = join(root, `records/loops/r1/play-1-${String(i + 1)}.md`);
-      if (link === 'output') expect(existsSync(final)).toBe(false);
-    }
-    expect(sh(root, 'git', ['log', '--format=%s', `${before}..loop/r1`]).trim().split('\n')).toEqual([expect.stringMatching(/: run log$/)]);
-    expect(sh(root, 'git', ['show', '--name-only', '--format=', 'loop/r1']).trim()).toBe('records/loops/r1/play-1-2-runs.json');
+    const fake = fakeAgentCli(ws, `fs.rmSync(output, { force: true }); fs.symlinkSync(${JSON.stringify(join(root, 'brief.md'))}, output);`);
+    const { waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
+    expect(waited.code).toBe(1);
+    expect(waited.stdout).toContain('failed: the result file is not a regular file');
+    expect(existsSync(join(root, 'records/loops/r1/play-1-1.md'))).toBe(false);
+    expect(sh(root, 'git', ['rev-parse', 'loop/r1']).trim()).toBe(before);
     expect(sh(root, 'git', ['status', '--porcelain', 'server']).trim()).toBe('M server/a.ts');
   });
 
@@ -346,7 +338,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     // the broker runs no `ogw command`; a broker command runs as the play agent, found by its key
     expect(refused).toContain('ogw broker: ogw command inst9 is not a command of the play and judge agents');
     expect(key).toBe(`key ${id}`);
-    const runLog = JSON.parse(log(root, 'loop/r1', 'records/loops/r1/play-1-1-runs.json')) as { runs: { command: string }[] };
+    const runLog = (await readRunLog(ws, id)) as { runs: { command: string }[] };
     expect(runLog.runs.map((entry) => entry.command)).toEqual(['ogw job status nojob']);
     const meta = (await readJob(id, ws.env)).meta;
     expect(meta.keyHash).toMatch(/^[0-9a-f]{64}$/);

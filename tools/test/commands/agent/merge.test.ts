@@ -230,8 +230,8 @@ describe('ogw agent merge: game worktrees', () => {
     expect(existsSync(join(root, 'data/tables/reward.csv'))).toBe(false);
     expect(existsSync(join(root, 'data/translations-note.md'))).toBe(false);
     expect(readFileSync(join(root, 'resource/2d/hero.png'), 'utf8')).toBe('img');
-    // the run log of the job is in its edit scope
-    expect(sh(root, 'git', ['ls-files', 'records/loops/r1/resource-requests'])).toContain('hero-result-runs.json');
+    // the run log is in the jobs folder, not on the branch
+    expect(sh(root, 'git', ['ls-files', 'records/loops/r1/resource-requests'])).toBe('records/loops/r1/resource-requests/hero.md\n');
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
   });
 
@@ -259,11 +259,11 @@ describe('ogw agent merge: game worktrees', () => {
     expect(sh(root, 'git', ['branch', '--list', `agent/${outside}`])).toContain(`agent/${outside}`);
     expect((await readJob(outside, ws.env)).meta.merged).toBe(false);
     expect(data.calls).toEqual([]);
-    // the record and its run log are in its edit scope
+    // the record is in its edit scope
     const inside = await job('');
     expect(await ogw(ws, ['agent', 'merge', inside], { cwd: root })).toMatchObject({ code: 0, stdout: `merged ${inside}\n` });
     expect(readFileSync(join(root, 'server/a.ts'), 'utf8')).toBe('hardened\n');
-    expect(sh(root, 'git', ['ls-files', 'records/hardening'])).toBe('records/hardening/dev-1.0.0-server-1-runs.json\nrecords/hardening/dev-1.0.0-server-1.md\n');
+    expect(sh(root, 'git', ['ls-files', 'records/hardening'])).toBe('records/hardening/dev-1.0.0-server-1.md\n');
   });
 
   it('does not merge when ogw data fails, and removes what the merge left', async () => {
