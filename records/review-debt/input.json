@@ -1,6 +1,6 @@
 {
   "target": "input",
-  "nextId": 5,
+  "nextId": 6,
   "items": [
     {
       "id": "D1",
@@ -25,6 +25,12 @@
       "location": "tools/src/commands/step/step.ts:178",
       "problem": "`ogw step --count <n>` and the stream line `step <n>` check the budget once before the first step (step.ts:273, step.ts:223), and the loop of `runSteps` does not check it again, and `--count` has no upper limit, which differs from ogw.md `## loop evaluate` (`ogw step` fails once the budget has passed). Run in a temporary copy with a judge agent key and 200 ms of budget left: `ogw step <instance> 50 --count 3000` sent all 3000 steps, exited 0 and ended 1361 ms after the budget end. The target of this defect is `ogw step`, it existed before this range, and it also applies to the play agent budget",
       "foundBy": "input round 2"
+    },
+    {
+      "id": "D5",
+      "location": "tools/src/commands/input/input.ts:229",
+      "problem": "A single `ogw input` that puts in no input still starts the budget, because `checkPlayBudget` runs before the call is validated, which differs from tools/ogw.md:299-300 (`since its first input or step`). Run in a temporary copy with a judge agent key and no earlier input on the instance: `ogw input <id> nosuchcommand`, `ogw input <id>` and `ogw input <id> tap 1 1 --video` each exited 1, sent nothing to the client, and left the budget file of that instance. This order existed before this range, and this range fixed it only for `--script`. D2 of records/review-debt/step.json holds the same problem with the `--video` call",
+      "foundBy": "input round 3"
     }
   ]
 }
