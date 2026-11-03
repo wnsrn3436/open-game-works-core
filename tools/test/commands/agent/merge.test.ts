@@ -5,7 +5,7 @@ import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { mergeAgentJobs } from '../../../src/commands/agent/api.ts';
-import { fakeAgentCli, gameWithRun, runAgent } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const data = vi.hoisted(() => ({ exitCode: 0, calls: [] as string[], write: null as ((root: string) => void) | null }));
 vi.mock('../../../src/commands/data/api.ts', () => ({
@@ -89,6 +89,21 @@ describe('ogw agent merge: game worktrees', () => {
     expect((await readJob(id, ws.env)).meta.merged).toBe(true);
     const again = await ogw(ws, ['agent', 'merge', id], { cwd: root });
     expect(again).toMatchObject({ code: 1, stdout: `not merged ${id}: already merged: the job was merged before\n` });
+  });
+
+  it('merges a job whose agent committed nothing without a merge commit, and removes its worktree and branch', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'records/loops/r1/resource-requests/hero.md': '## keys\n' });
+    const fake = fakeAgentCli(ws, WRITE_OUTPUT);
+    const { id, waited } = await runAgent(ws, ['resource', '--game', 'g', '--input', join(root, 'records/loops/r1/resource-requests/hero.md')], fake.env, root);
+    expect(waited.code).toBe(0);
+    const before = sh(root, 'git', ['rev-parse', 'HEAD']);
+    expect(await ogw(ws, ['agent', 'merge', id], { cwd: root })).toMatchObject({ code: 0, stdout: `merged ${id}\n` });
+    expect(sh(root, 'git', ['rev-parse', 'HEAD'])).toBe(before);
+    expect(existsSync(join(ws.worktrees, 'g', `agent-${id}`))).toBe(false);
+    expect(sh(root, 'git', ['branch', '--list', `agent/${id}`])).toBe('');
+    expect((await readJob(id, ws.env)).meta.merged).toBe(true);
+    expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
   });
 
   it('commits the files ogw data changes and creates with the merge', async () => {
