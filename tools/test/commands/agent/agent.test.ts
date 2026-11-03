@@ -437,6 +437,8 @@ describe('ogw agent: core and review', () => {
     expect((await readJob(id, ws.env)).meta).toMatchObject({ modules: ['routing', 'auth'], branch: `agent/${id}`, worktree });
     const hook = readFileSync(join(ws.coreImpl, '.git', 'hooks', 'pre-commit'), 'utf8');
     expect(hook).toContain('meta sync core --staged');
+    // the hook syncs in the workspace of this harness, not of whatever harness a commit's environment names
+    expect(hook).toContain(`OGW_HARNESS_ROOT="${ws.harness}"`);
   });
 
   it('adds the hook command to an existing pre-commit hook once', async () => {
@@ -444,8 +446,8 @@ describe('ogw agent: core and review', () => {
     const { ensurePreCommitHook } = await import('../../../src/commands/agent/lib/launch.ts');
     mkdirSync(join(ws.coreImpl, '.git', 'hooks'), { recursive: true });
     writeFileSync(join(ws.coreImpl, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho mine\n');
-    await ensurePreCommitHook(ws.coreImpl);
-    await ensurePreCommitHook(ws.coreImpl);
+    await ensurePreCommitHook(ws.coreImpl, ws.env);
+    await ensurePreCommitHook(ws.coreImpl, ws.env);
     const hook = readFileSync(join(ws.coreImpl, '.git', 'hooks', 'pre-commit'), 'utf8');
     expect(hook.split('\n')[0]).toBe('#!/bin/sh');
     expect(hook.match(/meta sync core --staged/g)?.length).toBe(1);

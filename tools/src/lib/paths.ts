@@ -2,7 +2,8 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The harness repo `open-game-works-core/`. Tests point `OGW_HARNESS_ROOT` at a temporary copy.
+ * The harness repo `open-game-works-core/`. Tests point `OGW_HARNESS_ROOT` at a temporary copy, and the core
+ * pre-commit hook at the harness that installed it (`ensurePreCommitHook`).
  */
 export function harnessRoot(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.OGW_HARNESS_ROOT;

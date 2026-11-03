@@ -11,7 +11,7 @@ import { commitPaths, commonDir, gitDir, gitIdentity, gitLine, head, withGitConf
 import { AGENT_KEY_ENV, endJobsOfAgent, jobsDir } from '../../../lib/jobs.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { escapeRegExp } from '../../../lib/regexp.ts';
-import { cliEntry } from '../../../lib/paths.ts';
+import { cliEntry, harnessRoot } from '../../../lib/paths.ts';
 import { newPrivateTempFolder, privateTempDir, secretFilesDir } from '../../../lib/secret-files.ts';
 import { secretStoreFolders } from '../../../lib/secrets.ts';
 import { moveOldSecrets } from '../../secret/lib/move.ts';
@@ -50,11 +50,14 @@ import { translationCounts } from './rowmerge.ts';
 /** The pre-commit hook command core worktrees need. */
 export const PRE_COMMIT_COMMAND = 'meta sync core --staged';
 
-/** Installs a pre-commit hook running `ogw meta sync core --staged` in the repo's hook folder when there is none. */
-export async function ensurePreCommitHook(repo: string): Promise<void> {
+/**
+ * Installs a pre-commit hook running `ogw meta sync core --staged` in the repo's hook folder when there is none. The
+ * hook names the harness of `env`, so that it syncs in that harness's workspace whatever environment commits.
+ */
+export async function ensurePreCommitHook(repo: string, env: NodeJS.ProcessEnv): Promise<void> {
   const hooks = resolve(repo, await gitLine(repo, ['rev-parse', '--git-path', 'hooks']));
   const hook = join(hooks, 'pre-commit');
-  const line = `"${process.execPath}" "${cliEntry()}" ${PRE_COMMIT_COMMAND}`;
+  const line = `env OGW_HARNESS_ROOT="${harnessRoot(env)}" "${process.execPath}" "${cliEntry()}" ${PRE_COMMIT_COMMAND}`;
   if (exists(hook)) {
     const current = await readFile(hook, 'utf8');
     if (current.includes(PRE_COMMIT_COMMAND)) return;
@@ -91,7 +94,7 @@ async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<Age
     await worktreeAdd(place.checkout, worktree, place.baseCommit, `agent/${id}`, { env: ctx.env });
     await linkReferenceVideos(place.checkout, worktree);
   } else if (place.kind === 'core-worktree') {
-    await ensurePreCommitHook(place.coreImpl);
+    await ensurePreCommitHook(place.coreImpl, ctx.env);
     worktree = join(place.worktrees, '_core', `agent-${id}`);
     await worktreeAdd(place.coreImpl, worktree, place.baseCommit, `agent/${id}`, { env: ctx.env });
     // A review file of the same name from an earlier review (`--restart`, a later `update core`) is on main: remove it
