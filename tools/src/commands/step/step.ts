@@ -220,7 +220,7 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
     if (words[0] === 'step' && words.length <= 2) {
       const count = words[1] === undefined ? 1 : /^[0-9]+$/.test(words[1]) ? Number(words[1]) : 0;
       if (count < 1) throw new OgwError(`invalid step count: ${words[1] ?? ''}`);
-      await checkPlayBudget(ctx);
+      await checkPlayBudget(ctx, undefined, plan.id);
       const outcome = await runSteps(ctx, { ...plan, count });
       return { exit: outcome.failed ? 1 : 0, data: outcome };
     }
@@ -228,7 +228,7 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
       // `text` takes the rest of the line as its one argument, spaces included
       const text = /^\s*input\s+text\s([\s\S]*)$/.exec(line);
       const args = text ? [text[1] as string] : words.slice(2);
-      await checkPlayBudget(ctx, [words[1], ...args]);
+      await checkPlayBudget(ctx, [words[1], ...args], plan.id);
       const result = await singleInput(ctx, plan.id, words[1], args);
       return { exit: result.exitCode ?? 0, data: result.data };
     }
@@ -270,7 +270,7 @@ export const step: CommandDef = {
     }
     const count = nonNegativeInt(args, 'count') ?? 1;
     if (count < 1) throw new OgwError(`invalid --count: ${String(count)}`);
-    await checkPlayBudget(ctx);
+    await checkPlayBudget(ctx, undefined, id);
     const outcome = await runSteps(ctx, { id, ms, count, capture: flag(args, 'capture'), state: flag(args, 'state') });
     return { exitCode: outcome.failed ? 1 : 0, text: outcomeLines(count, outcome).join('\n'), data: outcome };
   },

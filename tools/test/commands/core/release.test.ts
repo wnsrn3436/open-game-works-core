@@ -103,7 +103,7 @@ describe('ogw core release', () => {
   it('releases when every condition holds', async () => {
     const { ws, env, gh } = await setup();
     // what the clear of the core reviews could not remove is in the output
-    vi.mocked(clearReviews).mockResolvedValueOnce(['/w/_core/agent-x', 'agent/x']);
+    vi.mocked(clearReviews).mockResolvedValueOnce(['not removed: /w/_core/agent-x', 'not removed: agent/x']);
     const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);

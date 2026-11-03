@@ -166,7 +166,7 @@ export const releaseCommand: CommandDef = {
       });
       // the harness commit whose specs this core was made from (`core` command.md `## version and release`)
       await git(harness.root, ['tag', harnessCoreTag(version), harness.head], { env: ctx.env });
-      const left = (await clearReviews(ctx, 'core')).map((what) => `not removed: ${what}`);
+      const left = await clearReviews(ctx, 'core');
       const harnessLine = `harness tag ${harnessCoreTag(version)} at ${harness.head}`;
       return {
         text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...untested, ...debt, ...left].join('\n'),

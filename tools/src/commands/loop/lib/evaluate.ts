@@ -721,7 +721,7 @@ async function poll(state: State, slot: Slot): Promise<boolean> {
     return released;
   }
   await clearReleases(state.ctx.env, slot.job as string);
-  if (slot.role === 'play') await clearPlayBudget(state.ctx.env, slot.job as string);
+  if (slot.role === 'play' || slot.role === 'judge') await clearPlayBudget(state.ctx.env, slot.job as string);
   state.active.splice(state.active.indexOf(slot), 1);
   if (outcome.status === 'done' && outcome.output !== null && exists(outcome.output)) {
     if (slot.role === 'play') {

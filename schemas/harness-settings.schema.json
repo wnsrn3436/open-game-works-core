@@ -218,6 +218,7 @@
         "variants",
         "playTimeLimitMs",
         "playBudgetMs",
+        "judgeInstanceBudgetMs",
         "judgeTimeLimitMs"
       ],
       "properties": {
@@ -252,6 +253,11 @@
           "description": "How long a play agent puts in inputs: `ogw input` and `ogw step` of a play agent fail once this has passed since its first input or step (the release of a held input excepted), and the agent then writes its result. Below `playTimeLimitMs`, which stops the job",
           "type": "integer",
           "minimum": 60000
+        },
+        "judgeInstanceBudgetMs": {
+          "description": "How long a judge agent puts in inputs on one instance: `ogw input` and `ogw step` of a judge agent on an instance fail once this has passed since its first input or step on that instance, except the release of a held input",
+          "type": "integer",
+          "minimum": 10000
         },
         "judgeTimeLimitMs": {
           "description": "The time limit of one judge agent job, step 4, success confirmation, variant and calibration judges alike. A job that reaches it is stopped and counts as failed",
@@ -478,7 +484,7 @@
           "additionalProperties": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/measuredStep"
+              "$ref": "#/$defs/measuredStage"
             }
           }
         }
@@ -822,7 +828,7 @@
         }
       }
     },
-    "measuredStep": {
+    "measuredStage": {
       "type": "object",
       "additionalProperties": false,
       "required": [

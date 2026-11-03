@@ -92,3 +92,32 @@ describe('play budget', () => {
     }
   }, 60_000);
 });
+
+describe('judge play budget', () => {
+  it('fails an input or step of a judge on an instance once loop.judgeInstanceBudgetMs passed since its first one there', async () => {
+    const ws = jobWorkspace();
+    const folder = await newTempFolder('ogw-judge-');
+    const judge = await agent(ws.env, 'judge', 'agentjudge2', folder);
+    const ctx = createContext({ cwd: ws.root, env: { ...ws.env, OGW_AGENT_KEY: judge.key }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const budget = (await ctx.settings()).loop.judgeInstanceBudgetMs;
+    const passed = `the play budget of ${String(Math.round(budget / 1000))} s of instance insta has passed: put in no more input on it`;
+    try {
+      let now = 1_000_000;
+      playBudgetDeps.now = () => now;
+      await checkPlayBudget(ctx, undefined, 'insta');
+      now += budget - 1;
+      await checkPlayBudget(ctx, undefined, 'insta');
+      now += 1;
+      await expect(checkPlayBudget(ctx, undefined, 'insta')).rejects.toThrow(passed);
+      await expect(checkPlayBudget(ctx, ['tap', '1', '1'], 'insta')).rejects.toThrow(passed);
+      // a held input can still be released, and another instance has its own budget
+      await checkPlayBudget(ctx, ['key_up', 'a'], 'insta');
+      await checkPlayBudget(ctx, undefined, 'instb');
+      await clearPlayBudget(ws.env, 'agentjudge2');
+      await checkPlayBudget(ctx, undefined, 'insta');
+    } finally {
+      judge.remove();
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+});

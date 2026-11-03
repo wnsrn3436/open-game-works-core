@@ -22,7 +22,7 @@ const EXT = {
   button: '[ext_resource type="Script" path="res://core/ui_core/ui_button.gd" id="b"]',
   anchor: '[ext_resource type="Script" path="res://core/ui_core/ui_anchor.gd" id="a"]',
   vbutton: '[ext_resource type="Script" path="res://core/virtual_pad_core/virtual_button.gd" id="vb"]',
-  stick: '[ext_resource type="Script" path="res://core/virtual_pad_core/virtual_joystick.gd" id="vj"]',
+  stick: '[ext_resource type="Script" path="res://core/virtual_pad_core/virtual_pad_joystick.gd" id="vj"]',
   layout: '[ext_resource type="Script" path="res://core/virtual_pad_core/virtual_pad_layout.gd" id="vl"]',
 };
 
@@ -72,7 +72,7 @@ describe('action reference', () => {
     expect(lines(await actionReference.run(sc))).toEqual(sorted([
       'resource/scene/hud/main.tscn:14 | action reference: `UIButton` node `Bad` action `fly` is not in the input map',
       'resource/scene/hud/main.tscn:18 | action reference: `UIButton` node `Back` uses action `back`',
-      'resource/scene/hud/main.tscn:22 | action reference: `VirtualJoystick` node `Stick` action_negative_x `left` is not in the input map',
+      'resource/scene/hud/main.tscn:22 | action reference: `VirtualPadJoystick` node `Stick` action_negative_x `left` is not in the input map',
       'data/tables/shop.csv:5 | action reference: input prompt token `{action:dash}` is not in the input map',
       'data/translations/ko.csv:2 | action reference: input prompt token `{action:ui_accept}` is not in the input map',
       'data/tables/input_prompt.csv:6 | action reference: `Touch` input `swim` is not in the input map',

@@ -273,8 +273,8 @@ export function checkSize(docs: readonly DocFile[]): Failure[] {
   const failures: Failure[] = [];
   for (const doc of docs) {
     const m = /^skills\/[^/]+\/(.+)$/.exec(doc.rel);
-    if (!m) continue;
-    if (m[1] === 'SKILL.md') {
+    if (!m && doc.rel !== 'tools/ogw.md') continue;
+    if (m?.[1] === 'SKILL.md') {
       const body = bodyLines(doc.lines);
       if (body > SKILL_BODY_MAX) failures.push({ item: 'size', where: doc.rel, reason: `SKILL.md body has ${String(body)} lines (max ${String(SKILL_BODY_MAX)})` });
     } else if (doc.lines.length > TOC_MIN_LINES && !hasTableOfContents(doc.lines)) {

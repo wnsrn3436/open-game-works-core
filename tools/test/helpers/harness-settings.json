@@ -64,6 +64,8 @@
     "variants": 1,
     "playTimeLimitMs": 2700000,
     "playBudgetMs": 900000,
+    "judgeInstanceBudgetMs": 240000,
+    "judgeInstanceBudgetMs": 240000,
     "judgeTimeLimitMs": 3600000
   },
   "calibration": {

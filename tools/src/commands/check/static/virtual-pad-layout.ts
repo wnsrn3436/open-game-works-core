@@ -12,7 +12,7 @@ import { strOf, type Prop, type SceneNode, type TextScene } from './lib/tscn.ts'
  * `VirtualPadLayout` or a subclass) use more than one `joystick_mode` (a value not written in the `.tscn` is the value of the
  * scene its root instances, else the script
  * default), or one layout has the same action twice among its root's direct `VirtualButton` `action` and
- * `VirtualJoystick` direction actions, the children of the scenes its root instances included.
+ * `VirtualPadJoystick` direction actions, the children of the scenes its root instances included.
  */
 export const NAME = 'virtual pad layout';
 
@@ -93,8 +93,8 @@ async function duplicateActions(sc: StaticContext, path: string, scene: TextScen
   const seen = new Map<string, string>();
   const out: Finding[] = [];
   for (const child of (await rootChildren(sc, scene)).values()) {
-    const cls = await nodeClass(sc, child.scene, child.node, ['VirtualButton', 'VirtualJoystick']);
-    const props = cls === 'VirtualButton' ? ['action'] : cls === 'VirtualJoystick' ? JOYSTICK_PROPS : [];
+    const cls = await nodeClass(sc, child.scene, child.node, ['VirtualButton', 'VirtualPadJoystick']);
+    const props = cls === 'VirtualButton' ? ['action'] : cls === 'VirtualPadJoystick' ? JOYSTICK_PROPS : [];
     for (const prop of props) {
       const written = child.props.get(prop);
       const value = strOf(written?.prop.value);
