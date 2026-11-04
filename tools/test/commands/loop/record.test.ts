@@ -280,6 +280,13 @@ describe('ogw loop record', () => {
 
   it('merges findings into the defect list and writes the iteration record', async () => {
     const { g, sha } = await iterationOne();
+    // an in-range target with integer bounds above 2^53, as `ogw measure` writes their digits: no finding, and its range
+    // in the record keeps the digits
+    const measure = read(g.root, `${R}/measure-1.json`).replace(
+      '"targets": [',
+      '"targets": [{"metric": "content.gold", "min": 9007199254740993, "max": 9007199254740995, "value": 9007199254740994, "result": "in", "data": null}, ',
+    );
+    write(g.root, `${R}/measure-1.json`, measure);
     await ogw(g.ws, ['loop', 'findings', 'g']);
     const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
     const ids = ['static-bad', 'sim-crash', 'sim-slow', 'low-fps', 'gold', 'start-stuck', 'dash', 'boss'];
@@ -327,6 +334,7 @@ describe('ogw loop record', () => {
     expect(record).toContain(`| ${R}/play-1-1.md | 1 | 0 | 1 | 1 |\n| ${R}/play-1-2.md | 0 | 1 | 0 | 0 |`);
     expect(record).toContain('| start-stuck | blocker | design | lobby |');
     expect(record).toContain('| fps | 20 | 30..60 | out |');
+    expect(record).toContain('| content.gold | 9007199254740994 | 9007199254740993..9007199254740995 | in |');
     expect(record).toContain('## load\n\n| platform | hostLoad |\n|---|---|\n| web | {"cpuMaxPercent":95} |\n| android | {"cpuMaxPercent":20} |');
     expect(git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual([`${R}/defects.json`, `${R}/findings-1.json`, `${R}/iteration-1.md`]);
     expect(git(g.root, 'status', '--porcelain')).toBe('');
