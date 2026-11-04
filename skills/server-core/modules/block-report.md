@@ -62,7 +62,7 @@ internal operation
 | `list_blocked_ids` | ctx, user ID | list of user IDs that user has blocked. Ascending order | empty list | content handler, hook, `chat`, `matchmaker` |
 | `add_report` | ctx, target user ID, `reason_id`, `ReportContext`, `ref`, `comment`, `evidence` | `ReportResult.OK` | failure element of `ReportResult` | `chat`, content handler, hook |
 | `register_block_listener` | function(ctx, blocking user ID, blocked user ID → none. failure is a throw) | none | none. A registration error is a server start failure | `friend`. Calls it at server start |
-| `remove_user` | ctx | none | none | `auth` |
+| `remove_user` | ctx | none | `FAILED` | `auth` |
 
 admin operation. Collection and handling follow `admin-api`.
 
@@ -152,7 +152,8 @@ none
 | `INVALID_INPUT` of `add_report` called by a core module, content handler or hook | `INVALID_INPUT` | the caller decides | `error` log |
 | throw of a listener function | throw | `INTERNAL` | `routing` leaves an `error` log |
 | second `register_block_listener` registration of the same function | server start failure | none | `error` log |
-| exceeding the lock wait on the `block_report_sequence` row in step 4 of `add_report` or in `remove_user` | throw | `INTERNAL` | `routing` leaves an `error` log |
+| exceeding the lock wait on the `block_report_sequence` row in `remove_user` | `FAILED` | the caller decides | none |
+| exceeding the lock wait on the `block_report_sequence` row in step 4 of `add_report` | throw | `INTERNAL` | `routing` leaves an `error` log |
 | exceeding the lock wait on the report row in `resolve_report` | `internal` | none | error rules of `admin-api` |
 | `resolve_report` with an empty `resolution` | `bad_request` | none | `audit` |
 | `resolve_report` of a report that does not exist | `not_found` | none | `audit` |
@@ -207,5 +208,5 @@ none
 - A report resolved with `resolve_report` is deleted by the expiry cleanup after it reaches `resolved_at` + `block-report.reportRetentionMs`, and an `Open` report of the same time stays
 - When the target user of a chat report does `Withdraw`, the `evidence` of reports targeting that user is the empty string, and the report rows and their other columns stay as they are
 - `add_report` with `evidence` of a target that already did `Withdraw` is `OK` and writes the report row with the empty string as `evidence`
-- An `add_report` of a target that holds the `block_report_sequence` lock makes `remove_user` of that target wait, and after both commit the `evidence` of that row is the empty string
+- On PostgreSQL, an `add_report` of a target that holds the `block_report_sequence` lock makes `remove_user` of that target wait, and after both commit the `evidence` of that row is the empty string
 - `add_report` called by a content handler writes the report row with the passed `evidence`, and `list_reports` returns that `evidence`. An `evidence` longer than `block-report.maxEvidenceBytes` is `INVALID_INPUT` and there is no report row
