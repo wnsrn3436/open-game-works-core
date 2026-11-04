@@ -267,7 +267,7 @@ describe('ogw core upgrade', () => {
     });
     vi.mocked(runData).mockImplementationOnce((_c, game) => {
       writeFiles(game.root, { 'server/generated/data/game_data.proto': 'new tables', 'data/translations/en.csv': 'new hash' });
-      return Promise.resolve({ exitCode: 1, lines: [], stderr: '' });
+      return Promise.resolve({ exitCode: 0, lines: [], stderr: '' });
     });
     const hook = join(dir, '.git', 'hooks', 'pre-commit');
     // The check of the real hook: what `client/core` reads and `generated diff` compares is staged, from the new data.
@@ -276,6 +276,34 @@ describe('ogw core upgrade', () => {
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
     expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toEqual(expect.arrayContaining(['client/generated/contract/core_contract.gd', 'server/generated/data/game_data.proto', 'data/translations/en.csv']));
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('prints data check errors, keeps what the failed data run put in data/ out of the commit, and generates the contract code from the old data', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0' },
+      'client/generated/contract/core_contract.gd': 'old proto',
+      'server/generated/data/game_data.proto': 'old tables',
+      'data/system/reserved_id.csv': 'key,id\n',
+    });
+    const text = 'data/system/reserved_id.csv:2:3 ERROR empty_required [iap_grant_mail]';
+    vi.mocked(runData).mockImplementationOnce((_c, game) => {
+      // A run with errors writes no generation target, and a required row of the new core goes into `data/`.
+      writeFiles(game.root, { 'data/system/reserved_id.csv': 'key,id\n[iap_grant_mail],\n', 'data/made.csv': 'made' });
+      return Promise.resolve({ exitCode: 1, lines: [{ level: 'ERROR', code: 'empty_required', where: 'data/system/reserved_id.csv:2:3', message: '[iap_grant_mail]', text }], stderr: '' });
+    });
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    // The real hook refuses an error at a staged file.
+    writeFileSync(hook, '#!/bin/sh\nif git diff --cached --name-only | grep -q "^data/"; then echo refused >&2; exit 1; fi\n');
+    chmodSync(hook, 0o755);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
+    expect(run.stderr).toContain(text);
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toContain('client/generated/contract/core_contract.gd');
+    expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('new proto old tables');
+    expect(readFileSync(join(dir, 'data/system/reserved_id.csv'), 'utf8')).toBe('key,id\n');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 

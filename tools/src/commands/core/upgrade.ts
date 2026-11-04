@@ -116,10 +116,10 @@ async function chooseVersion(ctx: Context, game: GameRepo, current: string, sett
   }
 }
 
-/** Puts `TOOL_OUTPUTS` back to HEAD and unstages `staged`. Those folders were clean when the upgrade started. */
-async function restoreToolOutputs(game: GameRepo, staged: readonly string[], env: NodeJS.ProcessEnv): Promise<void> {
+/** Puts `folders` of `TOOL_OUTPUTS` back to HEAD and unstages `staged`. Those folders were clean when the upgrade started. */
+async function restoreToolOutputs(game: GameRepo, folders: readonly string[], staged: readonly string[], env: NodeJS.ProcessEnv): Promise<void> {
   if (staged.length > 0) await git(game.root, ['reset', '--quiet', '--', ...staged], { env });
-  const left = [...(await changedPaths(game.root))].filter(underFolders(TOOL_OUTPUTS));
+  const left = [...(await changedPaths(game.root))].filter(underFolders(folders));
   if (left.length === 0) return;
   const tracked = new Set((await git(game.root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...left], { env })).split('\0'));
   const inHead = left.filter((path) => tracked.has(path));
@@ -130,7 +130,9 @@ async function restoreToolOutputs(game: GameRepo, staged: readonly string[], env
 /**
  * Fetches the release, changes `coreVersion`, installs engines, runs `ogw generate`, the data tool and the contract tool
  * in the order `generated diff` regenerates, and commits `settings.json` with what they wrote or removed. A data check
- * error or a contract violation does not stop it: the content agent fixes it after the upgrade. When a step after the
+ * error or a contract violation does not stop it: the content agent fixes it after the upgrade. A data tool run with
+ * errors writes no generation target, and the rows it put in `data/` stay out of the commit, where the hook would refuse
+ * their errors: the next `ogw data` puts them in again. When a step after the
  * `settings.json` write fails, `settings.json` gets its committed content back, `ogw generate` runs again with it, and
  * what the tools wrote and the refused commit staged goes back to HEAD.
  */
@@ -156,6 +158,8 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
     const applied = await generateCheckout(ctx, game);
     const data = await runData(ctx, game, { generate: false });
     if (data.exitCode === 2) throw new OgwError(`data tool of core ${version} failed: ${data.stderr.trim()}`);
+    for (const line of data.lines.filter((l) => l.level === 'ERROR')) ctx.log(line.text);
+    if (data.exitCode !== 0) await restoreToolOutputs(game, ['data/'], [], ctx.env);
     const contract = await runContract(ctx, game, { generate: false });
     // exit code 1 with no violation line is a crash of the tool, which wrote nothing to commit
     if (contract.exitCode !== 0 && !(contract.exitCode === 1 && contract.violations.length > 0)) throw failed(version, contract);
@@ -173,7 +177,7 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
         ctx.log(`${step} with core ${from} after the failed upgrade failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
       };
       await generateCheckout(ctx, game).catch(logged('ogw generate'));
-      await restoreToolOutputs(game, paths, ctx.env).catch(logged('putting back what the tools wrote'));
+      await restoreToolOutputs(game, TOOL_OUTPUTS, paths, ctx.env).catch(logged('putting back what the tools wrote'));
     }
     throw error;
   }
