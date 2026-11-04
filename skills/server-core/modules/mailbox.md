@@ -188,7 +188,7 @@ Added `CoreError`: `MAIL_NOT_FOUND`, `MAIL_EXPIRED`
 
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
-| `mailbox.defaultExpireMs` | integer | core | content | expiry duration of a mail whose `expire_ms` is 0 |
+| `mailbox.defaultExpireMs` | integer | core | content | expiry duration of a mail whose `expire_ms` is 0. 1 or more |
 | `mailbox.maxExpireMs` | integer | core | content | upper limit of `expire_ms` |
 | `mailbox.maxArgs` | integer | core | content | limit on the number of `args` of one mail |
 | `mailbox.maxArgLength` | integer | core | content | limit on the byte length of `text_value` of one string `MailArg` |

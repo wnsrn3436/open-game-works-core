@@ -67,7 +67,7 @@ Added `CoreError`: none
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
 | `testing.maxFixtureBytes` | integer | core | human | maximum bytes of a fixture file |
-| `testing.backgroundWaitTimeoutMs` | integer | core | human | maximum wait duration of `wait_background` |
+| `testing.backgroundWaitTimeoutMs` | integer | core | human | maximum wait duration of `wait_background`. 1 or more |
 | `testing.defaultStartAt` | integer | core | human | first clock of a test server started without a start time. Unix ms |
 | `environments.<ENV>.adapters` | object | game | none | adapter names per environment. A `STG` test server treats it as an empty object |
 | `environments.<ENV>.updatePublicKeys` | array<string> | game | none | list of public keys for deploy list signature verification. A `STG` test server treats it as the one public key of a new signing key |
