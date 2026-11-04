@@ -1,12 +1,5 @@
 {
   "target": "step",
   "nextId": 3,
-  "items": [
-    {
-      "id": "D2",
-      "location": "tools/src/commands/input/input.ts:209",
-      "problem": "A call that puts in no input or step still starts the budget, while tools/ogw.md:299-300 count from the first input or step. The budget is noted before the call is validated. Reproduced in a temporary copy with a judge agent key: `ogw input <id> tap 1 1 --video` exited 1 with `--video goes with --script`, and the budget file of that instance existed afterwards. By code, `brokerBudgetRefusal` (broker-budget.ts:29) does the same before the command starts, for example for `ogw step <id> 0`, and step.ts:273 runs before `runSteps` finds `no client is in step mode`. The budget starts early only by the time until the next valid call. This order existed before this range, and this range did not change it",
-      "foundBy": "step round 2"
-    }
-  ]
+  "items": []
 }
