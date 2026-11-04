@@ -53,7 +53,7 @@ Of the `MatchmakerFrame` of `matchmaker`, this module handles `PEER_SIGNAL`, `MA
   - `stun_urls` is `p2p-signaling.stunUrls`. In LOCAL it is an empty list
   - `relays` are the short-lived credentials that the `turn` adapter issues per match. `expires_at` is `start_at` + `max_duration`
   - When the adapter call takes more than `p2p-signaling.turnTimeoutMs` or fails, empties `relays` and leaves a `warn` log. Match creation continues
-- The transport touches the messages of `realtime.proto`, the matching of `matchmaker` and the match result judgement only through the four operations of this module (`prepare_transport`, `open_match_session`, `handle_frame`, `connection_closed`). So replacing it with a module of another `TransportKind` does not change those three
+- The transport touches the messages of `realtime.proto`, the matching of `matchmaker` and the match result judgement only through the five operations of this module (`prepare_transport`, `open_match_session`, `handle_frame`, `connection_closed`, `is_bound`). So replacing it with a module of another `TransportKind` does not change those three
 
 ### match session
 

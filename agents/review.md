@@ -61,7 +61,7 @@ Write it to `output`.
 - `## must fix`: a table with one row per input `## must fix` item of step 4. The columns and how to write them are the same as `## debt`, and `id` is the `M<n>` of the input. `none` when input `## must fix` is `none`
 - `## unknown`: the places not checked and the reason
 - Write file paths (`location`, `<file:line>`, paths inside evidence) relative to the checkout under review, and a file outside the checkout relative to the workspace root (e.g. `games/<game>/resource/tween/hit.tres:10`). Do not write absolute paths: the review file is committed, and the secret check of the code check blocks workspace paths
-- Write `|` inside a table cell as `\|`. A short explanation appended after `none` is not used in the judgement
+- Write `|` inside a table cell as `\|`. A short explanation appended after `none` on the same line is not used in the judgement. Any other line in that section makes the file invalid: what was checked goes in `## unknown`
 - `ogw review wait` judges the result by this format. When the format differs, that round is not judged and runs again
 
 ## rules
