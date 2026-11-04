@@ -21,6 +21,7 @@ description: Holds the format of the documents the content agent writes (brief.m
 | `## reference game` | The reference game name in `records/setup/reference/reference.md` and its file path (in the draft). What this game does differently from the reference game |
 | `## request` | The original text of the human's request (in the draft), and the items that the content agent decided because the request did not have them |
 
+- Genre conventions include the screens that players of the genre expect, not only rules of play (e.g. character select in a fighting game, results and leaderboards in a racing game, an upgrade choice in a roguelike, a guided tutorial in a card game or a match-three game). A store or ads fall under line 1 of `## deciding without asking`
 - When the failure penalty rejects (`reject`) or twists (`twist`) a failure pressure convention (death, timer, game over, penalty), write the replacement pressure as numbers under the same heading: its base value and the multiplier applied to that base value (e.g. scroll speed 200, multiplied by 1.1 per room)
 
 ## design doc
