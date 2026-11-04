@@ -1,5 +1,12 @@
 {
   "target": "measure",
-  "nextId": 6,
-  "items": []
+  "nextId": 7,
+  "items": [
+    {
+      "id": "D6",
+      "location": "tools/src/commands/loop/lib/iteration-record.ts:115",
+      "problem": "test evidence: no test checks the `range` of `## measurements` in `iteration-<n>.md` with a bound outside the safe integers. That row is filled from `iterationResults` (`tools/src/commands/loop/lib/record.ts:173`). In a temporary copy of HEAD I changed the range to `${String(Number(t.min))}..${String(Number(t.max))}`, which rounds `9007199254740993..9007199254740995` to `9007199254740992..9007199254740996`. All 251 tests of `test/commands/loop` and `test/commands/measure` still pass. This code and its missing test existed before this range, and the change in this range only tests the `ogw loop findings` path",
+      "foundBy": "measure round 4"
+    }
+  ]
 }
