@@ -258,10 +258,10 @@ Added `CoreError`: `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_RE
 
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
-| `matchmaker.tickMs` | integer | core | content | queue matching period |
+| `matchmaker.tickMs` | integer | core | content | queue matching period. 1 or more |
 | `matchmaker.maxPlayers` | integer | core | content | value that `max_players` of `match_mode` cannot exceed |
 | `matchmaker.reportMarginMs` | integer | core | content | margin added to `deadline_at` |
-| `matchmaker.sweepIntervalMs` | integer | core | content | period of deadline judgement and apply retry |
+| `matchmaker.sweepIntervalMs` | integer | core | content | period of deadline judgement and apply retry. 1 or more |
 | `matchmaker.recordRetentionMs` | integer | core | content | duration a match record is kept after the apply of every participant is marked |
 | `matchmaker.resultMaxBytes` | integer | core | content | maximum bytes of `result` |
 | `matchmaker.inputLogMaxBytes` | integer | core | content | maximum bytes of `input_log` |
@@ -280,7 +280,7 @@ Added `CoreError`: `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_RE
 | `matchmaker.roomCodeLength` | integer | core | content | length of a room code |
 | `matchmaker.roomCodeMaxPicks` | integer | core | content | how many times one room code is picked before no room is created. 1 or more |
 | `matchmaker.lockstepMaxDurationMs` | integer | core | human | duration used instead of `max_duration` in a DEV lockstep match |
-| `admin-api.switchCacheMs` | integer | core | content | interval for rereading the maintenance and kill switch cache |
+| `admin-api.switchCacheMs` | integer | core | content | interval for rereading the maintenance and kill switch cache. 1 or more |
 
 - The server does not start when one of the following holds
   - `matchmaker.roomCodeAlphabet` is empty, or contains a character that is not an ASCII uppercase letter or digit, or a duplicate character

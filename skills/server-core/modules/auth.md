@@ -393,7 +393,7 @@ Added `CoreError`: `UNAUTHORIZED`, `TOKEN_EXPIRED`, `CONSENT_REQUIRED`, `SOCIAL_
 | `consent.version` | integer | game | none | version of the current privacy choices text |
 | `pushConsent.adPush` | boolean | game | none | whether ad pushes are sent |
 | `auth.inactiveGuestDeleteAfterMs` | integer? | core | content | duration after the last use until a guest account is deleted. null means guests are not deleted |
-| `auth.guestSweepIntervalMs` | integer | core | content | guest cleanup period |
+| `auth.guestSweepIntervalMs` | integer | core | content | guest cleanup period. 1 or more |
 | `auth.guestSweepBatchSize` | integer | core | content | number of users that one guest cleanup run scans |
 | `auth.maxDevAccountNameLength` | integer | core | content | max length of the dev account name of `DevLogin`. Only DEV code reads it |
 | `environments.<ENV>.adapters.login-apple` | string? | game | none | social login adapter name of provider `APPLE`. `null` means this environment does not have that adapter |

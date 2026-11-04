@@ -283,7 +283,7 @@ Added `CoreError`: none
 | `admin-api.maxSearchRangeMs` | integer | core | content | max length of a query time range |
 | `admin-api.maxSearchRows` | integer | core | content | max number of rows of a query result |
 | `admin-api.operationIdRetentionMs` | integer | core | content | duration that `operation_id` records are kept |
-| `admin-api.switchCacheMs` | integer | core | content | interval at which the maintenance and kill switch cache is read again |
+| `admin-api.switchCacheMs` | integer | core | content | interval at which the maintenance and kill switch cache is read again. 1 or more |
 | `admin-api.maxExportBytes` | integer | core | content | max bytes of the `export_personal_data` file |
 
 ## data

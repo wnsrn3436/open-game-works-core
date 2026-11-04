@@ -226,7 +226,7 @@ Added `CoreError`: none
 
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
-| `logging.securityRepeatWindowMs` | integer | core | content | length of the window that groups `security` logs, and period of the job `logging_security_flush` |
+| `logging.securityRepeatWindowMs` | integer | core | content | length of the window that groups `security` logs, and period of the job `logging_security_flush`. 1 or more |
 | `logging.maxRepeatedIps` | integer | core | content | max number of IPs in the list of a summary line |
 | `logging.reportRateLimitPerMinute` | integer | core | content | limit on the number of client log requests per user in one minute window |
 | `logging.maxErrorEntries` | integer | core | content | max number of entries in one `ReportClientErrors` |
@@ -238,7 +238,7 @@ Added `CoreError`: none
 | `logging.clientLogRetentionMs` | integer | core | content | duration for which client log rows are kept |
 | `logging.serverEventRetentionMs` | integer | core | content | duration for which `logging_server_event` rows are kept |
 | `logging.analyticsSendTimeoutMs` | integer | core | content | time limit of an analytics adapter call |
-| `logging.analyticsDeletionIntervalMs` | integer | core | content | period of the job `logging_analytics_deletion` |
+| `logging.analyticsDeletionIntervalMs` | integer | core | content | period of the job `logging_analytics_deletion`. 1 or more |
 | `logging.analyticsDeletionBatchSize` | integer | core | content | number of rows that the job `logging_analytics_deletion` sends in one run |
 | `logging.analyticsDeletionMaxAttempts` | integer | core | content | max number of times one deletion request is sent |
 | `environments.<ENV>.adapters.analytics` | string? | game | none | analytics adapter name. When `null`, this environment has no analytics adapter |

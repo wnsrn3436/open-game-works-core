@@ -118,13 +118,13 @@ admin operation. Collection and handling follow `admin-api`.
   1. `INVALID_INPUT` when the input meets the `INVALID_INPUT` condition of `ReportResult`
   2. When an `Open` report with the same (reporter, target, `ReportContext`, `ref`) exists, writes nothing and returns `OK`
   3. `LIMIT` when `count` in the current fixed window is `block-report.maxReportsPerWindow` or more
-  4. Writes the report row as `Open` and increases `count` by 1. Leaves `report_id`, the target user ID and `reason_id` in an `info` log
+  4. Locks the `block_report_sequence` row with `storage.lock_game_row`. When `public-profile.is_active_user` of the target is `false`, the `evidence` of the row is the empty string. Writes the report row as `Open` and increases `count` by 1. Leaves `report_id`, the target user ID and `reason_id` in an `info` log
 - `resolve_report` runs in a game transaction opened with `storage.run_game_transaction`, locking and reading the report row with `storage.lock_game_row`. `not_found` when there is no report, `conflict` when it is `Resolved`, `bad_request` when `resolution` is the empty string. Otherwise it sets `status` to `Resolved`, `resolved_at` to `clock_now` and `expires_at` to `resolved_at` + `block-report.reportRetentionMs`, and writes `resolution`. The expiry cleanup of `storage` deletes report rows that reached `expires_at`
 - `list_reports` returns up to `limit` reports with that `status` and `from_at` ≤ `created_at` < `to_at`, in ascending order of `(created_at, report_id)`. The rules for the time range and `limit` are the body rules of `admin-api`
 - cursor: when `after_created_at` and `after_report_id` are given, returns only reports whose `(created_at, report_id)` is greater than `(after_created_at, after_report_id)`. The next query gives the `created_at` and `report_id` of the last report of the previous query. Giving only one of the two is `bad_request`
 - A ban after handling a report is done separately with `admin-api.ban_user`, a chat mute with `chat.mute_chat_user`
 - A report on a user's text that content saves and shows to other users (e.g. self-introduction, room name) is left by the content handler with `add_report`. `ReportContext` is the screen that showed the text, `ref` is the identifying string of the text, and `evidence` is the text the handler read from the saved state. When the text is more than `block-report.maxEvidenceBytes` bytes, it is cut at the last UTF-8 character boundary within that byte count
-- `remove_user`, inside the user transaction of ctx, changes the `evidence` of report rows whose `target_id` is that user to the empty string. The other columns of those rows and the report rows that user wrote stay as they are
+- `remove_user`, inside the user transaction of ctx, locks the `block_report_sequence` row with `storage.lock_game_row`, then changes the `evidence` of report rows whose `target_id` is that user to the empty string. So an `add_report` of that target either commits before this change, which then empties its row, or reads the target as withdrawn. The other columns of those rows and the report rows that user wrote stay as they are
 
 ### collected data
 
@@ -152,7 +152,7 @@ none
 | `INVALID_INPUT` of `add_report` called by a core module, content handler or hook | `INVALID_INPUT` | the caller decides | `error` log |
 | throw of a listener function | throw | `INTERNAL` | `routing` leaves an `error` log |
 | second `register_block_listener` registration of the same function | server start failure | none | `error` log |
-| exceeding the lock wait on the `block_report_sequence` row in step 4 of `add_report` | throw | `INTERNAL` | `routing` leaves an `error` log |
+| exceeding the lock wait on the `block_report_sequence` row in step 4 of `add_report` or in `remove_user` | throw | `INTERNAL` | `routing` leaves an `error` log |
 | exceeding the lock wait on the report row in `resolve_report` | `internal` | none | error rules of `admin-api` |
 | `resolve_report` with an empty `resolution` | `bad_request` | none | `audit` |
 | `resolve_report` of a report that does not exist | `not_found` | none | `audit` |
@@ -206,4 +206,6 @@ none
 - After `Withdraw`, that user's block rows are gone and that user's report rows stay. `admin-api.export_personal_data` includes the report rows that user wrote
 - A report resolved with `resolve_report` is deleted by the expiry cleanup after it reaches `resolved_at` + `block-report.reportRetentionMs`, and an `Open` report of the same time stays
 - When the target user of a chat report does `Withdraw`, the `evidence` of reports targeting that user is the empty string, and the report rows and their other columns stay as they are
+- `add_report` with `evidence` of a target that already did `Withdraw` is `OK` and writes the report row with the empty string as `evidence`
+- An `add_report` of a target that holds the `block_report_sequence` lock makes `remove_user` of that target wait, and after both commit the `evidence` of that row is the empty string
 - `add_report` called by a content handler writes the report row with the passed `evidence`, and `list_reports` returns that `evidence`. An `evidence` longer than `block-report.maxEvidenceBytes` is `INVALID_INPUT` and there is no report row

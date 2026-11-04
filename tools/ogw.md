@@ -324,6 +324,8 @@ For the hardening record of a build run, `ogw loop findings <game> --hardening` 
 
 ## loop record
 
+A play of `evaluate-<iteration>.json` with an empty `result` (its save fixture did not start) has no observations for `ogw loop findings` and `ogw loop record`.
+
 `ogw loop record` merges findings with the same `id` into one defect. `severity` is the highest one, `evidence` is all of them, and the other fields are those of the first finding in the file. The defect list is in `severity` order, in finding file order within the same `severity`, followed by the defects not in this iteration's findings in their previous order.
 
 `ogw loop record` changes status as below, and writes the defect list and the `## loop verdict` counts of each defect to `records/loops/<run>/defects.json`. When the same iteration or the same round is recorded again, it discards the changes of the earlier record and does them again.

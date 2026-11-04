@@ -178,6 +178,8 @@ export const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /** Text of a game-repo-relative file; null when it does not exist. */
 export async function readGameText(game: GameRepo, rel: string): Promise<string | null> {
+  // a play whose save fixture did not start has an empty result: `abs` of it is the game folder
+  if (rel === '') return null;
   const path = abs(game, rel);
   return exists(path) ? readFile(path, 'utf8') : null;
 }

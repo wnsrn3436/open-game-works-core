@@ -225,6 +225,21 @@ function filled(file: FindingsFile, fill: (f: Finding, i: number) => Partial<Fin
 }
 
 describe('ogw loop record', () => {
+  it('takes no observations of a play whose save fixture did not start, in findings and in record', async () => {
+    const { g } = await iterationOne();
+    const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as { plays: object[] };
+    write(g.root, `${R}/evaluate-1.json`, { ...evaluate, plays: [...evaluate.plays, { result: '', instance: '', platform: 'android', moment: 'boss', status: 'failed' }] });
+    commit(g.root);
+    const found = await ogw(g.ws, ['loop', 'findings', 'g']);
+    expect(found.stderr).toBe('');
+    expect(found.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
+    write(g.root, `${R}/findings-1.json`, { ...file, findings: file.findings.map((f) => ({ ...f, id: null, drop: 'not a defect' })) });
+    const recorded = await ogw(g.ws, ['loop', 'record', 'g']);
+    expect(recorded.stderr).toBe('');
+    expect(recorded.code).toBe(0);
+  });
+
   it('refuses unfilled findings', async () => {
     const { g } = await iterationOne();
     await ogw(g.ws, ['loop', 'findings', 'g']);
