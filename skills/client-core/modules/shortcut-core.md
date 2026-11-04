@@ -121,6 +121,7 @@ none
 - `panels` is the panel path. Its elements are panel keys and are stacked in list order. An empty array opens no panel
 - Elements of `args` are integers or ID names
 - A row whose `panels` is an empty array but whose `args` is not empty is data check `out_of_range`
+- A row whose `panels` holds the root panel key of the scene of `scene` (the key that stage 7 closes to), other than a row whose `stack` is `Root` and whose `panels` is only that key, is blocked by static check `shortcut root panel`
 
 `data/enums.csv`
 
@@ -135,6 +136,7 @@ none
 ## test
 
 - A `shortcut` row whose `panels` is an empty array and whose `args` is not empty is a data check `out_of_range` ERROR
+- Static check `shortcut root panel` reports a `shortcut` row whose `panels` holds the root panel key of the scene of `scene` together with another panel key, and a row whose `stack` is `Top` and whose `panels` is only that key, and does not report a row whose `stack` is `Root` and whose `panels` is only that key
 - When `navigate` runs with a shortcut for which `passed` of the condition judgement is `true`, a param builder exists, the target scene has a root panel and is not the current scene, `stack` is `Root` and `panels` has one element, the condition judgement, the param builder, `UICore.close_all_popups`, `SceneCore.change_scene`, `UICore.close_panels_to`, `UICore.open_panel` and `ShortcutNavigatedEvent` each happen once in this order, and the result is `true`
 - With two popups open and the stack root R, A, B, `navigate` with a shortcut whose target scene is the current scene, whose `stack` is `Root` and whose `panels` is only C does not call `SceneCore.change_scene`; when it ends, no popup is open and the stack is R, C
 - With the stack root R, A, `navigate` with a shortcut whose target scene is the current scene, whose `stack` is `Root` and whose `panels` is B, C, D calls `UICore.open_panels`(B, C, D) once with clear stack off after `UICore.close_panels_to`(R), with no `UICore.open_panel`; when it ends, the stack is R, B, C, D

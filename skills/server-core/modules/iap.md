@@ -166,7 +166,7 @@ core `rpc` response field
 
 ### test transaction
 
-- A store transaction that the store marks as a test payment counts as a test transaction: a store transaction in the Apple sandbox environment, a store transaction whose `purchaseType` in the Google purchase info is test. It is granted in every environment, and the payment record keeps `true` for whether it is a test transaction
+- A store transaction that the store marks as a test payment counts as a test transaction: a store transaction in the Apple sandbox environment, a Google product transaction whose `purchaseType` in the `purchases.products` response is 0 (test), and a Google subscription receipt and subscription snapshot whose `purchases.subscriptionsv2` response has `testPurchase`. It is granted in every environment, and the payment record keeps `true` for whether it is a test transaction
 - test grant limit: when game settings `purchaseLimits.testGrants` is not `null`, a user has reached the limit when that user has `count` or more test transaction `GRANTED` payment records whose verification time is at least request time − `periodMs`. When `null`, there is no limit
 - `revoke_test_grant`: `user_target` is `user_id`. In the out-of-request change of the target user that `admin-api` opens, it does record recheck with `(store, transaction_id)` and judges with the re-read payment record. When the payment record does not exist, its user is not the target user, or it is not a test transaction, `not_found`; when the result is not `GRANTED`, `conflict`. Otherwise, in the same change, it does steps 1 to 4 of the store notification `REFUND` processing order, and for `Subscription`, changes `state` of that subscription record to `REVOKED` and `ends_at` to request time, and does subscription recompute
 
@@ -310,9 +310,9 @@ Added `CoreError`: `IAP_VERIFY_UNAVAILABLE`, `IAP_PRODUCT_UNAVAILABLE`, `IAP_PRO
 |---|---|---|---|---|
 | `iap.maxReceiptBytes` | integer | core | content | receipt byte length limit |
 | `iap.maxTransactionIdLength` | integer | core | content | transaction ID length limit |
-| `iap.verifyTimeoutMs` | integer | core | content | time limit of one receipt verification call or one subscription status lookup call |
+| `iap.verifyTimeoutMs` | integer | core | content | time limit of one receipt verification call or one subscription status lookup call. 1 or more |
 | `iap.notifyMaxBodyBytes` | integer | core | content | maximum bytes of a store notification body |
-| `iap.notifyBodyReadTimeoutMs` | integer | core | content | time limit of the whole store notification body read |
+| `iap.notifyBodyReadTimeoutMs` | integer | core | content | time limit of the whole store notification body read. 1 or more |
 | `iap.subscriptionSyncIntervalMs` | integer | core | content | interval at which `SyncSubscriptions` looks up a subscription again before expiry |
 | `iap.withdrawnRecordRetentionMs` | integer | core | content | duration that payment records, bindings, subscription records, account token mappings and `OTHER_USER` records of a withdrawn user are kept before deletion |
 | `iap.fakeSubscriptionPeriodMs` | integer | core | content | length of one subscription period of the fake adapter. Only DEV code reads it |
@@ -450,6 +450,7 @@ reserved ID: `[iap_grant_mail]` → row of `mail_template`
 - A `SUBSCRIPTION` notification whose snapshot `state` is `REVOKED`, `EXPIRED` or `BILLING_RETRY` and whose latest transaction ID has no payment record gives HTTP 200 with no grant and no payment record, and the subscription record takes that `state`. With `ACTIVE` or `GRACE_PERIOD` it grants once
 - `VerifyPurchase` and `RecoverPurchase` of a `Subscription` whose subscription snapshot has `state` `REVOKED` or `EXPIRED` and that transaction as its latest transaction ID are `INVALID`, with no grant
 - In `iap-google`, a subscription receipt whose line item has no `latestSuccessfulOrderId` has the purchase token as its transaction ID, also with a `latestOrderId`. It is `PENDING` with no grant, also when another line item of that response has an order, and `INVALID` for `SUBSCRIPTION_STATE_EXPIRED`. A subscription status lookup of a response with no order has an empty latest transaction ID. Of a line item deferred to and not owned yet and an owned one that ends earlier, the lookup reads the owned one. Two line items that end together give the first in byte order of `productId`
+- In `iap-google`, a subscription receipt and a subscription status lookup whose `purchases.subscriptionsv2` response has `testPurchase` are a test transaction, and without `testPurchase` they are not. A product whose `purchases.products` response has `purchaseType` 0 is a test transaction
 - The `REFUND` notification of a `Subscription` store transaction does a subscription status lookup with the original transaction ID of the payment record before `claim_notify`, and does subscription apply with that subscription snapshot. On lookup failure, HTTP 500, and the payment record and the subscription record stay unchanged
 - The revocation `ItemChange` of default `revoke_iap` has source `IapRefund` and `ref` transaction ID
 - When there is an `iap_product` row whose `extra_grant` is `true` and content leaves at least one of `grant_iap_extra` and `revoke_iap` unregistered, the server does not start and an `error` log is left

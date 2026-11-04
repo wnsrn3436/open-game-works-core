@@ -142,9 +142,9 @@ none
 | `follow`, `move_to`, `move_by_preset`, `snap_to`, `zoom_to`, `get_zoom`, `set_bounds`, `shake`, `get_view_center`, `screen_to_world`, `world_to_screen` while no camera is attached | each failure value. `move_by_preset` does not load the tween preset | error |
 | `has_camera`, `is_3d_camera`, `detach_camera`, `stop_follow`, `stop_move`, `stop_shake`, `clear_bounds` while no camera is attached | `false` for `has_camera` and `is_3d_camera`, none for the rest | none |
 | the target of `follow` is missing or destroyed, smooth time is negative, any axis of the dead zone size is negative | `false`. Does not change the previous follow | error |
-| the duration of `move_to`, `zoom_to` is less than 0 or more than `TweenCore.maxDurationMs` | `Failed` | error |
+| the duration of `move_to`, `zoom_to` is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` is not a member of `Easing`, the `TimeBasis` is not a member of `TimeBasis` | `Failed`. The base position, the zoom factor, the follow and the `move_to` or `zoom_to` in progress do not change | error |
 | the factor of `zoom_to` is 0 or less | `Failed` | error |
-| the tween preset of `move_by_preset` cannot be loaded, there is no first change | `Failed` | error |
+| the tween preset of `move_by_preset` cannot be loaded, there is no first change, the duration of the first change is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` of the first change is not a member of `Easing` | `Failed` when loading ends. The base position does not change | error |
 | the bounds size of `set_bounds` is 0 or less on any axis | `false`. Does not change the previous bounds | error |
 | the amount of `shake` is 0 or less | none. Does not change trauma | error |
 | the value of `set_shake_scale` is not at least 0 and at most 1000 | shake scale unchanged | error |
@@ -196,6 +196,7 @@ none
 - `move_by_preset` ends with `Completed` at the received position after the duration of the first change of the preset
 - For a `move_to` with `TimeBasis` `GameTime`, the base position stays as it is during a game time pause. For a `QuadIn` `move_to`, when half the duration has passed, the base position is at 1/4 of the distance from start to end (tolerance 0.01 world units)
 - Calling `stop_move` or `snap_to` during a `move_by_preset` that waits for loading gives `Cancelled`, and even after loading ends, the base position is the value that `stop_move` or `snap_to` set
+- `move_to` and `zoom_to` with an `Easing` or `TimeBasis` that is not a member are `Failed` with one error log, and the base position and zoom factor do not change. `move_by_preset` of a preset whose first change has an `Easing` that is not a member is `Failed` with one error log when loading ends, and the base position does not change
 - When the factor of `zoom_to` is out of range, it stops at `CameraCore.minZoom` or `CameraCore.maxZoom`. At factor 2, the length of each axis of the view range is half that at factor 1
 - A `zoom_to` with duration 0 applies the end factor inside the operation and is `Completed`. Calling a new `zoom_to` while one is in progress makes the previous one `Cancelled`, and the new one starts from the factor at that time
 - With bounds, for any follow goal the view range based on `get_view_center` is inside the bounds, and an axis on which the view range is longer than the bounds is at the center of the bounds

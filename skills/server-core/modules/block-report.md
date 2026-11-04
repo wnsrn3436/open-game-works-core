@@ -209,4 +209,6 @@ none
 - When the target user of a chat report does `Withdraw`, the `evidence` of reports targeting that user is the empty string, and the report rows and their other columns stay as they are
 - `add_report` with `evidence` of a target that already did `Withdraw` is `OK` and writes the report row with the empty string as `evidence`
 - On PostgreSQL, an `add_report` of a target that holds the `block_report_sequence` lock makes `remove_user` of that target wait, and after both commit the `evidence` of that row is the empty string
+- On PostgreSQL, while `Withdraw` of the target holds the `block_report_sequence` lock in `remove_user` and has not committed, an `add_report` with `evidence` of that target waits, and after the withdrawal commits it is `OK` and the `evidence` of its row is the empty string
+- While `testing.hold_game_row_lock` holds the key 0 row of `block_report_sequence`, `Withdraw` of a user who is the target of a report with non-empty `evidence` is `INTERNAL`, the `evidence` of that report and the other rows of that user keep their values, and there is no `withdrawn_at`
 - `add_report` called by a content handler writes the report row with the passed `evidence`, and `list_reports` returns that `evidence`. An `evidence` longer than `block-report.maxEvidenceBytes` is `INVALID_INPUT` and there is no report row

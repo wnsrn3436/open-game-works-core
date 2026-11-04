@@ -48,9 +48,9 @@ Handles toasts and black box messages, notifications that are shown for a set du
 
 ### resource
 
-- The toast resource and the black box resource are prefabs with a `MessageView` component at the root. `MessageView` points to the UI text element that shows the wording. The engine mapping is in the engine-specific implementation rules. The toast prefab is a manual-return pool object of `PoolCore`
+- The toast resource and the black box resource are prefabs with a `MessageView` component at the root. `MessageView` points to the UI text element that shows the displayed text. The engine mapping is in the engine-specific implementation rules. The toast prefab is a manual-return pool object of `PoolCore`
 - When a resource key in core settings is an empty string, a screen made by code is used. A toast made by code is white text on a black band whose opacity is `UICore.dimOpacity`, and a black box made by code is white text on a black dim whose opacity is `UICore.dimOpacity` and that covers the visible game area
-- The wording appears in the center of the visible game area
+- The displayed text appears in the center of the visible game area
 
 ### prepare
 
@@ -61,14 +61,14 @@ Handles toasts and black box messages, notifications that are shown for a set du
 
 ### text
 
-- The wording is made when the request is received. It is the result of `LocalizationCore.get_text` when there is no `FormatArgs`, and the result of `LocalizationCore.format` when there is one. When there is extra text, one line break and the extra text are appended
+- The wording is made when the request is received. It is the result of `LocalizationCore.get_text` when there is no `FormatArgs`, and the result of `LocalizationCore.format` when there is one. displayed text: the wording, followed by one line break and the extra text when there is extra text
 - The caller's `FormatArgs` is not kept. When the caller changes values after the request, the wording does not change
 
 ### display
 
 One message is shown in the order below. From the start of 1 to the end of 5 it is on display.
 
-1. Puts the message object on the `Message` layer, resets the tween properties to the prefab's values, and then puts in the wording
+1. Puts the message object on the `Message` layer, resets the tween properties to the prefab's values (for an object made by code, to its values when it was made), and then puts in the displayed text
 2. Plays the enter tween preset with `TweenCore.play_preset`
 3. Keeps it for the display duration: `MessageCore.toastDurationMs` for a toast, `MessageCore.blackBoxDurationMs` for a black box
 4. Plays the exit tween preset with `TweenCore.play_preset`
@@ -84,7 +84,7 @@ One message is shown in the order below. From the start of 1 to the end of 5 it 
 
 - There is one queue per kind, and only one message per kind is on display at a time. When one is on display, a request goes to the end of the queue, and when 5 finishes, the request at the front of the queue is shown
 - Toasts and black box messages do not wait for each other
-- When the wording of a toast request equals the wording of a toast on display or in the queue, the request is ignored. A black box message with the same wording is also put into the queue
+- When the displayed text of a toast request equals the displayed text of a toast on display or in the queue, the request is ignored. A black box message with the same displayed text is also put into the queue
 
 ### close
 
@@ -117,9 +117,10 @@ none
 | `prepare` while a `prepare` is in progress | `false`. The `prepare` in progress continues | error |
 | sum of the lengths of the black box enter·exit tween presets and `MessageCore.blackBoxDurationMs` is `InputBlockCore.maxDurationMs` or more | those values are used. The result of `prepare` is unchanged | error |
 | message request before `prepare` success | ignored | error |
-| no translation key, the made wording is an empty string | ignored | error |
-| toast object cannot be borrowed | display failure | error |
-| message object destroyed outside while on display | display failure | error |
+| no translation key, the made wording is an empty string (extra text is not counted) | ignored | error |
+| toast object cannot be borrowed | display failure | none. `PoolCore` or `ResourceCore` writes it |
+| borrowed toast object destroyed outside while on display | display failure | none. `PoolCore` writes it |
+| toast object made by code or black box object destroyed outside while on display | display failure | error |
 | block of the black box cannot be set | display failure | `InputBlockCore` writes it |
 
 ## settings
@@ -154,10 +155,11 @@ none
 - A presentation whose tween preset key is an empty string is skipped and progress continues
 - When the sum of the lengths of the black box enter·exit tween presets and `MessageCore.blackBoxDurationMs` is `InputBlockCore.maxDurationMs`, `prepare` leaves one error log and is `true`, and when it is 1 less, there is no such log
 - A black box after a black box whose exit tween made the opacity 0 appears with the prefab's opacity without an enter tween
+- With `MessageCore.toastResource` and `MessageCore.toastEnterTween` empty strings and `MessageCore.toastExitTween` a preset that makes the opacity 0, the next toast on the toast object made by code appears with the opacity it was made with
 - Three requests of the same kind with different wording appear one at a time in the order received
 - A black box request while a toast is on display and a toast request while a black box is on display appear immediately
-- A toast request with the same wording as a toast on display or in the queue does not appear, and black box requests with the same wording all appear
-- The text of a request without `FormatArgs` is the `get_text` result, and the text of a request with it equals the `format` result. When there is extra text, it is the wording, one line break, and the extra text joined
+- A toast request with the same displayed text as a toast on display or in the queue does not appear, and black box requests with the same displayed text all appear. Two toast requests with the same wording and different extra text both appear
+- The wording of a request without `FormatArgs` is the `get_text` result, and the wording of a request with it equals the `format` result. When there is extra text, the displayed text is the wording, one line break, and the extra text joined. A request whose wording is an empty string is ignored with an error log even when it has extra text
 - When the caller changes `FormatArgs` after the request, the wording stays the same
 - While a toast is on display, there is no block set by MessageCore, and a UI element overlapping the toast receives input
 - From 1 to 5 of a black box there is a block with reason tag `message`; during it, the buttons of an open system popup can be pressed and back input does not go to the back handling of `UICore`; after 5 and after `close_black_box`, `close_all`, `release` there is no block
@@ -166,6 +168,7 @@ none
 - Toast objects still borrowed are 1 or fewer, and 0 after 5 of the last toast
 - The `Message` layer is drawn above the `Popup` layer, and a toast above a black box
 - After the black box object is destroyed outside, a black box request appears with a new object
+- When a borrowed toast object is destroyed outside while on display, there is one error log, from `PoolCore`, and the next toast appears
 - A toast after a toast whose toast object could not be borrowed appears, and there is one error log per failure
 - When the resource keys in core settings are empty strings, the toast and black box made by code appear, and three toast requests with different wording appear in turn with the one toast object made by code. A toast request after that object is destroyed outside appears with a new object
 - After `release` there is no black box object, and after `init` and `prepare` again, toasts and black boxes appear in display order

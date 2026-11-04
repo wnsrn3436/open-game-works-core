@@ -29,7 +29,7 @@ admin-api does not depend on `routing`. admin-api exports the route `POST /admin
 
 ## API
 
-operator: a caller that has a name, a role list and an admin secret in game settings `environments.<ENV>.adminOperators`. Humans and the harness tool. The harness tool is the operator named `ogw`. An admin operation is `POST /admin/<operation>`. The LOCAL server and the test server use the operators below instead of `adminOperators`, regardless of environment. The admin secret is the value of `server.read_secret`(`adminSecret.<operator name>`)
+operator: a caller that has a name, a role list and an admin secret in game settings `environments.<ENV>.adminOperators`. Humans and the harness tool. The harness tool is the operator named `ogw`. An admin operation is `POST /admin/<operation>`. The LOCAL server and the test server use the operators below instead of `adminOperators`, regardless of environment. The admin secret of an operator below is the value of `server.read_secret`(`adminSecret.<operator name>`), and the admin secret of an operator of `adminOperators` is the value of `server.read_secret`(its `secret`)
 
 - `ogw`: all of roles `read`, `ops`, `economy`, `release`, `privacy`
 - `read`, `ops`, `economy`, `release`, `privacy`: the one role equal to the name. Only those whose key `adminSecret.<operator name>` is in the `--secret-file` file are operators
@@ -107,6 +107,7 @@ internal operation
 - `until_at`: the time the ban ends. 0 means it does not end
 - `result`(`grant_items`, `revoke_items`): an element name of `ItemChangeResult` of `item-ledger`
 - `payments`, `other_user_attempts`(`list_payments`): the list of payment records that `iap.list_payments` returned and the list of `OTHER_USER` records
+- `maintenance`, `kill_switches`(`get_switches`): `maintenance` is `true` when maintenance is on, and `kill_switches` is the list of the request names and `MATCH_REQUEST` whose kill switch is on, in UTF-8 byte order. `get_switches` reads the `admin_api_switch` rows in its transaction, not the cache of the server instance
 - field types of admin-api that are not in the common admin field table: `mail` is `json`, `enabled` is `bool`, `request_name` is `string`, `broadcast_id` is `int64`
 - An admin operation that a module exports holds the items below. Collected operations also follow this spec's processing order, authentication, body rules, user-targeted operation rules, `operation_id` rules and `audit` log
   - name
@@ -151,7 +152,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 3. operation: when it is not a registered operation name, 404 `not_found`. When the operator's role list does not have the operation's role, 403 `forbidden`
 4. body limit: when the accumulated body exceeds `admin-api.maxBodyBytes` (for a binary body operation, the limit that its module set) or the total read duration exceeds `admin-api.bodyReadTimeoutMs`, 400 `bad_request`. The body is first read in this step. Steps 1 to 3 look only at the request line and headers
 5. body check: when the body violates the body rules below, 400 `bad_request`
-6. handling: when there is a prepare function, calls it after the target user check of a user-targeted operation and before opening the transaction, outside the transaction. At that point the `operation_id` row is not yet looked at. On a failure reason, does not call the handler function and ends with that failure value. Then calls the handler function. Success is 200 with the output JSON; failure is the operation's failure value
+6. handling: when there is a prepare function, calls it after the target user check of a user-targeted operation and before opening the transaction, outside the transaction. At that point the `operation_id` row is not yet looked at. On a failure reason, does not call the handler function and ends with that failure value. Then calls the handler function. Success is 200 with the output JSON; failure is the operation's failure value. When the transaction that admin-api opened for the handler function is `WITHDRAWN`, 404 `not_found`, except `get_user` and `export_personal_data`, which read a withdrawn user. When that transaction or `lock_game_row` of the `operation_id` row is `FAILED`, 500 `internal`
 
 - The body is one JSON object. For an operation registered with a binary body, the body is raw bytes and the input is the query string
 - The IP is the client IP that `routing` passed to the route handler. The IP counter counts per minute window of `server-time`. The counter is kept in table `admin_api_ip_counter` and registered with `storage.register_table`: scope `game`, column `ip`, `window_start`, `count`, `expires_at`, key `(ip, window_start)`, expiry column `expires_at`. `window_start` is the window start of that minute window, and `expires_at` is the window end
@@ -169,11 +170,11 @@ Handles one admin request in the order below. When a step fails, responds with t
 ### body rules
 
 - A missing required field, an unknown field and a type mismatch are `bad_request`. Does not convert a bool to an integer or a numeric string to an integer
-- `user_id` is an integer of 1 or more. An `int64` value accepts both a JSON integer and a decimal integer string. Rejects decimals and exponent notation
+- `user_id` is an integer of 1 or more. An `int64` value accepts both a JSON integer and a decimal integer string. In the query string of a binary body operation, an `int64` or `int32` value is a decimal integer string. An integer value is within the range of its type. Rejects decimals and exponent notation
 - When `big_amount` of `items` is neither the empty string nor a contract big integer, `bad_request`
 - The time range is from `from_at` inclusive to `to_at` exclusive, and `to_at − from_at` is at least 1 and at most `admin-api.maxSearchRangeMs`
 - `limit` is at least 1 and at most `admin-api.maxSearchRows`
-- `after_seq` is an integer of 0 or more. 0 means from the start of the range; otherwise it is the sequence of the last row of the previous query
+- `after_seq` is an integer of 0 or more. In an operation whose only cursor field is `after_seq`, 0 means from the start of the range and another value is the sequence of the last row of the previous query
 - A string is at most `admin-api.maxStringBytes`, and `operation_id` is not empty
 - `request_name` is in request name format (`<Name>`, `core/<Name>`, `cheat/<Name>`, `core/cheat/<Name>`) or is `MATCH_REQUEST`
 
@@ -230,7 +231,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 - There is one `admin_api_switch` row per switch that is on. Maintenance is `kind` `maintenance`, `target` the empty string, and a kill switch is `kind` `kill_switch`, `target` the request name or `MATCH_REQUEST`. When `enabled` is `true`, `set_maintenance`, `set_kill_switch` insert the row or update its `updated_at`; when it is `false`, they delete the row
 - `is_banned` is `true` when the user has an `admin_api_ban` row and `until_at` is 0 or `server-time.clock_now` < `until_at`
 - When `request_name` of `set_kill_switch` is not the request name of an `rpc` of `service Game` or base proto `service Core` and is not `MATCH_REQUEST`, 404 `not_found`; when it is an element of `NoAccessTokenRpc`, 409 `conflict`
-- A server instance caches the maintenance and kill switch state in memory. The job `admin_switch_cache` (period `admin-api.switchCacheMs`) that admin-api schedules at server start with `server-time.schedule_job` reads it again with `storage.read_db`. The server instance that made a change updates its own cache at once
+- A server instance caches the maintenance and kill switch state in memory. admin-api reads it with `storage.read_db` in `complete_start()`. The job `admin_switch_cache` (period `admin-api.switchCacheMs`) that admin-api schedules at server start with `server-time.schedule_job` reads it again with `storage.read_db`. The server instance that made a change updates its own cache at once
 - Bans are not cached. `is_banned` reads the user's `admin_api_ban` row with `storage.read_db` on each request
 
 ### audit log
@@ -238,7 +239,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 - One line of `kind` `audit` log per admin request: `request` is the operation name, `user_id` is the target user (`null` when there is none), `actor`(the name of the operator that passed step 2. `null` when the request ended before that), `ip`(truncated IP), `status`(HTTP status), `error`(the reason, `null` on success), `args`(the input that passed the check)
 - When the spec of a collected operation sets `args` separately, the value that the audit args function of that operation returned is used. e.g. `import_user_snapshot`
 - `args` does not hold binary bodies or secrets. For a binary body, the SHA-256 hex is kept in `body_sha256`
-- `args` of a request that ended in steps 1 to 4 is `null`
+- `args` of a request that ended in steps 1 to 5 is `null`
 - No admin operation deletes or changes the `audit` log
 
 ## hook
@@ -257,14 +258,16 @@ none
 | authentication failure | 401 `unauthorized` | `audit`, `security` |
 | IP outside `adminAllowedCidrs`, operation outside the operator's roles | 403 `forbidden` | `audit`, `security` |
 | IP authentication failure limit exceeded | 429 `rate_limited` | `audit`, `security` |
-| unknown operation, no target | 404 `not_found` | `audit` |
+| unknown operation, no target, `WITHDRAWN` of the transaction admin-api opened | 404 `not_found` | `audit` |
 | `operation_id` input mismatch, item change failure, kill switch target not allowed | 409 `conflict` | `audit` |
 | personal data export file over the limit | 413 `too_large` | `audit`, `error` |
 | external service call failure | 502 `external_failed` | `audit`, `error` |
 | unhandled exception | 500 `internal` | `audit`, `error`(stack trace) |
 | `internal` of the handler function | 500 `internal` | `audit`, `error` |
+| `FAILED` of the transaction admin-api opened or of `lock_game_row` of the `operation_id` row | 500 `internal` | `audit`, `error` |
+| read failure of job `admin_switch_cache` | the cache stays as it was | `error` |
 
-- When `adminOperators` has the same name twice or the secret of any operator cannot be read, the server does not start. When a collected operation has no role or a role outside the allowed values, the server does not start. The server also does not start when a collected operation or content admin operation whose role is `read` has `operation_id` in its input fields
+- When `adminOperators` has the same name twice or the secret of any operator cannot be read, the server does not start. When a collected operation has no role or a role outside the allowed values, the server does not start. The server also does not start when a collected operation or content admin operation whose role is `read` has `operation_id` in its input fields. When the read of the maintenance and kill switch state in `complete_start()` fails, the server does not start. The server also does not start when a collected operation or content admin operation has a `user_target` that is not the name of an `int64` input field, or is a binary body operation without a `max_body_bytes` of 1 or more or with an input field whose type is not `int64`, `int32` or `string`
 - When two modules export the same admin operation name, an exported name overlaps an operation name of admin-api, or a content admin operation name does not start with `game_`, the server does not start
 - Calling `register_admin_operation` after server start has finished throws
 
@@ -275,16 +278,17 @@ Added `CoreError`: none
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
 | `environments.<ENV>.adminOperators` | array<object> | game | none | per operator, `name`, `roles`, `secret`(the name of the secret in the host secret store that holds the admin secret) |
-| `environments.<ENV>.adminAllowedCidrs` | array<string>? | game | none | list of CIDRs of the client IPs whose admin requests are accepted. `null` means no blocking by IP |
+| `environments.<ENV>.adminAllowedCidrs` | array<string>? | game | none | list of CIDRs of the client IPs whose admin requests are accepted. `null` means no blocking by IP. LOCAL is `null` |
 | `admin-api.maxBodyBytes` | integer | core | content | max bytes of a JSON body |
-| `admin-api.bodyReadTimeoutMs` | integer | core | content | total time limit for reading the body |
-| `admin-api.authFailuresPerMinute` | integer | core | content | authentication failure limit per IP in one minute window |
+| `admin-api.bodyReadTimeoutMs` | integer | core | content | total time limit for reading the body. 1 or more |
+| `admin-api.authFailuresPerMinute` | integer | core | content | authentication failure limit per IP in one minute window. 1 or more |
 | `admin-api.maxStringBytes` | integer | core | content | max bytes of a body string |
-| `admin-api.maxSearchRangeMs` | integer | core | content | max length of a query time range |
-| `admin-api.maxSearchRows` | integer | core | content | max number of rows of a query result |
+| `admin-api.maxSearchRangeMs` | integer | core | content | max length of a query time range. 1 or more |
+| `admin-api.maxSearchRows` | integer | core | content | max number of rows of a query result. 1 or more |
 | `admin-api.operationIdRetentionMs` | integer | core | content | duration that `operation_id` records are kept |
 | `admin-api.switchCacheMs` | integer | core | content | interval at which the maintenance and kill switch cache is read again. 1 or more |
 | `admin-api.maxExportBytes` | integer | core | content | max bytes of the `export_personal_data` file |
+| `storage.userLockWaitMs` | integer | core | content | maximum duration to wait for the per-user lock and for the row lock of `lock_game_row` |
 
 ## data
 
@@ -300,11 +304,12 @@ none. The admin API exists in every environment
 - A request without `Authorization` is 401 without the body being read, even when the body is larger than `admin-api.maxBodyBytes`
 - A request from an IP outside `adminAllowedCidrs` is 403 even with a correct secret, and the handler function is not called
 - When `adminAllowedCidrs` is `null`, a request with a correct secret from any IP does not become 403 at step 1
-- Every `audit` log has `actor`, and the `actor` of a request that passed step 2 is that operator name
+- Every `audit` log has `actor`. The `actor` of a request that passed step 2 is that operator name, and that of a request that ended in step 1 or 2 is `null`
 - Authentication failures of the same IP sent split across two server instances started with `testing.start_peer_server` accumulate in one IP counter, and when the sum reaches `admin-api.authFailuresPerMinute`, both instances are 429
 - The results of `ban_user`, `set_maintenance`, `set_kill_switch` stay after `restart_test_server`, and after `unban_user` and `enabled` `false` the row is gone
 - At each step of the processing order, a failing request ends with the set status, saved state does not change, and one line of `audit` log is left
 - An unknown field, a bool for an integer field, a decimal `user_id` and an out-of-range `limit` are 400
+- A binary body operation with `int32` query field `count` accepts `count=3` and is 400 for `count=3.0`, `count=abc` and `count=2147483648`
 - `grant_items` for a withdrawn user and for a nonexistent user are 404 and the balance is unchanged
 - The balance change of `grant_items` arrives as a pending delta in the next successful response of the target user
 - Two `grant_items` with the same `operation_id` change the balance only once and return the same output. With a different input, 409
@@ -312,6 +317,7 @@ none. The admin API exists in every environment
 - After `grant_items` with `operation_id` `mail:<mail ID>`, `ClaimMail` of that mail by that user grants the attachments
 - A request whose handler function threw or returned a failure reason leaves no `admin_api_operation` row, and a retry with the same `operation_id` calls the handler function again
 - Of two concurrent requests with the same `operation_id`, only one calls the handler function
+- `grant_items` whose `admin_api_operation` row `testing.hold_game_row_lock` holds longer than `storage.userLockWaitMs` is 500 `internal`, leaves an `error` log, and the balance is unchanged
 - A collected operation given `user_target` does not call the handler function for a nonexistent user or a withdrawn user, and is 404
 - A body whose `object union` field has two keys or no key, and a value outside the `enum`, are 400
 - `revoke_items` does not take the balance below 0 and returns `shortfall`
@@ -319,10 +325,13 @@ none. The admin API exists in every environment
 - `grant_items` with `big_amount` `12345678901234567890` on a big item whose `max_digits` is 20 adds that amount, and `revoke_items` with the same `items` revokes that amount. `grant_items` whose `big_amount` is not a big integer is 400 `bad_request`, and `grant_items` that gives an item that is not a big item a `big_amount` over 2^53−1 is 409 `conflict` with `result` `INVALID_AMOUNT`, and the balance is unchanged
 - A game request of a banned user is `BANNED`, and is handled once `until_at` has passed. Right after `unban_user`, it is handled
 - After `set_maintenance`, every server instance answers `MAINTENANCE` within `admin-api.switchCacheMs`, and after it is turned off, they handle requests within the same duration
+- After `set_maintenance`, a server instance started with `testing.start_peer_server` answers `MAINTENANCE` to its first game request before the test clock moves
+- With no switch on, `get_switches` returns `maintenance` `false` and an empty `kill_switches`. Right after `set_maintenance` `true` and `set_kill_switch` of `MATCH_REQUEST` on another server instance started with `testing.start_peer_server`, it returns `maintenance` `true` and `MATCH_REQUEST` in `kill_switches` before `admin-api.switchCacheMs` passes
 - A request whose kill switch is on is `FEATURE_DISABLED`, and other requests are handled. Turning it on for `core/Login`, `core/GetNotices` is 409, and for `MATCH_REQUEST` it turns on. Turning it on for game `rpc` `Login` makes only that game `rpc` `FEATURE_DISABLED`, and `core/Login` is handled. A name that starts with `cheat/` is 404
 - Ban, maintenance and kill switch stay after a server restart
 - The JSON of `get_user` follows the rules for kind names, field names and `int64` strings
 - The `audit` log has no secrets and no binary bodies
+- A request that is 400 at step 5 leaves an `audit` log whose `args` is `null`
 - The `ip` of the `audit` log is a truncated IP
 - For each operation of the collected admin operation table, a request of an operator that has its role calls the handling of that module, a wrong secret is 401, and an operator without that role gets 403 `forbidden`. The same holds per role for the admin operations of admin-api
 - After `cancel_broadcast`, the next request of a user who has not yet received the mail does not have that broadcast mail
@@ -337,3 +346,4 @@ none. The admin API exists in every environment
 - A content admin operation that starts with `game_` follows the processing order, authentication, `operation_id` rules and `audit` log, and when it has `user_target`, `add_items` inside the handler function is recorded with source `Admin` and ref the operation name
 - In a collected operation that has a prepare function, the prepare function is called once outside the transaction before the handler function, and its prepare value is passed to the handler function. When the prepare function returns a failure reason, the handler function is not called and the status is that of the failure value
 - When the handler function of a content admin operation whose role is `read` writes saved state, with `user_target` and without it, the result is 500 `internal` and saved state is unchanged. A content admin operation whose role is `read` and whose input fields have `operation_id` blocks server start
+- A collected operation whose `user_target` is not an `int64` input field, and a binary body operation without `max_body_bytes` or with a `bool` input field, block server start

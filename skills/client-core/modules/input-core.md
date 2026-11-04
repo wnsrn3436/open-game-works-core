@@ -251,7 +251,7 @@ none
 | `name` | `tstring<id>` | `Client` |
 
 - One row is the input prompt of one prompt family and one prompt input. When `icon` is `null`, only the name shows, without an icon
-- data check: two rows with the same `family` and `input` are `duplicate`. When `input` is the empty string, it is `empty_required`. When `family` is `Touch` and `input` is not snake_case, it is `value_type`. When `family` is `Generic`, `Xbox`, `PlayStation` or `Nintendo` and `input` is neither a gamepad button name nor a gamepad axis direction name, it is `value_type`. The `input` of a row whose `family` is `KeyboardMouse` is a key name or a mouse button name
+- data check: two rows with the same `family` and `input` are `duplicate`. When `input` is the empty string, it is `empty_required`. When `family` is `Touch` and `input` is not snake_case, it is `value_type`. When `family` is `Generic`, `Xbox`, `PlayStation` or `Nintendo` and `input` is neither a gamepad button name nor a gamepad axis direction name, it is `value_type`. The `input` of a row whose `family` is `KeyboardMouse` is a key name or a mouse button name. When the `name` text of any language has an input prompt token, it is `translation_format`
 - When the `input` of a row whose `family` is `Touch` is not in the action list of the game, or the `input` of a row whose `family` is `KeyboardMouse` is neither a key name nor a mouse button name, the static check `action reference` blocks it
 
 `data/enums.csv`

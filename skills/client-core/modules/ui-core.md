@@ -62,6 +62,7 @@ Handles UI layers, panels and the panel stack, popups and the popup queue, popup
 |---|---|
 | `UILayer` | a layer of the UI layer table |
 | `UIPanel`, `UIPopup` | base of panel classes and popup classes. has the panel interface |
+| `UISystemPopup` | a `UIPopup` that sets the system popup areas of the `UICore.systemPopupResource` prefab |
 | `UIParam` | base of param classes. content code inherits it |
 | `UIPanelCache` | base of cache classes. content code inherits it |
 | `PopupSuppress` | `key`(suppress key), `mode`(`PopupSuppressMode`) |
@@ -130,7 +131,7 @@ A row further down the table is drawn above the rows before it. The scene's worl
 - modal covered: a visible modal panel or modal popup (system popups included) is drawn above the UI element. The panel or popup object containing that element, objects being prepared, and objects whose destruction has started are not counted. The drawing order is the order of the UI layer table and the stacking order of popups
 - A dim is placed directly below a visible panel or popup with dim on. On the `Popup` layer, only one is placed, below the topmost visible popup with dim on (system popups included). Below the same popup the order is modal blocker, dim, popup. The dim does not receive pointer input
 - dimmed: a visible dim is drawn above the UI element. The drawing order is the order of the UI layer table and the stacking order of popups
-- Open and close tweens play on the prefab root with `TweenCore.play_preset`
+- Open and close tweens play on the prefab root with `TweenCore.play_preset`. When the definition of an open or close tween preset repeats infinitely, UICore leaves an error log and does not play that tween, the same as when its preset key is none. This holds for panels, popups and system popups
 - UICore creates a resource scope per panel or popup object and releases that scope after destroying the object. An object whose destruction has started is not visible and does not receive input
 - Params and caches do not reference engine objects or resources. Callbacks are the exception. UICore and panel classes do not change a received param
 
@@ -151,7 +152,7 @@ A row further down the table is drawn above the rows before it. The scene's worl
 ### panel stack
 
 - A panel stack item holds only the panel key, param, cache, whether it has been shown, and whether it is the root item. Only the top item has a panel object (current panel)
-- root item: the item that `open_root_panel` pushed. There is at most one, at the bottom of the stack, and only `reset_panel_stack` removes it
+- root item: the item that `open_root_panel` pushed. There is at most one, at the bottom of the stack. Only `reset_panel_stack` removes it, except a close flow that skips a root item whose prefab is not a panel class and ends with the stack empty
 - panel transition: from the start to the end of `open_root_panel`, `open_panel`, `open_panels`, `close_panel`, or `close_panels_to`. One at a time. During it, UICore sets a block with reason tag `ui` through `InputBlockCore.run_blocked` and uses `get_block_pass_list` as the pass list
 - A panel transition operation received during a panel transition or a panel lock leaves a warn log and returns `false`. `open_popup`, `open_system_popup`, `reset_panel_stack`, and `close_all_popups` are not blocked
 - The screen changes only after `prepare` of the item to be shown succeeds. When a panel transition fails, UICore destroys the created panel object, releases its scope, and ends. The stack and the current panel do not change
@@ -165,7 +166,7 @@ A row further down the table is drawn above the rows before it. The scene's worl
 5. Wait for the open tween and end the transition
 
 - `open_root_panel` is accepted only when the stack is empty, does the same as `open_panel` with param none and clear stack off, then makes the new item the root item
-- `open_panels` runs the flow of `open_panel`(with the received clear stack flag) for the last element. Right before the new item goes on the stack (step 4, or the replacement of step 3), it pushes the preceding elements in list order as items never shown. When step 3 replaces the root item, it does not push them, and the root item stays the bottom item. The preceding elements have no panel object, `prepare`, `on_opened`, or event. On failure the preceding elements are not pushed either
+- `open_panels` runs the flow of `open_panel`(with the received clear stack flag) for the last element. Right before step 4 pushes the new item, it pushes the preceding elements in list order as items never shown. When step 3 replaces an item that is not the root item, that item is removed from the stack, and step 4 pushes the preceding elements and then the new item. When step 3 replaces the root item, it does not push them, and the root item stays the bottom item. The preceding elements have no panel object, `prepare`, `on_opened`, or event. On failure the preceding elements are not pushed either
 
 The close flow is the handling of `close_panel` and `close_panels_to`. The destination is the item the close flow shows.
 
@@ -182,14 +183,14 @@ The close flow is the handling of `close_panel` and `close_panels_to`. The desti
 - The destination of `close_panel` is the item directly below the current panel. When there is no current panel or it is the root item, leave a warn log and return `false`
 - The destination of `close_panels_to` is the topmost item with that panel key. When the stack has no item with that panel key, leave a warn log and return `false`. When that item is the current panel, return `true` without a transition
 - flow cancel: `reset_panel_stack` and `release` stop the flow in progress. Panel and popup objects not yet shown are destroyed, a panel in its open tween stays as the current panel, and the set block is released. The stopped operation ends with `false`, and the results of loads and `prepare` that finish after that are discarded
-- `reset_panel_stack` cancels the flow, closes the current panel immediately, and empties the stack. It does not wait
+- `reset_panel_stack` cancels the flow, closes the current panel immediately, and empties the stack. It does not wait. Immediate close of a panel in its open or close tween stops that tween, and a panel that received `on_closed(Closed)` in step 5 of a close flow does not receive `on_closed` again
 
 ### popup
 
-- popup queue: `open_popup` runs open flows one at a time in the order received. When the same popup key is open, in an open flow, or in the queue, leave a warn log and return `Failed`
+- popup queue: `open_popup` runs open flows one at a time in the order received. When an open flow ends with `Opened` or `Failed`, the open flow of the next request in the queue starts in that same call, after that result and, for `Opened`, after `UIOpenedEvent`. When the same popup key is open, in an open flow, or in the queue, leave a warn log and return `Failed`
 - popup open flow: set a block with reason tag `ui` (the pass list is `get_block_pass_list`), scope and popup object, `accepts_param`, `prepare`, make it visible on top and `on_opened`, open tween, release the block
 - An open popup is a popup object from when the open flow makes it visible until closing (`close_popup`, `close_all_popups`) starts. A popup in its open tween is also an open popup. A popup after closing starts and before destruction is a closing popup. The popup flow is a popup's open flow and the handling of `close_popup`
-- `close_popup`: set a block with reason tag `ui` (the pass list is `get_block_pass_list`), `on_closed`, close tween, destroy and release the scope, release the block, hidden callback, after-close callback. When it is not an open popup, leave a warn log and ignore
+- `close_popup`: set a block with reason tag `ui` (the pass list is `get_block_pass_list`), `on_closed`, close tween, destroy and release the scope, release the block, hidden callback, `UIClosedEvent`, after-close callback. When it is not an open popup, leave a warn log and ignore
 - The after-close callback returns the popup's result to the opener. When its result is decided, the popup closes itself, passing the result callback it received in its param as the after-close callback. When closed by `close_all_popups`, the after-close callback is not called
 - `close_popup` of a popup in its open tween stops the open tween, ends that open flow (block release, `UIOpenedEvent`, `Opened` of `open_popup`), then closes
 - The hidden callback is called once when a popup that became visible closes. It is not called for a popup that failed or was canceled before becoming visible
@@ -217,8 +218,10 @@ The close flow is the handling of `close_panel` and `close_panels_to`. The desti
 - `open_system_popup` ends with `true` when the system popup's open flow ends and does not wait for the system popup to close. It is also `true` when closing started during the open tween and ended the open flow. The closing of a system popup is told only through the hidden callback and the button callback
 - The system popup root is a UI element placed above other popups on the `Popup` layer. System popups open under it, and the root does not receive pointer input. The root is visible only while a visible system popup exists, and is hidden when there is none
 - The body is the `LocalizationCore` translation when there are no format arguments, otherwise the format result. When the extra text is not an empty string, it is displayed below the body without translation
-- When the body and extra text do not fit in the area above the buttons, that area scrolls vertically. Pointer drag, mouse wheel, and up and down direction input when the input device is `Gamepad` or `KeyboardMouse` move the scroll position. One direction input moves it by `UICore.systemPopupScrollStep`. While `InputBlockCore.is_blocked` is `true`, a direction input moves it only when `InputBlockCore.pass_focus` of the system popup root is `true`. Up and down direction input does not move the focus of the system popup
-- One button is placed at the center of the popup area, and two or more are placed at equal spacing within the popup area. Buttons are inside the popup area and do not overlap
+- system popup area: the body area and the button area of a system popup. The scroll area of the body and extra text fills the rectangle of the body area. The buttons are placed in one row inside the rectangle of the button area: one button at the horizontal center of the button area, and two or more at equal spacing. Buttons are inside the button area and do not overlap
+- `UISystemPopup` has two properties set in the editor, body area and button area. Each points to a UI element inside that prefab, and that area is the rectangle of that UI element. The default is none. Only the root of the `UICore.systemPopupResource` prefab is a `UISystemPopup`, and popups of `open_popup` do not use it. The engine mapping is in the engine-specific implementation rules
+- An area is taken from the rectangle of the root of that system popup (the prefab root, or the root of the screen built in code) when the prefab root is not a `UISystemPopup`, when the property of that area is none, and for the screen built in code: the button area is the strip along its bottom edge that holds one row of buttons, and the body area is the rest of that rectangle above the button area. An area property that points to no UI element inside that prefab is treated as none, with an error log when the system popup opens
+- When the body and extra text do not fit in the body area, the body area scrolls vertically. Pointer drag, mouse wheel, and up and down direction input when the input device is `Gamepad` or `KeyboardMouse` move the scroll position. One direction input moves it by `UICore.systemPopupScrollStep`. While `InputBlockCore.is_blocked` is `true`, a direction input moves it only when `InputBlockCore.pass_focus` of the system popup root is `true`. Up and down direction input does not move the focus of the system popup
 - Pressing a button runs `close_popup`, passing that button callback as the after-close callback. When closed by `close_all_popups`, the button callback is not called. An omitted callback is skipped without a log
 - Back input on a system popup is a press of the back button, regardless of back policy. When there is no back button, it is ignored
 - While one or more system popups are visible, UICore sets `InputBlockCore.set_timer_hold`(`ui`, `true`), and sets it to `false` when none remain
@@ -318,6 +321,7 @@ UICore registers a back handler with `InputCore.set_back_handler` in `init`. Bac
 - `set_items` prefills the item prefab pool up to the max number of items that can overlap the visible area and the loading item prefab pool with one, then borrows item UIs from `PoolCore` only for items overlapping the visible area and calls `bind(item UI, index)`. An item UI that scrolls out is reused for a new item. For `Measured`, the pool count and the first layout are decided with estimated sizes, and all previous measured sizes are deleted. It turns the loading state off, and when the start-at-end flag is `true` it sets the scroll position to the max scroll position, otherwise it clamps the scroll position to at most the new max scroll position. When it is called again while a `set_items` is waiting, the waiting one ends with `false` without binding
 - `append_items` increases the item count. It does not wait. When end follow is on and the scroll position before the call was the max scroll position, the scroll position is set to the new max scroll position, otherwise the scroll position does not change. It borrows item UIs for the new indexes whose items overlap the visible area and binds them
 - `prepend_items`(n) adds n items at the front of a list whose cross axis count is 1. It does not wait. The item at index i becomes index i + n, and its measured size and borrowed item UI move with it. Moved item UIs are not bound again. The sum of the scroll-axis sizes of the n added lines and the item spacing is added to the scroll position so items that were visible do not move on screen. It borrows item UIs for the new indexes whose items overlap the visible area and binds them
+- `append_items` and `prepend_items` called while a `set_items` is waiting add to the item count of that waiting `set_items` and return `true`. They borrow and bind nothing, and that `set_items` sets the scroll position and binds when it ends. When that `set_items` ends with `false`, the items they added are discarded with it
 - remaining item count = item count − 1 − last index overlapping the visible area. When no item is visible, the last index is −1. The judgement runs when `set_items`, `append_items`, or `prepend_items` finishes and in a frame where the scroll position or a measured size changes
 - The end-near callback is called once at the first judgement after `set_items` or `append_items` where the remaining item count is `UICore.scrollLoadThresholdItems` or less. After that it is not called until the next `append_items` or `set_items`. In this callback content code requests the next list and calls `append_items` with the received count
 - front remaining item count = first index overlapping the visible area. When no item is visible, there is no judgement. The judgement runs at the same times as for the remaining item count
@@ -353,9 +357,11 @@ none
 
 | condition | failure value | log |
 |---|---|---|
-| prefab root is not `UIPanel` or `UIPopup`, `accepts_param` is `false` | `false`. `prepare` is not called | error |
+| prefab root is not `UIPanel` or `UIPopup` outside a close flow, `accepts_param` is `false` | `false`. `prepare` is not called. a close flow with force on continues with the item below | error |
+| prefab root of a close flow destination is not `UIPanel` | the close flow continues with the item below regardless of force, and ends with the stack empty when there is none | error |
 | `prepare` is `false` | `false`. a close flow with force on continues with the item below | none |
 | `accepts_param` or `prepare` of the root item is `false` in a close flow | `false` when force is off; when force is on, shows the root item and calls `on_opened(Returned)` | error |
+| open or close tween preset whose definition repeats infinitely | that tween is not played, and the flow goes on as without it | error |
 | panel transition operation during a transition or a panel lock | `false`. stack unchanged | warn |
 | `close_panel` when there is no current panel or it is the root item | `false`. stack unchanged | warn |
 | `close_panels_to` with a panel key not in the stack | `false`. stack unchanged | warn |
@@ -364,11 +370,12 @@ none
 | duplicate popup, popup request during `close_all_popups` | `Failed` for `open_popup`, `false` for `open_system_popup` | warn |
 | suppress key outside the `<owner>.<name>` rule | `Failed` for `open_popup`, `false` for `is_popup_suppressed`, `suppress_popup` does not save | error |
 | `SystemPopupParam` has 0 buttons or 4 or more, back button index outside the list, body or label translation key does not exist | `false` | error |
+| area property of a `UISystemPopup` root that points to no UI element inside that prefab | that area is taken from the root of that system popup, the same as an area property that is none | error |
 | `close_popup` of an object that is not an open popup | none | warn |
 | `hide_loading_icon` with a token that points to no request | none. display unchanged | error |
 | `set_items` with count < 0, no item prefab key, item size ≤ 0, item spacing or cross axis spacing < 0, cross axis count < 1, `Measured` with a cross axis count other than 1 | `false`. no item UI is borrowed | error |
-| `append_items` before `set_items` or with count < 1 | `false`. item count unchanged | error |
-| `prepend_items` before `set_items`, with count < 1, or with a cross axis count other than 1 | `false`. item count unchanged | error |
+| `append_items` when no `set_items` has ended with `true` and none is waiting, or with count < 1 | `false`. item count unchanged | error |
+| `prepend_items` when no `set_items` has ended with `true` and none is waiting, with count < 1, or with a cross axis count other than 1 | `false`. item count unchanged | error |
 | `scroll_to_index` with an index less than 0 or at least the item count | `false`. scroll position unchanged | error |
 | `set_scroll_offset` value is NaN or infinity | scroll position unchanged | error |
 | `UIButton` click before `init` | click discarded | error |
@@ -430,20 +437,24 @@ none
 - In stack R, A with root item R, after `open_panel`(B) with clear stack on, the stack is R, B and A receives `on_closed(Closed)`. When the current panel is R, R receives `on_closed(Covered)`. In a stack without a root item, the stack is B alone
 - When the current panel is the root item, `close_panel` gives a warn log and `false`, and the stack is unchanged
 - In stack A, B, C, when the `prepare` of B is `false`, `close_panel` without force returns `false`, C stays visible, the stack is unchanged, and there is no `on_closed` or event. With force on, B is removed, A receives `prepare(Returned, cache)` and `on_opened(Returned)`, and the stack is A
+- In stack A, X, C where the prefab of X is not a panel class, `close_panel` without force leaves an error log, returns `true`, and the stack is A with A visible. In stack X, C with root item X whose prefab is not a panel class, `close_panel` leaves an error log, returns `true`, and the stack is empty
 - When `prepare(Returned)` of root item R is `false`, a close flow with force on leaves an error log and shows R, and R receives `on_opened(Returned)`
 - `open_panel` of current panel A with a different param: after the `prepare` of the new A succeeds, the previous A receives `on_closed(Closed)` and the stack length is unchanged, and when the `prepare` of the new A is `false`, the previous A and the stack are unchanged. When the root item is opened with the same key, the replaced item is the root item
 - In stack R, A, B, C, after `close_panels_to`(A) the stack is R, A and B has no panel object or callback. When the `prepare` of A is `false`, it returns `false` without force and the stack is unchanged. A key not in the stack gives a warn log and `false`, and the key of the current panel gives `true` without a transition
 - In stack R, after `open_panels`(A, B, C) the stack is R, A, B, C, and only C has a panel object, `prepare(New, none)`, `on_opened(New)`, and `UIOpenedEvent`. A following `close_panel` gives B `prepare(Returned, none)`, `on_opened(Returned)`, and a `UIOpenedEvent` with reason `Returned`, with no open tween. When the `prepare` of C is `false`, the stack stays R
 - In stack R, A with root item R, after `open_panels`(B, C) with clear stack on, the stack is R, B, C and A receives `on_closed(Closed)`. In stack A without a root item, the stack is B, C. With clear stack off, stack R, A becomes R, A, B, C
+- In stack R, B with root item R, after `open_panels`(A, B) the stack is R, A, B, the previous B receives `on_closed(Closed)`, and only the new B has a panel object
 - `open_root_panel` when the stack is not empty gives an error log and `false`
 - Calling `reset_panel_stack` during an `open_panel` that waits for `prepare` ends that operation with `false`, and even when `prepare` succeeds later the panel is not visible and the stack is empty
+- Calling `reset_panel_stack` during the close tween of `close_panel` ends that operation with `false`, the closing panel receives `on_closed(Closed)` once and has one `UIClosedEvent`, the destination panel is never visible, and the stack is empty
 - Each condition of the error table gives the log and failure value of the table
-- Calling `open_popup` twice in a row calls the second `prepare` after the first popup flow ends, and the second is shown on top. An `open_popup` during a panel transition opens before that transition ends
+- Calling `open_popup` twice in a row calls the second `prepare` after the first popup flow ends, and the second is shown on top. Back input received after `Opened` of the first and before `Opened` of the second is ignored, and the first stays open. An `open_popup` during a panel transition opens before that transition ends
 - A system popup opens even while another system popup is open and while waiting for the `prepare` of a popup, and is shown above regular popups opened after it
-- `close_popup` runs in the order `on_closed`, close tween, destruction, hidden callback, after-close callback, and each of the two callbacks runs once
+- `close_popup` runs in the order `on_closed`, close tween, destruction, hidden callback, `UIClosedEvent`, after-close callback, and each of the two callbacks runs once
 - The after-close callback of a popup closed by `close_all_popups` is not called
 - After `close_all_popups` the popups and the queue are empty, the hidden callback runs once per closed popup, and queued requests get `Failed`
 - `close_popup` of a popup in its open tween stops the open tween, `Opened` of `open_popup` and `UIOpenedEvent` come before `on_closed`, the hidden callback and `UIClosedEvent` each happen once, and afterwards no block set by UICore remains
+- A panel, a popup and a `UICore.systemPopupResource` system popup whose open and close tween presets repeat infinitely leave an error log for each tween not played, become visible without an open tween, and `open_panel`, `close_panel`, `open_popup`, `close_popup` and `open_system_popup` end
 - `close_all_popups` ends the `open_popup` of a popup waiting for `prepare` with `Failed`, and that popup has no hidden callback. A popup in its open tween gets `Opened` and one hidden callback, and a popup in its close tween does not get `on_closed` again and gets one hidden callback
 - When a popup is open, it stays open after a panel transition and `reset_panel_stack`
 - A popup object opened without `PopupSuppress` has no `PopupSuppress`, and a popup object opened with one reads the received value
@@ -462,7 +473,9 @@ none
 - Under a block whose pass list is `get_block_pass_list`, without a system popup, pointer input at a position inside the safe area does not pass, and when a system popup opens, pressing its button calls the button callback
 - Under a block whose pass list is `get_block_pass_list`, when the input device is `KeyboardMouse`, a system popup opens, and a gamepad button is pressed once, the first button of the system popup has focus in the next frame, and gamepad direction input and accept input click another button of that system popup. Without a system popup, gamepad accept input does not click a button of a popup under the block
 - `get_block_pass_list` returns the same `BlockPassList` on every call, and its `elements` is the system popup root alone and its `actions` is `back` alone
-- The center of a single system popup button equals the center of the popup area, and two or three buttons have equal spacing and do not overlap
+- In the system popup built in code and in a `UICore.systemPopupResource` system popup whose root is not a `UISystemPopup`, the body and buttons are inside the rectangle of the root of that system popup, with the buttons in one row along its bottom edge below the body. In a system popup whose `UISystemPopup` root has both areas set, the body is inside the rectangle of the body area and the buttons are inside the rectangle of the button area
+- The horizontal center of a single system popup button equals the horizontal center of its button area, and two or three buttons have equal spacing and do not overlap
+- A `UISystemPopup` root whose button area points to a UI element outside that prefab gives one error log when the system popup opens, and its buttons are in one row along the bottom edge of the rectangle of that root
 - While a modal popup is open, the popups, panel, `SceneUI`, and world below do not receive pointer input, and while only popups with modal off are open, the panel receives input outside them
 - When two popups with dim on are open, there is one dim, directly below the upper popup, and closing the upper popup moves it directly below the lower popup when the destruction of the upper popup starts
 - Releasing one of two tokens leaves the loading icon visible, and releasing both hides it. UI below receives pointer input at the loading icon position
@@ -472,6 +485,7 @@ none
 - The scroll position is the same before and after `append_items`, and among the new indexes only items overlapping the visible area are bound to their index
 - In a vertical `UIScrollList` with cross axis count 3 and 10 items, index 4 is in the second slot of the second line, the fourth line has one item, and the number of borrowed item UIs equals the number of items of the lines overlapping the visible area. `scroll_to_index`(4) gives the distance to the second line start. The loading item of `set_loading(true)` is at the cross axis start of the fifth line
 - Calling `set_items` again while one is waiting gives `false` for the earlier call with no bind from it, and only the binds of the later call happen
+- `append_items`(2) and `prepend_items`(1) called while `set_items`(10) waits for its prefill return `true` and bind nothing, and after that `set_items` ends the item count is 13 and only items overlapping the visible area are bound
 - After `scroll_to_index`(i), `get_scroll_offset` is the distance to the start of the line that has item i, or the max scroll position when that distance is more than the max scroll position. An index outside the list gives `false` and an error log
 - Passing −1 and max scroll position + 1 to `set_scroll_offset` gives `get_scroll_offset` 0 and the max scroll position
 - The end-near callback is not called at a remaining item count of `UICore.scrollLoadThresholdItems` + 1, is called once in the frame the count reaches that value, is not called again on further scrolling, and is called once more when the count reaches it again after `append_items`. `set_items` with count 0 calls it once when it finishes

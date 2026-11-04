@@ -77,8 +77,9 @@ callback
   - Within a server instance, one fetch runs at a time. A callback that arrives during a fetch waits for the result of that fetch
   - When a fetch fails or does not finish within `ads-reward.keyFetchTimeoutMs`, does not change the cache and leaves an `error` log
 - When the signature matches, answers HTTP 200. The result of the handling below does not change the HTTP status. Except: a DB failure and a hook throw at step 4 of the grant order are HTTP 500
-- When the reward notify ID of a callback whose signature matched is not a lowercase UUID v4, or the user ID is not a decimal string without leading 0 from 1 to 2^63−1, does not grant, without `claim_notify` and without a transaction, and leaves a `warn` log
-- When the adapter is `ads-admob` and the ad unit that `parse` extracted from a callback whose signature matched equals none of the parts after `/` of the ad unit IDs in `environments.<ENV>.adUnits` (every placement and every platform), does not grant, without `claim_notify` and without a transaction, and leaves a `security` log (`reason` `ad_callback_ad_unit`). An empty ad unit equals none of them
+- A callback whose signature matched goes through the checks below in this order. When a check fails, does not grant, without `claim_notify` and without a transaction, leaves the log of that check and ends
+  1. ad unit check: when the adapter is `ads-admob` and the ad unit that `parse` extracted equals none of the parts after `/` of the ad unit IDs in `environments.<ENV>.adUnits` (every placement and every platform), a `security` log (`reason` `ad_callback_ad_unit`). An empty ad unit equals none of them
+  2. value format check: when the reward notify ID is not a lowercase UUID v4, or the user ID is not a decimal string without leading 0 from 1 to 2^63−1, a `warn` log
 - The reward notify ID is handled only once with `idempotency.claim_notify` (source is the adapter name), in the same transaction as the grant. With `DUPLICATE`, HTTP 200 without handling
 - The callback opens `storage.run_user_transaction` with the user ID of the query, and in it reads the ticket by key (user ID of the query, reward notify ID). When `run_user_transaction` is `WITHDRAWN`, there is no ticket, or the state is neither `Issued` nor `Claimed`, does not grant and leaves a `warn` log. A reward notify ID of another user has no ticket at that key
 - grant order. The grant is one out-of-request change of the ticket user that the `run_user_transaction` above opened. Steps 1 to 2 run inside one `storage.run_savepoint`
@@ -157,7 +158,7 @@ none
 | no usable signature key list | HTTP 503 | none | one `error` log line per fetch failure |
 | DB failure in callback handling | HTTP 500 | none | `error` log |
 | `on_ad_rewarded` throw in the grant order | HTTP 500, no grant. `INTERNAL` for `FakeAdCallback` | none | `error` log |
-| value format error of the reward notify ID or the user ID of a callback whose signature matched, the user ID of the callback query is a nonexistent user or a withdrawn user, that user has no ticket of that reward notify ID, the ticket is not `Issued`, `Claimed` | HTTP 200, no grant | none | `warn` log |
+| value format error of the reward notify ID or the user ID of a callback whose signature matched and whose ad unit check passed, the user ID of the callback query is a nonexistent user or a withdrawn user, that user has no ticket of that reward notify ID, the ticket is not `Issued`, `Claimed` | HTTP 200, no grant | none | `warn` log |
 | a callback that came again with the same reward notify ID (`DUPLICATE` of `claim_notify`) | HTTP 200, no handling | none | none |
 | the access token user of `FakeAdCallback` has no ticket of that reward notify ID, or the ticket is not `Issued`, `Claimed` | `AD_REWARD_NOT_FOUND` | `AD_REWARD_NOT_FOUND` | none |
 
@@ -244,7 +245,7 @@ core cheat request field
 - `BeginAdReward` → callback → `ClaimAdReward` grants `reward` once with source `AdReward`
 - Even when the callback of the same reward notify ID comes twice, grants only once
 - A callback with a wrong signature is HTTP 403 and does not grant
-- On a test server with `ads-admob` in the real adapter list, a key set with `set_key_source` and `environments.<ENV>.adUnits` holding `ca-app-pub-1/222` for one placement, a signed callback whose `ad_unit` is `333` is HTTP 200, does not grant and leaves a `security` log (`reason` `ad_callback_ad_unit`), and a signed callback of the same reward notify ID whose `ad_unit` is `222` sent after it grants
+- On a test server with `ads-admob` in the real adapter list, a key set with `set_key_source` and `environments.<ENV>.adUnits` holding `ca-app-pub-1/222` for one placement, a signed callback whose `ad_unit` is `333` is HTTP 200, does not grant and leaves a `security` log (`reason` `ad_callback_ad_unit`), and a signed callback of the same reward notify ID whose `ad_unit` is `222` sent after it grants. A signed callback whose `ad_unit` is `333` and whose `custom_data` is `x` leaves the `security` log (`reason` `ad_callback_ad_unit`) and no `warn` log
 - Sending a query made with `sign_callback` of the `fake` controller (service `ads`) to `GET /ads/callback/fake?<query>` with `testing.send_raw` grants, and a query signed with another key and a query with a key ID that is not in the key list are HTTP 403
 - On the `STG` test server, `GET /ads/callback/fake` and `GET /ads/callback/admob` are HTTP 404
 - Callbacks of a ticket of another user and of `Replaced`, `Expired` tickets do not grant

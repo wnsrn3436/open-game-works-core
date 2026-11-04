@@ -158,7 +158,7 @@ Added `CoreError`: `NICKNAME_INVALID`, `NICKNAME_BANNED`, `NICKNAME_TAKEN`, `NIC
 | `nicknameUnique` | boolean | game | none | whether duplicates of the normalized nickname are banned. Not changed after the first PROD build |
 | `nickname.changeCooldownMs` | integer | core | content | duration from a change to the next change |
 | `nickname.maxLookupCount` | integer | core | content | limit on the user count of one `get_nicknames` call |
-| `admin-api.maxSearchRows` | integer | core | content | maximum row count that `find_user_by_nickname` returns |
+| `admin-api.maxSearchRows` | integer | core | content | maximum row count that `find_user_by_nickname` returns. 1 or more |
 
 settings constraint
 

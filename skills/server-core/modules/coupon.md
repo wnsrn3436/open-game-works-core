@@ -62,20 +62,21 @@ admin operation. Collection and handling follow `admin-api`.
 - `kind`: `shared`(many users use one code) or `unique`(makes `count` codes, and one user uses one code)
 - `code`: used only by `shared`. The empty string for `unique`
 - `count`: used only by `unique`. At least 1 and at most `coupon.maxBatchCount`. 0 for `shared`
-- `max_uses`: total use count limit of `shared`. 0 means no limit. 0 for `unique`
+- `max_uses`: total use count limit of `shared`. 0 or more, and 0 means no limit. 0 for `unique`
 - `start_at`, `end_at`: active window. 0 ≤ `start_at` < `end_at`
 - `items`: list of `ItemAmount`. When `extra_id` is 0, at least 1 and at most `coupon.maxRewardItems` items; when it is not 0, 0 or more and at most the smaller of `coupon.maxRewardItems` and `mailbox.maxAttachments`. Must pass `item-ledger.check_add_items`
 - `extra_id`: integer 0 or more. When it is not 0, the reward is sent as a mail that holds `extra_id`, and when that mail is received, the `mailbox` hook `grant_mail_extra` grants the reward that is not an item
 - `memo`: description the operator leaves. Not sent to the client
 - field types: `kind` is `enum{shared, unique}`, `code`, `after_code` and `memo` are `string`, `count`, `max_uses` and `extra_id` are `int32`, `coupon_id` is `int64`
 - `get_coupon` takes exactly one of `coupon_id` and `code`. When both or neither are given, `bad_request`. `code` is looked up by its normalized value
-- `after_code`: when it is the empty string, returns from the first code; otherwise returns only codes after that code in byte order
+- `after_code`: when it is the empty string, returns from the first code; otherwise returns only codes after that code in byte order. `after_code` is used as given, without normalization or the code format check
+- output of `list_coupon_codes`: `redeemed_by` and `redeemed_at` are `null` for a `unique` code that no user redeemed and for the code of a `shared` coupon
 
 ## behavior
 
 code
 
-- code normalization: deletes every `-` and every whitespace character (Unicode `White_Space`) wherever it is in the input, and changes ASCII lowercase letters to uppercase. Saving, comparison and input all use the normalized value
+- code normalization: deletes every `-` and every whitespace character (Unicode `White_Space`) wherever it is in the input, and changes ASCII lowercase letters to uppercase. Saving, comparison and the `code` input of `RedeemCoupon`, `create_coupon` and `get_coupon` use the normalized value
 - A normalized code uses only characters of `coupon.codeAlphabet` and has a length of at least `coupon.minCodeLength` and at most `coupon.maxCodeLength`. On a violation, admin operations are `bad_request` and `RedeemCoupon` is `COUPON_INVALID`
 - A `unique` code picks `coupon.generatedCodeLength` characters from `coupon.codeAlphabet` with secure random. It does not use ctx random. When it collides with an existing code or a code picked earlier in the same `create_coupon`, it picks again. When one code still collides after `coupon.maxCodePicks` picks, `create_coupon` writes nothing and returns `conflict`
 - The codes of all coupons differ from each other. When the `code` of a `shared` coupon already exists, `create_coupon` is `conflict`
@@ -95,7 +96,7 @@ redeem attempt limit
 5. When `extra_id` is 0, `mailbox.grant_or_mail`: source `Coupon`, `ref` is the decimal string of the coupon ID, `once_key` is `coupon:<coupon ID>`, the template is reserved ID `[coupon_reward_mail]`, `args` is the empty list. `Mailed` also counts as a use. When `extra_id` is not 0, `mailbox.send_mail`: the template is `[coupon_reward_mail]`, `args` is the empty list, `attachments` is `items`, `extra_id` is the coupon's `extra_id`, `once_key` is `coupon:<coupon ID>`. `OK` and `ALREADY_SENT` count as a use, and the list of received `ItemAmount` in the response is the empty list
 6. Saves the use record. For `shared`, increases `used_count` by one; for `unique`, writes `redeemed_by` and `redeemed_at`. Adds the user's use record row
 7. after hook `on_coupon_redeemed`
-8. One `audit` log line after commit with `storage.after_commit`: `request` `core/RedeemCoupon`, `user_id`, and the coupon ID and the normalized code in `args`
+8. One `audit` log line at commit with `storage.on_commit`: `request` `core/RedeemCoupon`, `user_id`, and the coupon ID and the normalized code in `args`
 
 - A `RedeemCoupon` sent again with the same request ID returns the response that `idempotency` saved and does not increase the attempt counter
 
@@ -186,22 +187,22 @@ none
 - Only one user receives a `unique` code, and another user is `COUPON_USED_UP`. For the same user, another code of the same coupon is also `COUPON_ALREADY_REDEEMED`
 - Input mixed with lowercase letters, `-` and spaces finds the same coupon as the normalized code
 - Before `start_at` and from `end_at` on, the result is `COUPON_NOT_ACTIVE`, and after `disable_coupon`, `COUPON_INVALID`
-- The reward is granted with source `Coupon`, and one `audit` log line with `request` `core/RedeemCoupon` is left
+- The reward is granted with source `Coupon`, and one `audit` log line with `request` `core/RedeemCoupon` is left. Even when `routing` `stop()` runs right after the `RedeemCoupon` commit, that `audit` line is left
 - `on_coupon_redeemed` is called once per successful `RedeemCoupon` with that coupon ID, and changes made inside it come in the delta of the same response. It is not called for a failed `RedeemCoupon`. When the hook throws, `RedeemCoupon` is `INTERNAL` and the use record, `used_count` and items stay as they are
 - When the reward cannot be granted right away because it is over `max_amount` or an `item-ledger` validation hook rejects it, it is sent as a `[coupon_reward_mail]` mail, and the use record and `used_count` change
 - When the reward grant ends in a failure of `grant_or_mail`, the result is `INTERNAL` and the use record and `used_count` stay as they are
 - When the attempts in a fixed window are more than `coupon.maxAttemptsPerWindow`, a correct code is also `RATE_LIMITED`, and it is accepted again in the next fixed window. Failed attempts also count
 - In the `security` log of a `RedeemCoupon` over the attempt limit, `request_id` is the request ID of that request and `ip` is the truncated IP of that client IP
 - When two concurrent requests come for a coupon with `max_uses` 1, only one receives it
-- `create_coupon` makes `count` distinct `unique` codes, and `list_coupon_codes` returns them all
+- `create_coupon` makes `count` distinct `unique` codes, and `list_coupon_codes` returns them all, each with `redeemed_by` and `redeemed_at` `null`
 - With `coupon.codeAlphabet` `AB` and `coupon.generatedCodeLength` 1, a `unique` `create_coupon` with `count` 3 ends with `conflict` and leaves no coupon row or code row
 - `get_coupon` returns the `count` of a `unique` coupon as the `count` of `create_coupon`, and the `count` of a `shared` coupon as 0
 - Creating a `shared` coupon with an existing code is `conflict`
 - `get_coupon` given both or neither of `coupon_id` and `code` is `bad_request`, and `get_coupon` given a non-normalized `code` returns that coupon
-- `list_coupon_codes` with an empty `after_code` returns `limit` codes from the first code, and the next call given the last code as `after_code` returns the remaining codes, each once and none missing
+- `list_coupon_codes` with an empty `after_code` returns `limit` codes from the first code, and the next call given the last code as `after_code` returns the remaining codes, each once and none missing. An `after_code` `ab` returns the empty list
 - Two `create_coupon` calls with the same `operation_id` make only one coupon
 - Two concurrent `create_coupon` calls with different `operation_id` get different `coupon_id` values. When two `shared` creations with the same code are sent concurrently, only one is made and the other is `conflict`
 - The `expires_at` of a `coupon_attempt` row is `window_start` + `coupon.attemptWindowMs`, and from that time the expiry cleanup deletes the row
 - A coupon whose `extra_id` is not 0 sends one `[coupon_reward_mail]` mail that holds `items` and `extra_id`, and the use record changes. When that mail is received, `grant_mail_extra` is called with that `extra_id`
-- An `extra_id` coupon with empty `items` is created, and a `create_coupon` with `extra_id` 0 and empty `items` and a `create_coupon` with non-zero `extra_id` and more than `mailbox.maxAttachments` `items` are `bad_request`
+- An `extra_id` coupon with empty `items` is created, and a `create_coupon` with `extra_id` 0 and empty `items` and a `create_coupon` with non-zero `extra_id` and more than `mailbox.maxAttachments` `items` are `bad_request`, and so is a `shared` `create_coupon` with `max_uses` −1
 - The server does not start with settings where `coupon.codeAlphabet` has a lowercase letter

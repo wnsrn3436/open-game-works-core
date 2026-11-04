@@ -124,7 +124,7 @@ Sets the current language, turns translation keys into text of that language, ma
 - In the frame the text scale changes, it rewrites the bound rich text elements
 - When a bound rich text element is added to the screen, it is rewritten in that frame, because the font size is set at that time
 - `init` subscribes to `InputPromptChangedEvent`
-- `unbind_text` removes the binding and does not change the element's text. `bind_text` with an empty translation key binds and writes an empty string
+- `unbind_text` removes the binding and does not change the element's text. `unbind_text` of an element that is not bound does nothing, without a log. `bind_text` of a bound element replaces its translation key and writes the `get_text` result of the new key. `bind_text` with an empty translation key binds and writes an empty string
 - When the element is destroyed, the binding is deleted
 - For text with format arguments, the `format` result is written to the element. If that element is bound, it is first unbound with `unbind_text`
 
@@ -203,9 +203,10 @@ used table: `input_prompt`
 | operation | input | output | caller |
 |---|---|---|---|
 | `set_test_device_language` | device language tag. An empty string clears the override | none | core test |
+| `set_test_timezone_offset` | device timezone offset (ms integer) | none | core test |
 
 - In the environments that include DEV code, the missing key result is `‼ <translation key>`, a format error slot gets `‼ ` and the original argument text (e.g. `‼ {count:n}`), and the slot of an input prompt token whose `InputCore.get_prompt` is `false` gets `‼ ` and the original token text (e.g. `‼ {action:jump}`). In STG and PROD builds it is an empty string
-- The tag of `set_test_device_language` is used in place of the device language tag until `release`
+- The tag of `set_test_device_language` is used in place of the device language tag, and the offset of `set_test_timezone_offset` in place of the device timezone offset, until `release`
 
 ## test
 
@@ -222,7 +223,7 @@ used table: `input_prompt`
   - `value` writes integers and reals also as decimal strings, and a real NaN is `NaN`
   - `error log and empty slot` in the table is `expected` `null`. When it is `null`, that slot is an error slot and an error log is left
   - In one row of the table, columns with several values are paired by the same position into one case each, and a column with one value is used for every case of that row
-  - For each case, the `format` result equals `expected` (device timezone offset 0). The server `push` test uses the same fixture
+  - For each case, the `format` result equals `expected` (device timezone offset 0, set with `set_test_timezone_offset`). The server `push` test uses the same fixture
 
 | value | text | language | result |
 |---|---|---|---|
@@ -248,7 +249,7 @@ used table: `input_prompt`
 | integer `1` | `{v}}` | `en` | `1}` |
 | real NaN, integer `253402300800000` | `{v}`, `{v:date}` | `en` | error log and empty slot |
 
-- When the device timezone offset is 9 hours, the `date` result of time `t` equals the result of `t` + 9 hours at offset 0
+- When `set_test_timezone_offset` sets 9 hours, the `date` result of time `t` equals the result of `t` + 9 hours at offset 0
 - After `format`, the values of `FormatArgs` stay the same
 - `get_text` and `format` whose result length is more than `LocalizationCore.maxFormattedLength` give the text with the pieces from the exceeding one onward dropped, and an error log. A character outside the BMP counts as one code point, and an inline icon as one
 - After `load_fonts`, the character lookup order of the default font equals the font chain, and when two languages have the same `font`, that font is in the chain only once. After `release`, the default font is the same as before `init`
@@ -258,7 +259,7 @@ used table: `input_prompt`
 - A UI text element in the `heading` text style draws with the heading font, and an element whose text style was not set draws with the default font. The character lookup order of the heading font equals the font chain. After `release`, an element in the `heading` text style draws with the default font of before `init`
 - With a style based on the `heading` text style in the theme of `load_fonts`, after `load_fonts`, `release`, another `init` and another `load_fonts`, that style draws with the heading font
 - After `set_text_scale`(1500), the font size of a UI text element set to size 20 is 30, an element made after that is the same, and after `release` it is 20. 0 gives an error log and no change
-- The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string
+- The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string. `bind_text` again on a bound element with another key gives the `get_text` result of the later key, also after `load_translation` success, and `unbind_text` of an element that is not bound leaves no log and does not change its text
 - `get_text` with inline icon height 0 of text with an input prompt token gives the display name of the input prompt of `InputCore`, and calling it again after changing the input device with `InputCore.set_test_device` gives the display name for that device. When there is no `input_prompt` row, it is prompt input
 - After `load_prompt_icons`, `get_text` with an inline icon height greater than 0 replaces an input prompt that has an icon with an inline icon of that height, and an input prompt without an icon with its display name. Before `load_prompt_icons`, it is the display name
 - `format` of text that contains both an input prompt token and a format argument replaces both, and there is no error log
