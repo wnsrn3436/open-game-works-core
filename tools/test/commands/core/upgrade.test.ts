@@ -289,6 +289,11 @@ describe('ogw core upgrade', () => {
       'data/system/reserved_id.csv': 'key,id\n',
     });
     const text = 'data/system/reserved_id.csv:2:3 ERROR empty_required [iap_grant_mail]';
+    vi.mocked(generateCheckout).mockImplementationOnce(async (c, game) => {
+      writeFiles(game.root, { 'client/generated/core_settings.json': 'new settings' });
+      const applied = await generateWrites(c, game);
+      return { ...applied, written: [...applied.written, 'client/generated/core_settings.json'] };
+    });
     vi.mocked(runData).mockImplementationOnce((_c, game) => {
       // A run with errors writes no generation target, and a required row of the new core goes into `data/`.
       writeFiles(game.root, { 'data/system/reserved_id.csv': 'key,id\n[iap_grant_mail],\n', 'data/made.csv': 'made' });
@@ -302,6 +307,7 @@ describe('ogw core upgrade', () => {
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
     expect(run.stderr).toContain(text);
     expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toContain('client/generated/contract/core_contract.gd');
+    expect(sh(dir, 'git', ['show', 'HEAD:client/generated/core_settings.json'])).toBe('new settings');
     expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('new proto old tables');
     expect(readFileSync(join(dir, 'data/system/reserved_id.csv'), 'utf8')).toBe('key,id\n');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
