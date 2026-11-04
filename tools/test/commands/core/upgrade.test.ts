@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeTgz } from '../../../src/commands/core/lib/archive.ts';
@@ -42,6 +42,9 @@ fs.appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({
   coreSettings: JSON.parse(fs.readFileSync(opt('--core-settings'), 'utf8')),
 }) + '\\n');
 if (proto.includes('BAD')) { process.stderr.write('bad input'); process.exit(2); }
+const out = path.join(opt('--game'), 'client', 'generated', 'contract');
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(path.join(out, 'core_contract.gd'), proto);
 const lines = [];
 if (proto.includes('RULE')) lines.push('contract/service.proto:2:1 ERROR rule');
 if (prev && proto.includes('BREAK')) lines.push('contract/service.proto:1:1 ERROR breaks');
@@ -105,10 +108,10 @@ describe('ogw core upgrade', () => {
     }
     expect(generateCheckout).not.toHaveBeenCalled();
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['?? notes.txt']);
-    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.2.0'], { env: gh.env });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.2.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.2.0\n' });
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.2.0', engine: 'godot' });
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual(['core upgrade: 1.0.0 -> 1.2.0', '', 'generated.txt', 'settings.json']);
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual(['core upgrade: 1.0.0 -> 1.2.0', '', 'client/generated/contract/core_contract.gd', 'generated.txt', 'settings.json']);
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([' M records/request.md', '?? lead.md', '?? notes.txt']);
     expect(readdirSync(ws.coreReleases)).toContain('1.2.0');
     expect(installEngines).toHaveBeenCalledTimes(1);
@@ -245,6 +248,50 @@ describe('ogw core upgrade', () => {
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
+  it('commits the contract code with core, so that a base proto change passes the pre-commit hook, and a contract violation does not stop it', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto RULE', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto' });
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    // The check of the real hook: the code `client/core` reads is staged and has the new proto.
+    writeFileSync(hook, '#!/bin/sh\ngit show :client/generated/contract/core_contract.gd | grep -q "new proto"\n');
+    chmodSync(hook, 0o755);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toContain('client/generated/contract/core_contract.gd');
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('puts back settings.json, the contract code and the index when the pre-commit hook refuses the commit', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.0.0': await release(ws, '1.0.0', 'old proto', {}), 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto', 'generated.txt': 'generated 1.0.0' });
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\necho refused >&2\nexit 1\n');
+    chmodSync(hook, 0o755);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('refused');
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0' });
+    expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8').trim()).toBe('old proto');
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('fails and restores when the contract tool itself fails, with exit code 2 or a crash with no violation line', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'BAD', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'generated.txt': 'generated 1.0.0' });
+    const bad = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toContain('contract tool of core 1.1.0 failed (2): bad input');
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0' });
+    // no FAKE_TOOL_LOG: the fake tool throws, with exit code 1 and nothing on stdout
+    const crash = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
+    expect(crash.code).toBe(1);
+    expect(crash.stderr).toContain('contract tool of core 1.1.0 failed (1)');
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
   it('with a PROD tag, takes the highest version compatible with the last PROD build and prints the skipped ones', async () => {
     const ws = makeWorkspace();
     const log = join(ws.root, 'tool-log.jsonl');
@@ -275,7 +322,7 @@ describe('ogw core upgrade', () => {
     expect(run.stderr).toContain('core 1.3.0 breaks backward compatibility with prod-1.0.0:\ncontract/service.proto:1:1 ERROR breaks');
     const calls = toolLog(log);
     expect(calls.map((c) => [c.proto, c.previous])).toEqual([
-      ['BREAK again', true], ['BREAK again', false], ['BREAK', true], ['BREAK', false], ['ok proto', true],
+      ['BREAK again', true], ['BREAK again', false], ['BREAK', true], ['BREAK', false], ['ok proto', true], ['ok proto', true],
     ]);
     expect(calls[4]).toMatchObject({
       previousContract: ['service.proto'],
@@ -284,7 +331,8 @@ describe('ogw core upgrade', () => {
       contractVersion: '4',
       coreSettings: { 'NetworkCore.retryCount': 5, 'A.b': 2 },
     });
-    expect(calls[4]?.gameFiles.filter((f) => !f.endsWith('/') && f.includes('.'))).toEqual([
+    // the compatibility runs share one copy of the game, in which an earlier run left its generated code
+    expect(calls[4]?.gameFiles.filter((f) => !f.endsWith('/') && f.includes('.') && !f.startsWith('client/generated/'))).toEqual([
       'client/core/log_core/log_core.gd', 'contract/extra.proto', 'contract/service.proto', 'server/generated/data/game_data.proto',
     ]);
     expect(calls[4]?.args.slice(2, 4)).toEqual(['--engine', 'godot']);

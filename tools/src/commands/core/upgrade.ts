@@ -4,13 +4,13 @@ import { expectPositionals, flag, positional, str, type CommandDef, type Context
 import { OgwError } from '../../lib/errors.ts';
 import { readJson, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { commitPaths, listTags } from '../../lib/git.ts';
+import { commitPaths, git, listTags } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { changeOpenRun, openRun } from '../../lib/runstate.ts';
 import { gameSettingsPath, withGameSettingsLock, type GameSettings } from '../../lib/settings.ts';
 import { installEngines } from '../env/api.ts';
 import { lastProdTagName } from '../build/lib/names.ts';
-import { callContractTool, contractPrevious, type ContractRun } from '../contract/api.ts';
+import { callContractTool, contractPrevious, runContract, type ContractRun } from '../contract/api.ts';
 import { generateCheckout } from '../generate/api.ts';
 import { CORE_UPGRADE_KEY } from '../loop/lib/api.ts';
 import { fetchCoreRelease, gameCoreVersion, publishedRelease, releasedProposals, remoteReleaseVersions } from './api.ts';
@@ -32,6 +32,9 @@ export interface CoreUpgradeRecord {
 
 /** What the contract tool reads of a game (`contract` skill `tool.md` `--game`): `contract/`, the data proto, the client core folder. */
 const CONTRACT_INPUTS = ['contract/', 'server/generated/data/game_data.proto', 'client/core/'];
+
+/** Where the contract tool writes (`contract` skill `tool.md`). `client/core` reads this code, so it moves with `client/core`. */
+const CONTRACT_OUTPUTS = ['client/generated/contract/', 'server/generated/contract/', 'client/dev/generated/contract/', 'server/dev/generated/contract/'];
 
 /** Copies the game files the contract tool reads into `dir`, so that its generation does not touch the checkout. */
 async function gameCopy(game: GameRepo, dir: string): Promise<void> {
@@ -108,9 +111,11 @@ async function chooseVersion(ctx: Context, game: GameRepo, current: string, sett
 }
 
 /**
- * Fetches the release, changes `coreVersion`, installs engines, generates, and commits `settings.json` with the files
- * `ogw generate` wrote or removed. When a step after the `settings.json` write fails, `settings.json` gets its
- * committed content back and `ogw generate` runs again with it.
+ * Fetches the release, changes `coreVersion`, installs engines, generates, runs the contract tool, and commits
+ * `settings.json` with the files `ogw generate` and the contract tool wrote or removed. A contract violation does not
+ * stop it: the content agent fixes it after the upgrade. When a step after the `settings.json` write fails,
+ * `settings.json` gets its committed content back, `ogw generate` and the contract tool run again with it, and what the
+ * refused commit staged is unstaged.
  */
 async function applyVersion(ctx: Context, game: GameRepo, from: string, version: string): Promise<string | null> {
   if ((await changedPaths(game.root)).has('settings.json')) throw new OgwError('settings.json has uncommitted changes; commit or revert them first');
@@ -124,21 +129,29 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
     return bytes;
   });
   let generating = false;
+  let paths: string[] = [];
   try {
     await installEngines(ctx, game.name);
     generating = true;
     const applied = await generateCheckout(ctx, game);
+    const contract = await runContract(ctx, game, { generate: false });
+    // exit code 1 with no violation line is a crash of the tool, which wrote nothing to commit
+    if (contract.exitCode !== 0 && !(contract.exitCode === 1 && contract.violations.length > 0)) throw failed(version, contract);
     // git status leaves out ignored generated files, which git add would refuse.
     const changed = await changedPaths(game.root);
     const generated = [...new Set([...applied.written, ...applied.removed])].filter((p) => p !== 'settings.json' && changed.has(p));
-    const paths = ['settings.json', ...generated.sort()];
+    const fromContract = [...changed].filter((p) => CONTRACT_OUTPUTS.some((folder) => p.startsWith(folder)));
+    paths = ['settings.json', ...new Set([...generated, ...fromContract])].sort();
     return await commitPaths(game.root, paths, `core upgrade: ${from} -> ${version}`, { env: ctx.env });
   } catch (error) {
     await withGameSettingsLock(game.root, ctx.env, () => writeFileAtomic(path, original));
     if (generating) {
-      await generateCheckout(ctx, game).catch((restoreError: unknown) => {
-        ctx.log(`ogw generate with core ${from} after the failed upgrade failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
-      });
+      const logged = (step: string) => (restoreError: unknown): void => {
+        ctx.log(`${step} with core ${from} after the failed upgrade failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+      };
+      await generateCheckout(ctx, game).catch(logged('ogw generate'));
+      await runContract(ctx, game, { generate: false }).catch(logged('ogw contract'));
+      if (paths.length > 0) await git(game.root, ['reset', '--quiet', '--', ...paths], { env: ctx.env }).catch(logged('git reset'));
     }
     throw error;
   }
