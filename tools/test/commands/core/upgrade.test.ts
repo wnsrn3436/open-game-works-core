@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeTgz } from '../../../src/commands/core/lib/archive.ts';
 import { installEngines } from '../../../src/commands/env/api.ts';
+import { runData } from '../../../src/commands/data/api.ts';
 import { generateCheckout } from '../../../src/commands/generate/api.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { changeRuns, listRuns, newRunState } from '../../../src/lib/runstate.ts';
@@ -11,6 +12,10 @@ import { specJson } from '../generate/helpers.ts';
 import { fakeGh, readJsonFile, sha256, writeFiles } from './helpers.ts';
 
 vi.mock('../../../src/commands/env/api.ts', () => ({ installEngines: vi.fn(() => Promise.resolve()) }));
+vi.mock('../../../src/commands/data/api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/commands/data/api.ts')>()),
+  runData: vi.fn(),
+}));
 vi.mock('../../../src/commands/generate/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/generate/api.ts')>()),
   generateCheckout: vi.fn(),
@@ -42,13 +47,15 @@ fs.appendFileSync(process.env.FAKE_TOOL_LOG, JSON.stringify({
   coreSettings: JSON.parse(fs.readFileSync(opt('--core-settings'), 'utf8')),
 }) + '\\n');
 if (proto.includes('BAD')) { process.stderr.write('bad input'); process.exit(2); }
-const out = path.join(opt('--game'), 'client', 'generated', 'contract');
-fs.mkdirSync(out, { recursive: true });
-fs.writeFileSync(path.join(out, 'core_contract.gd'), proto);
 const lines = [];
 if (proto.includes('RULE')) lines.push('contract/service.proto:2:1 ERROR rule');
 if (prev && proto.includes('BREAK')) lines.push('contract/service.proto:1:1 ERROR breaks');
 if (lines.length > 0) { process.stdout.write(lines.join('\\n')); process.exit(1); }
+// A violation writes no file (\`contract\` skill \`tool.md\`): the code is written after them.
+const out = path.join(opt('--game'), 'client', 'generated', 'contract');
+fs.mkdirSync(out, { recursive: true });
+const tables = path.join(opt('--game'), 'server', 'generated', 'data', 'game_data.proto');
+fs.writeFileSync(path.join(out, 'core_contract.gd'), proto + (fs.existsSync(tables) ? ' ' + fs.readFileSync(tables, 'utf8') : ''));
 `;
 
 /** A release folder with a contract tool whose base proto holds `proto`. */
@@ -78,6 +85,7 @@ function toolLog(path: string): ToolCall[] {
 beforeEach(() => {
   vi.mocked(installEngines).mockReset().mockResolvedValue(undefined);
   vi.mocked(generateCheckout).mockReset().mockImplementation(generateWrites);
+  vi.mocked(runData).mockReset().mockResolvedValue({ exitCode: 0, lines: [], stderr: '' });
 });
 
 describe('ogw core upgrade', () => {
@@ -248,23 +256,57 @@ describe('ogw core upgrade', () => {
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
-  it('commits the contract code with core, so that a base proto change passes the pre-commit hook, and a contract violation does not stop it', async () => {
+  it('runs the data tool, then the contract tool on what it wrote, and commits their output, so that a base proto change passes the pre-commit hook', async () => {
     const ws = makeWorkspace();
-    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto RULE', {}) });
-    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto' });
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0' },
+      'client/generated/contract/core_contract.gd': 'old proto',
+      'server/generated/data/game_data.proto': 'old tables',
+      'data/translations/en.csv': 'old hash',
+    });
+    vi.mocked(runData).mockImplementationOnce((_c, game) => {
+      writeFiles(game.root, { 'server/generated/data/game_data.proto': 'new tables', 'data/translations/en.csv': 'new hash' });
+      return Promise.resolve({ exitCode: 1, lines: [], stderr: '' });
+    });
     const hook = join(dir, '.git', 'hooks', 'pre-commit');
-    // The check of the real hook: the code `client/core` reads is staged and has the new proto.
-    writeFileSync(hook, '#!/bin/sh\ngit show :client/generated/contract/core_contract.gd | grep -q "new proto"\n');
+    // The check of the real hook: what `client/core` reads and `generated diff` compares is staged, from the new data.
+    writeFileSync(hook, '#!/bin/sh\ngit show :client/generated/contract/core_contract.gd | grep -q "new proto new tables"\n');
     chmodSync(hook, 0o755);
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toContain('client/generated/contract/core_contract.gd');
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toEqual(expect.arrayContaining(['client/generated/contract/core_contract.gd', 'server/generated/data/game_data.proto', 'data/translations/en.csv']));
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
-  it('puts back settings.json, the contract code and the index when the pre-commit hook refuses the commit', async () => {
+  it('prints a contract violation and goes on with the contract code of HEAD, which writes no file', async () => {
     const ws = makeWorkspace();
-    const gh = fakeGh(ws, { 'v1.0.0': await release(ws, '1.0.0', 'old proto', {}), 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto RULE', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto' });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
+    expect(run.stderr).toContain('contract/service.proto:2:1 ERROR rule');
+    expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('old proto');
+  });
+
+  it('changes nothing when what it regenerates from has uncommitted changes', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'contract/service.proto': 'a', 'data/a.csv': 'a', 'server/generated/data/game_data.proto': 'a' });
+    for (const file of ['contract/service.proto', 'data/a.csv', 'server/generated/data/game_data.proto']) {
+      writeFileSync(join(dir, file), 'edited');
+      const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain(`the upgrade regenerates from these uncommitted changes; commit or revert them first:\n${file}`);
+      expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0' });
+      sh(dir, 'git', ['checkout', '--', file]);
+    }
+    expect(generateCheckout).not.toHaveBeenCalled();
+  });
+
+  it('puts back settings.json, what the tools wrote and the index when the pre-commit hook refuses the commit', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
     const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto', 'generated.txt': 'generated 1.0.0' });
     const hook = join(dir, '.git', 'hooks', 'pre-commit');
     writeFileSync(hook, '#!/bin/sh\necho refused >&2\nexit 1\n');
@@ -273,7 +315,14 @@ describe('ogw core upgrade', () => {
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('refused');
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0' });
-    expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8').trim()).toBe('old proto');
+    expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('old proto');
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+    // a file the tools made that HEAD does not have goes too
+    vi.mocked(runData).mockImplementationOnce((_c, game) => {
+      writeFiles(game.root, { 'data/new_table.csv': 'made' });
+      return Promise.resolve({ exitCode: 0, lines: [], stderr: '' });
+    });
+    expect((await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } })).code).toBe(1);
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
@@ -289,6 +338,11 @@ describe('ogw core upgrade', () => {
     const crash = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
     expect(crash.code).toBe(1);
     expect(crash.stderr).toContain('contract tool of core 1.1.0 failed (1)');
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+    // the data tool failing to run stops it too, before the contract tool
+    vi.mocked(runData).mockResolvedValueOnce({ exitCode: 2, lines: [], stderr: 'no tool' });
+    const noData = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
+    expect(noData.stderr).toContain('data tool of core 1.1.0 failed: no tool');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
