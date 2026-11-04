@@ -263,11 +263,11 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('o
       `const paths = ${JSON.stringify(paths)};`,
       "const open = (f) => { try { f(); return true; } catch { return false; } };",
       'const result = {};',
+      `result.otherFolder = open(() => { if (fs.readdirSync(${JSON.stringify(other)}).length === 0) throw new Error('empty'); });`,
       'for (const [name, path] of Object.entries(paths)) {',
       '  result[name] = { read: open(() => fs.readFileSync(path)), child: open(() => execFileSync(\'/bin/cat\', [path], { stdio: \'ignore\' })) };',
       '  open(() => fs.appendFileSync(path, \'x\'));',
       '}',
-      `result.otherFolder = open(() => { if (fs.readdirSync(${JSON.stringify(other)}).length === 0) throw new Error('empty'); });`,
       'fs.writeFileSync(output, JSON.stringify(result));',
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
@@ -300,7 +300,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('o
     makeGame(ws, 'other', { 'settings.json': {} });
     for (const role of ['content', 'translation', 'server-hardening', 'client-hardening']) {
       const wrapped = await run(role, 'g');
-      expect(wrapped.command.cmd).toBe('sandbox-exec');
+      expect(wrapped.command.cmd).toBe(process.platform === 'darwin' ? 'sandbox-exec' : 'bwrap');
       expect(readFileSync(join(wrapped.profileFolder as string, 'sandbox.sb'), 'utf8')).toContain(join(ws.games, 'other'));
       expect(readFileSync(join(wrapped.profileFolder as string, 'sandbox.sb'), 'utf8')).not.toContain(join(ws.games, 'g'));
     }
