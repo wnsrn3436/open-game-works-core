@@ -3,12 +3,6 @@
   "nextId": 10,
   "items": [
     {
-      "id": "D8",
-      "location": "tools/src/commands/core/upgrade.ts:147",
-      "problem": "The failure path writes back the `settings.json` bytes read before the job's steps. `game-loop` step 2 starts the upgrade without waiting and step 5 writes game settings with `ogw settings set` before step 6 waits, so when the upgrade fails after that write, the value the request decided and its `humanDecided` path are lost with no message. The lock is held only around each write, not across the job. This existed before the range",
-      "foundBy": "core round 1"
-    },
-    {
       "id": "D9",
       "location": "tools/src/commands/core/upgrade.ts:139",
       "problem": "The check that `settings.json` has no uncommitted changes runs in the background job after `chooseVersion`, which makes network calls and, for a game with a PROD tag, contract tool runs. `game-loop` step 2 starts the job without waiting, and step 5 writes game settings with `ogw settings set`. When step 5 runs before the job reaches this check, the upgrade fails with `settings.json has uncommitted changes`, and `game-loop` gives no action for that failure. This comes from reading the code and was not reproduced by a run. This existed before the range",
