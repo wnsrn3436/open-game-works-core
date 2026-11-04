@@ -3,30 +3,6 @@
   "nextId": 6,
   "items": [
     {
-      "id": "D1",
-      "location": "tools/src/commands/check/lib/ui-quality.ts:438",
-      "problem": "skills/client-core/modules/qa-core.md:137 (changed in this range) says that when a later call of the open command (keyboard capture) fails, the rest of that screen's captures and keyboard captures are skipped, but `keyboardCaptures` only returns (ui-quality.ts:421) and `screenCaptures` goes on with the next text scale of its loop (ui-quality.ts:427-438): with `keyboard` 1 or more and `AccessibilityCore` in the module list, a reopen that fails after the text scale 1000 captures is followed by `set_text_scale` of the largest scale, `capture_screen`, `list_ui` and the layout and keyboard judgements on a screen that did not open",
-      "foundBy": "input round 2"
-    },
-    {
-      "id": "D2",
-      "location": "skills/game-loop/instance.md:41",
-      "problem": "The `step` mode text says an input put in between steps \"advances game time by 1 ms per key or touch event\", and the same item has the agent turn step mode on before a realtime match. skills/client-core/modules/qa-core.md:116 adds no budget in `Playing` of a lockstep match, and says that game time there grows only by the steps of the match, so an input between those steps does not advance game time. The two defining documents differ for a lockstep realtime match. The condition `the client is not in Playing of a lockstep match` was already in qa-core.md at c8066bb, so the difference was there before this range",
-      "foundBy": "input round 4"
-    },
-    {
-      "id": "D3",
-      "location": "tools/src/commands/agent/lib/play-budget.ts:79",
-      "problem": "`brokerBudgetRefusal` treats opening `ogw step <instance> <ms> --stream` as a step. Run in a temporary copy with a judge agent key: opening a stream before any line created the budget file of `insta`, so the budget starts without an input or step, and opening a stream after the budget was refused with `the play budget of 240 s of instance insta has passed`, so its `input key_up` lines never reach `streamAction`, which excepts a release. `ogw input <instance> key_up <key>` still releases. The target of this defect is `ogw step`, and it also applies to the play agent budget",
-      "foundBy": "input round 1"
-    },
-    {
-      "id": "D4",
-      "location": "tools/src/commands/step/step.ts:178",
-      "problem": "`ogw step --count <n>` and the stream line `step <n>` check the budget once before the first step (step.ts:273, step.ts:223), and the loop of `runSteps` does not check it again, and `--count` has no upper limit, which differs from ogw.md `## loop evaluate` (`ogw step` fails once the budget has passed). Run in a temporary copy with a judge agent key and 200 ms of budget left: `ogw step <instance> 50 --count 3000` sent all 3000 steps, exited 0 and ended 1361 ms after the budget end. The target of this defect is `ogw step`, it existed before this range, and it also applies to the play agent budget",
-      "foundBy": "input round 2"
-    },
-    {
       "id": "D5",
       "location": "tools/src/commands/input/input.ts:229",
       "problem": "A single `ogw input` that puts in no input still starts the budget, because `checkPlayBudget` runs before the call is validated, which differs from tools/ogw.md:299-300 (`since its first input or step`). Run in a temporary copy with a judge agent key and no earlier input on the instance: `ogw input <id> nosuchcommand`, `ogw input <id>` and `ogw input <id> tap 1 1 --video` each exited 1, sent nothing to the client, and left the budget file of that instance. This order existed before this range, and this range fixed it only for `--script`. D2 of records/review-debt/step.json holds the same problem with the `--video` call",
