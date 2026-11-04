@@ -58,7 +58,7 @@ describe('movedCapturePaths', () => {
   });
 
   it('leaves a word or another path that ends in captures/', () => {
-    for (const text of ['screencaptures/a.jpg', 'my-captures/a.jpg', 'my_captures/a.jpg', '/other/captures/a.jpg', 'x/./captures/a.jpg', '캡처captures/a.jpg']) {
+    for (const text of ['screencaptures/a.jpg', 'my-captures/a.jpg', 'my_captures/a.jpg', '/other/captures/a.jpg', 'x/./captures/a.jpg', '캡처captures/a.jpg', '../captures/a.jpg', '.captures/a.jpg', 'shot1captures/a.jpg', 'dir\\captures/a.jpg']) {
       expect(movedCapturePaths(text, captures, evidence)).toBe(text);
     }
   });

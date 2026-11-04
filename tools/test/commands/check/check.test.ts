@@ -2,7 +2,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { check, timing } from '../../../src/commands/check/check.ts';
+import { check, coreTryChecks, timing } from '../../../src/commands/check/check.ts';
+import { botPlaytest } from '../../../src/commands/check/lib/bot-playtest.ts';
 import { instanceProcesses, instanceServerLog } from '../../../src/commands/check/lib/instance-probe.ts';
 import { fpsSampling } from '../../../src/commands/check/lib/performance.ts';
 import { staticCheck } from '../../../src/commands/check/static-api.ts';
@@ -21,6 +22,10 @@ import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/
 import { fakeAgentJob } from '../instance/agents.ts';
 import { doneState, fakeAutomation, ok } from './helpers.ts';
 
+vi.mock('../../../src/commands/check/lib/bot-playtest.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/commands/check/lib/bot-playtest.ts')>();
+  return { ...original, botPlaytest: vi.fn(original.botPlaytest) };
+});
 vi.mock('../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('./helpers.ts').fakeRestartClient>) => (await import('./helpers.ts')).fakeRestartClient(...args),
@@ -273,6 +278,31 @@ async function checkSummary(values: Record<string, string | boolean>): Promise<u
   const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
   return (await check.run(ctx, { positionals: ['g'], values, raw: [] })).summary;
 }
+
+describe('ogw check text of the modes without a result file', () => {
+  const many = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ where: `${prefix}:${String(i + 1)}`, message: 'm', evidence: [] }));
+
+  it('--bot prints every failure of a check', async () => {
+    setupGame(ws);
+    vi.mocked(botPlaytest).mockResolvedValueOnce([
+      { name: 'no blocker', platform: null, result: 'fail', failures: many(23, 'f'), warnings: [] },
+      { name: 'full flow', platform: null, result: 'pass', failures: [], warnings: [] },
+    ]);
+    const lines = (await ogw(ws, ['check', 'g', '--bot'])).stdout.split('\n');
+    expect(lines.slice(0, 25)).toEqual(['no blocker: fail', ...many(23, 'f').map((f) => `  ${f.where} m`), 'full flow: pass']);
+  });
+
+  it('ogw core try prints every failure and every warning of a check', async () => {
+    setupGame(ws);
+    serveClient();
+    vi.mocked(staticCheck).mockResolvedValueOnce({ name: 'static check', platform: null, result: 'fail', failures: many(23, 'f'), warnings: many(8, 'w') });
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const { lines } = await coreTryChecks(ctx, await ctx.game('g'), { root: ws.root, dir: null, relative: false });
+    const at = lines.indexOf('static check: fail');
+    expect(lines.slice(at + 1, at + 32)).toEqual([...many(23, 'f').map((f) => `  ${f.where} m`), ...many(8, 'w').map((w) => `  warning ${w.where} m`)]);
+    expect(lines.filter((line) => line.includes(' more '))).toEqual([]);
+  });
+});
 
 describe('ogw check --bot', () => {
   it('runs only the bot playtest on the checkout for a content agent, writes and commits no result file, and keeps its evidence only for a failure it points into', async () => {

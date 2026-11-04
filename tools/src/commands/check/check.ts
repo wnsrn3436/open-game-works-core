@@ -48,16 +48,18 @@ async function binaryData(ctx: Context, game: GameRepo): Promise<void> {
 
 /** The failures of one check that the text of `--loop` prints: the result file holds them all. */
 const LOOP_TEXT_FAILURES = 20;
-/** The warnings of one check that the text prints: they are the `WARN` lines of `ogw data`, or in the result file of `--loop`. */
+/** The warnings of one check that the text prints: `ogw data` of the checkout and the result file of `--loop` hold them all. */
 const TEXT_WARNINGS = 5;
 
-function checkText(check: CheckResult, resultFile = false): string[] {
+/** `checkout`: a check mode other than `--loop`. `core try` checks another core and tree than `ogw data` does, so it prints all. */
+function checkText(check: CheckResult, mode: 'loop' | 'checkout' | 'core try' = 'checkout'): string[] {
   const lines = [`${check.name}${check.platform === null ? '' : ` (${check.platform})`}: ${check.result}`];
-  const failures = resultFile ? check.failures.slice(0, LOOP_TEXT_FAILURES) : check.failures;
+  const failures = mode === 'loop' ? check.failures.slice(0, LOOP_TEXT_FAILURES) : check.failures;
+  const warnings = mode === 'core try' ? check.warnings : check.warnings.slice(0, TEXT_WARNINGS);
   for (const f of failures) lines.push(`  ${f.where} ${f.message}`.trimEnd(), ...f.evidence.map((path) => `    ${path}`));
   if (failures.length < check.failures.length) lines.push(`  ${String(check.failures.length - failures.length)} more failures, all in the result file`);
-  for (const w of check.warnings.slice(0, TEXT_WARNINGS)) lines.push(`  warning ${w.where} ${w.message}`.trimEnd());
-  if (check.warnings.length > TEXT_WARNINGS) lines.push(`  ${String(check.warnings.length - TEXT_WARNINGS)} more warnings, all in ${resultFile ? 'the result file' : 'ogw data <game> --json'}`);
+  for (const w of warnings) lines.push(`  warning ${w.where} ${w.message}`.trimEnd());
+  if (warnings.length < check.warnings.length) lines.push(`  ${String(check.warnings.length - warnings.length)} more warnings, all in ${mode === 'loop' ? 'the result file' : 'ogw data <game> --json'}`);
   if (check.hostLoad) {
     const load = check.hostLoad;
     lines.push(`  hostLoad cpuMaxPercent ${String(load.cpuMaxPercent)} memoryMaxPercent ${String(load.memoryMaxPercent)} instancesMax ${String(load.instancesMax)}`);
@@ -124,7 +126,7 @@ async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql'
 
 async function loop(ctx: Context, game: GameRepo, settings: GameSettings, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
   const outcome = await loopCheck(ctx, game, settings, { godot, db, ...timing });
-  const text = [...outcome.checks.flatMap((check) => checkText(check, true)), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
+  const text = [...outcome.checks.flatMap((check) => checkText(check, 'loop')), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
   return {
     exitCode: outcome.gate === 'pass' ? 0 : 1,
     text: text.join('\n'),
@@ -142,7 +144,7 @@ export async function coreTryChecks(ctx: Context, game: GameRepo, evidence: Evid
   const godot = await gameEngine(ctx, game, settings);
   await binaryData(ctx, game);
   const checks = await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, 'core try');
-  return { checks, lines: checks.flatMap((check) => checkText(check)) };
+  return { checks, lines: checks.flatMap((check) => checkText(check, 'core try')) };
 }
 
 async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult> {
