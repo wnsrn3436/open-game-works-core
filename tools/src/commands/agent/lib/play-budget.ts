@@ -121,6 +121,16 @@ export async function checkPlayBudget(ctx: Context, input?: readonly string[], i
   return budget;
 }
 
+/**
+ * Fails an input or step of the caller past the budget it already noted, without noting one: the command notes it once
+ * the call is valid (`checkPlayBudget`), so a call that puts in nothing starts no budget. A release passes as there.
+ */
+export async function refuseNotedPastBudget(ctx: Context, input?: readonly string[], instance?: string): Promise<void> {
+  if (input !== undefined && releasesHeld(input)) return;
+  const rule = await budgetRule(ctx, instance);
+  refusePastBudget(rule === null ? null : await notedBudget(rule));
+}
+
 export async function clearPlayBudget(env: NodeJS.ProcessEnv, agentJob: string): Promise<void> {
   await rm(await startFile(env, agentJob), { force: true });
   await rm(await judgeFolder(env, agentJob), { recursive: true, force: true });

@@ -1,13 +1,13 @@
 import { list, positional, str, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { collectMeasure, measureCollected, measureInstances, type MeasureResult } from './api.ts';
+import { collectMeasure, measureCollected, measureInstances, targetJson, type MeasureResult } from './api.ts';
 
 function report(result: MeasureResult): { text: string; data: unknown } {
   const lines = result.targets.map(
     (t) => `${t.metric}: ${t.value === null ? 'unknown' : String(t.value)} [${String(t.min)}, ${String(t.max)}] ${t.result}`,
   );
   lines.push(result.path);
-  return { text: lines.join('\n'), data: { path: result.path, commit: result.commit, targets: result.targets } };
+  return { text: lines.join('\n'), data: { path: result.path, commit: result.commit, targets: result.targets.map(targetJson) } };
 }
 
 export const measureCommand: CommandDef = {

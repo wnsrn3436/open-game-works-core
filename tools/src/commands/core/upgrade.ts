@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { expectPositionals, flag, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { readJson, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
+import { readJson, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { commitPaths, git, listTags } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
@@ -133,8 +133,8 @@ async function restoreToolOutputs(game: GameRepo, folders: readonly string[], st
  * error or a contract violation does not stop it: the content agent fixes it after the upgrade. A data tool run with
  * errors writes no generation target, and the rows it put in `data/` stay out of the commit, where the hook would refuse
  * their errors: the next `ogw data` puts them in again. When a step after the
- * `settings.json` write fails, `settings.json` gets its committed content back, `ogw generate` runs again with it, and
- * what the tools wrote and the refused commit staged goes back to HEAD.
+ * `settings.json` write fails, `coreVersion` goes back to `from`, `ogw generate` runs again with it, and what the tools
+ * wrote and the refused commit staged goes back to HEAD.
  */
 async function applyVersion(ctx: Context, game: GameRepo, from: string, version: string): Promise<string | null> {
   const before = await changedPaths(game.root);
@@ -143,13 +143,13 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
   if (inputs.length > 0) throw new OgwError(`the upgrade regenerates from these uncommitted changes; commit or revert them first:\n${inputs.join('\n')}`);
   await fetchCoreRelease(ctx, version);
   const path = gameSettingsPath(game.root);
-  const original = await withGameSettingsLock(game.root, ctx.env, async () => {
-    const bytes = await readFile(path);
-    const raw = await readJson<Record<string, unknown>>(path);
-    raw.coreVersion = version;
-    await writeJsonAtomic(path, raw);
-    return bytes;
-  });
+  const setCoreVersion = (value: string): Promise<void> =>
+    withGameSettingsLock(game.root, ctx.env, async () => {
+      const raw = await readJson<Record<string, unknown>>(path);
+      raw.coreVersion = value;
+      await writeJsonAtomic(path, raw);
+    });
+  await setCoreVersion(version);
   let generating = false;
   let paths: string[] = [];
   try {
@@ -171,7 +171,8 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
     paths = ['settings.json', ...new Set([...generated, ...fromTools])].sort();
     return await commitPaths(game.root, paths, `core upgrade: ${from} -> ${version}`, { env: ctx.env });
   } catch (error) {
-    await withGameSettingsLock(game.root, ctx.env, () => writeFileAtomic(path, original));
+    // only `coreVersion` goes back, on the current content: a value written meanwhile under the lock stays
+    await setCoreVersion(from);
     if (generating) {
       const logged = (step: string) => (restoreError: unknown): void => {
         ctx.log(`${step} with core ${from} after the failed upgrade failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);

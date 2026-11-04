@@ -224,6 +224,18 @@ describe('virtual pad layout', () => {
     expect(lines(await virtualPadLayout.run(sc))).toEqual(['resource/prefab/pad/twice.tscn:9 | virtual pad layout: action `jump` of `Jump2` is also used by `Jump`']);
   });
 
+  it('reads the action of the scene a child instances', async () => {
+    const child = (name: string, extra = ''): string => `[node name="${name}" parent="." instance=ExtResource("bt")]\n${extra}`;
+    const pad = (children: string[]): string => layout(null, children).replace(EXT.stick, `${EXT.stick}\n[ext_resource type="PackedScene" path="res://resource/prefab/btn.tscn" id="bt"]`);
+    const sc = memContext({
+      ...CORE_STUBS,
+      'resource/prefab/btn.tscn': '[gd_scene format=3]\n[ext_resource type="Script" path="res://core/virtual_pad_core/virtual_button.gd" id="vb"]\n\n[node name="Btn" type="Control"]\nscript = ExtResource("vb")\naction = &"jump"\n',
+      'resource/prefab/pad/a.tscn': pad([child('A'), child('B')]),
+      'resource/prefab/pad/b.tscn': pad([child('A'), child('B', 'action = &"dash"\n')]),
+    });
+    expect(lines(await virtualPadLayout.run(sc))).toEqual(['resource/prefab/pad/a.tscn:12 | virtual pad layout: action `jump` of `B` is also used by `A`']);
+  });
+
   it('accepts one mode across layouts', async () => {
     const sc = memContext({ ...CORE_STUBS, 'resource/prefab/pad/a.tscn': layout('1', [button('A', 'a')]), 'resource/prefab/pad/b.tscn': layout(null, []) });
     expect(await virtualPadLayout.run(sc)).toEqual([]);

@@ -12,7 +12,8 @@ import { strOf, type Prop, type SceneNode, type TextScene } from './lib/tscn.ts'
  * `VirtualPadLayout` or a subclass) use more than one `joystick_mode` (a value not written in the `.tscn` is the value of the
  * scene its root instances, else the script
  * default), or one layout has the same action twice among its root's direct `VirtualButton` `action` and
- * `VirtualPadJoystick` direction actions, the children of the scenes its root instances included.
+ * `VirtualPadJoystick` direction actions, the children of the scenes its root instances included, and a child that
+ * instances a scene with the properties of the root of that scene under the ones written on the child.
  */
 export const NAME = 'virtual pad layout';
 
@@ -89,19 +90,33 @@ async function rootChildren(sc: StaticContext, scene: TextScene): Promise<Map<st
   return out;
 }
 
+/** Properties of a child: those of the root of each scene it instances, farthest first, under the ones written on it. */
+async function childProps(sc: StaticContext, child: RootChild): Promise<Map<string, { prop: Prop; file: string }>> {
+  const chain = await instanceChain(sc, child.scene, child.node);
+  if (chain.length === 0) return child.props;
+  const merged = new Map<string, { prop: Prop; file: string }>();
+  for (const s of chain.reverse()) {
+    for (const [k, prop] of s.nodes[0]?.props ?? []) merged.set(k, { prop, file: s.path });
+  }
+  return new Map([...merged, ...child.props]);
+}
+
 async function duplicateActions(sc: StaticContext, path: string, scene: TextScene): Promise<Finding[]> {
   const seen = new Map<string, string>();
   const out: Finding[] = [];
   for (const child of (await rootChildren(sc, scene)).values()) {
     const cls = await nodeClass(sc, child.scene, child.node, ['VirtualButton', 'VirtualPadJoystick']);
     const props = cls === 'VirtualButton' ? ['action'] : cls === 'VirtualPadJoystick' ? JOYSTICK_PROPS : [];
+    const merged = props.length === 0 ? child.props : await childProps(sc, child);
     for (const prop of props) {
-      const written = child.props.get(prop);
+      const written = merged.get(prop);
       const value = strOf(written?.prop.value);
       if (value === null || value === '') continue;
       const first = seen.get(value);
-      // A value written in a base scene is reported at the root of this layout.
-      const where = written?.file === path ? at(path, written.prop.line) : at(path, scene.nodes[0]?.line ?? 1);
+      // A value written in a scene the child instances is reported at the child, one written in a base scene at the
+      // root of this layout.
+      const where =
+        written?.file === path ? at(path, written.prop.line) : child.scene.path === path ? at(path, child.node.line) : at(path, scene.nodes[0]?.line ?? 1);
       if (first !== undefined) out.push(finding(NAME, where, `action \`${value}\` of \`${child.node.path}\` is also used by \`${first}\``));
       else seen.set(value, child.node.path);
     }

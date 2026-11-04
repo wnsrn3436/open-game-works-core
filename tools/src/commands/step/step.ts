@@ -1,8 +1,8 @@
 import { expectPositionals, flag, nonNegativeInt, positional, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { checkPlayBudget, refusePastBudget } from '../agent/lib/play-budget.ts';
+import { checkPlayBudget, refuseNotedPastBudget, refusePastBudget } from '../agent/lib/play-budget.ts';
 import { captureScreen } from '../capture/capture.ts';
-import { singleInput } from '../input/input.ts';
+import { checkInputCommand, singleInput } from '../input/input.ts';
 import { automationRequest, botControl, type ClientRef } from '../instance/automation.ts';
 import { readPlayAccess } from '../instance/lib/records.ts';
 import { deviceMs, readTelemetry } from '../telemetry/api.ts';
@@ -172,8 +172,11 @@ async function endedEarly(ctx: Context, plan: Plan, index: number, watch: Watch,
 }
 
 async function runSteps(ctx: Context, plan: Plan): Promise<Outcome> {
-  const budget = await checkPlayBudget(ctx, undefined, plan.id);
+  // past a noted budget the call is refused before it reaches the instance; a call that steps no client notes none
+  await refuseNotedPastBudget(ctx, undefined, plan.id);
   const [main, telemetry] = await Promise.all([state(ctx, plan.id, 'main'), readTelemetry(ctx, plan.id)]);
+  if ((await stepTargets(ctx, plan.id, main)).length === 0) throw new OgwError('no client is in step mode');
+  const budget = await checkPlayBudget(ctx, undefined, plan.id);
   let watch: Watch = { main, marks: telemetry.marks };
   const steps: StepRecord[] = [];
   for (let index = 1; index <= plan.count; index++) {
@@ -229,6 +232,7 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
       // `text` takes the rest of the line as its one argument, spaces included
       const text = /^\s*input\s+text\s([\s\S]*)$/.exec(line);
       const args = text ? [text[1] as string] : words.slice(2);
+      checkInputCommand(words[1]);
       await checkPlayBudget(ctx, [words[1], ...args], plan.id);
       const result = await singleInput(ctx, plan.id, words[1], args);
       return { exit: result.exitCode ?? 0, data: result.data };

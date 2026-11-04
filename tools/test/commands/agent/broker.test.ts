@@ -1,8 +1,8 @@
 // The play and judge broker: `ogw` inside the sandbox sends each command to a broker outside it.
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BROKER_COMMANDS, brokerCommand, startBroker } from '../../../src/commands/agent/lib/broker.ts';
 import { commands } from '../../../src/commands/index.ts';
@@ -123,9 +123,11 @@ describe('broker', () => {
     });
     try {
       const env = { OGW_AGENT_KEY: key.value };
-      // the first step notes the start of the play
+      // the broker notes no budget: the command notes it once the call is valid
       expect(await forward(socket, ['step', 'instp1', '50'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
       const file = join(await jobsDir(ws.env), 'play-budget', 'agplay1');
+      expect(existsSync(file)).toBe(false);
+      mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, String(Date.now() - 900_000));
       started.length = 0;
       for (const argv of [['step', 'instp1', '50', '--state'], ['input', 'instp1', 'key_down', 'a']]) {
@@ -180,6 +182,8 @@ describe('broker', () => {
       expect(existsSync(budgets)).toBe(false);
       expect(existsSync(join(budgets, '..', 'escaped'))).toBe(false);
       expect(await forward(socket, ['step', '--count', '6', 'insta', '50'], env)).toMatchObject({ code: 0, stdout: 'ran\n' });
+      expect(existsSync(budgets)).toBe(false);
+      mkdirSync(join(budgets, 'judge-agjudge1'), { recursive: true });
       writeFileSync(join(budgets, 'judge-agjudge1', 'insta'), String(Date.now() - 240_000));
       started.length = 0;
       const refused = await forward(socket, ['step', '--count', '6', 'insta', '50'], env);

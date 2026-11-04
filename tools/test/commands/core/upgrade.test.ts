@@ -360,6 +360,21 @@ describe('ogw core upgrade', () => {
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
+  it('on a failure puts back only coreVersion, and keeps a game settings value written while the upgrade ran', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'b', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'generated.txt': 'generated 1.0.0' });
+    const path = join(dir, 'settings.json');
+    // `ogw settings set` of the lead agent while the upgrade job runs
+    vi.mocked(installEngines).mockImplementationOnce(() => {
+      writeFileSync(path, `${JSON.stringify({ ...(readJsonFile(path) as object), appName: 'Lantern', humanDecided: ['appName'] }, null, 2)}\n`);
+      return Promise.reject(new Error('no engine download'));
+    });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: gh.env });
+    expect(run.stderr).toContain('no engine download');
+    expect(readJsonFile(path)).toEqual({ coreVersion: '1.0.0', appName: 'Lantern', humanDecided: ['appName'] });
+  });
+
   it('fails and restores when the contract tool itself fails, with exit code 2 or a crash with no violation line', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'BAD', {}) });

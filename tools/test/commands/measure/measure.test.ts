@@ -1,13 +1,15 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { checkDoc } from '../../../src/commands/check/static/design-target.ts';
-import { collectMeasure, measureCollected, measureTargets, parseTargets, rejectRepeated } from '../../../src/commands/measure/api.ts';
+import { collectMeasure, measureCollected, measureTargets, parseTargets, rejectRepeated, targetJson, type MeasuredTarget } from '../../../src/commands/measure/api.ts';
+import { metricValue } from '../../../src/commands/telemetry/lib/metrics.ts';
+import { formatJson } from '../../../src/lib/fsx.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { resolveGame } from '../../../src/lib/game.ts';
 import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { loadHarnessSettings, workspaceFrom } from '../../../src/lib/settings.ts';
-import { ogw, sh } from '../../helpers/workspace.ts';
+import { makeGame, ogw, sh } from '../../helpers/workspace.ts';
 import { setupRunner, startFor, stopAll, type Runner } from '../instance/runner.ts';
 
 vi.mock('../../../src/commands/generate/api.ts', async () => (await import('../instance/mocks/apis.ts')).generate);
@@ -80,6 +82,24 @@ describe('targets', () => {
       { metric: 'fail_count', min: 1, max: 5, data: 'stage.fails' },
       { metric: 'goal_interval_ms', min: 0, max: 10, data: null },
     ]);
+  });
+
+  it('takes no name of Object.prototype as a metric', () => {
+    for (const name of ['constructor', 'toString', 'valueOf', '__proto__']) {
+      expect(() => parseTargets(`## feel targets\n| metric | min | max | data |\n|---|---|---|---|\n| ${name} | 0 | 1 | |\n`)).toThrow(`\`${name}\` is not a metric name`);
+      expect(() => metricValue(name, [])).toThrow(`unknown metric: ${name}`);
+    }
+  });
+
+  it('keeps an integer bound above 2^53 exact, in the judgement and in the written result', () => {
+    const targets = parseTargets('## tuning targets\n| metric | min | max | data |\n|---|---|---|---|\n| content.gold | 9007199254740993 | 9007199254740995 | |\n');
+    expect(targets[0]).toMatchObject({ min: 9007199254740993n, max: 9007199254740995n });
+    const telemetry = { started_at: 0, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
+    const at = (gold: number): MeasuredTarget => measureTargets(targets, [{ telemetry, state: { content: { gold } } }])[0] as MeasuredTarget;
+    // 2^53 is below the min, 2^53 + 2 is inside the range
+    expect(at(9007199254740992).result).toBe('out');
+    expect(at(9007199254740994).result).toBe('in');
+    expect(formatJson(targetJson(at(9007199254740994)))).toContain('"min": 9007199254740993,\n  "max": 9007199254740995,');
   });
 
   it('judges in, out and unknown', () => {
@@ -173,6 +193,31 @@ describe('ogw measure', () => {
     writeFileSync(join(runner.ws.root, 'bad.json'), '{"x":1}');
     expect((await ogw(runner.ws, ['measure', 'g', '--collected', 'bad.json'])).stderr).toContain('not a file of ogw measure --collect');
     expect((await ogw(runner.ws, ['measure', 'other', a])).code).not.toBe(0);
+  });
+
+  it('refuses an instance of another game and an instance whose get_state fails, and writes nothing', async () => {
+    makeGame(runner.ws, 'h', { 'design.md': DESIGN });
+    expect(await ogw(runner.ws, ['measure', 'h', a])).toMatchObject({ code: 1, stderr: expect.stringContaining(`instance ${a} is not of game h`) as unknown });
+    const collect = await ogw(runner.ws, ['measure', 'h', '--collect', a, '--out', 'h.json']);
+    expect(collect).toMatchObject({ code: 1, stderr: expect.stringContaining(`instance ${a} is not of game h`) as unknown });
+    expect(existsSync(join(runner.ws.root, 'h.json'))).toBe(false);
+    runner.config({ ...initial, clients: { main: { fail: { get_state: 'broken' } } } });
+    try {
+      const failed = await ogw(runner.ws, ['measure', 'g', '--collect', a, '--out', 'state.json']);
+      expect(failed).toMatchObject({ code: 1, stderr: expect.stringContaining('get_state failed') as unknown });
+      expect(existsSync(join(runner.ws.root, 'state.json'))).toBe(false);
+      expect(await ogw(runner.ws, ['measure', 'g', a])).toMatchObject({ code: 1, stderr: expect.stringContaining('get_state failed') as unknown });
+    } finally {
+      runner.config(initial);
+    }
+  });
+
+  it('calculates only for a game with an open run', async () => {
+    const root = makeGame(runner.ws, 'norun', { 'design.md': DESIGN });
+    writeFileSync(join(runner.ws.root, 'norun.json'), JSON.stringify({ instance: 'x', commit: 'c1', telemetry: { started_at: 0 }, state: {} }));
+    const run = await ogw(runner.ws, ['measure', 'norun', '--collected', 'norun.json']);
+    expect(run).toMatchObject({ code: 1, stderr: expect.stringContaining('no open run for game norun') as unknown });
+    expect(existsSync(join(root, 'records'))).toBe(false);
   });
 
   it('refuses collected data of different commits', async () => {

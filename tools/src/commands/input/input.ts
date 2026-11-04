@@ -209,12 +209,16 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
   return { results, refusal, ...(await endVideo(recording)) };
 }
 
+/** Fails a name that is no input command, before the budget notes the call. */
+export function checkInputCommand(command: string): void {
+  if (!isPlayInput(command)) throw new OgwError(`${command} is not an input command; see ogw input --help`);
+}
+
 /** One input command on the main client, as `ogw input <instance> <command> <argument...>` puts it in. */
-export function singleInput(ctx: Context, instanceId: string, command: string, args: string[]): Promise<CommandResult> {
-  if (!isPlayInput(command)) {
-    return Promise.reject(new OgwError(`${command} is not an input command; see ogw input --help`));
-  }
-  return sendInput(ctx, instanceId, command, args).then((data) => ({ exitCode: data.ok ? 0 : 1, text: JSON.stringify(data), data }));
+export async function singleInput(ctx: Context, instanceId: string, command: string, args: string[]): Promise<CommandResult> {
+  checkInputCommand(command);
+  const data = await sendInput(ctx, instanceId, command, args);
+  return { exitCode: data.ok ? 0 : 1, text: JSON.stringify(data), data };
 }
 
 export const input: CommandDef = {
@@ -226,9 +230,12 @@ export const input: CommandDef = {
     const instanceId = positional(args, 0, 'instance');
     const script = str(args, 'script');
     if (script === undefined) {
-      await checkPlayBudget(ctx, args.positionals.slice(1), instanceId);
+      // a call that puts in nothing starts no budget: it is refused before the budget notes it
       if (flag(args, 'video')) throw new OgwError('--video goes with --script');
-      return singleInput(ctx, instanceId, positional(args, 1, 'input command'), args.positionals.slice(2));
+      const command = positional(args, 1, 'input command');
+      checkInputCommand(command);
+      await checkPlayBudget(ctx, args.positionals.slice(1), instanceId);
+      return singleInput(ctx, instanceId, command, args.positionals.slice(2));
     }
     if (args.positionals.length !== 1) throw new OgwError(`usage: ${this.usage}`);
     const fps = await instanceTargetFps(ctx, instanceId);

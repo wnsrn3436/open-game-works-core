@@ -13,10 +13,13 @@ import { metricValue, toTelemetry, type FreeScenes, type Sample } from '../telem
 import { rowProblems, targetRows } from './lib/targets.ts';
 
 /** A design target: a row of `## feel targets` or `## tuning targets`. */
+/** A bound of a target: a number, or a bigint for an integer bound outside the safe integers, which a number would round. */
+export type Bound = number | bigint;
+
 export interface Target {
   metric: string;
-  min: number;
-  max: number;
+  min: Bound;
+  max: Bound;
   data: string | null;
 }
 
@@ -38,14 +41,39 @@ export function parseTargets(design: string): Target[] {
   return targetRows(design).map((row) => {
     const problem = rowProblems(row)[0];
     if (problem !== undefined) throw new OgwError(`design.md:${String(row.line)}: ${problem}`);
-    return { metric: row.metric, min: Number(row.min), max: Number(row.max), data: row.data === '' ? null : row.data };
+    return { metric: row.metric, min: bound(row.min), max: bound(row.max), data: row.data === '' ? null : row.data };
   });
+}
+
+/** The bound a `min` or `max` cell gives: exact also above 2^53, where `rowProblems` compares integers as bigints. */
+function bound(text: string): Bound {
+  if (!/^-?[0-9]+$/.test(text)) return Number(text);
+  const exact = BigInt(text);
+  return exact >= BigInt(Number.MIN_SAFE_INTEGER) && exact <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(exact) : exact;
+}
+
+/** `value` compared with `b`: negative below it, 0 at it, positive above it; an integer value is compared exactly. */
+function compareBound(value: number, b: Bound): number {
+  if (typeof b === 'number') return value - b;
+  if (!Number.isInteger(value)) return value - Number(b);
+  const v = BigInt(value);
+  return v < b ? -1 : v > b ? 1 : 0;
+}
+
+/** A bound as JSON writes it: a bigint keeps its digits. */
+function boundJson(b: Bound): unknown {
+  return typeof b === 'bigint' ? (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(String(b)) : b;
+}
+
+/** A measured target as the result file and the `--json` output write it. */
+export function targetJson(t: MeasuredTarget): Record<string, unknown> {
+  return { metric: t.metric, min: boundJson(t.min), max: boundJson(t.max), value: t.value, result: t.result, data: t.data };
 }
 
 export function measureTargets(targets: readonly Target[], samples: readonly Sample[], free: FreeScenes = null): MeasuredTarget[] {
   return targets.map((t) => {
     const value = metricValue(t.metric, samples, free);
-    const result = value === null ? 'unknown' : value >= t.min && value <= t.max ? 'in' : 'out';
+    const result = value === null ? 'unknown' : compareBound(value, t.min) >= 0 && compareBound(value, t.max) <= 0 ? 'in' : 'out';
     return { ...t, value, result };
   });
 }
@@ -94,7 +122,7 @@ export async function measure(ctx: Context, gameName: string, collected: readonl
   const path = join(game.root, 'records', 'loops', run.name, `measure-${String(run.iteration)}.json`);
   await writeJsonAtomic(path, {
     commit,
-    targets: targets.map((t) => ({ metric: t.metric, min: t.min, max: t.max, value: t.value, result: t.result, data: t.data })),
+    targets: targets.map(targetJson),
   });
   return { path, commit, targets };
 }

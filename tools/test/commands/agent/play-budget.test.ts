@@ -67,7 +67,7 @@ describe('play budget', () => {
     }
   });
 
-  it.runIf(process.platform === 'darwin')('notes the first step and refuses later ones from inside the broker sandbox of the play agent', async () => {
+  it.runIf(process.platform === 'darwin')('notes no step that is not put in and refuses one past the budget from inside the broker sandbox of the play agent', async () => {
     const ws = jobWorkspace();
     const folder = await newTempFolder('ogw-play-');
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
@@ -78,10 +78,11 @@ describe('play budget', () => {
       if (command === undefined) throw new Error('the play agent has no broker command');
       const env = { ...ws.env, TMPDIR: folder, OGW_AGENT_KEY: play.key };
       const first = await run(command.cmd, command.args, { env, timeoutMs: 60_000 });
-      // the budget passes; the step fails only because no such instance runs
+      // the budget passes; the step fails because no such instance runs, so it puts in nothing and notes no budget
       expect(`${first.stdout}${first.stderr}`).not.toContain('play budget');
       const file = join(await jobsDir(ws.env), 'play-budget', 'agentplay2');
-      expect(existsSync(file)).toBe(true);
+      expect(existsSync(file)).toBe(false);
+      mkdirSync(join(file, '..'), { recursive: true });
       writeFileSync(file, String(Date.now() - BUDGET));
       const later = await run(command.cmd, command.args, { env, timeoutMs: 60_000 });
       expect(`${later.stdout}${later.stderr}`).toContain(PASSED);
@@ -168,9 +169,11 @@ describe('judge play budget', () => {
 
   it('reads the instance of a forwarded call as the command does', async () => {
     await judgeAt('agentjudge4', async ({ ctx, folder, passed, pass }) => {
+      // the broker only reads a noted budget: the command notes it
       expect(await brokerBudgetRefusal(ctx, ['step', '--count', '6', 'insta', '50'])).toBeNull();
+      expect(existsSync(folder)).toBe(false);
+      await checkPlayBudget(ctx, undefined, 'insta');
       expect(await brokerBudgetRefusal(ctx, ['input', '--script=a.json', 'instb'])).toBeNull();
-      expect(readdirSync(folder)).toEqual(['insta']);
       pass();
       // the first step on another instance, with the same option before it
       expect(await brokerBudgetRefusal(ctx, ['step', '--count', '6', 'instb', '50'])).toBeNull();
@@ -182,8 +185,30 @@ describe('judge play budget', () => {
       expect(await brokerBudgetRefusal(ctx, ['step', '--nope', 'insta', '50'])).toBeNull();
       expect(await brokerBudgetRefusal(ctx, ['step', 'insta', '50', '--help'])).toBeNull();
       expect(await brokerBudgetRefusal(ctx, ['capture', 'insta'])).toBeNull();
-      expect(readdirSync(folder).sort()).toEqual(['insta', 'instb']);
+      expect(readdirSync(folder)).toEqual(['insta']);
     });
+  });
+
+  it('notes no budget for a call that puts in no input or step, in the command and from the broker', async () => {
+    await judgeAt('agentjudge8', async ({ ctx, ws, env, folder }) => {
+      for (const argv of [['input', 'insta', 'nosuchcommand'], ['input', 'insta'], ['input', 'insta', 'tap', '1', '1', '--video'], ['step', 'insta', '0'], ['step', 'insta', '50']]) {
+        expect(await brokerBudgetRefusal(ctx, argv)).toBeNull();
+        expect((await ogw(ws, argv, { env })).code).not.toBe(0);
+      }
+      const run = await ogw(ws, ['step', 'insta', '50', '--stream'], { env, stdin: 'input nosuchcommand\nstep\n' });
+      expect(run.stdout.trimEnd().split('\n').map((line) => (JSON.parse(line) as { exit: number }).exit)).toEqual([1, 1]);
+      expect(existsSync(folder)).toBe(false);
+    });
+    const ws = jobWorkspace();
+    const tmp = await newTempFolder('ogw-play-');
+    const play = await agent(ws.env, 'play', 'agentplay4', tmp);
+    try {
+      expect((await ogw(ws, ['input', 'instp1', 'not_a_command'], { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).code).not.toBe(0);
+      expect(existsSync(join(await jobsDir(ws.env), 'play-budget', 'agentplay4'))).toBe(false);
+    } finally {
+      play.remove();
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 
   it('neither starts nor refuses a stream when it opens: only its lines go through the budget', async () => {

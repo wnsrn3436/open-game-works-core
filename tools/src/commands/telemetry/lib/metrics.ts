@@ -205,7 +205,8 @@ const CALCS: Record<string, Calc> = {
 };
 
 export function isMetric(name: string): boolean {
-  return name in CALCS || /^content\.[A-Za-z0-9_]+$/.test(name);
+  // own keys only: a name of `Object.prototype` (`constructor`, `toString`) is no metric
+  return Object.hasOwn(CALCS, name) || /^content\.[A-Za-z0-9_]+$/.test(name);
 }
 
 /**
@@ -214,7 +215,7 @@ export function isMetric(name: string): boolean {
  */
 export function metricValue(metric: string, samples: readonly Sample[], free: FreeScenes = null): number | null {
   if (metric.startsWith('content.')) return contentValue(samples, metric.slice('content.'.length));
-  const calc = CALCS[metric];
+  const calc = Object.hasOwn(CALCS, metric) ? CALCS[metric] : undefined;
   if (!calc) throw new OgwError(`unknown metric: ${metric}`);
   return calc(samples, free);
 }
