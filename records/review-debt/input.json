@@ -1,12 +1,5 @@
 {
   "target": "input",
   "nextId": 6,
-  "items": [
-    {
-      "id": "D5",
-      "location": "tools/src/commands/input/input.ts:229",
-      "problem": "A single `ogw input` that puts in no input still starts the budget, because `checkPlayBudget` runs before the call is validated, which differs from tools/ogw.md:299-300 (`since its first input or step`). Run in a temporary copy with a judge agent key and no earlier input on the instance: `ogw input <id> nosuchcommand`, `ogw input <id>` and `ogw input <id> tap 1 1 --video` each exited 1, sent nothing to the client, and left the budget file of that instance. This order existed before this range, and this range fixed it only for `--script`. D2 of records/review-debt/step.json holds the same problem with the `--video` call",
-      "foundBy": "input round 3"
-    }
-  ]
+  "items": []
 }
