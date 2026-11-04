@@ -46,16 +46,18 @@ async function binaryData(ctx: Context, game: GameRepo): Promise<void> {
   await binaryBuild(ctx, game, 'data tool binary build failed; run ogw data and commit, then check again');
 }
 
-/** The failures and warnings of one check that the text prints; the result file and `--json` hold them all. */
-const TEXT_FAILURES = 20;
+/** The failures of one check that the text of `--loop` prints: the result file holds them all. */
+const LOOP_TEXT_FAILURES = 20;
+/** The warnings of one check that the text prints: they are the `WARN` lines of `ogw data`, or in the result file of `--loop`. */
 const TEXT_WARNINGS = 5;
 
-function checkText(check: CheckResult, allIn = '--json'): string[] {
+function checkText(check: CheckResult, resultFile = false): string[] {
   const lines = [`${check.name}${check.platform === null ? '' : ` (${check.platform})`}: ${check.result}`];
-  for (const f of check.failures.slice(0, TEXT_FAILURES)) lines.push(`  ${f.where} ${f.message}`.trimEnd(), ...f.evidence.map((path) => `    ${path}`));
-  if (check.failures.length > TEXT_FAILURES) lines.push(`  ${String(check.failures.length - TEXT_FAILURES)} more failures, all in ${allIn}`);
+  const failures = resultFile ? check.failures.slice(0, LOOP_TEXT_FAILURES) : check.failures;
+  for (const f of failures) lines.push(`  ${f.where} ${f.message}`.trimEnd(), ...f.evidence.map((path) => `    ${path}`));
+  if (failures.length < check.failures.length) lines.push(`  ${String(check.failures.length - failures.length)} more failures, all in the result file`);
   for (const w of check.warnings.slice(0, TEXT_WARNINGS)) lines.push(`  warning ${w.where} ${w.message}`.trimEnd());
-  if (check.warnings.length > TEXT_WARNINGS) lines.push(`  ${String(check.warnings.length - TEXT_WARNINGS)} more warnings, all in ${allIn}`);
+  if (check.warnings.length > TEXT_WARNINGS) lines.push(`  ${String(check.warnings.length - TEXT_WARNINGS)} more warnings, all in ${resultFile ? 'the result file' : 'ogw data <game> --json'}`);
   if (check.hostLoad) {
     const load = check.hostLoad;
     lines.push(`  hostLoad cpuMaxPercent ${String(load.cpuMaxPercent)} memoryMaxPercent ${String(load.memoryMaxPercent)} instancesMax ${String(load.instancesMax)}`);
@@ -122,7 +124,7 @@ async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql'
 
 async function loop(ctx: Context, game: GameRepo, settings: GameSettings, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
   const outcome = await loopCheck(ctx, game, settings, { godot, db, ...timing });
-  const text = [...outcome.checks.flatMap((check) => checkText(check, 'the result file')), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
+  const text = [...outcome.checks.flatMap((check) => checkText(check, true)), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
   return {
     exitCode: outcome.gate === 'pass' ? 0 : 1,
     text: text.join('\n'),

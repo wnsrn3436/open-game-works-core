@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { movedCapturePaths } from '../../../../src/commands/agent/lib/launch.ts';
 import {
   agentCliCommand,
   agentHomeBlocked,
@@ -31,6 +32,42 @@ import { commitInCheckout } from '../../../../src/commands/agent/lib/launch.ts';
 import { withLock } from '../../../../src/lib/lock.ts';
 import { byteCompare } from '../../../../src/lib/order.ts';
 import { escapeRegExp } from '../../../../src/lib/regexp.ts';
+
+describe('movedCapturePaths', () => {
+  const captures = '/tmp/agent/captures';
+  const evidence = '/game/evidence/play-1-1';
+
+  it('changes an absolute path and each form of a path relative to the agent folder', () => {
+    const forms: [string, string][] = [
+      ['/tmp/agent/captures/a.jpg', `${evidence}/a.jpg`],
+      ['captures/a.jpg', `${evidence}/a.jpg`],
+      ['./captures/a.jpg', `${evidence}/a.jpg`],
+      ['| 1 | captures/a.jpg |', `| 1 | ${evidence}/a.jpg |`],
+      ['`captures/a.jpg`', `\`${evidence}/a.jpg\``],
+      ["'captures/a.jpg'", `'${evidence}/a.jpg'`],
+      ['"captures/a.jpg"', `"${evidence}/a.jpg"`],
+      ['![x](./captures/a.jpg)', `![x](${evidence}/a.jpg)`],
+      ['[captures/a.jpg]', `[${evidence}/a.jpg]`],
+      ['<captures/a.jpg>', `<${evidence}/a.jpg>`],
+      ['capture:captures/a.jpg', `capture:${evidence}/a.jpg`],
+      ['capture=captures/a.jpg', `capture=${evidence}/a.jpg`],
+      ['a.jpg,captures/b.jpg', `a.jpg,${evidence}/b.jpg`],
+      ['one\ncaptures/a.jpg', `one\n${evidence}/a.jpg`],
+    ];
+    for (const [text, moved] of forms) expect(movedCapturePaths(text, captures, evidence)).toBe(moved);
+  });
+
+  it('leaves a word or another path that ends in captures/', () => {
+    for (const text of ['screencaptures/a.jpg', 'my-captures/a.jpg', 'my_captures/a.jpg', '/other/captures/a.jpg', 'x/./captures/a.jpg', '캡처captures/a.jpg']) {
+      expect(movedCapturePaths(text, captures, evidence)).toBe(text);
+    }
+  });
+
+  it('does not scan the paths it writes: an evidence folder under a folder named with a space keeps its path', () => {
+    const inFolder = '/work/my captures/game/evidence/play-1-1';
+    expect(movedCapturePaths('/tmp/agent/captures/a.jpg captures/b.jpg', captures, inFolder)).toBe(`${inFolder}/a.jpg ${inFolder}/b.jpg`);
+  });
+});
 
 describe('prompt', () => {
   const doc = '# t\n\n## a\n\none\n```\n## not a heading\n```\n### sub\n\n## b\ntwo\n';

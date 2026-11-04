@@ -241,19 +241,14 @@ describe('ogw check modes', () => {
     expect(staticCheck).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ name: 'g' }), {});
   });
 
-  it('prints the first failures and warnings of a check and the count of the rest; --json holds them all', async () => {
+  it('prints every failure of a check outside --loop, which a background run cannot read elsewhere, and the first warnings', async () => {
     setupGame(ws);
     const many = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ where: `${prefix}:${String(i + 1)}`, message: 'm', evidence: [] }));
     vi.mocked(staticCheck).mockResolvedValue({ name: 'static check', platform: null, result: 'fail', failures: many(23, 'f'), warnings: many(8, 'w') });
     const run = await ogw(ws, ['check', 'g', '--static']);
     const lines = run.stdout.trimEnd().split('\n');
-    expect(lines.slice(0, 2)).toEqual(['static check: fail', '  f:1 m']);
-    expect(lines[20]).toBe('  f:20 m');
-    expect(lines.slice(21)).toEqual(['  3 more failures, all in --json', '  warning w:1 m', '  warning w:2 m', '  warning w:3 m', '  warning w:4 m', '  warning w:5 m', '  3 more warnings, all in --json']);
-    const json = await ogw(ws, ['check', 'g', '--static', '--json']);
-    const data = JSON.parse(json.stdout) as { checks: { failures: unknown[]; warnings: unknown[] }[] };
-    expect(data.checks[0]?.failures).toHaveLength(23);
-    expect(data.checks[0]?.warnings).toHaveLength(8);
+    expect(lines.slice(0, 24)).toEqual(['static check: fail', ...many(23, 'f').map((f) => `  ${f.where} m`)]);
+    expect(lines.slice(24)).toEqual(['  warning w:1 m', '  warning w:2 m', '  warning w:3 m', '  warning w:4 m', '  warning w:5 m', '  3 more warnings, all in ogw data <game> --json']);
   });
 
   it('--regression runs the client regression test of a path and removes its evidence folder unless a failure points into it', async () => {
@@ -440,6 +435,22 @@ describe('ogw check --loop', () => {
     expect(file.gate).toBe('pass');
     // one headless instance: the bot playtest
     expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless' }]);
+  });
+
+  it('--loop prints the first failures and warnings of a check and the count of the rest; the result file holds them all', async () => {
+    const root = setupGame(ws, { 'server/tests/a.test.ts': "it('a', () => { expect(1).toBe(1); });\n" });
+    await openRun(2, { loop: { kinds: [{ iteration: 2, kind: 'fun' }] } });
+    serveClient();
+    const many = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ where: `${prefix}:${String(i + 1)}`, message: 'm', evidence: [] }));
+    vi.mocked(staticCheck).mockResolvedValueOnce({ name: 'static check', platform: null, result: 'fail', failures: many(23, 'f'), warnings: many(8, 'w') });
+    const lines = (await ogw(ws, ['check', 'g', '--loop'])).stdout.split('\n');
+    const at = lines.indexOf('static check: fail');
+    expect(lines.slice(at + 1, at + 21)).toEqual(many(20, 'f').map((f) => `  ${f.where} m`));
+    expect(lines.slice(at + 21, at + 28)).toEqual(['  3 more failures, all in the result file', '  warning w:1 m', '  warning w:2 m', '  warning w:3 m', '  warning w:4 m', '  warning w:5 m', '  3 more warnings, all in the result file']);
+    const file = JSON.parse(readFileSync(join(root, 'records/loops/create-1/check-2.json'), 'utf8')) as { checks: { name: string; failures: unknown[]; warnings: unknown[] }[] };
+    const check = file.checks.find((c) => c.name === 'static check');
+    expect(check?.failures).toHaveLength(23);
+    expect(check?.warnings).toHaveLength(8);
   });
 
   it('imports the client once, before any instance starts, and the regression test does not import again', async () => {

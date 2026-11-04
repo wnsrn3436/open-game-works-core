@@ -470,6 +470,15 @@ function notRegularFile(path: string): boolean {
 }
 
 /**
+ * `text` with each path into the agent folder `captures` changed to its path in `evidence`: absolute, or relative as
+ * `captures/` or `./captures/`. One pass, so that it does not scan the paths it writes.
+ */
+export function movedCapturePaths(text: string, captures: string, evidence: string): string {
+  const path = new RegExp(`${escapeRegExp(captures)}|(?<![\\p{L}\\p{N}_./\\\\-])(?:\\./)?captures/`, 'gu');
+  return text.replace(path, (match) => (match === captures ? evidence : `${evidence}/`));
+}
+
+/**
  * play, judge: moves the result file and `captures/` out of the agent folder, then removes the folder. A result file
  * that is not a regular file stays behind and fails the agent (`problem`).
  */
@@ -480,11 +489,7 @@ async function finishTemp(id: string, ctx: Context, meta: AgentMeta): Promise<{ 
   const problem = notRegularFile(meta.output) ? 'the result file is not a regular file' : null;
   if (problem === null && exists(meta.output)) {
     const text = await readFile(meta.output, 'utf8');
-    const evidence = meta.evidence;
-    const rewritten = text
-      .replace(new RegExp(escapeRegExp(captures), 'g'), evidence)
-      // the same path relative to the agent folder
-      .replace(/(^|[\s|`'"(])captures\//gm, (_, before: string) => `${before}${evidence}/`);
+    const rewritten = movedCapturePaths(text, captures, meta.evidence);
     await writeFileAtomic(meta.finalOutput, rewritten);
   }
   if (exists(captures)) await move(captures, meta.evidence);
