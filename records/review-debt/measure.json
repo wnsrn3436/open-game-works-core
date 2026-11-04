@@ -1,36 +1,5 @@
 {
   "target": "measure",
   "nextId": 6,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/src/commands/telemetry/lib/metrics.ts:208",
-      "problem": "`isMetric` uses `name in CALCS`, so names on `Object.prototype` count as metric names, and this line is unchanged in the range. Run: `rowProblems` of the metrics `constructor`, `toString`, `valueOf` and `__proto__` with min 0 and max 1 returns `[]`, so the `design target` static check passes them. Then `metricValue('constructor', samples)` returns the samples array, and `measureTargets` puts it in `value` with result `out`, `metricValue('toString', samples)` returns the string `[object Undefined]`, and `metricValue('__proto__', samples)` and `metricValue('valueOf', samples)` throw `TypeError`. `metricValue` at line 217 reads `CALCS[metric]` the same way. In `ogw loop evaluate`, the `TypeError` comes from `measureCollected` after the agents have ended, so no `evaluate-<iteration>.json` is written",
-      "foundBy": "measure round 1"
-    },
-    {
-      "id": "D2",
-      "location": "tools/test/commands/measure/measure.test.ts:175",
-      "problem": "No test goes through the `ogw.md` `## measure` failure \"the instance is not of that game\". `['measure', 'other', a]` only asserts a nonzero code, and that command also fails when `ctx.game('other')` fails. With the line `if (info.game !== game) throw` of `tools/src/commands/measure/api.ts:55` removed in a temporary copy, all tests of `test/commands/measure` still pass",
-      "foundBy": "measure round 1"
-    },
-    {
-      "id": "D3",
-      "location": "tools/src/commands/measure/api.ts:61",
-      "problem": "No test goes through the `ogw.md` `## measure` failure \"`get_state` fails\". With this line removed in a temporary copy, all tests of `test/commands/measure` still pass, and the collect would write the failure result as `state`. The `get_state failed` assertion at `tools/test/commands/instance/lib/units.test.ts:97` does not call this function",
-      "foundBy": "measure round 1"
-    },
-    {
-      "id": "D4",
-      "location": "tools/test/commands/measure/measure.test.ts:96",
-      "problem": "No test goes through the `ogw.md` `## measure` condition \"the calculation runs only when the game has an open run\". The `beforeAll` of `ogw measure` always opens a run, and no test under `tools/test/commands/measure` asserts `no open run for game`",
-      "foundBy": "measure round 1"
-    },
-    {
-      "id": "D5",
-      "location": "tools/src/commands/measure/api.ts:41",
-      "problem": "`parseTargets` converts `min` and `max` with `Number`, so a row that `rowProblems` accepts loses precision above 2^53, and this line is unchanged in the range. Run at HEAD: a `content.gold` row with min and max `9007199254740993` gives `min` and `max` `9007199254740992`, and `measureTargets` with `QAState` `content.gold` `9007199254740992` returns result `in`, although that value is below the `min` of the row. `measure-<iteration>.json` then also holds a `min` and `max` other than those of `design.md`",
-      "foundBy": "measure round 2"
-    }
-  ]
+  "items": []
 }
