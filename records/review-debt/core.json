@@ -1,48 +1,5 @@
 {
   "target": "core",
   "nextId": 8,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/src/commands/check/lib/regression.ts:178",
-      "problem": "`clientRegression` calls `gutRun` without `startLimitMs`, so a client regression test run of a game whose core settings have `UnitTestCore.startTimeLimitMs` and that never sends `PUT /started` is not ended at that limit and waits `runTimeLimitMs` plus the startup allowance, unlike `skills/client-core/modules/unit-test-core.md:137` and `skills/client-core/engines/godot.md:549` (\"A native run that did not start ends with a failure\"); it is in `ogw check`, not the `core` command",
-      "foundBy": "core round 3"
-    },
-    {
-      "id": "D2",
-      "location": "tools/src/commands/check/check.ts:78",
-      "problem": "`ogw check` with the regression check alone calls `regressionTest` with `{ godot, evidence, runTimeLimitMs: limit }` and no `startTimeLimitMs` (only `gameChecks`, tools/src/commands/check/lib/loop.ts:128, passes it after this range), so `clientRegression` passes `startLimitMs: null` to `gutRun` (tools/src/commands/check/lib/regression.ts:192), and a client regression test run of a game whose core settings have `UnitTestCore.startTimeLimitMs` and that never sends `PUT /started` waits `runTimeLimitMs` plus the startup allowance, unlike `skills/client-core/modules/unit-test-core.md:137` and `skills/client-core/engines/godot.md:549`. `startTimeLimitMs` is optional in `ClientRunOptions` (regression.ts:122), so the type check does not catch the missing caller; it is in `ogw check`, not the `core` command",
-      "foundBy": "core round 4"
-    },
-    {
-      "id": "D3",
-      "location": "tools/src/commands/check/lib/regression.ts:203",
-      "problem": "the did-not-start failure of the client regression test added in this range has no test: no test under tools/test/commands/check passes `startTimeLimitMs` or asserts `test run did not start within`; it is in `ogw check`, not the `core` command",
-      "foundBy": "core round 4"
-    },
-    {
-      "id": "D4",
-      "location": "tools/src/commands/loop/next.ts:21",
-      "problem": "`test evidence`: no test runs `ogw loop next` on a game whose core is not the core version of the harness (no test file outside tools/test/commands/core/lib/harness-core.test.ts refers to `requireHarnessCore` or its message `the specs of this harness are of core`), so deleting the call leaves the AGENTS.md `## repo` rule for `ogw loop next` untested",
-      "foundBy": "core round 6"
-    },
-    {
-      "id": "D5",
-      "location": "tools/src/commands/build/start.ts:134",
-      "problem": "`test evidence`: no test runs `ogw build start` on a game whose core at the checked commit is not the core version of the harness; deleting the `requireHarnessCore` call fails no test that refers to it",
-      "foundBy": "core round 6"
-    },
-    {
-      "id": "D6",
-      "location": "tools/src/commands/game/init.ts:41",
-      "problem": "`test evidence`: skills/game-setup/SKILL.md step 2 gives the draft `coreVersion` the core version of the harness; no test makes a tagged harness for `ogw game init`, so changing the line back to the highest release fails no test that refers to `core-v`",
-      "foundBy": "core round 6"
-    },
-    {
-      "id": "D7",
-      "location": "tools/src/commands/review/clear.ts:13",
-      "problem": "`data.notRemoved` of `ogw review clear` now holds the whole report lines of `clearReviews`, because commit 2a63664 moved the prefixes into `removeLeftAgentWorktrees`. With `--json`, a job branch with commits not in main puts `discarded: agent/<id>: ...` in `notRemoved` although that branch was removed, and a real leftover appears as `not removed: <what>` instead of `<what>`. Found by reading the code; `tools/test/commands/review/run-fix-jobs.test.ts` checks only stdout",
-      "foundBy": "core round 1"
-    }
-  ]
+  "items": []
 }
