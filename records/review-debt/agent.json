@@ -1,12 +1,18 @@
 {
   "target": "agent",
-  "nextId": 2,
+  "nextId": 3,
   "items": [
     {
       "id": "D1",
       "location": "tools/src/commands/step/step.ts:273",
       "problem": "`ogw step <instance> <ms> --count <n>` checks the play budget once before its first step, and `runSteps` (step.ts:178) sends the other steps without a check, so a call started before the budget ends goes on after it. tools/ogw.md:299 and :300 say `ogw step` of a play or judge agent fails once the budget has passed. A `step <n>` stream line (step.ts:224) goes through the same `runSteps`. Measured in a temporary copy with the fake client as a judge agent, 60 ms of budget left and `--count 1000`: exit code 0, 1000 steps sent, and the command ended 1110 ms after the budget ended. The same gap was closed for `ogw input --script` in this range. The code predates this range and belongs to the `step` target",
       "foundBy": "agent round 2"
+    },
+    {
+      "id": "D2",
+      "location": "tools/src/commands/check/check.ts:56",
+      "problem": "The line `<n> more failures, all in --json` and tools/ogw.md:224 name `--json` as where every failure is, but `ogw check` is a command that AGENTS.md `## rules` runs with `--background`, and `--json` does not reach that job. `prepare` in tools/src/lib/cli.ts takes `--json` out of the tokens, `startBackground` starts the job with `def.name` and `args.raw` only, so the job prints the text; `ogw job wait <id> --json` returns that same truncated text as `stdout` (tools/src/commands/job/wait.ts:27). So with `--static`, `--regression` and `--bot` in the background, failures past the 20th and warnings past the 5th cannot be read. `ogw core try` (tools/src/commands/core/try.ts:49) prints the same line through `coreTryChecks` and is also a `--background` command. Read from the code, not run",
+      "foundBy": "agent round 5"
     }
   ]
 }
