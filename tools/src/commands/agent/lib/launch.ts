@@ -185,6 +185,9 @@ export async function harnessGitDirs(ws: SandboxWorkspace, env: NodeJS.ProcessEn
  */
 const OTHER_GAMES_BLOCKED_ROLES: readonly string[] = ['content', 'translation', 'server-hardening', 'client-hardening'];
 
+/** The OSes `sandboxed` runs on. */
+const SANDBOX_PLATFORMS: readonly NodeJS.Platform[] = ['darwin', 'linux'];
+
 /** The folders of the other games: repos under `paths.games`, and worktree folders under `paths.worktrees` but core's. */
 export async function otherGameFolders(ws: SandboxWorkspace, game: string): Promise<string[]> {
   const under = async (parent: string, keep: readonly string[]): Promise<string[]> => {
@@ -376,18 +379,24 @@ export async function cliToRun(
   const command = agentCliCommand(agent);
   if (!SANDBOXED_ROLES.includes(role)) {
     const env = { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) };
-    const others = game !== null && OTHER_GAMES_BLOCKED_ROLES.includes(role) ? await otherGameFolders(ws, game) : [];
+    const blocksOthers = game !== null && OTHER_GAMES_BLOCKED_ROLES.includes(role) && SANDBOX_PLATFORMS.includes(process.platform);
+    const others = blocksOthers ? await otherGameFolders(ws, game) : [];
     if (others.length === 0) return { command, env, profileFolder: null, brokerCommand: null, brokerWorker: null };
     const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
-    const profileFile = join(profileFolder, 'sandbox.sb');
-    await writeFile(profileFile, macosFoldersProfile(others));
-    return {
-      command: sandboxed(command, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false }),
-      env,
-      profileFolder,
-      brokerCommand: null,
-      brokerWorker: null,
-    };
+    try {
+      const profileFile = join(profileFolder, 'sandbox.sb');
+      await writeFile(profileFile, macosFoldersProfile(others));
+      return {
+        command: sandboxed(command, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false }),
+        env,
+        profileFolder,
+        brokerCommand: null,
+        brokerWorker: null,
+      };
+    } catch (error) {
+      await rm(profileFolder, { recursive: true, force: true });
+      throw error;
+    }
   }
   const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
   try {

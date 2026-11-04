@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hardeningRecords } from '../../../src/commands/loop/lib/findings.ts';
@@ -242,8 +242,8 @@ describe('ogw agent: content', () => {
   });
 });
 
-describe.runIf(process.platform === 'darwin')('ogw agent: the other games', () => {
-  it('a content agent and what it starts use its game and core worktrees, and neither reads nor writes the other game repos and worktrees', async () => {
+describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('ogw agent: the other games', () => {
+  it('a content agent and what it starts use its game and core worktrees, and neither reads nor changes the other game repos and worktrees', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'own.txt': 'own', 'records/loops/r1/content-input-1.md': '## request\nnone\n' });
     const other = makeGame(ws, 'other', { 'settings.json': {}, 'secret.txt': 'hidden' });
@@ -264,16 +264,17 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the other games', () =
       "const open = (f) => { try { f(); return true; } catch { return false; } };",
       'const result = {};',
       'for (const [name, path] of Object.entries(paths)) {',
-      '  result[name] = { read: open(() => fs.readFileSync(path)), child: open(() => execFileSync(\'/bin/cat\', [path], { stdio: \'ignore\' })), write: open(() => fs.appendFileSync(path, \'x\')) };',
+      '  result[name] = { read: open(() => fs.readFileSync(path)), child: open(() => execFileSync(\'/bin/cat\', [path], { stdio: \'ignore\' })) };',
+      '  open(() => fs.appendFileSync(path, \'x\'));',
       '}',
-      `result.otherFolder = open(() => fs.readdirSync(${JSON.stringify(other)}));`,
+      `result.otherFolder = open(() => { if (fs.readdirSync(${JSON.stringify(other)}).length === 0) throw new Error('empty'); });`,
       'fs.writeFileSync(output, JSON.stringify(result));',
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'records/loops/r1/content-input-1.md')], fake.env, root);
     expect(waited.code).toBe(0);
-    const all = { read: true, child: true, write: true };
-    const none = { read: false, child: false, write: false };
+    const all = { read: true, child: true };
+    const none = { read: false, child: false };
     expect(JSON.parse(readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8'))).toEqual({
       own: all,
       ownWorktree: all,
@@ -282,7 +283,9 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the other games', () =
       otherWorktree: none,
       otherFolder: false,
     });
+    expect(readFileSync(paths.own, 'utf8')).toBe('ownx');
     expect(readFileSync(paths.other, 'utf8')).toBe('hidden');
+    expect(readFileSync(paths.otherWorktree, 'utf8')).toBe('a');
     expect(fake.calls()[0]?.argv).toContain('--session-id');
   });
 
@@ -304,6 +307,29 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the other games', () =
     // `resource` runs local models in their own sandbox, which macOS does not start inside another
     expect(await run('resource', 'g')).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
     for (const role of ['core', 'review']) expect(await run(role, null)).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
+  });
+
+  it('runs on Linux with the other games on an empty mount and the host processes in view, and starts without it where no sandbox runs', async () => {
+    const ws = makeWorkspace();
+    makeGame(ws, 'g', { 'settings.json': {} });
+    makeGame(ws, 'other', { 'settings.json': {} });
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const workspace = await ctx.workspace();
+    const agent: AgentSettings = { cli: 'claude-code', model: 'm', effort: 'high' };
+    const real = process.platform;
+    const on = async (platform: NodeJS.Platform) => {
+      Object.defineProperty(process, 'platform', { value: platform });
+      try {
+        return await cliToRun(ctx, 'content', agent, workspace, null, null, null, 'g');
+      } finally {
+        Object.defineProperty(process, 'platform', { value: real });
+      }
+    };
+    const linux = await on('linux');
+    expect(linux.command.cmd).toBe('bwrap');
+    expect(linux.command.args.slice(0, 5)).toEqual(['--dev-bind', '/', '/', '--tmpfs', realpathSync(join(ws.games, 'other'))]);
+    expect(linux.command.args).not.toContain('--unshare-pid');
+    expect(await on('win32')).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
   });
 });
 
