@@ -1,24 +1,5 @@
 {
   "target": "review",
   "nextId": 4,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/src/commands/core/test.ts:408",
-      "problem": "The run log summary of `ogw core test` gets `screenLocked: true`, and `ogw agent merge` reads it at tools/src/commands/agent/lib/merge.ts:252. tools/ogw.md:136 defines that summary as `{\"tests\": <test count>, \"passed\": <passed count>}` only, so the summary differs from its defining document.",
-      "foundBy": "review round 1"
-    },
-    {
-      "id": "D2",
-      "location": "tools/src/commands/core/test.ts:407",
-      "problem": "No test fails when the `screenLocked` flag is removed from `ogw core test`. tools/test/commands/agent/merge-core-test.test.ts:65 writes the flag into a fake run log, and tools/test/commands/core/test.test.ts:108 runs a locked screen but does not assert the flag (`grep -rn screenLocked tools/test` shows no assert on it). The path from a real locked run to `ogw agent merge` accepting it has no test.",
-      "foundBy": "review round 1"
-    },
-    {
-      "id": "D3",
-      "location": "tools/src/commands/core/release.ts:173",
-      "problem": "`data` of `ogw core release` has no `left`, and `--json` prints only `data` (tools/src/lib/cli.ts:48), so `ogw core release <version> --json` loses the `not removed:` lines that skills/core/command.md:25 requires, and the `discarded:` lines with the sha they carry.",
-      "foundBy": "review round 1"
-    }
-  ]
+  "items": []
 }
