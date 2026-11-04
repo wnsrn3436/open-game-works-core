@@ -46,10 +46,16 @@ async function binaryData(ctx: Context, game: GameRepo): Promise<void> {
   await binaryBuild(ctx, game, 'data tool binary build failed; run ogw data and commit, then check again');
 }
 
-function checkText(check: CheckResult): string[] {
+/** The failures and warnings of one check that the text prints; the result file and `--json` hold them all. */
+const TEXT_FAILURES = 20;
+const TEXT_WARNINGS = 5;
+
+function checkText(check: CheckResult, allIn = '--json'): string[] {
   const lines = [`${check.name}${check.platform === null ? '' : ` (${check.platform})`}: ${check.result}`];
-  for (const f of check.failures) lines.push(`  ${f.where} ${f.message}`.trimEnd(), ...f.evidence.map((path) => `    ${path}`));
-  for (const w of check.warnings) lines.push(`  warning ${w.where} ${w.message}`.trimEnd());
+  for (const f of check.failures.slice(0, TEXT_FAILURES)) lines.push(`  ${f.where} ${f.message}`.trimEnd(), ...f.evidence.map((path) => `    ${path}`));
+  if (check.failures.length > TEXT_FAILURES) lines.push(`  ${String(check.failures.length - TEXT_FAILURES)} more failures, all in ${allIn}`);
+  for (const w of check.warnings.slice(0, TEXT_WARNINGS)) lines.push(`  warning ${w.where} ${w.message}`.trimEnd());
+  if (check.warnings.length > TEXT_WARNINGS) lines.push(`  ${String(check.warnings.length - TEXT_WARNINGS)} more warnings, all in ${allIn}`);
   if (check.hostLoad) {
     const load = check.hostLoad;
     lines.push(`  hostLoad cpuMaxPercent ${String(load.cpuMaxPercent)} memoryMaxPercent ${String(load.memoryMaxPercent)} instancesMax ${String(load.instancesMax)}`);
@@ -96,7 +102,7 @@ async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql'
   if (importFailure !== null) {
     const failure = [{ where: 'client/project.godot:1', message: `the client import failed: ${importFailure}`, evidence: [] }];
     const checks = [checkResult('no blocker', null, failure), checkResult('full flow', null, failure)];
-    return { exitCode: 1, text: checks.flatMap(checkText).join('\n'), data: { checks }, summary: summary(checks) };
+    return { exitCode: 1, text: checks.flatMap((check) => checkText(check)).join('\n'), data: { checks }, summary: summary(checks) };
   }
   const scenario = await readScenario(game.root);
   const slots = await slotsOf(ctx);
@@ -110,13 +116,13 @@ async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql'
     if (checks.every((c) => c.result === 'pass')) await rm(dir, { recursive: true, force: true });
   }
   const passed = checks.length > 0 && checks.every((c) => c.result === 'pass');
-  const lines = [...checks.flatMap(checkText), ...(passed ? [] : [`evidence: ${dir}`])];
+  const lines = [...checks.flatMap((check) => checkText(check)), ...(passed ? [] : [`evidence: ${dir}`])];
   return { exitCode: passed ? 0 : 1, text: lines.join('\n'), data: { checks, ...(passed ? {} : { evidence: dir }) }, summary: summary(checks) };
 }
 
 async function loop(ctx: Context, game: GameRepo, settings: GameSettings, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
   const outcome = await loopCheck(ctx, game, settings, { godot, db, ...timing });
-  const text = [...outcome.checks.flatMap(checkText), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
+  const text = [...outcome.checks.flatMap((check) => checkText(check, 'the result file')), `result file: ${outcome.file}`, `gate: ${outcome.gate}`];
   return {
     exitCode: outcome.gate === 'pass' ? 0 : 1,
     text: text.join('\n'),
@@ -134,7 +140,7 @@ export async function coreTryChecks(ctx: Context, game: GameRepo, evidence: Evid
   const godot = await gameEngine(ctx, game, settings);
   await binaryData(ctx, game);
   const checks = await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, 'core try');
-  return { checks, lines: checks.flatMap(checkText) };
+  return { checks, lines: checks.flatMap((check) => checkText(check)) };
 }
 
 async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult> {

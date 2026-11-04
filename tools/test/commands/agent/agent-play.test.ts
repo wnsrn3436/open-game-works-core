@@ -26,14 +26,14 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
       "let forged = 'no'; try { fs.writeFileSync(runLog, '{\"runs\": []}'); forged = 'yes'; } catch {}",
       "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png');",
       'const guide = JSON.parse(fs.readFileSync(input, \'utf8\')).playGuide;',
-      "fs.writeFileSync(output, 'blocked ' + blocked + '\\nrun log written ' + forged + '\\nguide ' + fs.readFileSync(guide, 'utf8') + 'capture ' + process.cwd() + '/captures/shot.png\\n');",
+      "fs.writeFileSync(output, 'blocked ' + blocked + '\\nrun log written ' + forged + '\\nguide ' + fs.readFileSync(guide, 'utf8') + 'capture ' + process.cwd() + '/captures/shot.png\\n| 1 | captures/shot.png\\nscreencaptures/shot.png\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
     const { id, waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
     const final = join(root, 'records/loops/r1/play-1-1.md');
     expect(waited).toMatchObject({ code: 0, stdout: `${final}\n` });
-    expect(readFileSync(final, 'utf8')).toBe(`blocked yes\nrun log written no\nguide # guide\ncapture ${join(evidenceDir, 'play-1-1')}/shot.png\n`);
+    expect(readFileSync(final, 'utf8')).toBe(`blocked yes\nrun log written no\nguide # guide\ncapture ${join(evidenceDir, 'play-1-1')}/shot.png\n| 1 | ${join(evidenceDir, 'play-1-1')}/shot.png\nscreencaptures/shot.png\n`);
     expect(readFileSync(join(evidenceDir, 'play-1-1', 'shot.png'), 'utf8')).toBe('png');
     const call = fake.calls()[0];
     expect(existsSync(call?.cwd as string)).toBe(false);

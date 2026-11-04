@@ -480,7 +480,11 @@ async function finishTemp(id: string, ctx: Context, meta: AgentMeta): Promise<{ 
   const problem = notRegularFile(meta.output) ? 'the result file is not a regular file' : null;
   if (problem === null && exists(meta.output)) {
     const text = await readFile(meta.output, 'utf8');
-    const rewritten = text.replace(new RegExp(escapeRegExp(captures), 'g'), meta.evidence);
+    const evidence = meta.evidence;
+    const rewritten = text
+      .replace(new RegExp(escapeRegExp(captures), 'g'), evidence)
+      // the same path relative to the agent folder
+      .replace(/(^|[\s|`'"(])captures\//gm, (_, before: string) => `${before}${evidence}/`);
     await writeFileAtomic(meta.finalOutput, rewritten);
   }
   if (exists(captures)) await move(captures, meta.evidence);

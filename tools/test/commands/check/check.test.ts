@@ -241,6 +241,21 @@ describe('ogw check modes', () => {
     expect(staticCheck).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ name: 'g' }), {});
   });
 
+  it('prints the first failures and warnings of a check and the count of the rest; --json holds them all', async () => {
+    setupGame(ws);
+    const many = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ where: `${prefix}:${String(i + 1)}`, message: 'm', evidence: [] }));
+    vi.mocked(staticCheck).mockResolvedValue({ name: 'static check', platform: null, result: 'fail', failures: many(23, 'f'), warnings: many(8, 'w') });
+    const run = await ogw(ws, ['check', 'g', '--static']);
+    const lines = run.stdout.trimEnd().split('\n');
+    expect(lines.slice(0, 2)).toEqual(['static check: fail', '  f:1 m']);
+    expect(lines[20]).toBe('  f:20 m');
+    expect(lines.slice(21)).toEqual(['  3 more failures, all in --json', '  warning w:1 m', '  warning w:2 m', '  warning w:3 m', '  warning w:4 m', '  warning w:5 m', '  3 more warnings, all in --json']);
+    const json = await ogw(ws, ['check', 'g', '--static', '--json']);
+    const data = JSON.parse(json.stdout) as { checks: { failures: unknown[]; warnings: unknown[] }[] };
+    expect(data.checks[0]?.failures).toHaveLength(23);
+    expect(data.checks[0]?.warnings).toHaveLength(8);
+  });
+
   it('--regression runs the client regression test of a path and removes its evidence folder unless a failure points into it', async () => {
     setupGame(ws);
     const temp = join(ws.harness, '.git', 'ogw-temp');

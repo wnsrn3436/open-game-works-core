@@ -292,4 +292,17 @@ describe('ogw data', () => {
     write(join(root, 'fake-data-tool.json'), {});
     expect(await ogw(ws, ['data', 'g'])).toEqual({ code: 0, stdout: '', stderr: '' });
   });
+
+  it('prints the first WARN lines of each code and the count of the rest, every ERROR line, and all of them with --json', async () => {
+    const ws = makeWorkspace();
+    makeRelease(ws, '1.0.0');
+    const root = makeGame(ws, 'g', { 'settings.json': GAME_SETTINGS });
+    const warns = Array.from({ length: 7 }, (_, i) => `data/glossary.csv:${String(i + 1)}:5 WARN translation_missing m`);
+    const errors = Array.from({ length: 7 }, (_, i) => `data/a.csv:${String(i + 1)}:1 ERROR structure s`);
+    write(join(root, 'fake-data-tool.json'), { stdout: `${[...warns, ...errors, 'data/b.csv:1:1 WARN other o'].join('\n')}\n`, exitCode: 1 });
+    const run = await ogw(ws, ['data', 'g']);
+    expect(run.stdout.trimEnd().split('\n')).toEqual([...warns.slice(0, 5), ...errors, 'data/b.csv:1:1 WARN other o', '2 more WARN translation_missing, all in --json']);
+    const json = JSON.parse((await ogw(ws, ['data', 'g', '--json'])).stdout) as { lines: unknown[] };
+    expect(json.lines).toHaveLength(15);
+  });
 });

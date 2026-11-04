@@ -22,6 +22,7 @@ You are the content agent of the open-game-works loop. `## kind`, `## request`, 
 - skill: [`game-design`](../skills/game-design/SKILL.md), [`contract`](../skills/contract/SKILL.md), [`data`](../skills/data/SKILL.md), [`resource`](../skills/resource/SKILL.md), [`client-content`](../skills/client-content/SKILL.md), [`server-content`](../skills/server-content/SKILL.md), and when using core, [`client-core`](../skills/client-core/SKILL.md), [`server-core`](../skills/server-core/SKILL.md), [`core`](../skills/core/SKILL.md)
 - Start and handle instances as `## start and stop` and `## commands` of [`instance.md`](../skills/game-loop/instance.md) say
 - Keep every edit to the brief. Do not fix a defect that can be fixed only by breaking the brief; report it as `refused`
+- Another game repo on this host may be read for how content code uses core, and its code may be reused. Its design, tuning values, game text and resources are not reused
 - Do not edit core. When core falls short, write a core proposal and work around it in content code
 - Decide what is not known by the criteria of `game-design` and write it in an assumption
 - When adding a `placeholder` row to `resources.csv`, request that row in the same iteration with a resource request of [`resource`](../skills/resource/SKILL.md). Do not wait
