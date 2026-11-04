@@ -104,7 +104,7 @@ The transport handles the matchmaker connection and the connections between part
 - RealtimeCore judges time limits. The transport does not
 - The transport does not raise peer connected or peer lost for a participant index closed with `close_peer` until `close` or `disconnect`
 - Connection addresses and NAT traversal information stay only inside the transport. They are not put in `MatchInfo`, events or logs
-- RealtimeCore calls `poll` once per frame and handles the received notifications in the order received. It also calls it during `TimeCore` pause. When `MatchState` becomes `None` inside `poll`, the remaining notifications are discarded while it stays `None`, except room updated, room kicked and matchmaker lost, which are handled as `### room` says. The transport reads the frames of a `poll` before these notifications, so the `close` of that change has already left a match found of the same `poll`. When `leave_room` is called inside `poll`, the remaining room updated, room failed and room kicked of that `poll` are discarded, because they belong to the room that was left. When it leaves `MatchState` at `None`, all the remaining notifications of that `poll` are discarded. A match in `Connecting` or `Playing` goes on after `leave_room`, so its other notifications stay handled
+- RealtimeCore calls `poll` once per frame and handles the received notifications in the order received. It also calls it during `TimeCore` pause. When `MatchState` becomes `None` inside `poll`, the remaining notifications are discarded while it stays `None`, except room updated, room kicked and matchmaker lost, which are handled as `### room` says. The transport reads the frames of a `poll` before these notifications, so the `close` of that change has already left a match found of the same `poll`. A member whose room returned to `Matching` in that `poll` still takes that match found, has nothing to connect, and fails at the connect time limit. When `leave_room` is called inside `poll`, the remaining room updated, room failed and room kicked of that `poll` are discarded, because they belong to the room that was left. When it leaves `MatchState` at `None`, all the remaining notifications of that `poll` are discarded. A match in `Connecting` or `Playing` goes on after `leave_room`, so its other notifications stay handled
 - RealtimeCore passes `false` as the lockstep flag of `start_matching` and `open_room`. The lockstep transport changes that value
 - `lockstep_time` of the P2P transport is always none
 
@@ -296,7 +296,7 @@ On receiving matchmaker lost, the module does the following with its error code 
 | `match_time_ms` when there is no server time | int64 minimum | none |
 | match found received when not `Matching` (except one a non-host member of a room receives in `None`) | discarded. In `None`, transport `close` | warn |
 | `MATCH_FOUND` received while the P2P transport holds a match | `MATCH_LEAVE` of that match, nothing raised | warn |
-| `connect_peer` failed | peer lost at the next `poll` | warn |
+| `connect_peer` failed | peer lost at the next `poll` | warn, once per match |
 | `PEER_SIGNAL`, `PEER_REJOINED` received with no match | discarded | none |
 | malformed `PEER_SIGNAL` `payload` | discarded | warn |
 | `PEER_SIGNAL` with a connection attempt number other than the current connection's | discarded | warn |

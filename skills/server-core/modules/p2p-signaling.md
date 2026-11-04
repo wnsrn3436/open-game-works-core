@@ -29,6 +29,7 @@ Gives connection information (STUN, relay) so that match participants make P2P c
 | `open_match_session` | `match_id`, `players`(list of `MatchPlayer`), connection per participant, `Transport`, `expires_at` | list of participant changes | none. Throws when a session of that `match_id` already exists, the same connection appears twice, or the connection count differs from the `players` count | `matchmaker` |
 | `handle_frame` | connection, `MatchmakerFrame` | participant change or none | none. A frame that does not meet the conditions is dropped and none is returned | `matchmaker` |
 | `connection_closed` | connection | participant change or none | none | `matchmaker` |
+| `is_bound` | connection | `true` when that connection is bound to a match session | none | `matchmaker` |
 
 - connection: an authenticated `/realtime` WebSocket that `matchmaker` passes. In TypeScript it is `{ user_id: bigint; send(frame: MatchmakerFrame): void; close(): void }`, and connections are told apart by object identity
 - connection per participant: list of connections in the same order as `players`. The `index` of the i-th element of `players` is i
