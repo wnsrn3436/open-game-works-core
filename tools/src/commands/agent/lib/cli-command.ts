@@ -231,6 +231,15 @@ export function macosProfile(blocked: Blocked): string {
 }
 
 /**
+ * The macOS profile that blocks only `folders`: for an agent of one game, which starts instances, window clients and
+ * other processes that `macosProfile` would cut off.
+ */
+export function macosFoldersProfile(folders: readonly string[]): string {
+  const rules = bothForms(folders).map((path) => `(subpath ${sbString(path)})`).join(' ');
+  return ['(version 1)', '(allow default)', `(deny file-read* file-write* ${rules})`, ''].join('\n');
+}
+
+/**
  * Linux: makes each blocked folder and file that does not exist yet (an empty folder, an empty file), so that each
  * gets its mount at its real path and what a process outside the sandbox writes there later stays blocked. Each
  * read-only, writable, excepted and hidden folder is made when missing; nothing is made in a hidden one. Sockets and

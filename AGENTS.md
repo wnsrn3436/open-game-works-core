@@ -262,6 +262,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 
 ## rules
 
+- An agent that works on a game does not read another game repo or its worktrees on this host, for any purpose. How game code uses core is in the specs and in the benchmark game `open-game-works-core-impl/benchmark/<engine>/`
 - Time is in UTC. Timestamps are handled as Unix milliseconds and durations as milliseconds. Conversion to the local timezone is done only for display
 - A time interval includes its start time and does not include its end time. Reaching a time means that the current time is that time or later
 - What is not known is not made up. Inside the loop, the lead agent and the content agent write an assumption in `records/` and continue, and a resource sub-agent or translation sub-agent writes it in its result file and continues. Outside the loop, the lead agent asks the human. When asking, it gives a recommendation together with its evidence (document, specification, reproduced cause), and asks separately per topic. When there is no evidence, it states that fact

@@ -36,6 +36,7 @@ import {
   userServicesBlocked,
   withoutSessionFiles,
   withSession,
+  macosFoldersProfile,
   type Blocked,
   type CliCommand,
 } from './cli-command.ts';
@@ -176,6 +177,22 @@ function harnessRepos(ws: SandboxWorkspace): string[] {
 export async function harnessGitDirs(ws: SandboxWorkspace, env: NodeJS.ProcessEnv): Promise<string[]> {
   const dirs = await Promise.all(harnessRepos(ws).map((repo) => commonDir(repo, { env })));
   return [...new Set(dirs)];
+}
+
+/**
+ * The roles of one game that run with the other games blocked, besides play and judge. Not `resource`: `ogw generation run`
+ * runs its local models in a sandbox of their own, and macOS does not start a sandbox inside another.
+ */
+const OTHER_GAMES_BLOCKED_ROLES: readonly string[] = ['content', 'translation', 'server-hardening', 'client-hardening'];
+
+/** The folders of the other games: repos under `paths.games`, and worktree folders under `paths.worktrees` but core's. */
+export async function otherGameFolders(ws: SandboxWorkspace, game: string): Promise<string[]> {
+  const under = async (parent: string, keep: readonly string[]): Promise<string[]> => {
+    if (!exists(parent)) return [];
+    const entries = await readdir(parent, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory() && !keep.includes(e.name)).map((e) => join(parent, e.name));
+  };
+  return [...(await under(ws.games, [game])), ...(await under(ws.worktrees, [game, '_core']))];
 }
 
 /**
@@ -331,7 +348,7 @@ export interface CliToRun {
   command: CliCommand;
   /** The environment the command runs with. */
   env: NodeJS.ProcessEnv;
-  /** play, judge: folder with the sandbox profiles in the temp folder of ogw; the caller removes it. */
+  /** A sandboxed role, or a role with other games to block: folder with the sandbox profiles in the temp folder of ogw; the caller removes it. */
   profileFolder: string | null;
   /** play, judge with a broker: the command that runs a forwarded argv in the broker sandbox. */
   brokerCommand: ((argv: readonly string[]) => CliCommand) | null;
@@ -344,7 +361,7 @@ export interface CliToRun {
  * default config folder (the user's login) and no session file of its own. `cliLog` is the file the CLI output goes
  * to when it is under the agent log folder (`ogw agent`), else null. `socket` is the broker socket (`ogw agent`),
  * else null. `folder` is the folder the agent starts in (`ogw agent`, the play and judge run of `ogw env check`), whose
- * `tmp/` the CLI gets as `TMPDIR`, else null.
+ * `tmp/` the CLI gets as `TMPDIR`, else null. `game` is the game of the agent, whose role blocks the other games.
  */
 export async function cliToRun(
   ctx: Context,
@@ -354,10 +371,23 @@ export async function cliToRun(
   cliLog: string | null,
   socket: string | null = null,
   folder: string | null = null,
+  game: string | null = null,
 ): Promise<CliToRun> {
   const command = agentCliCommand(agent);
   if (!SANDBOXED_ROLES.includes(role)) {
-    return { command, env: { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) }, profileFolder: null, brokerCommand: null, brokerWorker: null };
+    const env = { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) };
+    const others = game !== null && OTHER_GAMES_BLOCKED_ROLES.includes(role) ? await otherGameFolders(ws, game) : [];
+    if (others.length === 0) return { command, env, profileFolder: null, brokerCommand: null, brokerWorker: null };
+    const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
+    const profileFile = join(profileFolder, 'sandbox.sb');
+    await writeFile(profileFile, macosFoldersProfile(others));
+    return {
+      command: sandboxed(command, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false }),
+      env,
+      profileFolder,
+      brokerCommand: null,
+      brokerWorker: null,
+    };
   }
   const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
   try {
@@ -640,7 +670,7 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   const afterEnv = await afterCliEnv(ctx.env, meta);
   // `runWithBroker` removes the sandbox profile folder this makes
   const agent = jobAgentSettings(meta, () => agentSettings(settings, meta.role));
-  const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder);
+  const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder, meta.game);
   if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = withSession(agentCli(agent), toRun.command, meta.session ?? null);
   const cli = await runWithBroker(id, ctx, meta, toRun, { prompt, logPath, socket, runLog: meta.runLog, afterEnv });
   const written = await wroteOutput(meta.output, before);

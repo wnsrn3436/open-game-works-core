@@ -11,7 +11,9 @@ import { createContext } from '../../../src/lib/command.ts';
 import { startAgentJob } from '../../../src/commands/agent/api.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { privateTempDir } from '../../../src/lib/secret-files.ts';
-import { ogw, commitAll, gitEnv, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
+import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/launch.ts';
+import type { AgentSettings } from '../../../src/lib/settings.ts';
+import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
@@ -237,6 +239,83 @@ describe('ogw agent: content', () => {
     const fake = fakeAgentCli(ws, WRITE_OUTPUT);
     const run = await ogw(ws, ['agent', 'content', '--game', 'g', '--input', 'in.md'], { env: fake.env, cwd: root });
     expect(run).toMatchObject({ code: 0, stdout: `${join(root, 'records/loops/r1/content-1.md')}\n` });
+  });
+});
+
+describe.runIf(process.platform === 'darwin')('ogw agent: the other games', () => {
+  it('a content agent and what it starts use its game and core worktrees, and neither reads nor writes the other game repos and worktrees', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'own.txt': 'own', 'records/loops/r1/content-input-1.md': '## request\nnone\n' });
+    const other = makeGame(ws, 'other', { 'settings.json': {}, 'secret.txt': 'hidden' });
+    const file = (folder: string): string => {
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'a.txt'), 'a');
+      return join(folder, 'a.txt');
+    };
+    const paths = {
+      own: join(root, 'own.txt'),
+      ownWorktree: file(join(ws.worktrees, 'g', 'agent-1')),
+      core: file(join(ws.worktrees, '_core', 'agent-2')),
+      other: join(other, 'secret.txt'),
+      otherWorktree: file(join(ws.worktrees, 'other', 'agent-3')),
+    };
+    const behavior = [
+      `const paths = ${JSON.stringify(paths)};`,
+      "const open = (f) => { try { f(); return true; } catch { return false; } };",
+      'const result = {};',
+      'for (const [name, path] of Object.entries(paths)) {',
+      '  result[name] = { read: open(() => fs.readFileSync(path)), child: open(() => execFileSync(\'/bin/cat\', [path], { stdio: \'ignore\' })), write: open(() => fs.appendFileSync(path, \'x\')) };',
+      '}',
+      `result.otherFolder = open(() => fs.readdirSync(${JSON.stringify(other)}));`,
+      'fs.writeFileSync(output, JSON.stringify(result));',
+    ].join('\n');
+    const fake = fakeAgentCli(ws, behavior);
+    const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'records/loops/r1/content-input-1.md')], fake.env, root);
+    expect(waited.code).toBe(0);
+    const all = { read: true, child: true, write: true };
+    const none = { read: false, child: false, write: false };
+    expect(JSON.parse(readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8'))).toEqual({
+      own: all,
+      ownWorktree: all,
+      core: all,
+      other: none,
+      otherWorktree: none,
+      otherFolder: false,
+    });
+    expect(readFileSync(paths.other, 'utf8')).toBe('hidden');
+    expect(fake.calls()[0]?.argv).toContain('--session-id');
+  });
+
+  it('wraps the roles of one game that run no local model when another game exists, and no other role or a game alone', async () => {
+    const ws = makeWorkspace();
+    makeGame(ws, 'g', { 'settings.json': {} });
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const workspace = await ctx.workspace();
+    const agent: AgentSettings = { cli: 'claude-code', model: 'm', effort: 'high' };
+    const run = (role: string, game: string | null) => cliToRun(ctx, role, agent, workspace, null, null, null, game);
+    expect(await run('content', 'g')).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
+    makeGame(ws, 'other', { 'settings.json': {} });
+    for (const role of ['content', 'translation', 'server-hardening', 'client-hardening']) {
+      const wrapped = await run(role, 'g');
+      expect(wrapped.command.cmd).toBe('sandbox-exec');
+      expect(readFileSync(join(wrapped.profileFolder as string, 'sandbox.sb'), 'utf8')).toContain(join(ws.games, 'other'));
+      expect(readFileSync(join(wrapped.profileFolder as string, 'sandbox.sb'), 'utf8')).not.toContain(join(ws.games, 'g'));
+    }
+    // `resource` runs local models in their own sandbox, which macOS does not start inside another
+    expect(await run('resource', 'g')).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
+    for (const role of ['core', 'review']) expect(await run(role, null)).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
+  });
+});
+
+describe('otherGameFolders', () => {
+  it('lists the folders of the other games, not its own, core worktrees or files, and nothing for a missing folder', async () => {
+    const ws = makeWorkspace();
+    const dirs = [join(ws.games, 'g'), join(ws.games, 'other'), join(ws.worktrees, 'g'), join(ws.worktrees, 'other'), join(ws.worktrees, '_core')];
+    for (const dir of dirs) mkdirSync(dir, { recursive: true });
+    writeFileSync(join(ws.games, '.DS_Store'), '');
+    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees };
+    expect(await otherGameFolders(folders, 'g')).toEqual([join(ws.games, 'other'), join(ws.worktrees, 'other')]);
+    expect(await otherGameFolders({ ...folders, games: join(ws.root, 'none'), worktrees: join(ws.root, 'none') }, 'g')).toEqual([]);
   });
 });
 
