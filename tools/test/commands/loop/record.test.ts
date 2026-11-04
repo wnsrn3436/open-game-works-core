@@ -136,6 +136,16 @@ describe('ogw loop findings', () => {
     expect(git(g.root, 'status', '--porcelain')).toBe(`?? ${R}/findings-1.json`);
   });
 
+  it('reads the integer bounds above 2^53 of measure-<n>.json with their digits', async () => {
+    const { g, sha } = await iterationOne();
+    // the digits as `ogw measure` writes them: a JSON number that a JS number would round
+    write(g.root, `${R}/measure-1.json`, `{"commit": "${sha}", "targets": [{"metric": "content.gold", "min": 9007199254740993, "max": 9007199254740995, "value": 9007199254740992, "result": "out", "data": null}]}\n`);
+    commit(g.root);
+    expect((await ogw(g.ws, ['loop', 'findings', 'g'])).code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
+    expect(file.findings.filter((f) => f.where === 'content.gold').map((f) => f.what)).toEqual(['value 9007199254740992 out of 9007199254740993..9007199254740995']);
+  });
+
   it('makes judge findings of the failed vs reference rows with the judge result path, for main and success judges', async () => {
     const { g, sha } = await iterationOne();
     const reference = (side: string): string => `## vs reference\n\n| instance | element | result | reason | evidence |\n|---|---|---|---|---|\n| ${side} | \`no friction\` | fail | four taps first | frames |\n\n## defects\n\nnone\n`;
