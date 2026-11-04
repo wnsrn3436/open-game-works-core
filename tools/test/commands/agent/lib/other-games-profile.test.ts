@@ -8,7 +8,7 @@ import { makeGame, makeWorkspace } from '../../../helpers/workspace.ts';
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
   const writeFile: typeof original.writeFile = (path, ...rest) =>
-    String(path).endsWith('sandbox.sb') ? Promise.reject(new Error('disk full')) : original.writeFile(path, ...rest);
+    typeof path === 'string' && path.endsWith('sandbox.sb') ? Promise.reject(new Error('disk full')) : original.writeFile(path, ...rest);
   return { ...original, writeFile };
 });
 
