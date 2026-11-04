@@ -1,11 +1,11 @@
 {
   "target": "build",
-  "nextId": 2,
+  "nextId": 3,
   "items": [
     {
-      "id": "D1",
-      "location": "tools/src/commands/loop/next.ts:21",
-      "problem": "AGENTS.md `## repo` says `ogw loop next` fails unless the game is on the core version of the harness, and no loop test makes a `core-v` tag in the test harness, so removing that call fails no test (`grep core-v tools/test` finds only tools/test/commands/core/)",
+      "id": "D2",
+      "location": "tools/src/commands/core/lib/harness-core.ts:63",
+      "problem": "AGENTS.md `## repo` says the failure of a game outside the harness core names two ways out (`ogw core upgrade`, or the harness at the tag `core-v<core version of the game>`), and `skills/game-loop/SKILL.md:54` has the lead agent report those two, but for a game on a newer core `requireHarnessCore` passes `upgradable` null, so `remedy` names only the harness tag (`requireSupportedCore` at line 45 to 46 does the same). Reproduced by `tools/test/commands/loop/start.test.ts:351-353`, which asserts that one-way text for game core 1.0.0 on harness tag `core-v0.9.0`. An upgrade cannot lower a core, so the direction is likely to narrow the sentence of AGENTS.md to a game on an older core rather than to change the code",
       "foundBy": "build round 1"
     }
   ]
