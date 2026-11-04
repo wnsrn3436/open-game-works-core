@@ -191,12 +191,13 @@ describe('judge play budget', () => {
 
   it('notes no budget for a call that puts in no input or step, in the command and from the broker', async () => {
     await judgeAt('agentjudge8', async ({ ctx, ws, env, folder }) => {
-      for (const argv of [['input', 'insta', 'nosuchcommand'], ['input', 'insta'], ['input', 'insta', 'tap', '1', '1', '--video'], ['step', 'insta', '0'], ['step', 'insta', '50']]) {
+      // insta does not run: a valid input command on it puts in nothing too
+      for (const argv of [['input', 'insta', 'nosuchcommand'], ['input', 'insta'], ['input', 'insta', 'tap', '1', '1', '--video'], ['input', 'insta', 'tap', '1', '1'], ['step', 'insta', '0'], ['step', 'insta', '50']]) {
         expect(await brokerBudgetRefusal(ctx, argv)).toBeNull();
         expect((await ogw(ws, argv, { env })).code).not.toBe(0);
       }
-      const run = await ogw(ws, ['step', 'insta', '50', '--stream'], { env, stdin: 'input nosuchcommand\nstep\n' });
-      expect(run.stdout.trimEnd().split('\n').map((line) => (JSON.parse(line) as { exit: number }).exit)).toEqual([1, 1]);
+      const run = await ogw(ws, ['step', 'insta', '50', '--stream'], { env, stdin: 'input nosuchcommand\ninput tap 1 1\nstep\n' });
+      expect(run.stdout.trimEnd().split('\n').map((line) => (JSON.parse(line) as { exit: number }).exit)).toEqual([1, 1, 1]);
       expect(existsSync(folder)).toBe(false);
     });
     const ws = jobWorkspace();
@@ -204,6 +205,8 @@ describe('judge play budget', () => {
     const play = await agent(ws.env, 'play', 'agentplay4', tmp);
     try {
       expect((await ogw(ws, ['input', 'instp1', 'not_a_command'], { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).code).not.toBe(0);
+      // a mistyped instance id starts no play budget
+      expect((await ogw(ws, ['input', 'nosuch', 'key_down', 'a'], { env: { ...ws.env, OGW_AGENT_KEY: play.key } })).stderr).toContain('instance nosuch is not running');
       expect(existsSync(join(await jobsDir(ws.env), 'play-budget', 'agentplay4'))).toBe(false);
     } finally {
       play.remove();

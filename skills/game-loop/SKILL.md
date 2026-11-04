@@ -27,8 +27,8 @@ The lead agent runs the `ogw` commands of this document and acts on what they pr
    - `export_user_snapshot` and `import_user_snapshot` are called only through `ogw clone user`, `export_game_state` and `import_game_state` only through `ogw clone game-state`, and `import_guild` only through `ogw clone guild`. Snapshots are not received as files
    - The lead agent writes the reproduction steps in order and the evidence (capture path, log, server response) in `## reproduction` of `request.md`. If it cannot reproduce the problem, it writes the steps it tried and their results. Then it stops that instance with `ogw instance stop <id>`
 4. The lead agent writes each moment that the request sets or changes and that is not in `## moments` of `records/setup/reference/reference.md` in `## judge moments` of `request.md`, one per line, as `` - `<moment name>`: <description> ``. The name is snake_case. The description is the path from the first screen to that moment; for a moment that comes only after time passes (e.g. the moment of receiving the rewards accumulated while not connected), it also gives the duration (ms) that must pass on that path. When the request adds or changes something that a moment would show but names no moment, the lead agent sets that moment and appends `(set by lead agent)` after the name. When the request adds nothing beyond `## moments`, the lead agent writes nothing here
-5. For `update game`, the lead agent writes with `ogw settings set` each game settings value that the request decides, and adds its path to `humanDecided` in the same call. A value at or below a `humanDecided` path is changed only when the request asks for that change
-6. If 2 was started, the lead agent waits for it with `ogw job wait <id>`. Then it commits what this section changed: `request.md`, `assumptions.md` and game settings
+5. If 2 was started, the lead agent waits for it with `ogw job wait <id>`. The upgrade writes and commits game settings, so no game settings value is written before it ends
+6. For `update game`, the lead agent writes with `ogw settings set` each game settings value that the request decides, and adds its path to `humanDecided` in the same call. A value at or below a `humanDecided` path is changed only when the request asks for that change. Then it commits what this section changed: `request.md`, `assumptions.md` and game settings
 
 ## iteration
 
@@ -51,7 +51,7 @@ An iteration is a fun iteration or a completeness iteration (AGENTS.md `## loop`
 - During the loop, the lead agent does not wait for the human
 - The lead agent writes an assumption in `records/loops/<run>/assumptions.md` in the format of `### assumption` of [`game-design`](../game-design/SKILL.md) and commits it
 - If harness settings `useLocalCore` is `true`, `ogw loop next` does not raise the number and exits with a nonzero code. The lead agent then stops without closing the run and tells the human
-- If the core version of the game is not the core version of the harness, `ogw loop next` does not raise the number and exits with a nonzero code. The lead agent closes the run with `ogw loop end <game>` and tells the human the two ways out that the output names
+- If the core version of the game is not the core version of the harness, `ogw loop next` does not raise the number and exits with a nonzero code. The lead agent closes the run with `ogw loop end <game>` and tells the human the ways out that the output names
 - If the content agent fails, the lead agent calls it again with `ogw agent retry <id> --background` and waits with `ogw agent wait <id>`. If `ogw agent retry` reaches `backgroundRetryLimit` and exits with a nonzero code, the lead agent stops without closing the run and reports to the human
 
 ## defect list

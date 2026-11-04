@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJsonIfExists } from '../../../lib/fsx.ts';
+import { readMeasureFile } from './files.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { openRun, type RunState } from '../../../lib/runstate.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../../lib/settings.ts';
@@ -199,6 +200,6 @@ export async function iterationResults(game: GameRepo, run: RunState, n: number)
     checkRel,
     check: await readJsonIfExists<CheckFile>(abs(game, checkRel)),
     evaluate,
-    measure: evaluate?.measure ? await readJsonIfExists<MeasureFile>(abs(game, evaluate.measure)) : null,
+    measure: evaluate?.measure ? await readMeasureFile(abs(game, evaluate.measure)) : null,
   };
 }

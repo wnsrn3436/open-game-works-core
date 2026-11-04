@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { CHECK_ORDER, GATE_CHECKS, mergedResult, type CheckResult } from '../../check/api.ts';
 
 export { GATE_CHECKS };
@@ -12,8 +14,9 @@ export interface CheckFile {
 /** `records/loops/<run>/measure-<iteration>.json`. */
 export interface MeasureTarget {
   metric: string;
-  min: number;
-  max: number;
+  /** A bigint for an integer bound outside the safe integers, which `ogw measure` wrote with all its digits. */
+  min: number | bigint;
+  max: number | bigint;
   value: number | null;
   result: 'in' | 'out' | 'unknown';
   data: string | null;
@@ -22,6 +25,19 @@ export interface MeasureTarget {
 export interface MeasureFile {
   commit: string;
   targets: MeasureTarget[];
+}
+
+/**
+ * `measure-<iteration>.json`, or null when it does not exist. An integer `min` or `max` outside the safe integers is read
+ * from its digits as a bigint, so that it stays the bound of `design.md` that `ogw measure` wrote.
+ */
+export async function readMeasureFile(path: string): Promise<MeasureFile | null> {
+  if (!existsSync(path)) return null;
+  const exact = (key: string, value: unknown, context?: { source?: string }): unknown =>
+    (key === 'min' || key === 'max') && typeof value === 'number' && !Number.isSafeInteger(value) && context?.source !== undefined && /^-?[0-9]+$/.test(context.source)
+      ? BigInt(context.source)
+      : value;
+  return JSON.parse(await readFile(path, 'utf8'), exact) as MeasureFile;
 }
 
 export interface PlayEntry {

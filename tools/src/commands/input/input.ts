@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { flag, positional, str, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { readText } from '../../lib/fsx.ts';
-import { budgetRule, checkPlayBudget, notedBudget, noteBudget, releasesHeld, type PlayBudget } from '../agent/lib/play-budget.ts';
+import { budgetRule, checkPlayBudget, notedBudget, noteBudget, refuseNotedPastBudget, releasesHeld, type PlayBudget } from '../agent/lib/play-budget.ts';
 import { recordVideo, takesFormat, type VideoCapture, videoDir } from '../capture/capture.ts';
 import { automationRequest } from '../instance/automation.ts';
 import { inputHelp, inputHoldMs, isPlayInput } from '../instance/lib/qa.ts';
@@ -230,10 +230,13 @@ export const input: CommandDef = {
     const instanceId = positional(args, 0, 'instance');
     const script = str(args, 'script');
     if (script === undefined) {
-      // a call that puts in nothing starts no budget: it is refused before the budget notes it
+      // past a noted budget the call is refused first; a call that puts in nothing (an invalid call, an instance that
+      // does not run) is refused before the budget notes it
+      await refuseNotedPastBudget(ctx, args.positionals.slice(1), instanceId);
       if (flag(args, 'video')) throw new OgwError('--video goes with --script');
       const command = positional(args, 1, 'input command');
       checkInputCommand(command);
+      await readPlayAccess(instanceId, ctx.env);
       await checkPlayBudget(ctx, args.positionals.slice(1), instanceId);
       return singleInput(ctx, instanceId, command, args.positionals.slice(2));
     }

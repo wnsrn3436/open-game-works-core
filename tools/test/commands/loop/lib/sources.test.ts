@@ -1,5 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkFindings, hardeningFindings, judgeFindings, measureFindings, playFindings, settleUiFindings, sortOut, uiQualityFields } from '../../../../src/commands/loop/lib/findings.ts';
+import { readMeasureFile, type MeasureFile } from '../../../../src/commands/loop/lib/files.ts';
+import { targetJson, type MeasuredTarget } from '../../../../src/commands/measure/api.ts';
+import { formatJson } from '../../../../src/lib/fsx.ts';
 import { judgeMoments, readReference, referenceMoments } from '../../../../src/commands/loop/lib/setup.ts';
 import { setupGame, write } from '../helpers.ts';
 
@@ -90,6 +96,18 @@ describe('finding sources', () => {
     }, 'c.json');
     expect(out).toEqual([{ source: 'check', severity: null, owner: null, where: 'w', what: 'm', why: null, evidence: ['c.json#UI quality'], id: null, drop: null }]);
     expect(measureFindings({ commit: 'c', targets: [{ metric: 'm', min: 1, max: 2, value: null, result: 'out', data: null }] }, 'm.json')[0]?.what).toBe('value null out of 1..2');
+  });
+
+  it('reads integer bounds above 2^53 of a measure file with their digits', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ogw-measure-file-'));
+    const path = join(dir, 'measure-1.json');
+    const target: MeasuredTarget = { metric: 'content.gold', min: 9007199254740993n, max: 9007199254740995n, value: 9007199254740992, result: 'out', data: null };
+    writeFileSync(path, formatJson({ commit: 'c', targets: [targetJson(target)] }));
+    const read = await readMeasureFile(path);
+    expect(read?.targets[0]).toMatchObject({ min: 9007199254740993n, max: 9007199254740995n, value: 9007199254740992 });
+    expect(measureFindings(read as MeasureFile, 'measure-1.json')[0]?.what).toBe('value 9007199254740992 out of 9007199254740993..9007199254740995');
+    expect(await readMeasureFile(join(dir, 'none.json'))).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('fills one defect per UI quality problem kind and prefab or scene, the same in every resolution, language and text scale', () => {

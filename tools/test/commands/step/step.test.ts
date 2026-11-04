@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { playBudgetDeps } from '../../../src/commands/agent/lib/play-budget.ts';
@@ -271,6 +271,32 @@ describe('ogw step --stream', () => {
     runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
     expect(await ogw(runner.ws, ['step', id, '50', '--stream'], { stdin: 'step\nstep 3\n' })).toMatchObject({ code: 0, stderr: '' });
     expect((await ogw(runner.ws, ['step', id, '50', '--stream', '--count', '2'], { stdin: 'step\n' })).stderr).toContain('--count does not go with --stream');
+  });
+});
+
+describe('ogw step of an agent when no client is in step mode', () => {
+  it('fails the step and a stream step line, and notes no budget', async () => {
+    runner.config({ clients: { main: { stepEffects: [] } }, telemetry, seq: Math.random() });
+    expect((await ogw(runner.ws, ['step-mode', id, 'off'])).code).toBe(0);
+    const judgeKey = newAgentKey('agjudgestep2');
+    const playKey = newAgentKey('agplaystep2');
+    const removeJudge = await fakeAgentJob(runner.ws.env, 'agjudgestep2', { role: 'judge', cliPid: 999_999, keyHash: judgeKey.hash });
+    const removePlay = await fakeAgentJob(runner.ws.env, 'agplaystep2', { role: 'play', cliPid: 999_999, keyHash: playKey.hash });
+    const budgets = join(await jobsDir(runner.ws.env), 'play-budget');
+    try {
+      for (const key of [judgeKey, playKey]) {
+        const env = { OGW_AGENT_KEY: key.value };
+        expect(await ogw(runner.ws, ['step', id, '50'], { env })).toMatchObject({ code: 1, stderr: expect.stringContaining('no client is in step mode') as unknown });
+        const run = await ogw(runner.ws, ['step', id, '50', '--stream'], { env, stdin: 'step\n' });
+        expect(JSON.parse(run.stdout.trim())).toEqual({ exit: 1, error: 'no client is in step mode' });
+      }
+      expect(existsSync(join(budgets, 'judge-agjudgestep2'))).toBe(false);
+      expect(existsSync(join(budgets, 'agplaystep2'))).toBe(false);
+    } finally {
+      removeJudge();
+      removePlay();
+      expect((await ogw(runner.ws, ['step-mode', id, 'on'])).code).toBe(0);
+    }
   });
 });
 

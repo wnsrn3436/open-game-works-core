@@ -232,7 +232,11 @@ async function streamAction(ctx: Context, plan: Omit<Plan, 'count'>, line: strin
       // `text` takes the rest of the line as its one argument, spaces included
       const text = /^\s*input\s+text\s([\s\S]*)$/.exec(line);
       const args = text ? [text[1] as string] : words.slice(2);
+      // past a noted budget the line is refused first; a line that puts in nothing (an invalid command, an instance
+      // that does not run) is refused before the budget notes it
+      await refuseNotedPastBudget(ctx, [words[1], ...args], plan.id);
       checkInputCommand(words[1]);
+      await readPlayAccess(plan.id, ctx.env);
       await checkPlayBudget(ctx, [words[1], ...args], plan.id);
       const result = await singleInput(ctx, plan.id, words[1], args);
       return { exit: result.exitCode ?? 0, data: result.data };

@@ -65,6 +65,8 @@ describe('UI quality presentation conditions', () => {
       el('hud/edge', { text: 'E', font_size: 20, rect: [190, 100, 20, 40], owner: 'run' }),
       // one color too, but a dim is drawn above it, which darkens it on purpose: its contrast is not judged
       el('pause/under', { text: 'U', font_size: 20, rect: [100, 100, 100, 40], owner: 'run', dimmed: true }),
+      // one color, under a modal panel or popup that covers it: its contrast is not judged
+      el('shop/covered', { text: 'C', font_size: 20, rect: [100, 100, 100, 40], owner: 'run', modal_covered: true }),
     ]);
     expect(presentationProblems(list, image, 'run', LIMITS).map((p) => p.message)).toEqual([
       '3 text sizes (12, 20, 40 px), more than 2',
