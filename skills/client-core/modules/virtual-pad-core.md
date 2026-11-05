@@ -35,7 +35,7 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
 | `reset_user_settings` | none | none | none | content code |
 | `get_state` | none | `VirtualPadState`. `Hidden` when there is no virtual pad | `Hidden` | content code |
 
-- `VirtualPadState`: `Active`(draws and holds pointers), `Inactive`(draws but does not hold pointers), `Hidden`(does not draw and does not hold pointers)
+- `VirtualPadState`: `Active`(draws and holds pointers), `Inactive`(draws but does not hold pointers), `Hidden`(does not draw and does not hold pointers. While no pointer whose press was consumed in an element area is still pressed, its elements are not visible UI elements)
 - VirtualPadCore does not give pointers and direction values to content code. Content code gets input through `InputCore.is_pressed`, `InputCore.is_just_pressed`, `InputCore.is_just_released`, `InputCore.get_strength`, `InputCore.get_vector`
 
 ## behavior
@@ -223,6 +223,7 @@ Common conditions: touch supported, input device `Touch`, no open popup, dead zo
 - With the engine making mouse input from touch and the input device `Gamepad`, a touch pressed and released inside a button area that lies over a `SceneUI` button clicks that `SceneUI` button, and the action of that button is pressed and then released
 - Without touch support, the state is `Hidden` and a press gives no action
 - When the input device changes to something other than `Touch` while a pointer is held, the state is `Hidden` and no action is pressed, and it is `Active` when the device returns to `Touch`
+- With the input device `Gamepad`, the elements are not visible UI elements. When the input device changes to `Gamepad` while a touch pressed in a button area is held, the elements become not visible UI elements when that touch is released
 - When a popup opens while a pointer is held, the state is `Inactive`, the pad is drawn, the action is not pressed, and the moves and release of that pointer make no gesture and are not received by the popup. When all popups close, it is `Active`
 - After an input cancel, the `Floating` base is at its default position, and after a release and a new press the joystick holds the new pointer
 - Opening B during the load of A makes A `false` and B `true`, and the current layout is B
