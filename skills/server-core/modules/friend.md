@@ -64,7 +64,7 @@ internal operation
 |---|---|---|---|---|
 | `are_friends` | ctx, two user IDs | `true` when they are friends | `false` | content handler, hook, `chat` |
 | `list_friend_ids` | ctx, user ID | list of the friend user IDs of that user. Ascending order | empty list | content handler, hook, `chat` |
-| `remove_user` | ctx | none | `FAILED` | `auth` |
+| `remove_user` | ctx | none | `FAILED`, `CHANGED` | `auth` |
 
 - `FriendState`(base proto enum): `Friend`, `Sent`(request the caller sent), `Received`(request the caller received)
 - `FriendEntry`(base proto message): `PublicProfileEntry profile`, `FriendState state`, `int64 updated_at`
@@ -128,7 +128,7 @@ internal operation
 - `remove_user` runs in the order below. `FAILED` on exceeding the lock wait
   1. Reads the user's link rows to get the list of other users
   2. Locks the `friend_count` rows of the user and of all the other users in ascending order of user ID
-  3. Reads the user's link rows again. When there is an other user not locked in step 2, changes nothing and returns `FAILED`. The caller rolls back the transaction
+  3. Reads the user's link rows again. When there is an other user not locked in step 2, changes nothing and returns `CHANGED`. The caller rolls back the transaction
   4. Deletes all link rows read again, decreases each other user's counts according to the deleted state, and deletes the user's count row
 
 ## hook
@@ -161,7 +161,8 @@ none
 | the caller's sent request count limit | `FRIEND_REQUEST_LIMIT` | `FRIEND_REQUEST_LIMIT` | none |
 | `SearchUsers` of a child user when `chat.allowChild` is `false` | `CHILD_RESTRICTED` | `CHILD_RESTRICTED` | none |
 | exceeding the lock wait on a count row in a core rpc | `FAILED` | `INTERNAL` | `routing` leaves an `error` log |
-| exceeding the lock wait on a count row in `remove_user`, a link row that `remove_user` read again has an other user that was not locked | `FAILED` | the caller decides | none |
+| exceeding the lock wait on a count row in `remove_user` | `FAILED` | the caller decides | none |
+| a link row that `remove_user` read again has an other user that was not locked | `CHANGED` | the caller decides | none |
 | exceeding the lock wait on a count row in the block listener function | throw | `INTERNAL` | `routing` leaves an `error` log |
 
 Added `CoreError`: `FRIEND_ALREADY`, `FRIEND_REQUEST_NOT_FOUND`, `FRIEND_NOT_FOUND`, `FRIEND_LIMIT`, `FRIEND_TARGET_LIMIT`, `FRIEND_REQUEST_LIMIT`

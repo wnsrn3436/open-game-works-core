@@ -77,7 +77,7 @@ internal operation
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `remove_user` | ctx | none | `FAILED` | `auth` |
+| `remove_user` | ctx | none | `FAILED`, `CHANGED` | `auth` |
 | `post_system_message` | ctx, `ChatChannelKind`, channel ID, `text` | the written `ChatMessage` | none. Exceeding the lock wait is a throw | content handler, hook |
 
 admin operation. Collection and handling follow `admin-api`.
@@ -203,7 +203,7 @@ message deletion: locks the channel row with `storage.lock_game_row`, sets `dele
 - `remove_user` runs in the order below. `FAILED` on exceeding the lock wait
   1. Reads the `Direct` channel rows the user is in to get the list of other users. When `friend` is in the server module list, adds the users of `friend.list_friend_ids`(ctx, that user). `auth` calls this before `friend.remove_user`, so the friend link rows are still there
   2. For each other user, locks the `Direct` channel key with that user with `storage.lock_game_row`, in ascending order of `(key_a, key_b)`. Also locks keys without a row
-  3. Reads the `Direct` channel rows the user is in again. When there is a row with a key not locked in step 2, changes nothing and returns `FAILED`. The caller rolls back the transaction
+  3. Reads the `Direct` channel rows the user is in again. When there is a row with a key not locked in step 2, changes nothing and returns `CHANGED`. The caller rolls back the transaction
   4. Deletes the message rows the user sent, and the channel rows, message rows and `chat_deletion` rows of the `Direct` channels read again
 - The lock in step 2 uses the same key as the channel row lock in step 6 of `SendChatMessage`. So a friend's first `Direct` message either commits before the withdrawal and is deleted in step 4, or comes after the withdrawal's commit and is `USER_NOT_FOUND` because `is_active_user` is `false`
 - Message rows deleted by `remove_user` leave no `chat_deletion` row, so they do not appear in `deleted_seqs` of `GetChatMessages`
@@ -255,7 +255,8 @@ none
 | channel or `text` violation of `post_system_message` | none. Writes nothing | content decides | `error` log |
 | report count limit | `REPORT_LIMIT` | `REPORT_LIMIT` | log of `block-report` |
 | exceeding the lock wait on a channel row or guild row outside `post_system_message` and `remove_user` | `FAILED` | `INTERNAL` | `routing` leaves an `error` log |
-| exceeding the lock wait on a channel row in `remove_user`, `remove_user` did not lock the key of a `Direct` channel row it read again | `FAILED` | the caller decides | none |
+| exceeding the lock wait on a channel row in `remove_user` | `FAILED` | the caller decides | none |
+| `remove_user` did not lock the key of a `Direct` channel row it read again | `CHANGED` | the caller decides | none |
 | exceeding the lock wait on a channel row or guild row in `post_system_message` | throw | `INTERNAL` | `routing` leaves an `error` log |
 | `delete_chat_message` of a message that does not exist | `not_found` | none | `audit` |
 | `mute_chat_user` with `until_at` less than 0 | `bad_request` | none | `audit` |

@@ -119,7 +119,7 @@ Handles one game request in the following order. When a step fails, responds wit
 12. request start: calls the `on_request_start` operations of the request start table in order. Each operation opens and closes its own user transaction. Goes to the next step even when one fails
 13. transaction start: opens a user transaction with `storage.run_request_transaction` and makes ctx. Steps 14 to 16 run inside that function. `UNAUTHORIZED` on `WITHDRAWN`, `INTERNAL` on `FAILED`
 14. idempotency: when `idempotency.find_response` finds a saved response, closes the transaction and responds with those bytes. On `NAME_MISMATCH`, saves nothing and gives `INVALID_REQUEST` and a `security` log
-15. handler run: on `GameError` or `CoreError`, rolls back and responds with that error. When a `GameError` that a core `rpc` handler returned is not in the `(ogw.core_errors)` list of that core `rpc` in the contract generated code, responds with `INTERNAL` instead of that `GameError` and leaves the request name and the `GameError` value in an `error` log
+15. handler run: on `GameError` or `CoreError`, rolls back and responds with that error. When `storage` makes the transaction `FAILED` whatever the handler returned (e.g. a `lock_game_row` of the handler that was `FAILED` on PostgreSQL), step 13 handles that `FAILED` instead. When a `GameError` that a core `rpc` handler returned is not in the `(ogw.core_errors)` list of that core `rpc` in the contract generated code, responds with `INTERNAL` instead of that `GameError` and leaves the request name and the `GameError` value in an `error` log
 16. commit: gets the response delta and the unknown kind row list with `storage.take_response_delta` and makes the `ResponseEnvelope`. When that list is not empty, calls `logging.annotate_request_log`(ctx, field `unknown_kinds`: the list joined with `,` as one string, minimum level `warn`). Saves with `idempotency.save_response` and `save_withdrawn_response`(ctx, access token hash of `Authorization`, the bytes of that `ResponseEnvelope`) and commits. On failure, rolls back and gives `INTERNAL`
 17. response: sends the `ResponseEnvelope` with HTTP 200
 
@@ -144,7 +144,7 @@ request prepare
 | `VerifyPurchase`, `RecoverPurchase` | `iap.prepare_verify_purchase` |
 | `SyncSubscriptions` | `iap.prepare_sync_subscriptions` |
 
-- On an exception that a handler or core did not handle, routing rolls back, responds with `INTERNAL` and leaves an `error` log with the stack trace
+- On an exception that a handler or core did not handle, routing rolls back, responds with `INTERNAL` and leaves an `error` log with the stack trace. When a route handler throws, routing leaves that `error` log and responds with HTTP 500, no body, no CORS header, and to a WebSocket upgrade request it closes the connection without a response
 - `storage`, `session`, `idempotency`, `validation` and `server-time` do not leave logs. routing leaves the `request`, `error` and `security` logs for failures of those modules
 - For a request among `NoAccessTokenRpc` that is not `NoUserRpc`, routing calls the core `rpc` handler without a token instead of steps 5 to 9 and 12 to 16, and that handler does the handling that `auth` defines. Steps 1 to 4, 10 to 11 and 17 are the same. Rate limit is counted with the IP counter after step 4 and before step 10
   - The `Authorization` of `RefreshToken` is the login token, and `auth` checks the request signature with the session signing key of that session
@@ -215,6 +215,7 @@ none
 | kill switch | `FEATURE_DISABLED` | `FEATURE_DISABLED` | none |
 | cheat path `POST` in STG·PROD | `UNAUTHORIZED`. The body is not read | `UNAUTHORIZED` | `security` log (`reason` `cheat_path_closed`) |
 | unhandled exception, commit failure | rolls back | `INTERNAL` | `error` log, stack trace |
+| throw of a route handler | HTTP 500, no body, no CORS header. A WebSocket upgrade request: the connection is closed | none | `error` log, stack trace |
 | `GameError` of a core `rpc` handler that is not in `(ogw.core_errors)` of that core `rpc` | rolls back | `INTERNAL` | `error` log. request name, `GameError` value |
 
 - Every request, except the HTTP 404 of an unknown path or method and the HTTP 403 of an origin that is not allowed, leaves one `request` log line with `logging.write` regardless of the result. For a request that made ctx, whatever step it ended in after that, that line has the fields and the minimum level received with `logging.take_request_log_annotation`(ctx). `logging` defines the level and the fields
@@ -237,6 +238,7 @@ Added `CoreError`: `INVALID_REQUEST`, `RATE_LIMITED`, `MAINTENANCE`, `BANNED`, `
 | `routing.corsPreflightMaxAgeMs` | integer | core | content | preflight cache duration |
 | `routing.externalMaxResponseBytes` | integer | core | content | maximum bytes of the response body that every external service call of every module reads |
 | `routing.storageSweepIntervalMs` | integer | core | content | period at which job `storage_sweep` calls `storage.sweep_expired` and `run_user_changes`. 1 or more |
+| `storage.userLockWaitMs` | integer | core | content | the meaning in `## settings` of [`storage`](storage.md) |
 
 ## data
 
@@ -307,3 +309,4 @@ none
 - `core/FinishPlaySession`, `core/ContinuePlaySession` and `core/ReportMatchResult` requests with the same protocol hash and only a different data hash are handled through the handler even when `is_data_update_ready` is `true` or `X-Ogw-Client-Version` is an empty string, and other requests under the same condition are `DATA_UPDATE_REQUIRED`. Those three requests are `APP_UPDATE_REQUIRED` when their protocol hash differs from both `client_data_version` and `compat_client_data_version`
 - When `run_game_transaction` of a rate counter is `FAILED`, the handler is not called, the result is `INTERNAL`, and an `error` log is left
 - When the failed table list of `storage.sweep_expired` has two tables, job `storage_sweep` leaves two `error` logs, each with one of those table names and its DB error code, and calls `run_user_changes`
+- On PostgreSQL without a `cdn` adapter, while `testing.hold_db` holds `LOCK TABLE game_update_file IN ACCESS EXCLUSIVE MODE`, `GET /update/files/<sha256>` of a file in `game_update_file` gets HTTP 500 with no body after `storage.userLockWaitMs`, one `error` log with a stack trace, and a `request` line whose `error_code` is `INTERNAL`

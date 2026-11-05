@@ -93,7 +93,7 @@ internal operation
 | `register_disband_listener` | function (ctx or game tx, guild ID → none) | none | none. A registration error is a server start failure | `ranking`. Called at server start |
 | `set_guild_max_members` | ctx, guild ID, capacity | success flag | `false`. Exceeding the lock wait throws | content handler, hook |
 | `set_member_role` | ctx, guild ID, user ID, `GuildRole` | success flag | `false`. Exceeding the lock wait throws | content handler, hook |
-| `remove_user` | ctx | none | `FAILED` | `auth` |
+| `remove_user` | ctx | none | `FAILED`, `CHANGED` | `auth` |
 
 admin operation. Collection and handling follow `admin-api`.
 
@@ -220,7 +220,7 @@ admin operation. Collection and handling follow `admin-api`.
 - `remove_user` locks in the order below. On exceeding the lock wait, `FAILED`
   1. Reads the `guild_member` row of that user. When the row exists, locks that guild row, and locks all `guild_member` rows of that guild, read after locking the guild row, and the `guild_member` row of that user in ascending order of user ID. When the row does not exist, locks only the `guild_member` row of that user
   2. Reads all locked `guild_member` rows again
-  3. When the re-read row of that user exists, and the guild row was not locked in 1 or the guild of that row is not the guild locked in 1, changes nothing and returns `FAILED`. The caller rolls back the transaction
+  3. When the re-read row of that user exists, and the guild row was not locked in 1 or the guild of that row is not the guild locked in 1, changes nothing and returns `CHANGED`. The caller rolls back the transaction
 - After that, `remove_user` deletes the join request rows and the cooldown row of that user. When the re-read row of that user exists, it does the following
   - When not `Leader`, deletes that user's row and lowers `member_count` by 1. Writes no cooldown. Calls after hook `on_guild_member_changed`(`Left`)
   - When `Leader` and there are other members, changes to `Leader`, among the re-read rows, the `Officer` with the earliest `joined_at`, or, when there is no `Officer`, the `Member` with the earliest `joined_at`, changes `leader_id` to that member and calls after hook(`RoleChanged`) with that member, then leaves the same way as when not `Leader` and calls after hook(`Left`). When `joined_at` is equal, the member with the smaller user ID
@@ -295,7 +295,8 @@ none
 | capacity out of range, `set_guild_max_members` of a guild that does not exist | `false` | content decides | `error` log |
 | `set_member_role` with a role change failure | `false` | content decides | none |
 | exceeding the lock wait in a core rpc | `FAILED` | `INTERNAL` | `error` log by `routing` |
-| exceeding the lock wait in `lock_guild` called by `chat` or `ranking`, exceeding the lock wait in `remove_user`, the `guild_member` row of that user that `remove_user` read again is not a row of the guild locked in 1 | `FAILED` | the caller decides | none |
+| exceeding the lock wait in `lock_guild` called by `chat` or `ranking`, exceeding the lock wait in `remove_user` | `FAILED` | the caller decides | none |
+| the `guild_member` row of that user that `remove_user` read again is not a row of the guild locked in 1 | `CHANGED` | the caller decides | none |
 | exceeding the lock wait in `lock_guild`, `set_guild_max_members` or `set_member_role` called by a content handler or a hook | throw | `INTERNAL` | `error` log by `routing` |
 | throw of a `register_disband_listener` function | throw | `INTERNAL` | `error` log by `routing` |
 | second `register_disband_listener` registration of the same function | server start failure | none | `error` log |

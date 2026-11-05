@@ -69,7 +69,7 @@ Server content code is written in TypeScript. The common rules of requests, hand
 
 Game-specific operations work (fixing broken content UserState, granting rewards specific to the game) goes in content admin operations.
 
-- They are written in `server/admin/` and registered in `register` with the `routing` operation `register_admin_operation`. Their format (role, body format, input fields, `user_target`, handler function) is the same as the admin operations that modules export in `admin-api`
+- They are written in `server/admin/` and registered in `register` with the `routing` operation `register_admin_operation`. Their format is the same as the admin operations that modules export in `admin-api`
 - The name is snake_case starting with `game_`
 - The role is picked by what the operation does, following the criteria of `### role` of `admin-api`. An operation that changes the saved state is not `read`
 - An operation that changes the saved state has `operation_id` in its input, and has `user_target` when it changes one user
