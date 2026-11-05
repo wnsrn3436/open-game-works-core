@@ -85,7 +85,6 @@ When sending, replaces `index` with the sending participant's index. `payload` s
   - that user's index is not a left index
   - the sending connection is not bound to another match session
 - When any one is violated, sends `MATCH_REJOINED` (`match_id` is the `match_id` of the request, `ok` `false`, `my_index` 0, `players` empty list, `transport` empty, `left_indices` empty list)
-- A rejoined participant makes P2P connections with the other participants again
 
 ### real adapter
 

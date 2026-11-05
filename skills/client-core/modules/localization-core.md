@@ -152,6 +152,7 @@ none
 | fallback resource for `icon` of `input_prompt` | `load_prompt_icons` returns `false`. That icon is not used as an inline icon | error |
 | input prompt token whose `InputCore.get_prompt` is `false` | text with that slot left empty | error once per action per load |
 | value of `set_text_scale` less than 1 | text scale unchanged | error |
+| value of `set_test_timezone_offset` less than -86399999 or more than 86399999 | ignored. The offset in use is unchanged | error |
 | second `resolve_language` after `init` | ID value of the current language. The current language is not changed | error |
 | `load_translation` while a `load_translation` is in progress, `load_fonts` while a `load_fonts` is in progress, `load_prompt_icons` while a `load_prompt_icons` is in progress | `false`. The one in progress continues | error |
 
@@ -203,7 +204,7 @@ used table: `input_prompt`
 | operation | input | output | caller |
 |---|---|---|---|
 | `set_test_device_language` | device language tag. An empty string clears the override | none | core test |
-| `set_test_timezone_offset` | device timezone offset (ms integer) | none | core test |
+| `set_test_timezone_offset` | device timezone offset (ms integer from -86399999 to 86399999) | none | core test |
 
 - In the environments that include DEV code, the missing key result is `‼ <translation key>`, a format error slot gets `‼ ` and the original argument text (e.g. `‼ {count:n}`), and the slot of an input prompt token whose `InputCore.get_prompt` is `false` gets `‼ ` and the original token text (e.g. `‼ {action:jump}`). In STG and PROD builds it is an empty string
 - The tag of `set_test_device_language` is used in place of the device language tag, and the offset of `set_test_timezone_offset` in place of the device timezone offset, until `release`
@@ -250,6 +251,7 @@ used table: `input_prompt`
 | real NaN, integer `253402300800000` | `{v}`, `{v:date}` | `en` | error log and empty slot |
 
 - When `set_test_timezone_offset` sets 9 hours, the `date` result of time `t` equals the result of `t` + 9 hours at offset 0
+- `set_test_timezone_offset`(86400000) leaves an error log, and the `date` result is the same as before that call
 - After `format`, the values of `FormatArgs` stay the same
 - `get_text` and `format` whose result length is more than `LocalizationCore.maxFormattedLength` give the text with the pieces from the exceeding one onward dropped, and an error log. A character outside the BMP counts as one code point, and an inline icon as one
 - After `load_fonts`, the character lookup order of the default font equals the font chain, and when two languages have the same `font`, that font is in the chain only once. After `release`, the default font is the same as before `init`

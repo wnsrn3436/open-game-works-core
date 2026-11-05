@@ -39,6 +39,7 @@ Opens scenes and panels along a screen navigation path (shortcut) defined in the
 - A shortcut is one row of the `shortcut` table. It moves the screen to the target scene (`scene`), and when the panel path (`panels`) is not empty, opens those panels in list order. The last element is the target panel
 - The target scene is opened with scene param none
 - `stack` is where the panel path opens. `Root` opens after going back to the target scene's root panel, and `Top` opens on top of the current panel stack. When the scene was changed at stage 6, `Top` also acts as `Root`. The value set this way is the applied stack
+- A shortcut row whose `panels` holds the root panel key of the scene of `scene` (the key that stage 7 closes to), other than a row whose `stack` is `Root` and whose `panels` is only that key, is blocked by static check `shortcut root panel`
 - `args` are values that the param builder of the target panel reads when it builds the param. That param builder defines the meaning of the elements. The param builder of a panel that is not the target panel does not read `args`
 - When `panels` is empty, `args` is not used
 - When `requirement` is not 0 (empty cell), the move happens only when `passed` of `RequirementCore.evaluate` is `true`
@@ -121,7 +122,6 @@ none
 - `panels` is the panel path. Its elements are panel keys and are stacked in list order. An empty array opens no panel
 - Elements of `args` are integers or ID names
 - A row whose `panels` is an empty array but whose `args` is not empty is data check `out_of_range`
-- A row whose `panels` holds the root panel key of the scene of `scene` (the key that stage 7 closes to), other than a row whose `stack` is `Root` and whose `panels` is only that key, is blocked by static check `shortcut root panel`
 
 `data/enums.csv`
 
@@ -136,7 +136,6 @@ none
 ## test
 
 - A `shortcut` row whose `panels` is an empty array and whose `args` is not empty is a data check `out_of_range` ERROR
-- Static check `shortcut root panel` reports a `shortcut` row whose `panels` holds the root panel key of the scene of `scene` together with another panel key, and a row whose `stack` is `Top` and whose `panels` is only that key, and does not report a row whose `stack` is `Root` and whose `panels` is only that key
 - When `navigate` runs with a shortcut for which `passed` of the condition judgement is `true`, a param builder exists, the target scene has a root panel and is not the current scene, `stack` is `Root` and `panels` has one element, the condition judgement, the param builder, `UICore.close_all_popups`, `SceneCore.change_scene`, `UICore.close_panels_to`, `UICore.open_panel` and `ShortcutNavigatedEvent` each happen once in this order, and the result is `true`
 - With two popups open and the stack root R, A, B, `navigate` with a shortcut whose target scene is the current scene, whose `stack` is `Root` and whose `panels` is only C does not call `SceneCore.change_scene`; when it ends, no popup is open and the stack is R, C
 - With the stack root R, A, `navigate` with a shortcut whose target scene is the current scene, whose `stack` is `Root` and whose `panels` is B, C, D calls `UICore.open_panels`(B, C, D) once with clear stack off after `UICore.close_panels_to`(R), with no `UICore.open_panel`; when it ends, the stack is R, B, C, D

@@ -60,7 +60,7 @@ admin operation. Collection and handling follow `admin-api`.
 | `disable_coupon` | `coupon_id` | empty object | `not_found` | operator |
 
 - `kind`: `shared`(many users use one code) or `unique`(makes `count` codes, and one user uses one code)
-- `code`: used only by `shared`. The empty string for `unique`
+- `code`: used only by `shared`. For `unique`, the `code` as given is the empty string, without normalization or the code format check
 - `count`: used only by `unique`. At least 1 and at most `coupon.maxBatchCount`. 0 for `shared`
 - `max_uses`: total use count limit of `shared`. 0 or more, and 0 means no limit. 0 for `unique`
 - `start_at`, `end_at`: active window. 0 ≤ `start_at` < `end_at`
@@ -76,7 +76,7 @@ admin operation. Collection and handling follow `admin-api`.
 
 code
 
-- code normalization: deletes every `-` and every whitespace character (Unicode `White_Space`) wherever it is in the input, and changes ASCII lowercase letters to uppercase. Saving, comparison and the `code` input of `RedeemCoupon`, `create_coupon` and `get_coupon` use the normalized value
+- code normalization: deletes every `-` and every whitespace character (Unicode `White_Space`) wherever it is in the input, and changes ASCII lowercase letters to uppercase. Saving, comparison and the `code` input of `RedeemCoupon`, `get_coupon` and a `shared` `create_coupon` use the normalized value
 - A normalized code uses only characters of `coupon.codeAlphabet` and has a length of at least `coupon.minCodeLength` and at most `coupon.maxCodeLength`. On a violation, admin operations are `bad_request` and `RedeemCoupon` is `COUPON_INVALID`
 - A `unique` code picks `coupon.generatedCodeLength` characters from `coupon.codeAlphabet` with secure random. It does not use ctx random. When it collides with an existing code or a code picked earlier in the same `create_coupon`, it picks again. When one code still collides after `coupon.maxCodePicks` picks, `create_coupon` writes nothing and returns `conflict`
 - The codes of all coupons differ from each other. When the `code` of a `shared` coupon already exists, `create_coupon` is `conflict`
@@ -204,5 +204,5 @@ none
 - Two concurrent `create_coupon` calls with different `operation_id` get different `coupon_id` values. When two `shared` creations with the same code are sent concurrently, only one is made and the other is `conflict`
 - The `expires_at` of a `coupon_attempt` row is `window_start` + `coupon.attemptWindowMs`, and from that time the expiry cleanup deletes the row
 - A coupon whose `extra_id` is not 0 sends one `[coupon_reward_mail]` mail that holds `items` and `extra_id`, and the use record changes. When that mail is received, `grant_mail_extra` is called with that `extra_id`
-- An `extra_id` coupon with empty `items` is created, and a `create_coupon` with `extra_id` 0 and empty `items` and a `create_coupon` with non-zero `extra_id` and more than `mailbox.maxAttachments` `items` are `bad_request`, and so is a `shared` `create_coupon` with `max_uses` −1
+- An `extra_id` coupon with empty `items` is created, and a `create_coupon` with `extra_id` 0 and empty `items` and a `create_coupon` with non-zero `extra_id` and more than `mailbox.maxAttachments` `items` are `bad_request`, and so is a `shared` `create_coupon` with `max_uses` −1, and so is a `unique` `create_coupon` whose `code` is `" - "`, while a `unique` `create_coupon` whose `code` is the empty string is created with `coupon.minCodeLength` 1 or more
 - The server does not start with settings where `coupon.codeAlphabet` has a lowercase letter

@@ -63,7 +63,7 @@ client/
 - Scenes and prefabs are text `.tscn`. `.scn` and `.res` are not used. A shared resource is `.tres`
 - The root script of a scene resource inherits `SceneBase`
 - `_ready()` and `@onready var` of a scene run in stage 4 of `SceneCore`, so they can be used from `on_preload` on. `_process()`, `_physics_process()` and input callbacks are called from stage 7 on
-- Before stage 7, `visible` of the top visual node of the `client-core` Godot rules is not changed. A node to hide at first has `visible` set to `false` in the `.tscn`
+- Before stage 7, `visible` of the top visual node of the `client-core` Godot rules and `process_mode` of a node under the scene are not changed. A node to hide at first has `visible` set to `false` in the `.tscn`, and a node with its own `process_mode` from the start has it set in the `.tscn`
 - `ext_resource` of a `.tscn` points only to files under `res://resource/`, `res://features/<own feature>/`, `res://common/` and `res://core/`. A `.tscn` of `prefab/common/` does not point to `res://features/`
 - A script is not put inside a `.tscn` or `.tres` (`type="GDScript"`). A script goes in a `.gd` file. Static check `embedded script` blocks it
 - The links inside a `.tscn` or `.tres` hold: an `ext_resource` path names a file with the same letter case (an export runs on a file system where case matters), each `ext_resource` and `sub_resource` id is declared once and every `ExtResource` and `SubResource` id used is declared, a scene has one root node, and every `parent` and `[connection]` node path is a node of the scene. Static check `scene links` blocks violations

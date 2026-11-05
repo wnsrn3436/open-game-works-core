@@ -59,7 +59,7 @@ Opens the OS store review request window and share window with a per-platform na
 ### store review request
 
 - The OS decides whether to show the store review request window and how many times, and does not report the result. `Requested` means it was requested from the OS, not that the window was shown
-- On `android`, the request counts as made when it is handed to the Google Play In-App Review flow: `request_review` of the adapter reports success then, so the result is `Requested` and `NativeUiCore.last_review_at` is saved. A failure of the Google Play flow after that is not reported and changes nothing, so `NativeUiCore.reviewMinIntervalMs` still applies to the next request
+- On `android`, the request counts as made when `request_review` of the adapter has started `requestReviewFlow` of the Google Play In-App Review API: the adapter reports success then, so the result is `Requested` and `NativeUiCore.last_review_at` is saved. The adapter reports a failure only when it cannot start `requestReviewFlow`. A failure of `requestReviewFlow` or of `launchReviewFlow` after that is not reported and changes nothing, so `NativeUiCore.reviewMinIntervalMs` still applies to the next request
 - `request_review` processing order
   1. `Unsupported` when there is no adapter or `supports_review` is `false`
   2. `Throttled` when `NativeUiCore.last_review_at` of the `device` file exists and its difference from the current device time is less than `NativeUiCore.reviewMinIntervalMs`

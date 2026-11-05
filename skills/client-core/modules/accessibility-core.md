@@ -139,7 +139,7 @@ none
 |---|---|---|---|
 | `set_test_text_scale` | permille(1000 or more) | none | `QACore`, core test |
 
-- Applies the text scale with `LocalizationCore.set_text_scale` and does not save it. That text scale stays until `LocalizationCore.release` or the next `apply_saved_settings`. `release` of AccessibilityCore does not set it back
+- Applies the text scale with `LocalizationCore.set_text_scale` and does not save it. It does not change the option value, so `text_scale_permille` of `get_settings` and the value check of `set_text_scale` use the option value. That text scale stays until `LocalizationCore.release`, the next `apply_saved_settings`, the next `set_test_text_scale` or a `set_text_scale` that changes the option value. `release` of AccessibilityCore does not set it back
 - The `QACore` command `set_text_scale` calls this operation
 - STG and PROD builds do not have this operation
 
@@ -156,5 +156,6 @@ none
 - Each `set_*` that changes a value publishes `AccessibilityChangedEvent` once, and the same value publishes none
 - After `set_test_text_scale`, the device file is unchanged
 - After `set_text_scale`(1250), `set_test_text_scale`(1500) and `release`, `LocalizationCore.get_text_scale` is 1500. After `init` and `apply_saved_settings` it is 1250
+- After `set_text_scale`(1250) and `set_test_text_scale`(1500), `text_scale_permille` of `get_settings` is 1250. `set_text_scale`(1250) after that leaves `LocalizationCore.get_text_scale` at 1500 and publishes no `AccessibilityChangedEvent`, and `set_text_scale`(1000) makes it 1000 and publishes `AccessibilityChangedEvent` once
 - `set_test_text_scale`(999) leaves an error log, and `LocalizationCore.get_text_scale` is unchanged
 - After `release`, there is no color filter and no subtitle box

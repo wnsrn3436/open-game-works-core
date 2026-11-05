@@ -100,6 +100,7 @@ The messages below stop display and are taken down, and then the request at the 
 - A toast whose toast object could not be borrowed
 - A black box message whose block could not be set. The black box object is not shown
 - A message whose message object was destroyed outside MessageCore while on display
+- MessageCore judges the destruction of the message object in each frame while it is on display and before each operation on that object. It plays no tween on a destroyed message object, and does not give a destroyed borrowed toast object back to `PoolCore`, which has already removed it, in 5, in a kind close or in `release`
 
 ## hook
 
@@ -168,7 +169,7 @@ none
 - Toast objects still borrowed are 1 or fewer, and 0 after 5 of the last toast
 - The `Message` layer is drawn above the `Popup` layer, and a toast above a black box
 - After the black box object is destroyed outside, a black box request appears with a new object
-- When a borrowed toast object is destroyed outside while on display, there is one error log, from `PoolCore`, and the next toast appears
+- When a borrowed toast object is destroyed outside during its enter tween, and when it is destroyed outside during 3, each gives one error log, from `PoolCore`, and the next toast appears. When the toast object made by code is destroyed outside during 3, there is one error log, from MessageCore
 - A toast after a toast whose toast object could not be borrowed appears, and there is one error log per failure
 - When the resource keys in core settings are empty strings, the toast and black box made by code appear, and three toast requests with different wording appear in turn with the one toast object made by code. A toast request after that object is destroyed outside appears with a new object
 - After `release` there is no black box object, and after `init` and `prepare` again, toasts and black boxes appear in display order
