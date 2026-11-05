@@ -83,8 +83,7 @@ Opens the OS store review request window and share window with a per-platform na
 
 ### screen capture
 
-- `capture_screen` waits until the engine has fully drawn the next frame and returns that frame at the window resolution as PNG. A `capture_screen` called while another one waits joins that wait and returns the same frame. A wait ends when its frame is drawn, so a `capture_screen` called after that, also one called while the captures of that wait are returning, starts a new wait. The captures of a wait return in the order they were called. The first capture of a wait hides the `Debug` layer of `UICore`, and the captures that join it do not change its visibility. When a wait ends, before any of its captures returns, the `Debug` layer gets back the visibility it had right before the first capture hid it
-- While the engine draws no frame (e.g. the window is minimized or the app is in the background), `capture_screen` keeps waiting, with no time limit, until a frame is drawn or `release`
+- `capture_screen` waits until the engine has fully drawn the next frame and returns that frame at the window resolution as PNG. `capture_screen` calls made while one waits return the same frame. The `Debug` layer of `UICore` is not in the image, and after a capture returns it has the visibility it had before
 - Content code hides the UI to leave out of the screen before calling it
 - In a headless run of `QACore`, it returns empty bytes without waiting for a frame and without hiding the `Debug` layer. NativeUiCore reads whether it is headless from the engine without calling `QACore`. The method is in the engine-specific implementation rules
 
@@ -96,7 +95,7 @@ Opens the OS store review request window and share window with a per-platform na
 
 ### release
 
-- Ends a `share` in progress with `Failed`, then every `capture_screen` that has not returned, also one of a wait that has ended, with empty bytes in the order they were called, and deletes the adapter. When a wait is in progress, the `Debug` layer gets back the visibility it had right before the first capture of that wait hid it, before any of those captures returns. Saved values are not deleted
+- Ends a `share` in progress with `Failed` and every `capture_screen` that has not returned with empty bytes, and deletes the adapter. The `Debug` layer gets back the visibility it had before the capture. Saved values are not deleted
 
 ## hook
 
@@ -156,10 +155,8 @@ none
 - Text length exceeded, image size exceeded, and empty text with an empty image give `Failed` and an error log, and the adapter is not called
 - `share` of text that ends with a character outside the BMP and whose number of Unicode code points is `shareTextMaxChars` goes to the adapter, and `share` of that text with one more character outside the BMP gives `Failed` and an error log
 - Even without an adapter, `share` of empty text and an empty image gives `Failed` and an error log
-- The PNG size of `capture_screen` equals the window resolution and there are no elements of the `Debug` layer. Two `capture_screen` calls in the same frame return the same bytes. When one `capture_screen` returns, and when two called in the same frame return, the `Debug` layer has the visibility it had before the first call, both when it was visible and when it was hidden. In a headless run, `capture_screen` returns empty bytes with one warn log and leaves the visibility of the `Debug` layer as it is
-- Of two `capture_screen` calls made in the same frame, the first returns before the second. When the caller of the first, right after it returns, hides a UI element and calls `capture_screen` again, the second call returns the same bytes as the first, the third returns a PNG without that UI element and without elements of the `Debug` layer, and when the third returns the `Debug` layer has the visibility it had before the first call
-- In a run that is not a headless run, while the engine draws no frame, `capture_screen` does not return and the `Debug` layer stays hidden. When the engine draws a frame again, it returns the PNG of that frame, and the `Debug` layer has the visibility it had before the call
+- The PNG size of `capture_screen` equals the window resolution and there are no elements of the `Debug` layer. Two `capture_screen` calls in the same frame return the same bytes. When `capture_screen` returns, the `Debug` layer has the visibility it had before the call. In a headless run, `capture_screen` returns empty bytes with one warn log and leaves the visibility of the `Debug` layer as it is
 - `get_fake_record` of the fake adapter returns the text and image byte count passed to `share`
-- A `share` during `release` ends with `Failed` without a log, and after `init` again there is no adapter. In a run that is not a headless run, one `capture_screen`, and two, called right before `release` in the same frame return empty bytes without a log, and when they return the `Debug` layer has the visibility it had before the first call. When the caller of the first of two `capture_screen` calls made in the same frame calls `release` right after the first returns, the second returns empty bytes without a log before `release` returns
+- A `share` during `release` ends with `Failed` without a log, and after `init` again there is no adapter. In a run that is not a headless run, a `capture_screen` called right before `release` returns empty bytes without a log
 - `set_native_adapter` after `init` leaves an error log and does not change the adapter
 - In a run that is not a headless run on a platform that provides a clipboard, `copy_text`(`12345`) is `true` and the text of the engine clipboard is `12345`. Empty text gives `false` and an error log, and the clipboard stays the same. In a headless run `copy_text`(`12345`) gives `false` and a warn log, and empty text gives `false` and an error log without a warn log

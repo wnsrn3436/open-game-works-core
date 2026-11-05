@@ -141,8 +141,8 @@ none
 | `follow`, `move_to`, `move_by_preset`, `snap_to`, `zoom_to`, `get_zoom`, `set_bounds`, `shake`, `get_view_center`, `screen_to_world`, `world_to_screen` while no camera is attached | each failure value. `move_by_preset` does not load the tween preset | error |
 | `has_camera`, `is_3d_camera`, `detach_camera`, `stop_follow`, `stop_move`, `stop_shake`, `clear_bounds` while no camera is attached | `false` for `has_camera` and `is_3d_camera`, none for the rest | none |
 | the target of `follow` is missing or destroyed or has no world position for the attached camera, smooth time is negative, any axis of the dead zone size is negative | `false`. The previous follow and the `move_to` in progress do not change | error |
-| the duration of `move_to`, `zoom_to` is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` is not a member of `Easing`, the `TimeBasis` is not a member of `TimeBasis`, the factor of `zoom_to` is 0 or less | `Failed`. The base position, the zoom factor, the follow and the `move_to` or `zoom_to` in progress do not change | error |
-| the tween preset of `move_by_preset` cannot be loaded, there is no first change, the duration of the first change is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` of the first change is not a member of `Easing` | `Failed` when loading ends. The follow that the call ended stays ended | error |
+| the duration of `move_to`, `zoom_to` is less than 0 or more than `TweenCore.maxDurationMs`, the factor of `zoom_to` is 0 or less | `Failed`. The base position, the zoom factor, the follow and the `move_to` or `zoom_to` in progress do not change | error |
+| the tween preset of `move_by_preset` cannot be loaded, there is no first change | `Failed` when loading ends. The follow that the call ended stays ended | error |
 | the bounds size of `set_bounds` is 0 or less on any axis | `false`. Does not change the previous bounds | error |
 | the amount of `shake` is 0 or less | none. Does not change trauma | error |
 | the value of `set_shake_scale` is not at least 0 and at most 1000 | shake scale unchanged | error |
@@ -194,8 +194,7 @@ none
 - `move_by_preset` ends with `Completed` at the received position after the duration of the first change of the preset
 - For a `move_to` with `TimeBasis` `GameTime`, the base position stays as it is during a game time pause. For a `QuadIn` `move_to`, when half the duration has passed, the base position is at 1/4 of the distance from start to end (tolerance 0.01 world units)
 - Calling `stop_move` or `snap_to` during a `move_by_preset` that waits for loading gives `Cancelled`, and even after loading ends, the base position is the value that `stop_move` or `snap_to` set
-- `move_to` and `zoom_to` with an `Easing` or `TimeBasis` that is not a member are `Failed` with one error log, and the base position and zoom factor do not change. `move_by_preset` of a preset whose first change has an `Easing` that is not a member is `Failed` with one error log when loading ends, and the base position does not change
-- After `follow`(target), `move_by_preset` of a preset whose first change has an `Easing` that is not a member ends the follow when it is called: while it waits for loading and after it is `Failed`, the base position stays at its value at the call even when the target moves
+- After `follow`(target), `move_by_preset` of a tween preset that cannot be loaded ends the follow when it is called: while it waits for loading and after it is `Failed`, the base position stays at its value at the call even when the target moves
 - `zoom_to` with factor 0 and `zoom_to` with a NaN factor during a `zoom_to` in progress are `Failed`, and the one in progress ends with `Completed`. `move_to` with a NaN position while following is `Failed` and the follow continues, and during a `move_to` in progress it is `Failed` and that `move_to` ends with `Completed`
 - `follow` with a destroyed target during a `move_to` is `false` with one error log, and that `move_to` ends with `Completed`
 - `follow` of a target that has no world position for the attached camera is `false` with one error log, and the previous follow continues

@@ -139,7 +139,7 @@ none
 |---|---|---|---|
 | `set_test_text_scale` | permille(1000 or more) | none | `QACore`, core test |
 
-- Applies the text scale with `LocalizationCore.set_text_scale` and does not save it. It does not change the option value, so `text_scale_permille` of `get_settings` and the value check of `set_text_scale` use the option value. That text scale stays until `LocalizationCore.release`, the next `apply_saved_settings`, the next `set_test_text_scale` or a `set_text_scale` that changes the option value. `release` of AccessibilityCore does not set it back
+- Applies the text scale with `LocalizationCore.set_text_scale` and does not save it. It does not change the option value, so `text_scale_permille` of `get_settings` and the value check of `set_text_scale` use the option value. That text scale stays until `LocalizationCore.release`, the next `apply_saved_settings`, the next `set_test_text_scale` or a `set_text_scale` that changes the option value
 - The `QACore` command `set_text_scale` calls this operation
 - STG and PROD builds do not have this operation
 

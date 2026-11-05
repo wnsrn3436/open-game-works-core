@@ -57,7 +57,7 @@ Handles toasts and black box messages, notifications that are shown for a set du
 - `prepare` loads the toast resource, the black box resource, and the enter and exit tween presets (kind of `TweenCore.get_preset_kind`) into the global scope, and makes one black box object and keeps it hidden. When the toast resource key is not an empty string, it fills the `PoolCore` pool of the toast prefab in advance; when it is an empty string, it makes one toast object by code and keeps it hidden
 - When it is called again, it closes the same as `close_all`, destroys the previous black box object and the toast object made by code, and reads the core settings again and loads
 - A message request before `prepare` succeeds, after it fails, and before a `prepare` called again ends leaves an error log and is ignored
-- `prepare` leaves an error log when the sum of the length of the black box enter tween preset, `MessageCore.blackBoxDurationMs`, and the length of the black box exit tween preset is `InputBlockCore.maxDurationMs` or more. The values are used as they are and the result of `prepare` does not change. The length of a tween preset is cycle time × repeat count of `TweenCore`, computed from the loaded definition without the `TweenCore` definition check, and 0 when the key is an empty string. Static check `tween preset` blocks in the game repo a preset that fails an item of that check that does not depend on the target object
+- `prepare` leaves an error log when the sum of the length of the black box enter tween preset, `MessageCore.blackBoxDurationMs`, and the length of the black box exit tween preset is `InputBlockCore.maxDurationMs` or more. The values are used as they are and the result of `prepare` does not change. The length of a tween preset is cycle time × repeat count of `TweenCore`, and 0 when the key is an empty string
 
 ### text
 
@@ -88,7 +88,7 @@ One message is shown in the order below. From the start of 1 to the end of 5 it 
 
 ### close
 
-- kind close: takes down the message of that kind on display without presentation and empties the queue. Stops with `TweenCore.stop` the tween it played on the message object, and for a black box, releases the block
+- kind close: takes down the message of that kind on display without presentation and empties the queue. Stops the tweens of the message object, and for a black box, releases the block
 - `close_black_box` does a kind close only for black box messages
 - `close_all` does a kind close for both kinds
 - `release` takes them down the same as `close_all`, then returns borrowed toast objects to the pool and destroys the toast object made by code and the black box object
@@ -100,7 +100,7 @@ The messages below stop display and are taken down, and then the request at the 
 - A toast whose toast object could not be borrowed
 - A black box message whose block could not be set. The black box object is not shown
 - A message whose message object was destroyed outside MessageCore while on display
-- MessageCore judges the destruction of the message object in each frame while it is on display and before each operation on that object. It plays no tween on a destroyed message object, and does not give a destroyed borrowed toast object back to `PoolCore`, which has already removed it, in 5, in a kind close or in `release`. When a kind close or `release` finds the message object on display destroyed, it leaves the log of the `## error` table for it and shows no request of the queue
+- MessageCore does not give a destroyed borrowed toast object back to `PoolCore`, which has already removed it
 
 ## hook
 
@@ -170,7 +170,6 @@ none
 - The `Message` layer is drawn above the `Popup` layer, and a toast above a black box
 - After the black box object is destroyed outside, a black box request appears with a new object
 - When a borrowed toast object is destroyed outside during its enter tween, and when it is destroyed outside during 3, each gives one error log, from `PoolCore`, and the next toast appears. When the toast object made by code is destroyed outside during 3, there is one error log, from MessageCore
-- When the toast object made by code is destroyed outside during 3 while a toast request is in the queue and `close_all` is called in the same frame, there is one error log, from MessageCore, and no toast appears
 - A toast after a toast whose toast object could not be borrowed appears, and there is one error log per failure
 - When the resource keys in core settings are empty strings, the toast and black box made by code appear, and three toast requests with different wording appear in turn with the one toast object made by code. A toast request after that object is destroyed outside appears with a new object
 - After `release` there is no black box object, and after `init` and `prepare` again, toasts and black boxes appear in display order

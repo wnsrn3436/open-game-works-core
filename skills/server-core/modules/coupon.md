@@ -69,7 +69,7 @@ admin operation. Collection and handling follow `admin-api`.
 - `memo`: description the operator leaves. Not sent to the client
 - field types: `kind` is `enum{shared, unique}`, `code`, `after_code` and `memo` are `string`, `count`, `max_uses` and `extra_id` are `int32`, `coupon_id` is `int64`
 - `get_coupon` takes exactly one of `coupon_id` and `code`. When both or neither are given, `bad_request`. `code` is looked up by its normalized value
-- `after_code`: when it is the empty string, returns from the first code; otherwise returns only codes after that code in byte order. `after_code` is used as given, without normalization or the code format check
+- `after_code`: when it is the empty string, returns from the first code; otherwise returns only codes after that code in byte order
 - output of `list_coupon_codes`: `redeemed_by` and `redeemed_at` are `null` for a `unique` code that no user redeemed and for the code of a `shared` coupon
 
 ## behavior
@@ -201,7 +201,7 @@ none
 - `get_coupon` returns the `count` of a `unique` coupon as the `count` of `create_coupon`, and the `count` of a `shared` coupon as 0
 - Creating a `shared` coupon with an existing code is `conflict`
 - `get_coupon` given both or neither of `coupon_id` and `code` is `bad_request`, and `get_coupon` given a non-normalized `code` returns that coupon
-- `list_coupon_codes` with an empty `after_code` returns `limit` codes from the first code, and the next call given the last code as `after_code` returns the remaining codes, each once and none missing. An `after_code` `ab` returns the empty list
+- `list_coupon_codes` with an empty `after_code` returns `limit` codes from the first code, and the next call given the last code as `after_code` returns the remaining codes, each once and none missing
 - Two `create_coupon` calls with the same `operation_id` make only one coupon
 - Two concurrent `create_coupon` calls with different `operation_id` get different `coupon_id` values. When two `shared` creations with the same code are sent concurrently, only one is made and the other is `conflict`
 - The `expires_at` of a `coupon_attempt` row is `window_start` + `coupon.attemptWindowMs`, and from that time the expiry cleanup deletes the row

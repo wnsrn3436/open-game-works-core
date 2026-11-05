@@ -204,8 +204,8 @@ none
 | `CutsceneCore.fastForwardDelayMs` | integer | core | content | in fast forward, the time from the whole text being shown until the `Line` ends |
 | `CutsceneCore.lineHistoryMaxCount` | integer | core | content | limit on the number of line history items |
 | `TweenCore.maxDurationMs` | integer | core | content | maximum duration of the first change of a tween preset that the `Camera` start check accepts |
-| `InputCore.maxKeysPerAction` | integer | core | content | maximum number of keys and mouse buttons that `set_keys` accepts for one action. CutsceneCore reads the key binding of `cutscene_advance` with `InputCore.get_keys` into a buffer of this size plus the number of device inputs in the default binding of `cutscene_advance` |
-| `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions that `set_pad_buttons` accepts for one action. CutsceneCore reads the gamepad button binding of `cutscene_advance` with `InputCore.get_pad_buttons` into a buffer of this size plus the number of device inputs in the default binding of `cutscene_advance` |
+| `InputCore.maxKeysPerAction` | integer | core | content | maximum number of keys and mouse buttons that `set_keys` accepts for one action |
+| `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions that `set_pad_buttons` accepts for one action |
 
 ## data
 
