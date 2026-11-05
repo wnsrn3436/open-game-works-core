@@ -35,7 +35,7 @@ Builds the profile that other users see (nickname, the `PublicProfile` message t
 | `count_find_attempt` | user ID | async operation. `pass` | `RATE_LIMITED`, `UNAUTHORIZED`, `INTERNAL` | `routing` |
 
 - `PublicProfileEntry`(base proto message): `int64 user_id`, `string nickname` (empty string when there is no nickname), `bytes profile` (bytes of the game `PublicProfile` message; empty bytes when there is no hook `build_public_profile`), `int64 last_active_at` (last active time; 0 when there is no record), `string public_code` (the public code of `storage`)
-- The output list is in ascending order of user ID and leaves out users for whom `is_active_user` is `false`
+- The output list has one entry per distinct user ID, in ascending order of user ID, and leaves out users for whom `is_active_user` is `false`
 
 core `rpc` request field
 
@@ -53,8 +53,8 @@ core `rpc` response field
 
 ## behavior
 
-- profile build runs inside `storage.run_read_only`. For each input user ID that has an element in the output of `storage.get_user_records` whose `record.withdrawn_at` is `null`, calls hook `build_public_profile`, and fills the nickname with `nickname.get_nicknames`
-- `get_public_profiles` has no limit on the user ID count. Splits the user ID list in ascending order into groups of `public-profile.maxRequestCount` users and calls `storage.get_user_records` and `nickname.get_nicknames` once per group
+- profile build runs inside `storage.run_read_only`. For each distinct input user ID that has an element in the output of `storage.get_user_records` whose `record.withdrawn_at` is `null`, calls hook `build_public_profile`, and fills the nickname with `nickname.get_nicknames`
+- `get_public_profiles` has no limit on the user ID count. Splits the distinct input user IDs in ascending order into groups of `public-profile.maxRequestCount` users and calls `storage.get_user_records` and `nickname.get_nicknames` once per group
 - The ctx of `build_public_profile` is the ctx of the user who requested the profile. The hook reads the public kind of the target user with `storage.read_public_state`, and builds `PublicProfile` from those values and `data` of ctx. The profile of the requester's own user ID is built the same way
 - `PublicProfile` is a module message, and the game that registers hook `build_public_profile` defines it
 - There is no cache. Each call builds the profiles and writes nothing
@@ -101,6 +101,7 @@ none
 | `(ogw.v)` violation of `user_ids` (count, element less than 1, duplicate) | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | `public_code` of `FindUserByPublicCode` that is not a public code input | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
 | more `FindUserByPublicCode` of one user than `public-profile.findPerMinute` in one minute window | `RATE_LIMITED` | `RATE_LIMITED` | none |
+| no user has the `public_code` of `FindUserByPublicCode`, or profile build leaves that user out | `USER_NOT_FOUND` | `USER_NOT_FOUND` | none |
 | the user transaction of `count_find_attempt` is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
 | the user transaction of `count_find_attempt` is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
 | throw of the hook, output in a wrong format, write inside the hook | throw. The message of the throw holds the target user ID | `INTERNAL` | `error` log by `routing` |
@@ -138,6 +139,7 @@ none
 - User IDs that do not exist and withdrawn users are not in the output
 - Passing `public-profile.maxRequestCount` × 2 + 1 users to `get_public_profiles` does not throw and returns the profiles of all active users in ascending order of user ID
 - With `public-profile.maxRequestCount` 2, `get_public_profiles` of 5 users calls `storage.get_user_records` 3 times and does not call `storage.get_user_record`
+- `get_public_profiles` with the user ID list B, A, B returns one entry of A and then one entry of B, and calls `build_public_profile` once per user
 - `FindUserByPublicCode` of the public code of a withdrawn user is `USER_NOT_FOUND`, and that of an existing user calls `storage.get_user_records` once and does not call `storage.get_user_record`
 - Without the hook, `profile` is empty bytes and the nickname is filled
 - Reading a kind that is not a public kind with `read_public_state` or calling `put_state` inside the hook is `INTERNAL`, and the saved state stays

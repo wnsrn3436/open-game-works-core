@@ -135,7 +135,7 @@ none
 | outside the active window | `COUPON_NOT_ACTIVE` | `COUPON_NOT_ACTIVE` | none |
 | this user already used it | `COUPON_ALREADY_REDEEMED` | `COUPON_ALREADY_REDEEMED` | none |
 | use count limit reached, used `unique` code | `COUPON_USED_UP` | `COUPON_USED_UP` | none |
-| the lock of step 4 is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
+| the lock of step 4 is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log by `routing` |
 | redeem attempt limit exceeded | `RATE_LIMITED` | `RATE_LIMITED` | `security` log |
 | the user transaction of `count_redeem_attempt` is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
 | the user transaction of `count_redeem_attempt` is `FAILED` | `INTERNAL` | `INTERNAL` | `error` log |
@@ -195,7 +195,7 @@ none
 - When the attempts in a fixed window are more than `coupon.maxAttemptsPerWindow`, a correct code is also `RATE_LIMITED`, and it is accepted again in the next fixed window. Failed attempts also count
 - In the `security` log of a `RedeemCoupon` over the attempt limit, `request_id` is the request ID of that request and `ip` is the truncated IP of that client IP
 - When two concurrent requests come for a coupon with `max_uses` 1, only one receives it
-- On PostgreSQL, while `testing.hold_game_row_lock` holds the row that step 4 locks (the coupon row of a `shared` coupon, the code row of a `unique` code), `RedeemCoupon` is `INTERNAL` with one `error` log holding that user ID and request ID, and the use record, `used_count` and items stay as they are
+- On PostgreSQL, while `testing.hold_game_row_lock` holds the row that step 4 locks (the coupon row of a `shared` coupon, the code row of a `unique` code), `RedeemCoupon` is `INTERNAL` with one `error` log, which `routing` leaves, holding that user ID and request ID, and the use record, `used_count` and items stay as they are
 - `create_coupon` makes `count` distinct `unique` codes, and `list_coupon_codes` returns them all, each with `redeemed_by` and `redeemed_at` `null`
 - With `coupon.codeAlphabet` `AB` and `coupon.generatedCodeLength` 1, a `unique` `create_coupon` with `count` 3 ends with `conflict` and leaves no coupon row or code row
 - `get_coupon` returns the `count` of a `unique` coupon as the `count` of `create_coupon`, and the `count` of a `shared` coupon as 0

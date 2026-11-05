@@ -209,7 +209,7 @@ The TypeScript that the contract tool and the data tool make. One namespace is o
 ## log
 
 - One line is one JSON object. The levels are `debug`, `info`, `warn`, `error`
-- Every line has the common fields `time` (Unix ms), `level`, `kind`, `user_id`, `request_id`, `request` (the request name of the contract; for an admin request, the admin operation name), `message`. A missing value is `null`
+- Every line has the common fields `time` (Unix ms), `level`, `kind`, `user_id`, `request_id`, `request` (the request name of the contract; for an admin request, the admin operation name, except in the `request` line that `routing` writes for a route), `message`. A missing value is `null`
 - `kind`: `request` (one line per request), `error`, `security`, `audit` (operations actions and grants), `game` (logs that content code leaves), `core` (the `debug`, `info`, `warn` logs that core modules leave and that are not `request`, `security`, `audit`)
 - Messages are in English
 - Logs do not contain secrets, tokens, raw receipts, personal information, request bodies and response bodies. Exceptions: `request_body` of the `request` log that `logging` sets (not kept for a request with the `rpc` option `(ogw.sensitive)`), the verified admin input in `audit` logs, the truncated IP in `security` and `audit` logs

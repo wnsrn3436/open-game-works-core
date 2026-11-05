@@ -115,7 +115,7 @@ Checks in this order, and on a failure changes nothing.
 
 - Rows of excluded tables (the login token, social account link and push device registration of the target user) stay as they are. So a device that was logging in as the target user plays in the cloned state when it logs in again
 - Output `replaced_records` is the number of saved records, `data_version_matches` is whether the `data_version` of the snapshot equals that of this server, and `data_version` is the server data version of this server
-- The `args` of the `audit` log keep `source_environment`, `source_user_id`, `sha256`, `target_user_id` instead of the snapshot
+- The `args` of the `audit` log keep `source_environment`, `source_user_id`, `sha256`, `target_user_id` instead of the snapshot. When the body breaks check 2, `source_environment`, `source_user_id` and `sha256` are `null`
 
 ### game state snapshot
 
@@ -132,7 +132,7 @@ A game state snapshot is a JSON object with the fields of the snapshot table oth
   - `target_key` is given and there is not exactly one record, or `target_key` is less than 0
 - When the checks pass, writes the records with `storage.replace_game_rows` in the game transaction that `admin-api` opened. When `target_key` is given, it writes the record with its `key` changed to `<kind column value>/<target_key>` and the value of field `int64 key = 1` of `value` changed to `target_key`. When `replace_game_rows` is `FAILED`, it is `internal`. It does not write a clone record
 - Output `replaced_records` is the number of written records, `data_version_matches` is whether the `data_version` of the game state snapshot equals that of this server, and `data_version` is the server data version of this server
-- The `args` of the `audit` log keep `source_environment`, the key list of the records, `sha256`, `target_key` instead of the game state snapshot
+- The `args` of the `audit` log keep `source_environment`, the key list of the records (`keys`), `sha256`, `target_key` instead of the game state snapshot. When the body breaks check 2, `source_environment` and `sha256` are `null` and `keys` is empty. `target_key` is `null` when it is not given
 
 ### clone wipe
 
@@ -198,6 +198,7 @@ none
 - Import in the PROD environment is `conflict`, and the rows do not change
 - A snapshot with `sha256` changed to a wrong value, a snapshot with a different `app_id`, a snapshot with a contract version higher than the server's, and a snapshot with a core version higher than the server's are rejected, and the rows do not change
 - A snapshot whose `format` or `contract_version` is a string, a snapshot whose `exported_at` is a JSON integer, and a snapshot with a record whose `contract_version` is a string are `bad_request`, and the rows do not change. An exported snapshot keeps the types of the snapshot table
+- An `import_user_snapshot` whose body is not JSON is 400 `bad_request`, and its `audit` line has `args` with `source_environment`, `source_user_id` and `sha256` `null` and `target_user_id` the input value
 - When a snapshot is imported into a server that registered more `?` columns than the server that made the snapshot, those columns are saved as null. A record with an unregistered column, a missing non-`?` column, or a JSON value that differs from the column type is `bad_request`, and the rows do not change
 - Import of a user snapshot with two records with the same `table` and `key`, and of a game state snapshot with two records with the same `key`, is `bad_request`, and the rows do not change
 - When import fails during save, the rows of the target user are the same as before the import

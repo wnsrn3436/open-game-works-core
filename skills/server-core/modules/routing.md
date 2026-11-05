@@ -218,6 +218,7 @@ none
 | `GameError` of a core `rpc` handler that is not in `(ogw.core_errors)` of that core `rpc` | rolls back | `INTERNAL` | `error` log. request name, `GameError` value |
 
 - Every request, except the HTTP 404 of an unknown path or method and the HTTP 403 of an origin that is not allowed, leaves one `request` log line with `logging.write` regardless of the result. For a request that made ctx, whatever step it ended in after that, that line has the fields and the minimum level received with `logging.take_request_log_annotation`(ctx). `logging` defines the level and the fields
+- The `request` log line of a request that a route handled, `POST /admin/<operation>` included, has `user_id`, `request_id`, `request`, `client_version`, `platform` and `seed` `null` and no `request_body`. Its `error_code` is 0, or the value of `INTERNAL` when the route handler threw
 - `ServerError.ban` of a `BANNED` error response is base proto message `BanDetail` (`int64 user_id`, `int64 until_at`, `string deletion_url`, `string access_token`, `string session_signing_key`, `string public_code`). `public_code` is the public code of that user from `storage.get_user_record`. `until_at` is the time the ban ends, and 0 when it does not end. `deletion_url` is the address of the web account deletion page of `auth`. Only the ban login of `auth` fills `access_token` and `session_signing_key`, and in step 6 they are empty strings
 
 Added `CoreError`: `INVALID_REQUEST`, `RATE_LIMITED`, `MAINTENANCE`, `BANNED`, `FEATURE_DISABLED`, `APP_UPDATE_REQUIRED`, `DATA_UPDATE_REQUIRED`, `INTERNAL`
@@ -287,6 +288,7 @@ none
 - An update route `GET` from an allowed origin has `Access-Control-Allow-Origin` equal to that origin and has `Vary: Origin`, for both 200 responses and 404 responses. A `GET` from an origin that is not allowed has no `Access-Control-Allow-Origin`. `OPTIONS` of an update route is 404
 - A `POST` request from an allowed origin has `Access-Control-Allow-Origin` equal to that origin, for both success responses and `INVALID_REQUEST` responses
 - Every request that got a response, except the HTTP 404 of an unknown path or method and the HTTP 403 of an origin that is not allowed, leaves one `request` log line
+- The `request` log line of a `POST /admin/<operation>` request and of a `GET /update/files/<sha256>` request that got HTTP 404 has `request`, `user_id` and `request_id` `null` and `error_code` 0
 - The HTTP 404 of an unknown path, and the HTTP 403 of a `POST` and a preflight from an origin that is not allowed, leave no `request` log
 - The `request` log of a successful request for which `take_response_delta` returned unknown kind rows has level `warn` and carries those `kind` column values in `unknown_kinds`, and the response is a success
 - The attempt counter of `RedeemCoupon` is committed before the transaction start and remains even when the handler ends with `GameError`, and when it exceeds the limit, the handler is not called

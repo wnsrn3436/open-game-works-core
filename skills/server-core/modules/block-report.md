@@ -74,9 +74,9 @@ admin operation. Collection and handling follow `admin-api`.
 - `BlockedUserEntry`(base proto message): `PublicProfileEntry profile`, `int64 blocked_at`(`created_at` of the block row)
 - `ReportContext`(base proto enum): `Profile`, `Chat`, `Match`, `Guild`, `Other`. The screen the report was made from
 - `reason_id`: ID value of `report_reason`
-- `ref`: identifying string of the reported target. e.g. the decimal string of a match ID or a guild ID. At most `block-report.maxRefBytes` bytes
+- `ref`: identifying string of the reported target. e.g. the decimal string of a match ID or a guild ID. At most `block-report.maxRefBytes` bytes, and holds no U+0000
 - `comment`: description written by the reporter. It is the empty string, or `validation.is_plain_text`(comment, `block-report.maxCommentLength`) is `true`
-- `evidence`: text of the reported target saved on the server. Text the client sent is not used. `chat` passes the text of the reported message, content handlers and hooks pass the text of the reported target that content saved, and `ReportUser` passes the empty string. At most `block-report.maxEvidenceBytes` bytes
+- `evidence`: text of the reported target saved on the server. Text the client sent is not used. `chat` passes the text of the reported message, content handlers and hooks pass the text of the reported target that content saved, and `ReportUser` passes the empty string. At most `block-report.maxEvidenceBytes` bytes, and holds no U+0000
 - report: `report_id`, `reporter_id`, `target_id`, `reason_id`, `context`(`ReportContext` element name), `ref`, `comment`, `evidence`, `status`(`Open`, `Resolved`), `created_at`, `resolved_at`, `resolution`, `expires_at`(null when `Open`)
 - `resolution`: handling note written by the operator. The empty string is `bad_request`
 - field types of admin operations: `report_id` and `after_report_id` are `int64`, `resolution` is `string`
@@ -98,7 +98,7 @@ admin operation. Collection and handling follow `admin-api`.
   1. `INVALID_REQUEST` when `user_id` is the caller's own
   2. `USER_NOT_FOUND` when `public-profile.is_active_user` is `false`
   3. When already blocked, success without changing anything
-  4. Deletes the user's block rows whose `blocked_id` has `is_active_user` `false`
+  4. Reads the `user` rows of the `blocked_id` values of the user's block rows with one `storage.get_user_records`(`storage.db`(ctx), that list) call, and deletes the block rows whose `blocked_id` has no element in its output or has an element whose `record.withdrawn_at` is not `null`
   5. `BLOCK_LIMIT` when the block row count is `block-report.maxBlocks` or more
   6. Writes the block row and calls the functions received through `register_block_listener` in registration order
 - `UnblockUser` is `INVALID_REQUEST` when `user_id` is the caller's own. Otherwise it deletes that block row. It also succeeds when there is no row or the target is a withdrawn user
@@ -194,14 +194,14 @@ none
 
 - After `BlockUser`, `is_blocked` is `true`, and after `UnblockUser`, `false`. A second `BlockUser` on the same target succeeds and there is one block row
 - A `user_id` that is the caller's own or 0 is `INVALID_REQUEST`, a user that does not exist is `USER_NOT_FOUND`, and reaching the limit is `BLOCK_LIMIT`
-- A row blocking a withdrawn user is deleted at the next `BlockUser` and does not count toward the limit
+- A row blocking a withdrawn user is deleted at the next `BlockUser` and does not count toward the limit. A `BlockUser` of a new target by a user with 3 block rows calls `storage.get_user_records` once with a list holding those 3 `blocked_id` values, and calls `public-profile.is_active_user` with none of them
 - A registered listener is called once inside the `BlockUser` transaction. When the listener throws, the result is `INTERNAL` and there is no block row
 - `GetBlockedUsers` is in descending order of `blocked_at` and leaves out withdrawn users
 - `is_blocked_either` is `true` for a block in either direction
 - A second report with the same target, the same `ReportContext` and the same `ref` makes no further report and succeeds
 - When the report count in a fixed window reaches `block-report.maxReportsPerWindow`, the next report is `REPORT_LIMIT`, and reports are accepted again in the next fixed window
 - When two users report concurrently, the `report_id` of the two reports differs
-- `INVALID_REQUEST` when `reason_id` is not in `report_reason`, `context` is `_UNSPECIFIED`, or `comment` breaks the plain text condition
+- `INVALID_REQUEST` when `reason_id` is not in `report_reason`, `context` is `_UNSPECIFIED`, `comment` breaks the plain text condition, or `ref` holds U+0000
 - `resolve_report` writes `Resolved` and `resolution`; a second call with a different `operation_id` is `conflict`, and one with the same `operation_id` returns the first output
 - `list_reports` returns the reports selected by status and time range in ascending order of `(created_at, report_id)`. Even when more reports than `limit` share the same `created_at`, continuing with queries whose cursor is the last report of the previous query gets every report once. A query that gives only one of the cursor fields is `bad_request`
 - After `Withdraw`, that user's block rows are gone and that user's report rows stay. `admin-api.export_personal_data` includes the report rows that user wrote
@@ -211,4 +211,4 @@ none
 - On PostgreSQL, an `add_report` of a target that holds the `block_report_sequence` lock makes `remove_user` of that target wait, and after both commit the `evidence` of that row is the empty string
 - On PostgreSQL, while `Withdraw` of the target holds the `block_report_sequence` lock in `remove_user` and has not committed, an `add_report` with `evidence` of that target waits, and after the withdrawal commits it is `OK` and the `evidence` of its row is the empty string
 - While `testing.hold_game_row_lock` holds the key 0 row of `block_report_sequence`, `Withdraw` of a user who is the target of a report with non-empty `evidence` is `INTERNAL`, the `evidence` of that report and the other rows of that user keep their values, and there is no `withdrawn_at`
-- `add_report` called by a content handler writes the report row with the passed `evidence`, and `list_reports` returns that `evidence`. An `evidence` longer than `block-report.maxEvidenceBytes` is `INVALID_INPUT` and there is no report row
+- `add_report` called by a content handler writes the report row with the passed `evidence`, and `list_reports` returns that `evidence`. An `evidence` longer than `block-report.maxEvidenceBytes` or holding U+0000, and a `ref` holding U+0000, are each `INVALID_INPUT` and there is no report row
