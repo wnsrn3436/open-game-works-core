@@ -199,7 +199,7 @@ describe('ogw core test godot', () => {
     writeFileSync(join(ws.coreImpl, 'untracked.txt'), '');
     const run = await ogw(ws, ['core', 'test', 'godot'], { env });
     expect(run.code).toBe(0);
-    expect(run.stdout).toBe('LogCore pass\nUICore pass\n');
+    expect(run.stdout).toBe('LogCore pass\nUICore pass\nno test record: uncommitted changes in the checkout\n');
     expect(await readTestRecords(ws.coreImpl)).toEqual([]);
   });
 
@@ -332,7 +332,7 @@ describe('ogw core test godot', () => {
     expect((await ogw(ws, ['core', 'test', 'godot', 'routing'], { env })).stderr).toContain('not a module of godot: routing');
     // A core agent's worktree has only some modules: a run with modules does not need the others.
     sh(ws.coreImpl, 'rm', ['-r', 'client/godot/core/log_core']);
-    expect(await ogw(ws, ['core', 'test', 'godot', 'UICore'], { env })).toMatchObject({ code: 0, stdout: 'UICore pass\n' });
+    expect(await ogw(ws, ['core', 'test', 'godot', 'UICore'], { env })).toMatchObject({ code: 0, stdout: 'UICore pass\nno test record: uncommitted changes in the checkout\n' });
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stderr).toContain('core-spec/ check failed; no test ran:\nLogCore has no implementation');
   });
 
@@ -393,7 +393,7 @@ describe('ogw core test godot', () => {
     const { ws, env } = setup();
     writeFiles(ws.coreImpl, { 'settings/core-settings.json': { 'UICore.fadeMs': 100, 'LogCore.maxLines': 300, 'UnitTestCore.runTimeLimitMs': 100 } });
     const run = await ogw(ws, ['core', 'test', 'godot', 'LogCore'], { env: { ...env, FAKE_DELAY: '500' } });
-    expect(run).toMatchObject({ code: 0, stdout: 'LogCore pass\n' });
+    expect(run).toMatchObject({ code: 0, stdout: 'LogCore pass\nno test record: uncommitted changes in the checkout\n' });
   });
 
   it('runs the browser run from a web export', async () => {

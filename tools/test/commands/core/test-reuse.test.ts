@@ -112,13 +112,13 @@ describe('ogw core test passing results of the same key', () => {
   it('neither keeps nor uses a result in a checkout with changes or in a --file run', async () => {
     const { ws, env } = setup();
     writeFileSync(join(ws.coreImpl, 'untracked.txt'), '');
-    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore pass\n');
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore pass\nno test record: uncommitted changes in the checkout\n');
     rmSync(join(ws.coreImpl, 'untracked.txt'));
     expect((await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', 'client/godot/core/ui_core/tests/test_ui.gd'], { env })).stdout).toBe('UICore pass\n');
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore pass\n');
     expect((await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', 'client/godot/core/ui_core/tests/test_ui.gd'], { env })).stdout).toBe('UICore pass\n');
     writeFileSync(join(ws.coreImpl, 'untracked.txt'), '');
-    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore pass\n');
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore pass\nno test record: uncommitted changes in the checkout\n');
   });
 
   it('keys a server module by the folders of its dependencies and of testing, the server package files outside server/core/ and the server/core/ entries in no module folder', async () => {

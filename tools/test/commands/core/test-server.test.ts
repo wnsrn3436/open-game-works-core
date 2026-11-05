@@ -151,7 +151,9 @@ describe('ogw core test server and tools', () => {
       commitAll(ws.coreImpl, 'merge');
       return Promise.resolve({ tests: 1, passed: 1, failures: [] });
     });
-    expect((await ogw(ws, ['core', 'test', 'server'], { env })).code).toBe(0);
+    const moved = await ogw(ws, ['core', 'test', 'server'], { env });
+    expect(moved.code).toBe(0);
+    expect(`${moved.stdout}${moved.stderr}`).toContain('no test record: HEAD moved during the run\n');
     expect(await readTestRecords(ws.coreImpl)).toEqual([]);
 
     writeFileSync(join(ws.coreImpl, 'untracked.txt'), '');
@@ -159,11 +161,15 @@ describe('ogw core test server and tools', () => {
       sh(ws.coreImpl, 'rm', ['untracked.txt']);
       return Promise.resolve({ tests: 1, passed: 1, failures: [] });
     });
-    expect((await ogw(ws, ['core', 'test', 'server'], { env })).code).toBe(0);
+    const dirty = await ogw(ws, ['core', 'test', 'server'], { env });
+    expect(dirty.code).toBe(0);
+    expect(`${dirty.stdout}${dirty.stderr}`).toContain('no test record: uncommitted changes in the checkout\n');
     expect(await readTestRecords(ws.coreImpl)).toEqual([]);
 
     vi.mocked(serverModuleTest).mockResolvedValue({ tests: 1, passed: 1, failures: [] });
-    expect((await ogw(ws, ['core', 'test', 'server'], { env })).code).toBe(0);
+    const recorded = await ogw(ws, ['core', 'test', 'server'], { env });
+    expect(recorded.code).toBe(0);
+    expect(`${recorded.stdout}${recorded.stderr}`).not.toContain('no test record');
     expect(await readTestRecords(ws.coreImpl)).toEqual([
       { commit: sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim(), target: 'server', modules: { routing: 'pass' }, recordedAt: expect.any(Number) as number },
     ]);
@@ -263,7 +269,7 @@ describe('ogw core test server and tools', () => {
     // fixture may name an ID name no core test data has yet.
     sh(ws.coreImpl, 'rm', ['-r', 'server/core/routing', 'client/godot/core/log_core', 'test-data', 'licenses.json']);
     writeFiles(ws.coreImpl, { 'fixtures/text-format.json': { cases: [{ name: 'a', input: '[not_in_any_table]', expected: 1 }] } });
-    expect(await ogw(ws, ['core', 'test', 'tools'], { env })).toMatchObject({ code: 0, stdout: 'contract-tool pass\ndata-tool pass\n' });
+    expect(await ogw(ws, ['core', 'test', 'tools'], { env })).toMatchObject({ code: 0, stdout: 'contract-tool pass\ndata-tool pass\nno test record: uncommitted changes in the checkout\n' });
     expect(baseProtoErrors).not.toHaveBeenCalled();
     expect(vi.mocked(buildTool).mock.calls.map((c) => c[2])).not.toContain('data-tool');
   });

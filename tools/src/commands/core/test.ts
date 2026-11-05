@@ -348,14 +348,24 @@ async function keepPassed(
   }
 }
 
+/**
+ * Why a run that is not a `--file` run leaves no test record: changes in the checkout at its start or end, or a HEAD
+ * that moved while it ran. Null when it records, and for a `--file` run, which never records.
+ */
+function noRecordReason(fileRun: boolean, clean: boolean, sameHead: boolean): string | null {
+  if (fileRun) return null;
+  if (!clean) return 'uncommitted changes in the checkout';
+  return sameHead ? null : 'HEAD moved during the run';
+}
+
 /** The result of a run: `screenLocked` when every module that did not pass only left its render pass out for the screen lock. */
-export function runResult(target: Target, results: Map<string, ModuleResult>, outcomes: Map<string, ModuleOutcome>): CommandResult {
+export function runResult(target: Target, results: Map<string, ModuleResult>, outcomes: Map<string, ModuleOutcome>, noRecord: string | null = null): CommandResult {
   const ok = [...results.values()].every((r) => r === 'pass');
   const screenLocked = !ok && [...results].every(([m, r]) => r === 'pass' || (r === 'skipped' && outcomes.get(m)?.skipped === SCREEN_LOCKED_SKIP));
   const summary = { ...testSummary(results, outcomes), ...(screenLocked ? { screenLocked } : {}) };
   return {
     exitCode: ok ? 0 : 1,
-    text: summaryText(results, outcomes),
+    text: noRecord === null ? summaryText(results, outcomes) : `${summaryText(results, outcomes)}\nno test record: ${noRecord}`,
     data: {
       target: recordTarget(target),
       modules: Object.fromEntries(results),
@@ -364,6 +374,7 @@ export function runResult(target: Target, results: Map<string, ModuleResult>, ou
       durationsMs: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.durationMs ?? null])),
       skipped: Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.skipped === undefined ? [] : [[m, o.skipped]]))),
       reused: [...outcomes].filter(([, o]) => o.reused === true).map(([m]) => m),
+      ...(noRecord === null ? {} : { noRecord }),
       ...summary,
     },
     summary,
@@ -394,6 +405,7 @@ export const testCommand: CommandDef = {
         return stoppedRun(ctx, target, error);
       }
       const startHead = start.head;
+      let noRecord: string | null = null;
       let results: Map<string, ModuleResult>;
       let outcomes: Map<string, ModuleOutcome>;
       try {
@@ -417,7 +429,8 @@ export const testCommand: CommandDef = {
         // the HEAD check below records nothing
         const endClean = (await statusLines(implDir, { env: ctx.env })).length === 0;
         // a run of one test file is not a run of its module: it leaves no record
-        if (file === undefined && start.clean && endClean && (await head(implDir, { env: ctx.env })) === startHead) {
+        noRecord = noRecordReason(file !== undefined, start.clean && endClean, (await head(implDir, { env: ctx.env })) === startHead);
+        if (file === undefined && noRecord === null) {
           const skips = Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.skipped === undefined || results.get(m) !== 'skipped' ? [] : [[m, o.skipped]])));
           await addTestRecord(implDir, { commit: startHead, target: recordTarget(target), modules: Object.fromEntries(results), ...(Object.keys(skips).length > 0 ? { skips } : {}), recordedAt: Date.now() });
           await keepPassed(ctx, keys, results, outcomes, recordTarget(target), startHead);
@@ -425,7 +438,7 @@ export const testCommand: CommandDef = {
       } finally {
         await start.release();
       }
-      return runResult(target, results, outcomes);
+      return runResult(target, results, outcomes, noRecord);
     } finally {
       await rm(work, { recursive: true, force: true });
     }
