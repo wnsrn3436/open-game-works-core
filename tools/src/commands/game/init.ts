@@ -17,6 +17,7 @@ const FOLDERS = ['contract', 'data', 'resource', 'client/dev', 'server/dev', 're
 
 /** The gameplay videos of `records/setup/reference/` are third-party works: every file there but `reference.md` stays out of git. */
 const GITIGNORE = [
+  '.DS_Store',
   '/builds/',
   '/client/build/',
   '/server/build/',

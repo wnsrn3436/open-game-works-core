@@ -42,7 +42,7 @@ describe('ogw game init', () => {
     expect(run).toEqual({ code: 0, stdout: `created ${root}\ncoreVersion 1.10.0\npostgresqlMajor 18\n`, stderr: '' });
     expect(readFileSync(join(root, 'settings.json'), 'utf8')).toBe(`${JSON.stringify(draft('1.10.0', 18), null, 2)}\n`);
     expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(
-      '/builds/\n/client/build/\n/server/build/\n/captures/\n/records/loops/*/evidence/\n/records/setup/reference/*\n!/records/setup/reference/reference.md\n',
+      '.DS_Store\n/builds/\n/client/build/\n/server/build/\n/captures/\n/records/loops/*/evidence/\n/records/setup/reference/*\n!/records/setup/reference/reference.md\n',
     );
     for (const folder of ['contract', 'data', 'resource', 'client/dev', 'server/dev', 'records']) expect(existsSync(join(root, folder))).toBe(true);
     expect(sh(root, 'git', ['symbolic-ref', 'HEAD']).trim()).toBe('refs/heads/main');
