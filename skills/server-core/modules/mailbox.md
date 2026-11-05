@@ -76,7 +76,7 @@ core `rpc` response field
 |---|---|
 | `OK` | sent |
 | `ALREADY_SENT` | That user has a `mailbox_once_key` row with the same `once_key`, and the input meets no `INVALID_INPUT` condition. The mail ID is the `mail_id` of that row |
-| `INVALID_INPUT` | `template_id` is not in the table, or a TypeScript mail input is not an object or has a field that is neither `undefined` nor of its type, or `args` or `attachments` exceed a limit, or `expire_ms` is less than 0 or more than `mailbox.maxExpireMs`, or `no_expiry` is `true` outside `grant_or_mail`, or `args` has a `MailArg` that is not an object with a string `name`, whose `kind` is neither `Int` nor `Text`, whose selected value is not an int64 `bigint` (`Int`) or a string (`Text`), or with a value other than `undefined` and that field's default value (`0n` for `int_value`, `''` for `text_value`) in a field that its `kind` does not select, or `attachments` do not pass `item-ledger.check_add_items`, or the `once_key` of `broadcast_mail` is not empty |
+| `INVALID_INPUT` | `template_id` is not in the table, or a TypeScript mail input is not an object or has a field that is neither `undefined` nor of its type, or `args` or `attachments` exceed a limit, or `expire_ms` is less than 0 or more than `mailbox.maxExpireMs`, or `no_expiry` is `true` outside `grant_or_mail`, or `args` has a `MailArg` that is not an object with a string `name`, whose `kind` is neither `Int` nor `Text`, whose selected value is not an int64 `bigint` (`Int`) or a string (`Text`), or with a value other than `undefined` and that field's default value (`0n` for `int_value`, `''` for `text_value`) in a field that its `kind` does not select, or `attachments` do not pass `item-ledger.check_add_items`, or `once_key` holds U+0000, or the `once_key` of `broadcast_mail` is not empty |
 
 ## behavior
 
@@ -219,6 +219,7 @@ none
 - `send_mail` creates a `MailUserState` delta, and `send_mail` in an out-of-request change creates a pending delta of the target user
 - An integer `MailArg` and a string `MailArg` stay in `MailUserState` with their `kind`, `int_value` and `text_value` unchanged. A `MailArg` with a non-default value in a field that its `kind` does not select is `INVALID_INPUT`. `send_mail` with `args` `[{name: 'n', int_value: 5n, text_value: ''}]` sends a `MailArg` with `kind` `Int`, and with `[{name: 'n', kind: Text, int_value: 0n, text_value: 'x'}]` one with `kind` `Text`; `[{name: 'n', int_value: 0n, text_value: 'x'}]`, `[{name: 'n'}]` and `[{name: 'n', kind: Int, text_value: 'x'}]` are `INVALID_INPUT`. `[{name: 'n', int_value: 5n}]` sends a `MailArg` with `kind` `Int`
 - The second `send_mail` with the same `once_key` is `ALREADY_SENT` and there is one mail
+- `send_mail` with a `once_key` that holds U+0000 is `INVALID_INPUT` and sends no mail
 - `send_mail` with `once_key` `gift` and `expire_ms` more than `mailbox.maxExpireMs`, after a mail with `once_key` `gift` was sent, is `INVALID_INPUT`
 - `send_mail` with an `input` that has only `template_id` sends a mail with no `args`, no `attachments`, `extra_id` 0 and no `once_key` that expires at the sent time + `mailbox.defaultExpireMs`
 - `send_mail` and `grant_or_mail` that content code calls with a `once_key` starting with the core `once_key` prefix of `item-ledger` throw, the request is `INTERNAL`, and mail and balance are unchanged
