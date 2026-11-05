@@ -217,7 +217,7 @@ none
 | `set_store_adapter` called after `init` | none | error |
 | The guest warning popup cannot open | `Rejected` | error |
 | verify result `OtherUser` | `OtherAccount`. The transaction is not finished | warn |
-| the login session at the start of an async operation other than `prepare` has ended when that operation ends | failure value. The row of the step it waited on does not apply | none |
+| the login session at the start of an async operation other than `prepare` has ended when that operation ends | failure value. The row of the step it waited on, other than `prepare`, does not apply | none |
 
 ## settings
 
