@@ -161,7 +161,7 @@ The store adapter wraps the store SDK. Handling that differs per store stays onl
 - A `recover_purchases` or `restore_purchases` that started in a login session that has ended is not shared with the current login session: a call of the same operation that finds it in progress does not wait for it and starts its own run. From the end of its login session, the old run starts no further `list_unfinished`, `list_owned`, transaction processing or subscription sync, and ends with its result discarded when the step it is waiting on ends
 - A `purchase` that started in a login session that has ended starts no further `prepare`, `CheckPurchase`, `buy`, `VerifyPurchase` or `finish` from the end of its login session, and ends with `Rejected` when the step it is waiting on ends
 - `restore_purchases` runs `prepare` first when not in the ready state, then handles the transactions of `list_owned` with the same transaction processing as recovery. When `prepare` and `list_owned` succeed, it is `true`. When a `restore_purchases` that started in the current login session is in progress, it does not start a new one and returns that one's result. For a `restore_purchases` that content code called, content code does the result display and the block during it
-- subscription sync: after transaction processing, when `UserStateCore` holds one or more `SubscriptionUserState`, `recover_purchases` and `restore_purchases` send `SyncSubscriptions` with `send`. The failure callback returns `true`. A failure does not change the operation result
+- subscription sync: after the transaction processing of a `list_unfinished` or `list_owned` that succeeded, when `UserStateCore` holds one or more `SubscriptionUserState`, `recover_purchases` and `restore_purchases` send `SyncSubscriptions` with `send`. The failure callback returns `true`. A failure does not change the operation result
 
 ### subscription and pass
 
@@ -217,7 +217,7 @@ none
 | `set_store_adapter` called after `init` | none | error |
 | The guest warning popup cannot open | `Rejected` | error |
 | verify result `OtherUser` | `OtherAccount`. The transaction is not finished | warn |
-| the login session at the start of an async operation other than `prepare` has ended when that operation ends | failure value. The row of the step it waited on (`buy` is `Failed`, verify result `Invalid`, `finish` failure, verify result `OtherUser`) does not apply | none |
+| the login session at the start of an async operation other than `prepare` has ended when that operation ends | failure value. The row of the step it waited on does not apply | none |
 
 ## settings
 
