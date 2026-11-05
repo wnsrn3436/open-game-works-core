@@ -27,8 +27,10 @@ function withoutFindings(text: string, ids: ReadonlySet<string>): string {
   const start = text.indexOf('## findings');
   const end = text.indexOf('\n## ', start + 1);
   const section = text.slice(start, end === -1 ? text.length : end);
-  const kept = section.split('\n').filter((line) => !ids.has(/^\|\s*([^|\s]+)\s*\|/.exec(line)?.[1] ?? ''));
-  const rows = kept.filter((line) => /^\|\s*R\d+-\d+\s*\|/.test(line));
+  // an id cell is read as `parseReviewFile` reads it: without surrounding code span backticks
+  const idOf = (line: string): string | null => /^\|\s*`?(R\d+-\d+)`?\s*\|/.exec(line)?.[1] ?? null;
+  const kept = section.split('\n').filter((line) => !ids.has(idOf(line) ?? ''));
+  const rows = kept.filter((line) => idOf(line) !== null);
   // a findings table left without rows is `none`
   const body = rows.length === 0 ? ['## findings', '', 'none', ''] : kept;
   return text.slice(0, start) + body.join('\n') + (end === -1 ? '' : text.slice(end));

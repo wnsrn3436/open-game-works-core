@@ -48,8 +48,8 @@ describe('ogw review spec: scope and lists', () => {
     const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
     writeFileSync(spec, `${readFileSync(spec, 'utf8')}\n- changed rule\n`);
     const changedLine = readFileSync(spec, 'utf8').split('\n').indexOf('- changed rule') + 1;
-    const row = (id: string, line: number): string => `| ${id} | \`spec\` | medium | skills/server-core/modules/routing.md:${String(line)} | two readings ${id} | settle it | yes | 90 |`;
-    const env = reviewer(ws, { 1: reviewFile([row('R1-1', changedLine), row('R1-2', 1)]), 2: reviewFile([], ['| R1-1 | fixed | settled |']) });
+    const row = (id: string, line: number, cell = id): string => `| ${cell} | \`spec\` | medium | skills/server-core/modules/routing.md:${String(line)} | two readings ${id} | settle it | yes | 90 |`;
+    const env = reviewer(ws, { 1: reviewFile([row('R1-1', changedLine), row('R1-2', 1, '`R1-2`')]), 2: reviewFile([], ['| R1-1 | fixed | settled |']), 3: reviewFile([]) });
     const first = await specReview(ws, ['--since', head], env);
     expect(first.input).toContain('## previous review\n\nnone\n');
     expect(first.waited.code).toBe(0);
@@ -69,19 +69,27 @@ describe('ogw review spec: scope and lists', () => {
     expect(readFileSync(last, 'utf8')).toContain('| R1-1 | fixed | settled |');
     expect(second.waited.code).toBe(0);
     expect(second.waited.stdout).not.toContain('finding outside the spec changes');
+    // each accepted review with a previous review is the next round
+    expect((await specReview(ws, ['--since', head], env)).input).toContain('- round: 3\n');
   });
 
   it('fails at agent wait when ## previous does not answer exactly the findings of the previous review', async () => {
     const ws = makeWorkspace();
     const row = (id: string): string => `| ${id} | \`spec\` | medium | skills/server-core/modules/routing.md:2 | two readings ${id} | settle it | yes | 90 |`;
-    const env = reviewer(ws, { 1: reviewFile([row('R1-1')]), 2: reviewFile([]), 3: reviewFile([], ['| R1-1 | open | still |', '| R1-9 | fixed | x |']), 4: reviewFile([], ['| R1-1 | withdrawn | not a problem |']) });
+    const env = reviewer(ws, {
+      1: reviewFile([row('R1-1')]),
+      2: reviewFile([]),
+      3: reviewFile([], ['| R1-1 | open | still |', '| R1-9 | fixed | x |']),
+      4: reviewFile([], ['| R1-9 | fixed | x |']),
+      5: reviewFile([], ['| R1-1 | withdrawn | not a problem |']),
+    });
     expect((await specReview(ws, ['--full'], env)).waited.code).toBe(0);
-    for (const answer of [1, 2]) {
+    // no answer, one more answer, and as many answers with another id are each refused
+    for (const answered of ['none', 'R1-1, R1-9', 'R1-9']) {
       const bad = await specReview(ws, ['--full'], env);
       expect(bad.input).toContain('- round: 2\n');
       expect(bad.waited.code).toBe(1);
-      expect(bad.waited.stdout).toContain(`not the findings R1-1 of the previous review`);
-      expect(answer).toBeGreaterThan(0);
+      expect(bad.waited.stdout).toContain(`## previous answers ${answered}, not the findings R1-1 of the previous review`);
     }
     const good = await specReview(ws, ['--full'], env);
     expect(good.waited.code).toBe(0);
