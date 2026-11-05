@@ -54,7 +54,7 @@ Handles the store purchase flow, subscription purchase and restore, entitlement 
   | `VerifyFailed` | The verify result is `Invalid` |
   | `DeliveryPending` | The verification request failed. The transaction was not finished, and delivery retry handles it again |
   | `OtherAccount` | The verify result is `OtherUser`. The transaction belongs to another account, so it was not finished |
-  | `Rejected` | A start condition or `CheckPurchase` stopped it, so no store purchase was made |
+  | `Rejected` | A start condition or `CheckPurchase` stopped it, so no store purchase was made. It is also the result when `release` or the end of its login session stopped it, and a store purchase may have been made before that |
   | `AgeConfirmationRequired` | The `CheckPurchase` result is `AGE_CONFIRMATION_REQUIRED`. No store purchase was made |
   | `SpendLimitReached` | The `CheckPurchase` result is `IAP_SPEND_LIMIT_REACHED`. No store purchase was made |
 
@@ -216,6 +216,7 @@ none
 | `set_store_adapter` called after `init` | none | error |
 | The guest warning popup cannot open | `Rejected` | error |
 | verify result `OtherUser` | `OtherAccount`. The transaction is not finished | warn |
+| the login session at the start of an async operation other than `prepare` has ended when that operation ends | failure value | none |
 
 ## settings
 
@@ -275,7 +276,7 @@ reserved ID, reserved sound: none
 - Even when a purchase update notification arrives for the same transaction as an in-flight transaction, verification happens once
 - A `recover_purchases` called during a `buy` held by `fake_hold_buy`(`true`), and a `recover_purchases` called after `buy` returns and before the `VerifyPurchase` response, do not verify that transaction. The verification request of that transaction is one `VerifyPurchase`, there is no `PurchaseRecoveredEvent`, and `finish` happens once
 - When a verification response of the previous login session ends in a new session, the list, `finish` and event do not change
-- When a login of another user comes while `buy` of a `Consumable` is held by `fake_hold_buy`(`true`), `fake_hold_buy`(`false`) makes that `purchase` end with `Rejected` without `VerifyPurchase` and `finish`, and a `recover_purchases` called after it ends sends one `RecoverPurchase` for that transaction
+- When a login of another user comes while `buy` of a `Consumable` is held by `fake_hold_buy`(`true`), `fake_hold_buy`(`false`) makes that `purchase` end with `Rejected` without `VerifyPurchase`, `finish` and a log of PaymentCore, and a `recover_purchases` called after it ends sends one `RecoverPurchase` for that transaction
 - `restore_purchases` is `true` when `list_owned` succeeds, regardless of the verify result per transaction, and `false` without verification when it fails
 - When the store is `GOOGLE`, a `restore_purchases` that content code calls while a `restore_purchases` called by PaymentCore is in progress does not call `list_owned` again and returns the same success flag and `RecoverySummary` as the one in progress
 - When the store is `GOOGLE`, `list_owned` is called once after the first `recover_purchases` that started in the login session ends, and one `RecoverPurchase` goes out per transaction of it. After the next `recover_purchases` in the same login session there is no `list_owned`. When the store is `APPLE`, there is no `list_owned` before content code calls `restore_purchases`

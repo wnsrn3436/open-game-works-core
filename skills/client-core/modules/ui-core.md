@@ -449,7 +449,7 @@ none
 - Each condition of the error table gives the log and failure value of the table
 - Calling `open_popup` twice in a row calls the second `prepare` after the first popup flow ends, and the second is shown on top. Back input received after `Opened` of the first and before `Opened` of the second is ignored, and the first stays open. An `open_popup` during a panel transition opens before that transition ends
 - A system popup opens even while another system popup is open and while waiting for the `prepare` of a popup, and is shown above regular popups opened after it
-- When two `UICore.systemPopupResource` system popups are opened in one frame while their open and close tween presets are not loaded, the one opened later is above the other after both are visible, and back input applies to it
+- When two `UICore.systemPopupResource` system popups are opened in one frame while their open and close tween presets are not loaded, the one opened later is above the other after both are visible
 - `close_popup` runs in the order `on_closed`, close tween, destruction, hidden callback, `UIClosedEvent`, after-close callback, and each of the two callbacks runs once
 - The after-close callback of a popup closed by `close_all_popups` is not called
 - After `close_all_popups` the popups and the queue are empty, the hidden callback runs once per closed popup, and queued requests get `Failed`

@@ -74,7 +74,6 @@ Turns device input into actions and gestures and delivers them. Handles the inpu
 - binding context: the `BindingContext` defined per action by its name. `back` and actions whose names start with `menu_` are `Ui`, actions whose names start with `cutscene_` are `Cutscene`, and the others are `Gameplay`
 - overlapping action: two actions with the same binding context. Two actions that are overlapping actions do not both have the same key, mouse button, gamepad button or gamepad axis direction in their bindings. Two actions with different binding contexts can both have the same key, mouse button, gamepad button or gamepad axis direction
 - When two actions that are overlapping actions have the same key, mouse button, gamepad button or gamepad axis direction in the default bindings, `init` leaves an error log and fails
-- When the default binding of an action has more keys and mouse buttons than `InputCore.maxKeysPerAction`, or more gamepad buttons and gamepad axis directions than `InputCore.maxPadButtonsPerAction`, `init` leaves an error log and fails
 
 ### input processing order
 
@@ -213,7 +212,6 @@ none
 | `back` for `is_pressed`, `is_just_pressed`, `is_just_released`, `get_strength`, `get_vector` | failure value | error |
 | a core action is missing from the input map | `init` fails | error |
 | in the default bindings, two actions that are overlapping actions have the same key, mouse button, gamepad button or gamepad axis direction | `init` fails | error. The two action names |
-| in the default bindings, an action has more keys and mouse buttons than `InputCore.maxKeysPerAction` or more gamepad buttons and gamepad axis directions than `InputCore.maxPadButtonsPerAction` | `init` fails | error. The action name |
 | `InputCore.padAxisWaitThreshold` is 0 or less, or more than 1 | `init` fails | error |
 | `InputCore.padAxisDeadzone` is less than 0, or 1 or more | `init` fails | error |
 | the strength of `inject_action` is outside 0 to 1 | clamps it to 0 to 1 | error |
@@ -235,8 +233,8 @@ none
 | `InputCore.swipeMaxMs` | integer | core | content | maximum real elapsed time from press to release for a swipe |
 | `InputCore.swipeMinDistance` | number | core | content | minimum distance between the press position and the release position for a swipe. game coordinates |
 | `InputCore.maxJudgePointers` | integer | core | content | maximum number of concurrent judge pointers |
-| `InputCore.maxKeysPerAction` | integer | core | content | maximum number of keys and mouse buttons in the key binding of one action |
-| `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions in the gamepad button binding of one action |
+| `InputCore.maxKeysPerAction` | integer | core | content | maximum number of keys and mouse buttons that `set_keys` accepts for one action |
+| `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions that `set_pad_buttons` accepts for one action |
 | `InputCore.padAxisWaitThreshold` | number | core | content | direction strength at which `wait_pad_button` passes a gamepad axis direction. More than 0 and at most 1 |
 | `InputCore.padAxisDeadzone` | number | core | content | a gamepad axis direction magnitude less than this value counts as strength 0. At least 0 and less than 1 |
 
@@ -335,7 +333,6 @@ none
 - Each non-applied case of `load_keys` gives a warn log, and the other actions are applied. Two actions with the same key are both not applied even when the saved order is swapped
 - `set_keys` with the same key succeeds for an action whose binding context is `Gameplay` and for `cutscene_advance`, and a key of an overlapping action gives `false`. `set_keys` of a `Gameplay` action with the key of `back` succeeds, and `set_keys` of a `menu_` action with it gives `false`. After the key of a `Gameplay` action is changed, a `set_keys` that changes it back to the same key as `cutscene_advance` succeeds
 - When two actions that are overlapping actions have the same key in the default bindings, `init` gives an error log and fails
-- When the default binding of an action has more keys than `InputCore.maxKeysPerAction`, or more gamepad buttons than `InputCore.maxPadButtonsPerAction`, `init` gives an error log and fails
 - After `release`, the bindings, the back callback, the pointer observer, action state, pointers, the pinch enabled state, the previous value of the block start check, the gamepad family, the previous gamepad axis inputs and the prompt table are their initial values, and `get_connected_gamepads` is 0
 - `wait_key` returns the next key press, and that press does not go to UI, back or action state
 - When a block is acquired while a judge pointer in a drag and two judge pointers in a pinch are pressed, at the first block stage or first frame the drag and pinch publish `Cancel` once, those pointers give no long press, and the releases of those pointers in the blocked state publish no gesture event

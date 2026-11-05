@@ -116,7 +116,7 @@ Plays a cutscene that shows dialogue and presentation by running the steps writt
 
 ### line progress
 
-- advance input: an advance button click, a press of the `cutscene_advance` action in this frame. An advance button click while `cutscene_advance` is held down, or by a key, gamepad button or gamepad axis direction that is in the binding of `cutscene_advance` at that click, is not an advance input: a press of the same key or gamepad button and the click are one advance input. A press of `cutscene_advance` while a view button other than the advance button has UICore focus is not an advance input: that accept input is a click of that button
+- advance input: an advance button click, a press of the `cutscene_advance` action in this frame. An advance button click while `cutscene_advance` is held down, or by a key, gamepad button or gamepad axis direction whose press is a press of `cutscene_advance`, is not an advance input: a press of the same key, gamepad button or gamepad axis direction and the click are one advance input. A press of `cutscene_advance` while a view button other than the advance button has UICore focus is not an advance input: that accept input is a click of that button
 - advance input during `Line`: during typing it shows the whole text, and when the whole text is shown it ends the `Line`. Advance input outside `Line` is ignored
 - typing: visible character count = the quotient of the time elapsed since `Line` start ÷ `CutsceneCore.typingIntervalMs`. It does not exceed the character count of the text. When `CutsceneCore.typingIntervalMs` is 0, it shows the whole text at start. The character count of the text counts an inline icon as one character
 - auto advance: when on, it ends the `Line` `CutsceneCore.autoAdvanceDelayMs` after the whole text is shown and voice end is reached. The wait is measured from the later of the two
@@ -204,8 +204,8 @@ none
 | `CutsceneCore.fastForwardDelayMs` | integer | core | content | in fast forward, the time from the whole text being shown until the `Line` ends |
 | `CutsceneCore.lineHistoryMaxCount` | integer | core | content | limit on the number of line history items |
 | `TweenCore.maxDurationMs` | integer | core | content | maximum duration of the first change of a tween preset that the `Camera` start check accepts |
-| `InputCore.maxKeysPerAction` | integer | core | content | maximum number of keys and mouse buttons in the key binding of one action. CutsceneCore reads the key binding of `cutscene_advance` with `InputCore.get_keys` into a buffer of this size |
-| `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions in the gamepad button binding of one action. CutsceneCore reads the gamepad button binding of `cutscene_advance` with `InputCore.get_pad_buttons` into a buffer of this size |
+| `InputCore.maxKeysPerAction` | integer | core | content | maximum number of keys and mouse buttons that `set_keys` accepts for one action. CutsceneCore reads the key binding of `cutscene_advance` with `InputCore.get_keys` into a buffer of this size plus the number of device inputs in the default binding of `cutscene_advance` |
+| `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions that `set_pad_buttons` accepts for one action. CutsceneCore reads the gamepad button binding of `cutscene_advance` with `InputCore.get_pad_buttons` into a buffer of this size plus the number of device inputs in the default binding of `cutscene_advance` |
 
 ## data
 

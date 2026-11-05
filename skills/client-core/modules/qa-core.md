@@ -35,7 +35,7 @@ none
 - command: one action received through the debug screen or the automation channel. It has a name, a string argument list and a result (`ok`, `result`, `bytes`)
 - Commands are handled one at a time in the order received. The next starts only after the previous command ends. `capture_video` is the exception: it starts as soon as it is received, and the next command starts without waiting for it to end. A `capture_video` received while another `capture_video` runs fails
 - Arguments are external input. An unknown name, a wrong argument count, and a format or range violation of a built-in command fail without calling the target operation
-- A failed command writes the reason in English in `result` and leaves a warn log and no error log, except a cheat command whose `NetworkCore.send_cheat` ends with `false`, which leaves no warn log
+- A failed command writes the reason in English in `result` and leaves a warn log and no error log, except a cheat command that ends when its `NetworkCore.send_cheat` ends with `false`, which leaves no warn log
 - When a command ends, an info log records its name and `ok`. Arguments are not written to the log
 - A command that does not end within `QACore.commandTimeoutMs` fails. The limit of `drag`, `key`, `capture_video` is `QACore.commandTimeoutMs` plus the argument's ms. The limit of `step` is `QACore.commandTimeoutMs` plus ms × 1000 ÷ (`TimeCore.get_time_scale` at the start of `step`) rounded up, because game time in step mode grows with the time scale applied. The ms of `step` is game time, and the ms of other command arguments is measured in real elapsed time of `TimeCore`
 - numeric argument syntax: integer `-?[0-9]{1,18}`, real number `-?[0-9]+(\.[0-9]+)?`. The whole string must match
@@ -125,7 +125,7 @@ A command marked setup is not real input. Bot playtest records that step as setu
 - When `set_step_mode`(`on`) succeeds, QACore calls `InputBlockCore.set_timer_hold`(`step`, `true`), and when `set_step_mode`(`off`) succeeds, `InputBlockCore.set_timer_hold`(`step`, `false`)
 - mouse button argument: `left`, `right`, `middle`, which press and release, in order, the buttons of the `InputCore` mouse button names `mouse_left`, `mouse_right`, `mouse_middle`. The `InputCore` mouse button names are not accepted. Gamepad button names, gamepad axis names and ranges are those of `InputCore`
 - When the automation channel connection drops outside `release`, QACore ends the commands received through that connection that are in handling or waiting with `ok` = `false`, puts in a release for the touches, keys, mouse buttons and gamepad buttons held by input commands, and puts 0 in gamepad axes that are not 0. An ended command puts in no device input after that
-- A cheat command sends with `NetworkCore.send_cheat` and passes no success callback and no failure callback. So a failed cheat request goes through the `Interaction` default handling of `NetworkCore` (error popup, `ErrorDisplay`). The command ends when `send_cheat` ends, and `ok` equals its success flag. A failed cheat command writes `the cheat request failed` in `result`. ID names are converted to ID values with the DEV accessor of the data tool
+- A cheat command sends with `NetworkCore.send_cheat` and passes no success callback and no failure callback. So a failed cheat request goes through the `Interaction` default handling of `NetworkCore` (error popup, `ErrorDisplay`). The command ends when `send_cheat` ends, and `ok` equals its success flag. A cheat command that ends when `send_cheat` ends with `false` writes `the cheat request failed` in `result`. ID names are converted to ID values with the DEV accessor of the data tool
 - kind name: the UserState kind message name that `get_user_state`, `set_user_state`, `delete_user_state` receive. It equals `kind` of `UserStateEntry`. e.g. `QuestUserState`. An accepted name is a name in the list of core UserState kinds and `user_state.proto` kinds that the contract tool generates. A name not in the list fails without the target operation and without a request
 - item: the item ID that `set_user_state`, `delete_user_state` send. The item of a list kind is an ID name or an integer of 0 or more in the numeric argument syntax, and an integer is used as the item ID as is. The item of a single kind is `[]` and is sent as item ID 0. `[]` for a list kind and any value other than `[]` for a single kind fail without a request
 - `set_user_state` converts, inside the value JSON, every string whose whole value is an ID name to that ID value integer, and for a list kind fills `id` of the JSON with the item ID. An ID name that does not exist and a value JSON that cannot be decoded fail without a request
@@ -262,7 +262,7 @@ none
 |---|---|---|
 | Unknown command, argument count or format violation | `ok` = `false` | warn |
 | content command handler failure, command time limit exceeded | `ok` = `false` | warn |
-| cheat request that `NetworkCore.send_cheat` ends with `false` | `ok` = `false` | none |
+| cheat command that ends when its `NetworkCore.send_cheat` ends with `false` | `ok` = `false` | none |
 | Name format violation in `register_command`, a name that already exists | not registered | error |
 | `mark` with an undefined kind | not recorded | error |
 | Name format violation in `register_invariant`, a name that already exists | not registered | error |
