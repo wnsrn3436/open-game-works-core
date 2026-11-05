@@ -60,3 +60,13 @@ export function isStringLiteral(expr: Expr | undefined): boolean {
 }
 
 export type { ClassDecl };
+
+/** True when the expression's type is `base` or a subclass, or unknown; a null receiver is `self`. */
+export async function mayBeA(resolver: TypeResolver, recv: Expr | null, base: string): Promise<boolean> {
+  if (recv === null) return resolver.index.isA(resolver.self, base);
+  const t = await resolver.typeOf(recv);
+  if (!t) return true;
+  if (t.name === base) return true;
+  const ref = await resolver.classOf(t);
+  return ref ? resolver.index.isA(ref, base) : false;
+}

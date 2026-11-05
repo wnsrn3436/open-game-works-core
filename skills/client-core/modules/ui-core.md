@@ -131,7 +131,7 @@ A row further down the table is drawn above the rows before it. The scene's worl
 - modal covered: a visible modal panel or modal popup (system popups included) is drawn above the UI element. The panel or popup object containing that element, objects being prepared, and objects whose destruction has started are not counted. The drawing order is the order of the UI layer table and the stacking order of popups
 - A dim is placed directly below a visible panel or popup with dim on. On the `Popup` layer, only one is placed, below the topmost visible popup with dim on (system popups included). Below the same popup the order is modal blocker, dim, popup. The dim does not receive pointer input
 - dimmed: a visible dim is drawn above the UI element. The drawing order is the order of the UI layer table and the stacking order of popups
-- Open and close tweens play on the prefab root with `TweenCore.play_preset`. When the definition of an open or close tween preset repeats infinitely, UICore leaves an error log and does not play that tween, the same as when its preset key is none. This holds for panels, popups and system popups
+- Open and close tweens play on the prefab root with `TweenCore.play_preset`. An open or close tween preset does not repeat infinitely: static check `finite tween` blocks one in the game repo, and UICore does not check the definition
 - UICore creates a resource scope per panel or popup object and releases that scope after destroying the object. An object whose destruction has started is not visible and does not receive input
 - Params and caches do not reference engine objects or resources. Callbacks are the exception. UICore and panel classes do not change a received param
 
@@ -361,7 +361,6 @@ none
 | prefab root of a close flow destination is not `UIPanel` | the close flow continues with the item below regardless of force, and ends with the stack empty when there is none | error |
 | `prepare` is `false` | `false`. a close flow with force on continues with the item below | none |
 | `accepts_param` or `prepare` of the root item is `false` in a close flow | `false` when force is off; when force is on, shows the root item and calls `on_opened(Returned)` | error |
-| open or close tween preset whose definition repeats infinitely | that tween is not played, and the flow goes on as without it | error |
 | panel transition operation during a transition or a panel lock | `false`. stack unchanged | warn |
 | `close_panel` when there is no current panel or it is the root item | `false`. stack unchanged | warn |
 | `close_panels_to` with a panel key not in the stack | `false`. stack unchanged | warn |
@@ -454,7 +453,6 @@ none
 - The after-close callback of a popup closed by `close_all_popups` is not called
 - After `close_all_popups` the popups and the queue are empty, the hidden callback runs once per closed popup, and queued requests get `Failed`
 - `close_popup` of a popup in its open tween stops the open tween, `Opened` of `open_popup` and `UIOpenedEvent` come before `on_closed`, the hidden callback and `UIClosedEvent` each happen once, and afterwards no block set by UICore remains
-- A panel, a popup and a `UICore.systemPopupResource` system popup whose open and close tween presets repeat infinitely leave an error log for each tween not played, become visible without an open tween, and `open_panel`, `close_panel`, `open_popup`, `close_popup` and `open_system_popup` end
 - `close_all_popups` ends the `open_popup` of a popup waiting for `prepare` with `Failed`, and that popup has no hidden callback. A popup in its open tween gets `Opened` and one hidden callback, and a popup in its close tween does not get `on_closed` again and gets one hidden callback
 - When a popup is open, it stays open after a panel transition and `reset_panel_stack`
 - A popup object opened without `PopupSuppress` has no `PopupSuppress`, and a popup object opened with one reads the received value

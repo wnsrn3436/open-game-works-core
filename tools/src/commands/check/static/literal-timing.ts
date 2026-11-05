@@ -1,7 +1,7 @@
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { isClientContentGd } from './lib/files.ts';
 import type { Expr, GdFile } from './lib/gd-ast.ts';
-import { classIndex, exprsOf, resolverFor } from './lib/gd-shared.ts';
+import { classIndex, exprsOf, mayBeA, resolverFor } from './lib/gd-shared.ts';
 import type { ClassIndex, TypeResolver } from './lib/gd-types.ts';
 import { isNumberLiteral, visitClass } from './lib/gd-walk.ts';
 import type { Scope } from './lib/gd-walk.ts';
@@ -13,16 +13,6 @@ import type { Scope } from './lib/gd-walk.ts';
  * whose two results are such values, `as`) is a number literal. A receiver whose type is not known counts as the named class.
  */
 export const NAME = 'literal timing';
-
-/** True when the expression's type is `base` or a subclass, or unknown. */
-async function mayBe(resolver: TypeResolver, recv: Expr | null, base: string): Promise<boolean> {
-  if (recv === null) return resolver.index.isA(resolver.self, base);
-  const t = await resolver.typeOf(recv);
-  if (!t) return true;
-  if (t.name === base) return true;
-  const ref = await resolver.classOf(t);
-  return ref ? resolver.index.isA(ref, base) : false;
-}
 
 const PROPERTY_CLASS: Record<string, string> = { speed_scale: 'AnimationPlayer', wait_time: 'Timer' };
 const ARITHMETIC = new Set(['+', '-', '*', '/', '%', '**']);
@@ -44,7 +34,7 @@ async function assignment(target: Expr, value: Expr, resolver: TypeResolver): Pr
   if (!base || name === null) return null;
   const recv = target.k === 'member' ? target.obj : null;
   if (recv === null && resolver.isLocal(name)) return null;
-  return (await mayBe(resolver, recv, base)) ? `number literal assigned to \`${base}.${name}\`` : null;
+  return (await mayBeA(resolver, recv, base)) ? `number literal assigned to \`${base}.${name}\`` : null;
 }
 
 interface CallRule {
@@ -84,7 +74,7 @@ async function call(e: Extract<Expr, { k: 'call' }>, resolver: TypeResolver): Pr
   if (!rule?.args.some(literal)) return null;
   const recv = callee.k === 'member' ? callee.obj : null;
   if (rule.cls === null) return rule.message;
-  const matches = rule.known ? await knownAs(resolver, recv, rule.cls) : await mayBe(resolver, recv, rule.cls);
+  const matches = rule.known ? await knownAs(resolver, recv, rule.cls) : await mayBeA(resolver, recv, rule.cls);
   return matches ? rule.message : null;
 }
 

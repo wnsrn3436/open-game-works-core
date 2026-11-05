@@ -20,6 +20,7 @@ import * as fontWeight from './static/font-weight.ts';
 import * as sceneLinks from './static/scene-links.ts';
 import * as engineRandom from './static/engine-random.ts';
 import * as featureBoundary from './static/feature-boundary.ts';
+import * as finiteTween from './static/finite-tween.ts';
 import * as forbiddenApi from './static/forbidden-api.ts';
 import * as formatArgs from './static/format-args.ts';
 import * as frameCode from './static/frame-code.ts';
@@ -55,7 +56,7 @@ export interface StaticCheckModule {
 /** The checks that `ogw check --static` runs, in report order. */
 export const STATIC_CHECKS: readonly StaticCheckModule[] = [
   coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, framePolling,
-  hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
+  hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, finiteTween, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
   literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference, shortcutRootPanel, playGuideInput,
 ];
