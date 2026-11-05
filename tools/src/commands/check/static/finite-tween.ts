@@ -14,8 +14,9 @@ import { strOf } from './lib/tscn.ts';
  * whose root is a `UIPanel` or `UIPopup` name, and the ones that `MessageCore.toastEnterTween`,
  * `MessageCore.toastExitTween`, `MessageCore.blackBoxEnterTween` and `MessageCore.blackBoxExitTween` of the merged core
  * settings name. Tween key `tween/<name>` is `resource/tween/<name>.tres`, and a key with no file there is not checked.
- * Content code that assigns `open_tween` or `close_tween` of a `UIPanel` or `UIPopup` (with any assignment operator), or
- * passes one of those names as a string literal to `set()` or `set_deferred()` of one, is also reported. A receiver
+ * Content code that assigns `open_tween` or `close_tween` of a `UIPanel` or `UIPopup` (with any assignment operator, also
+ * through a string literal index), or passes one of those names as a string literal to `set()`, `set_deferred()` or
+ * `set_indexed()` of one, is also reported. A receiver
  * whose type is not known counts as a `UIPanel`.
  */
 export const NAME = 'finite tween';
@@ -23,7 +24,7 @@ export const NAME = 'finite tween';
 const UI_CLASSES = ['UIPanel', 'UIPopup'] as const;
 const UI_PROPS: readonly string[] = ['open_tween', 'close_tween'];
 const MESSAGE_KEYS = ['MessageCore.toastEnterTween', 'MessageCore.toastExitTween', 'MessageCore.blackBoxEnterTween', 'MessageCore.blackBoxExitTween'] as const;
-const SETTERS = new Set(['set', 'set_deferred']);
+const SETTERS = new Set(['set', 'set_deferred', 'set_indexed']);
 
 /** The preset file of a tween key and the line of its repeat count when it repeats forever; otherwise null. */
 async function forever(sc: StaticContext, key: string): Promise<{ path: string; line: number } | null> {
@@ -82,6 +83,7 @@ async function codeFindings(sc: StaticContext): Promise<Finding[]> {
         if (s.k !== 'assign') return;
         if (s.target.k === 'member') sites.push({ recv: s.target.obj, name: s.target.name, line: s.line, scope });
         if (s.target.k === 'name') sites.push({ recv: null, name: s.target.name, line: s.line, scope });
+        if (s.target.k === 'index' && s.target.index.k === 'str') sites.push({ recv: s.target.obj, name: s.target.index.value, line: s.line, scope });
       },
       expr(e, scope) {
         if (e.k !== 'call' || (e.callee.k !== 'member' && e.callee.k !== 'name') || !SETTERS.has(e.callee.name)) return;

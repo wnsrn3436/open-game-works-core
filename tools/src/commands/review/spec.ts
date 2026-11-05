@@ -1,15 +1,15 @@
-import { rm } from 'node:fs/promises';
+import { copyFile, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { expectPositionals, flag, positional, str, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, writeFileAtomic } from '../../lib/fsx.ts';
+import { exists, readText, writeFileAtomic } from '../../lib/fsx.ts';
 import { git, gitRaw, revParse } from '../../lib/git.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import { startAgent } from '../agent/lib/prepare.ts';
 import { debtRepo, itemLine, readList, specDebtTarget } from './lib/debt.ts';
 import { coreDefinitions, moduleSpecs } from './lib/definitions.ts';
 import { formatSpecReviewInput, targetSlug } from './lib/input.ts';
-import { lastSpecReviewPath } from './lib/spec-debt.ts';
+import { lastSpecReviewPath, lastSpecRoundPath } from './lib/spec-debt.ts';
 
 const USAGE = 'ogw review spec core <module> <--since <commit>|--full|--debt>';
 
@@ -24,12 +24,27 @@ async function specChanges(harness: string, spec: string, since: string, folder:
   if (commit === null) throw new OgwError(`--since: commit ${since} not found in ${harness}`);
   const rel = relative(harness, spec);
   if ((await gitRaw(harness, ['cat-file', '-e', `${commit}:${rel}`], { env })).code !== 0) return null;
-  const diff = await git(harness, ['diff', commit, '--', rel], { env });
+  // fixed prefixes and no color, whatever the host's git config: `ogw agent wait` reads the hunks
+  const diff = await git(harness, ['diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', commit, '--', rel], { env });
   // with no change, the review confirms the fix of a must-fix item made elsewhere
   if (diff.trim() === '' && !mustFix) throw new OgwError(`the spec ${rel} did not change since ${since} and its spec must-fix list is empty: nothing to review`);
   const file = join(folder, 'spec-changes.diff');
   await writeFileAtomic(file, diff);
   return file;
+}
+
+/**
+ * The module's last spec review copied into this review's input folder, and this review's round (one more than that
+ * review's); null when there is none since the last `ogw review clear core`.
+ */
+async function previousReview(module: string, folder: string, env: NodeJS.ProcessEnv): Promise<{ file: string; round: number } | null> {
+  const last = await lastSpecReviewPath(module, env);
+  if (!exists(last)) return null;
+  const roundPath = await lastSpecRoundPath(module, env);
+  const round = exists(roundPath) ? Number((await readText(roundPath)).trim()) : 1;
+  const file = join(folder, 'previous-review.md');
+  await copyFile(last, file);
+  return { file, round: (Number.isInteger(round) && round >= 1 ? round : 1) + 1 };
 }
 
 /** Writes an empty diff file: a `--debt` spec review reviews no change of the spec, only the debt items. */
@@ -75,8 +90,7 @@ export const spec: CommandDef = {
       const input = join(folder, `${targetSlug(target)}-input.md`);
       // a review of the whole spec, and a `--debt` review, pay the spec debt
       const items = { debt: changes === null || paying ? debt : [], mustFix };
-      const last = await lastSpecReviewPath(target, ctx.env);
-      await writeFileAtomic(input, formatSpecReviewInput(target, definitions, changes, items, exists(last) ? last : null));
+      await writeFileAtomic(input, formatSpecReviewInput(target, definitions, changes, items, await previousReview(target, folder, ctx.env)));
       const id = await startAgent(ctx, { role: 'review', input });
       return { text: id, data: { job: id } };
     } catch (error) {

@@ -75,20 +75,20 @@ function field(text: string, name: string): string {
 /**
  * The review agent input of a spec review (`ogw review spec`): the module's definition documents, which the agent
  * checks against each other before the module is implemented, and the review file of the module's last spec review
- * (`## previous review`, `none` when there is none).
+ * (`## previous review`, `none` when there is none); its round is one more than that review's round, 1 without one.
  */
 export function formatSpecReviewInput(
   target: string,
   definitions: readonly string[],
   specChanges: string | null,
   items: { debt: readonly string[]; mustFix: readonly string[] },
-  previous: string | null = null,
+  previous: { file: string; round: number } | null = null,
 ): string {
   return [
-    '# review input', '', '- side: spec', `- target: ${target}`, '- round: 1', '',
+    '# review input', '', '- side: spec', `- target: ${target}`, `- round: ${String(previous === null ? 1 : previous.round)}`, '',
     '## definition', '', list(definitions), '',
     '## spec changes', '', specChanges ?? 'none', '',
-    '## previous review', '', previous ?? 'none', '',
+    '## previous review', '', previous?.file ?? 'none', '',
     '## debt', '', list(items.debt), '',
     '## must fix', '', list(items.mustFix), '',
   ].join('\n');

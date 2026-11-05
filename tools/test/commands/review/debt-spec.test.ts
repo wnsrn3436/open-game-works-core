@@ -57,13 +57,34 @@ describe('ogw review spec: scope and lists', () => {
     expect(first.waited.stdout).not.toContain('finding outside the spec changes: R1-1');
     expect(first.waited.stdout).toContain('review debt added: spec routing D1: skills/server-core/modules/routing.md:1: medium two readings R1-2\n');
     expect(ids(ws.coreImpl, 'debt', 'spec-routing.json')).toEqual(['D1']);
+    // the kept review leaves out the finding that went to the debt list
     const last = await lastSpecReviewPath('routing', ws.env);
     expect(readFileSync(last, 'utf8')).toContain('two readings R1-1');
+    expect(readFileSync(last, 'utf8')).not.toContain('two readings R1-2');
     const second = await specReview(ws, ['--since', head], env);
-    expect(second.input).toContain(`## previous review\n\n${last}\n`);
+    expect(second.input).toContain('- round: 2\n');
+    const previous = /## previous review\n\n(\S+)\n/.exec(second.input)?.[1] ?? '';
+    expect(previous).not.toBe(last);
+    expect(readFileSync(previous, 'utf8')).toContain('two readings R1-1');
     expect(readFileSync(last, 'utf8')).toContain('| R1-1 | fixed | settled |');
     expect(second.waited.code).toBe(0);
     expect(second.waited.stdout).not.toContain('finding outside the spec changes');
+  });
+
+  it('fails at agent wait when ## previous does not answer exactly the findings of the previous review', async () => {
+    const ws = makeWorkspace();
+    const row = (id: string): string => `| ${id} | \`spec\` | medium | skills/server-core/modules/routing.md:2 | two readings ${id} | settle it | yes | 90 |`;
+    const env = reviewer(ws, { 1: reviewFile([row('R1-1')]), 2: reviewFile([]), 3: reviewFile([], ['| R1-1 | open | still |', '| R1-9 | fixed | x |']), 4: reviewFile([], ['| R1-1 | withdrawn | not a problem |']) });
+    expect((await specReview(ws, ['--full'], env)).waited.code).toBe(0);
+    for (const answer of [1, 2]) {
+      const bad = await specReview(ws, ['--full'], env);
+      expect(bad.input).toContain('- round: 2\n');
+      expect(bad.waited.code).toBe(1);
+      expect(bad.waited.stdout).toContain(`not the findings R1-1 of the previous review`);
+      expect(answer).toBeGreaterThan(0);
+    }
+    const good = await specReview(ws, ['--full'], env);
+    expect(good.waited.code).toBe(0);
   });
 
   it('writes out of scope items to the spec lists at agent wait once, pays the debt only with --full or --debt, and gives must-fix items to every spec review', async () => {
@@ -71,7 +92,7 @@ describe('ogw review spec: scope and lists', () => {
     const env = reviewer(ws, {
       1: reviewFile([], [], ['- skills/server-core/modules/storage.md:4: medium two names for one error', '- skills/server-core/modules/routing.md:9: medium an unused key', '- skills/server-core/modules/routing.md:12: high two orders']),
       2: reviewFile([], [], [], [], ['| M1 | open | R1-1 | still |']).replace('## findings\n\nnone', `## findings\n\n| id | aspect | severity | location | evidence | fix | spec change | confidence |\n|---|---|---|---|---|---|---|---|\n${finding('R1-1', 'yes')}`),
-      3: reviewFile([], [], [], ['| D1 | fixed | none | gone |'], ['| M1 | fixed | none | gone |']),
+      3: reviewFile([], ['| R1-1 | fixed | gone |'], [], ['| D1 | fixed | none | gone |'], ['| M1 | fixed | none | gone |']),
     });
     const first = await specReview(ws, ['--full'], env);
     expect(first.waited.code).toBe(0);

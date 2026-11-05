@@ -93,6 +93,8 @@ describe('finite tween', () => {
         '\tset("close_tween", "tween/once")',
         '\tpopup.set_deferred("open_tween", "tween/once")',
         '\tbanner.set("open_tween", "tween/once")',
+        '\tself["open_tween"] = "tween/once"',
+        '\tpopup.set_indexed("close_tween", "tween/once")',
         '',
         'func local() -> void:',
         '\tvar close_tween := ""',
@@ -106,6 +108,8 @@ describe('finite tween', () => {
       'client/features/shop/shop_panel.gd:10 | finite tween: code sets `open_tween` of a UIPanel or UIPopup; it is set in the .tscn',
       'client/features/shop/shop_panel.gd:11 | finite tween: code sets `close_tween` of a UIPanel or UIPopup; it is set in the .tscn',
       'client/features/shop/shop_panel.gd:12 | finite tween: code sets `open_tween` of a UIPanel or UIPopup; it is set in the .tscn',
+      'client/features/shop/shop_panel.gd:14 | finite tween: code sets `open_tween` of a UIPanel or UIPopup; it is set in the .tscn',
+      'client/features/shop/shop_panel.gd:15 | finite tween: code sets `close_tween` of a UIPanel or UIPopup; it is set in the .tscn',
     ]);
   });
 });
