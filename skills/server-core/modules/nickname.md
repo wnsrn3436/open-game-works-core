@@ -47,7 +47,7 @@ core `rpc` response field
 |---|---|---|
 | `SetNicknameResponse` | `nickname` | `string` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|

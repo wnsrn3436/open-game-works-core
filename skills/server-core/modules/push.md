@@ -33,7 +33,7 @@ Takes device token registration, picks the targets of the remote pushes that han
 | `refresh_push_consent` | ctx | none | none | `auth`(`UpdatePushConsent`) |
 | `remove_user` | ctx | none | none | `auth` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; processing order, authentication, `operation_id` rules and the `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|

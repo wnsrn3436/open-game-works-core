@@ -43,7 +43,7 @@ core `rpc` response field
 | `GetRemoteConfigResponse` | `entries` | `repeated RemoteConfigEntry` |
 | `GetRemoteConfigResponse` | `assignments` | `repeated ExperimentAssignment` |
 
-admin operation. `routing` collects them and passes them to `admin-api`; the processing order, authentication, `operation_id` rules and `audit` log follow `admin-api`.
+admin operation. Collection and handling follow `admin-api`.
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
