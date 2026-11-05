@@ -117,6 +117,7 @@ none
 | `set_native_adapter` after `init` | ignored. The adapter stays the same | error |
 | empty text in `copy_text` | `false` | error |
 | `copy_text` of text that is not empty on a platform without a clipboard or in a headless run | `false` | warn |
+| `share` or `capture_screen` in progress at `release` | `Failed` for `share`, empty bytes for `capture_screen` | none |
 
 ## settings
 
@@ -156,6 +157,6 @@ none
 - Even without an adapter, `share` of empty text and an empty image gives `Failed` and an error log
 - The PNG size of `capture_screen` equals the window resolution and there are no elements of the `Debug` layer
 - `get_fake_record` of the fake adapter returns the text and image byte count passed to `share`
-- A `share` during `release` ends with `Failed`, and after `init` again there is no adapter
+- A `share` during `release` ends with `Failed` without a log, and after `init` again there is no adapter. In a run that is not a headless run, a `capture_screen` called right before `release` in the same frame returns empty bytes without a log
 - `set_native_adapter` after `init` leaves an error log and does not change the adapter
 - In a run that is not a headless run on a platform that provides a clipboard, `copy_text`(`12345`) is `true` and the text of the engine clipboard is `12345`. Empty text gives `false` and an error log, and the clipboard stays the same. In a headless run `copy_text`(`12345`) gives `false` and a warn log, and empty text gives `false` and an error log without a warn log

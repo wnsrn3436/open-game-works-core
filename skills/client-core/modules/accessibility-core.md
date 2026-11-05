@@ -74,7 +74,7 @@ Saves the user options for text size scale, color vision correction, voice subti
 - A `voice` resource played with `play_voice` is a subtitled voice as defined in [`resource`](../../resource/SKILL.md)
 - The subtitle box is a black rectangle made in code (opacity `AccessibilityCore.subtitleBoxOpacity`) holding white text (the size set on that element is `AccessibilityCore.subtitleFontSize`, and the font size follows the text scale rules of `LocalizationCore`) with a padding of `AccessibilityCore.subtitlePadding`. It is placed in `UICore.get_layer(Message)`; its horizontal center is the horizontal center of the safe area of `SafeAreaCore`, and its bottom edge is `AccessibilityCore.subtitleBottomMargin` above the bottom edge of the safe area. Its width is safe area width × `AccessibilityCore.subtitleWidthPermille` ÷ 1000, and the text wraps
 - One subtitle is shown at a time. The subtitle that a new `play_voice` shows replaces the previous subtitle
-- Each frame, when `SoundCore.is_playing`(that handle) is `false`, it hides the subtitle. A request whose playback did not start (invalid handle) shows no subtitle
+- Each frame, when `SoundCore.is_playing`(the handle that the `play_voice` of the visible subtitle returned) is `false`, it hides the subtitle. A request whose playback did not start (invalid handle) shows no subtitle
 - Turning subtitles off hides the visible subtitle at once
 - Cutscene lines do not use `play_voice`, because `CutsceneCore` shows the line text
 

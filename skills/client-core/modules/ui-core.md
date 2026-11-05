@@ -349,7 +349,7 @@ none
 | `PanelFlowFinishedEvent` | after a panel transition operation that started a transition ends with success, failure, or cancel and the transition has ended. Not published for a call that ended without starting a transition | open flag(`true` for `open_root_panel`, `open_panel`, `open_panels`), success flag |
 | `ExitConfirmedEvent` | the `[ui_exit_quit]` button callback of the exit confirm | none |
 
-- `UIClosedEvent` is not published for a panel or popup object for which `UIOpenedEvent` was not published. The events one operation publishes are in the order closed, opened
+- `UIClosedEvent` is not published for a panel or popup object for which `UIOpenedEvent` was not published. The events one operation publishes are in the order closed, opened, `PanelFlowFinishedEvent`. When a subscriber of that `UIOpenedEvent` calls a panel transition operation, the `PanelFlowFinishedEvent` is published before that call starts a transition
 - `UIOpenedEvent` and `UIClosedEvent` are not published for system popups
 - Content code and tests wait for the end of a flow with these events. They do not wait by counting frames
 
@@ -497,6 +497,7 @@ none
 - After `scroll_to_end`, `get_scroll_offset` is the max scroll position
 - During `set_loading(true)` one loading item is shown in the line after the last line with no bind, and after `set_loading(false)` there is none. When the loading item prefab key is an empty string, it is not shown
 - For each success, failure, or cancel of a panel transition operation that started a transition, there is one `PanelFlowFinishedEvent`, and `is_panel_transitioning` is `false` when it is received
+- Opening panel B from panel A with `open_panel` publishes `UIClosedEvent` of A, `UIOpenedEvent` of B and `PanelFlowFinishedEvent` in that order. When a subscriber of that `UIOpenedEvent` calls `open_panel`(C), the `PanelFlowFinishedEvent` of the first `open_panel` is received before `UIClosedEvent` of B, and `is_panel_transitioning` is `false` when it is received
 - A panel transition operation called during a transition or a panel lock, and `close_panel` called when there is no current panel, return `false` and have no `PanelFlowFinishedEvent`. The transition that was in progress has one `PanelFlowFinishedEvent`
 - `get_anchor_rect` returns `found`, `visible`, and the rectangle for a visible anchor, a result with only `found` `true` for an anchor under a hidden ancestor, inside a panel in `prepare`, or inside a panel under an open modal popup or system popup, and a result with both `false` for a name that does not exist. An anchor inside a panel with only popups with modal off above it is visible. When two with the same name are visible, it is the one drawn on top. `owner` is the panel key for an anchor in a panel, the popup key for an anchor in a popup, and an empty string for an anchor on the `SceneUI` layer
 - When `set_anchor_key` sets key 7, key 7, and key 9 on three visible `UIAnchor` elements named a, `get_anchor_rect`(a, 7) returns the one drawn on top of the two with key 7, (a, 9) returns the one with key 9, (a, 8) returns a result with `found` and `visible` `false`, and (a) without a key returns the one drawn on top of the three. After `set_anchor_key`(none), that anchor is not found by (a, 7) and is found by (a). `set_anchor_key` and `get_anchor_rect` with key -1 leave an error log

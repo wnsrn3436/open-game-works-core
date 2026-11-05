@@ -75,12 +75,13 @@ Owns following, camera shake, zoom, screen bounds, and the conversion between sc
 
 Each frame, it sets the camera position in the order below.
 
-1. Set the base position: when a `move_to` is in progress, its value (unchanged while a `move_by_preset` waits for loading); when following, the follow value; when neither, unchanged
+1. Set the base position: when a `move_to` is in progress, its value (unchanged while a `move_by_preset` waits for loading); when following, the follow value; when neither, unchanged. When a `zoom_to` is in progress, set the zoom factor to its value
 2. When there are bounds, fit the base position inside the bounds
 3. Apply to the camera object the value with the shake offset and the shake rotation added
 
 - Shake is added after bounds fitting. During a shake, the screen can show up to `CameraCore.shakeMaxOffset` outside the bounds
 - For a 3D camera, the point on the height-0 horizontal plane that the screen center shows is `screen_to_world`(center of the visible game area)
+- `snap_to`, a `move_to` with duration 0 (also the one that `move_by_preset` does when loading ends) and a `zoom_to` with duration 0 apply their value inside the operation: they set the base position or the zoom factor to that value, then do steps 2 and 3 with the current shake offset and shake rotation. `set_bounds` fits the base position at step 2 of the next frame
 
 ### follow
 
@@ -101,7 +102,6 @@ Each frame, it sets the camera position in the order below.
 - `zoom_to` changes the zoom factor from the current factor to the received factor over the duration with `Easing`. It clamps the received factor to at least `CameraCore.minZoom` and at most `CameraCore.maxZoom`. When a `zoom_to` is in progress, it ends that with `Cancelled` and starts from the current factor. Duration 0 applies the end factor inside the operation and ends with `Completed`
 - A new `move_to` ends the `move_to` in progress with `Cancelled` and starts from the current base position
 - A `move_to` and a `zoom_to` with a duration more than 0 progress by the elapsed time of the received `TimeBasis`. Each frame, with r the value that `TweenCore.evaluate_easing`(`Easing`, progress rate) makes from the progress rate (elapsed time since the start ÷ duration; 1 when it is more than 1), it sets start value + (end value − start value) × r. In the frame in which the progress rate becomes 1, it sets the end value and ends with `Completed`
-- When the zoom changes, bounds fitting is done again with the changed view range
 
 ### screen bounds
 
@@ -203,8 +203,10 @@ none
 - When the factor of `zoom_to` is out of range, it stops at `CameraCore.minZoom` or `CameraCore.maxZoom`. At factor 2, the length of each axis of the view range is half that at factor 1
 - A `zoom_to` with duration 0 applies the end factor inside the operation and is `Completed`. Calling a new `zoom_to` while one is in progress makes the previous one `Cancelled`, and the new one starts from the factor at that time
 - With bounds, for any follow goal the view range based on `get_view_center` is inside the bounds, and an axis on which the view range is longer than the bounds is at the center of the bounds. When `set_bounds` is called after `snap_to`(p) with a p whose view range is outside the bounds, `get_view_center` after one frame is not p and its view range is inside the bounds, and after `clear_bounds` and one more frame it is unchanged
+- With bounds longer than the view range on each axis, right after `snap_to`(p) with a p whose view range is outside the bounds and before the next frame, `get_view_center` is not p and the `screen_to_world` points of the four corners of the visible game area are inside the bounds (tolerance 0.01 world units). The same holds right after a `move_to` to p with duration 0
 - For a 3D perspective camera tilted down with bounds, for any follow goal and zoom, the `screen_to_world` points of the four corners of the visible game area are inside the range of the two horizontal axes of the bounds (tolerance 0.01 world units) and the height of the base position stays as it is. A camera looking above the horizon has no bounds fitting and one error log
 - In the frame after `GameAreaChangedEvent`, bounds fitting uses the changed view range
+- With a base position whose view range touches an edge of the bounds and a factor z smaller than the current factor at which the bounds are longer than the view range on each axis, right after a `zoom_to` to z with duration 0, and after each frame of a `zoom_to` to z with a duration more than 0, the `screen_to_world` points of the four corners of the visible game area are inside the bounds (tolerance 0.01 world units)
 - For both a 2D camera and a 3D camera, `get_view_center` is the base position after bounds fitting and does not add the shake offset even during a shake. For a 3D camera it equals the camera position
 - Two `shake(0.5)` calls publish `CameraShakeStartedEvent` twice and make trauma 1, and without `shake` it is 0 after 1 / `CameraCore.shakeDecayPerSecond` seconds. When trauma is 0, offset and rotation are 0
 - In every frame, the absolute value of each axis of the shake offset is at most `CameraCore.shakeMaxOffset` × trauma²

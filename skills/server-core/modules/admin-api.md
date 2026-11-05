@@ -214,7 +214,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 - Does not include server state
 - The response is 200, `Content-Type: application/json`, `Content-Disposition: attachment; filename="personal-data-<user_id>.json"`, and the body is the file
 - When the UTF-8 byte length of the file exceeds `admin-api.maxExportBytes`, 413 `too_large`
-- `args` of the `audit` log is only `user_id`, and the log keeps neither the file contents nor `body_sha256`
+- `args` of the `audit` log is only `user_id`, and the log does not keep the file contents
 
 ### ban, maintenance, kill switch
 
@@ -238,7 +238,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 
 - One line of `kind` `audit` log per admin request: `request` is the operation name, `user_id` is the target user (`null` when there is none), `actor`(the name of the operator that passed step 2. `null` when the request ended before that), `ip`(truncated IP), `status`(HTTP status), `error`(the reason, `null` on success), `args`(the input that passed the check)
 - When the spec of a collected operation sets `args` separately, the value that the audit args function of that operation returned is used. e.g. `import_user_snapshot`
-- `args` does not hold binary bodies or secrets. For a binary body, the SHA-256 hex is kept in `body_sha256`. A `bigint` in `args` is written as a decimal string
+- `args` does not hold binary bodies or secrets. For a binary body operation whose spec does not set `args` separately, `args` is the input that passed the check with one more key `body_sha256` (replacing an input field of that name), the lowercase hex SHA-256 of the body bytes. A `bigint` in `args` is written as a decimal string
 - `args` of a request that ended in steps 1 to 5 is `null`
 - No admin operation deletes or changes the `audit` log
 
@@ -336,6 +336,7 @@ none. The admin API exists in every environment
 - The JSON of `get_user` follows the rules for kind names, field names and `int64` strings
 - The `audit` log has no secrets and no binary bodies
 - `args` of the `audit` log of `grant_items` holds `user_id` and the `amount` of `items` as decimal strings, and `args` of `send_mail` whose `mail` has a JSON integer `int_value` 9007199254740993 holds it as the string `9007199254740993`
+- The `audit` log of a binary body operation without an audit args function that reached step 6 has as `args` its query input and `body_sha256`, the lowercase hex SHA-256 of the body
 - A request that is 400 at step 5 leaves an `audit` log whose `args` is `null`
 - The `ip` of the `audit` log is a truncated IP
 - For each operation of the collected admin operation table, a request of an operator that has its role calls the handling of that module, a wrong secret is 401, and an operator without that role gets 403 `forbidden`. The same holds per role for the admin operations of admin-api

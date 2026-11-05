@@ -102,7 +102,7 @@ none
 | `hold_db` | PostgreSQL test server or PostgreSQL connection string, SQL and parameter list | async operation. holder: the backend pid of the connection that opened the transaction, `release` that ends that transaction | a DB failure throws | server core test |
 | `hold_lock_key` | PostgreSQL test server or PostgreSQL connection string, int64 key | async operation. holder | a DB failure throws | server core test |
 | `until_blocked_by` | PostgreSQL test server or PostgreSQL connection string, backend pid, count (optional, default 1) | async operation. none | a timeout throws | server core test |
-| `game_row_lock_id` | table name, key value | the int64 key of the transaction advisory lock that `storage.lock_game_row` takes on that row. Passed to `hold_lock_key` | none | server core test |
+| `game_row_lock_id` | table name, key value | the int64 key of the advisory lock that `storage.lock_game_row` takes on that row. Passed to `hold_lock_key` | none | server core test |
 | `gates_of` | gate folder, a function that returns whether the process waiting at the gates is alive, the name of that process | `reached` and `open` of the gates | none | server core test |
 | `wait_at_gate` | gate folder, gate name, note (optional) | none. Marks the gate as reached and blocks the thread until that gate opens | none | server core test |
 | `start_http2_test_server` | a function that decides the answer per request (received request → status and body) | async operation. HTTP/2 test server: `origin` (`https://localhost:<port>`), list of received requests (ALPN protocol, header, body), `close` | none | server core test |

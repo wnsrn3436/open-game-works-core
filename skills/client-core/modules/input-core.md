@@ -180,6 +180,7 @@ Device input is handled in the order below.
   - gamepad family: the first gamepad button name of the gamepad button binding. When the gamepad button binding has no gamepad button, the first gamepad axis direction name
   - The order inside a binding is in the engine-specific implementation rules
 - prompt table: the table from (`family`, `input`) of `input_prompt` to that row. The first `get_prompt` called while `DataCore.is_loaded` is `true` makes it from all rows of `input_prompt`, and `release` deletes it
+- When the `input` of a row whose `family` is `Touch` is not in the action list of the game, or the `input` of a row whose `family` is `KeyboardMouse` is neither a key name nor a mouse button name, the static check `action reference` blocks it
 - `get_prompt` is `false` without a log when there is no prompt input. Otherwise it finds the row of the prompt table whose `family` is the prompt family and whose `input` is the prompt input. When `DataCore.is_loaded` is `false`, it does not make or read the prompt table and treats it as no row, without a log. When the prompt family is `Xbox`, `PlayStation` or `Nintendo` and that row does not exist, it finds the row whose `family` is `Generic`. `family` of `InputPrompt` is the prompt family, `input` is the prompt input, and `icon` and `name_key` are the values of the found row. When there is no row or `icon` of the row is `null`, `icon` is the empty string, and when there is no row, `name_key` is none
 - `get_prompt` is also used for `back`
 - `InputPromptChangedEvent` is published when the prompt family changes and when a binding changes. A binding changes on a successful `set_keys`, `set_pad_buttons`, `reset_keys`, `reset_pad_buttons` and on a `load_keys` that applied one or more saved values. Once per call or per device input. When the input device also changes, it is published after `InputDeviceChangedEvent`
@@ -252,8 +253,7 @@ none
 | `name` | `tstring<id>` | `Client` |
 
 - One row is the input prompt of one prompt family and one prompt input. When `icon` is `null`, only the name shows, without an icon
-- data check: two rows with the same `family` and `input` are `duplicate`. When `input` is the empty string, it is `empty_required`. When `family` is `Touch` and `input` is not snake_case, it is `value_type`. When `family` is `Generic`, `Xbox`, `PlayStation` or `Nintendo` and `input` is neither a gamepad button name nor a gamepad axis direction name, it is `value_type`. The `input` of a row whose `family` is `KeyboardMouse` is a key name or a mouse button name. When the `name` text of any language has an input prompt token, it is `translation_format`
-- When the `input` of a row whose `family` is `Touch` is not in the action list of the game, or the `input` of a row whose `family` is `KeyboardMouse` is neither a key name nor a mouse button name, the static check `action reference` blocks it
+- data check: two rows with the same `family` and `input` are `duplicate`. When `input` is the empty string, it is `empty_required`. When `family` is `Touch` and `input` is not snake_case, it is `value_type`. When `family` is `Generic`, `Xbox`, `PlayStation` or `Nintendo` and `input` is neither a gamepad button name nor a gamepad axis direction name, it is `value_type`. When the `name` text of any language has an input prompt token, it is `translation_format`
 
 `data/enums.csv`
 

@@ -124,7 +124,7 @@ Sets the current language, turns translation keys into text of that language, ma
 - In the frame the text scale changes, it rewrites the bound rich text elements
 - When a bound rich text element is added to the screen, it is rewritten in that frame, because the font size is set at that time
 - `init` subscribes to `InputPromptChangedEvent`
-- `unbind_text` removes the binding and does not change the element's text. `unbind_text` of an element that is not bound does nothing, without a log. `bind_text` of a bound element replaces its translation key and writes the `get_text` result of the new key. `bind_text` with an empty translation key binds and writes an empty string
+- `unbind_text` removes the binding and does not change the element's text. `unbind_text` of a UI text element that is not bound does nothing, without a log. `bind_text` of a bound element replaces its translation key and writes the `get_text` result of the new key. `bind_text` with an empty translation key binds and writes an empty string
 - When the element is destroyed, the binding is deleted
 - For text with format arguments, the `format` result is written to the element. If that element is bound, it is first unbound with `unbind_text`
 
@@ -152,7 +152,7 @@ none
 | fallback resource for `icon` of `input_prompt` | `load_prompt_icons` returns `false`. That icon is not used as an inline icon | error |
 | input prompt token whose `InputCore.get_prompt` is `false` | text with that slot left empty | error once per action per load |
 | value of `set_text_scale` less than 1 | text scale unchanged | error |
-| element of `bind_text` that is missing, destroyed or not a UI text element, element of `unbind_text` that is missing or not a UI text element | none. No binding and no text changes | error |
+| element of `bind_text` or `unbind_text` that is missing or not a UI text element | none. No binding and no text changes | error |
 | value of `set_test_timezone_offset` less than -86399999 or more than 86399999 | ignored. The offset in use is unchanged | error |
 | second `resolve_language` after `init` | ID value of the current language. The current language is not changed | error |
 | `load_translation` while a `load_translation` is in progress, `load_fonts` while a `load_fonts` is in progress, `load_prompt_icons` while a `load_prompt_icons` is in progress | `false`. The one in progress continues | error |
@@ -262,8 +262,8 @@ used table: `input_prompt`
 - A UI text element in the `heading` text style draws with the heading font, and an element whose text style was not set draws with the default font. The character lookup order of the heading font equals the font chain. After `release`, an element in the `heading` text style draws with the default font of before `init`
 - With a style based on the `heading` text style in the theme of `load_fonts`, after `load_fonts`, `release`, another `init` and another `load_fonts`, that style draws with the heading font
 - After `set_text_scale`(1500), the font size of a UI text element set to size 20 is 30, an element made after that is the same, and after `release` it is 20. 0 gives an error log and no change
-- The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string. `bind_text` again on a bound element with another key gives the `get_text` result of the later key, also after `load_translation` success, and `unbind_text` of an element that is not bound leaves no log and does not change its text
-- `bind_text` of a missing element, a destroyed element and an element that is not a UI text element, and `unbind_text` of a missing element and an element that is not a UI text element, each leave one error log and change no binding. `unbind_text` of a destroyed element leaves no log
+- The text of a bound element equals the `get_text` result at binding and at `load_translation` success, the text of an element unbound with `unbind_text` does not change, and the text of an element bound with an empty translation key is an empty string. `bind_text` again on a bound element with another key gives the `get_text` result of the later key, also after `load_translation` success, and `unbind_text` of a UI text element that is not bound leaves no log and does not change its text
+- `bind_text` and `unbind_text` of a missing element and of an element that is not a UI text element each leave one error log and change no binding
 - `get_text` with inline icon height 0 of text with an input prompt token gives the display name of the input prompt of `InputCore`, and calling it again after changing the input device with `InputCore.set_test_device` gives the display name for that device. When there is no `input_prompt` row, it is prompt input
 - After `load_prompt_icons`, `get_text` with an inline icon height greater than 0 replaces an input prompt that has an icon with an inline icon of that height, and an input prompt without an icon with its display name. Before `load_prompt_icons`, it is the display name
 - `format` of text that contains both an input prompt token and a format argument replaces both, and there is no error log

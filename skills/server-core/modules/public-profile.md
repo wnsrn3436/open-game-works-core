@@ -53,13 +53,13 @@ core `rpc` response field
 
 ## behavior
 
-- profile build runs inside `storage.run_read_only`. For each input user ID whose user has `is_active_user` `true`, calls hook `build_public_profile`, and fills the nickname with `nickname.get_nicknames`
+- profile build runs inside `storage.run_read_only`. For each input user ID that has an element in the output of `storage.get_user_records` whose `record.withdrawn_at` is `null`, calls hook `build_public_profile`, and fills the nickname with `nickname.get_nicknames`
 - `get_public_profiles` has no limit on the user ID count. Splits the user ID list in ascending order into groups of `public-profile.maxRequestCount` users and calls `storage.get_user_records` and `nickname.get_nicknames` once per group
 - The ctx of `build_public_profile` is the ctx of the user who requested the profile. The hook reads the public kind of the target user with `storage.read_public_state`, and builds `PublicProfile` from those values and `data` of ctx. The profile of the requester's own user ID is built the same way
 - `PublicProfile` is a module message, and the game that registers hook `build_public_profile` defines it
 - There is no cache. Each call builds the profiles and writes nothing
 - `is_active_user` judges with `storage.get_user_record`(`storage.db`(ctx), user ID)
-- profile build judges `is_active_user` and fills `public_code` from the `user` rows that `storage.get_user_records` read
+- profile build calls `storage.get_user_records`(`storage.db`(ctx), the user IDs of one group) and fills `public_code` with `record.public_code` of the element of that user. It does not call `is_active_user`
 
 ### find by public code
 
@@ -69,7 +69,7 @@ core `rpc` response field
 
 - `public_profile_find_counter` is registered with snapshot flag `false`
 - `count_find_attempt`: in its own `storage.run_user_transaction`, sets that user's `public_profile_find_counter` row to the current minute window of `server-time` (`count` 0 when the row is of another window, `expires_at` the window end), increments `count` by 1 and commits, whatever the find gives later. When the incremented value exceeds `public-profile.findPerMinute`, the result is `RATE_LIMITED`. When `run_user_transaction` is `WITHDRAWN`, the result is `UNAUTHORIZED`; when it is `FAILED`, `INTERNAL`; and the count does not increase. `routing` calls it before the request transaction (request prepare)
-- `FindUserByPublicCode`: when `storage.is_public_code_input` of `public_code` is `false`, `INVALID_REQUEST`; otherwise finds the user with `storage.find_user_by_public_code`; when no user is found or `is_active_user` of that user is `false`, `USER_NOT_FOUND`. Otherwise the response is the profile of that user, built as `GetPublicProfiles` builds it. A failed find also counts, so codes are not found by trying many
+- `FindUserByPublicCode`: when `storage.is_public_code_input` of `public_code` is `false`, `INVALID_REQUEST`; otherwise finds the user with `storage.find_user_by_public_code`(`storage.db`(ctx), `public_code`) and builds the profile of that user as `GetPublicProfiles` builds it. When no user is found or that build leaves the user out, `USER_NOT_FOUND`; otherwise the response is that profile. A failed find also counts, so codes are not found by trying many
 
 ### last active
 
@@ -138,6 +138,7 @@ none
 - User IDs that do not exist and withdrawn users are not in the output
 - Passing `public-profile.maxRequestCount` × 2 + 1 users to `get_public_profiles` does not throw and returns the profiles of all active users in ascending order of user ID
 - With `public-profile.maxRequestCount` 2, `get_public_profiles` of 5 users calls `storage.get_user_records` 3 times and does not call `storage.get_user_record`
+- `FindUserByPublicCode` of the public code of a withdrawn user is `USER_NOT_FOUND`, and that of an existing user calls `storage.get_user_records` once and does not call `storage.get_user_record`
 - Without the hook, `profile` is empty bytes and the nickname is filled
 - Reading a kind that is not a public kind with `read_public_state` or calling `put_state` inside the hook is `INTERNAL`, and the saved state stays
 - `user_ids` over the limit, an empty list, an element 0 and a duplicate are `INVALID_REQUEST`

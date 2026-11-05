@@ -94,7 +94,7 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
 - One element holds only one pointer, and one pointer belongs to only one element. Several elements can each hold a pointer at the same time
 - When `Active`, a pointer pressed inside an element area is held by that element. Where areas overlap, the element drawn on top holds it. A pointer pressed in the area of an element that already holds a pointer is held by no element
 - An element holds its pointer until the pointer is released. The same holds when the pointer moves out of the area
-- When `Active`, the press of a pointer pressed inside an element area is consumed at the UI stage of `InputCore`, also when no element holds that pointer. Such a pointer is not a judge pointer. The moves and release of a pointer are consumed only while an element holds that pointer
+- When `Active`, the press of a pointer pressed inside an element area is consumed at the UI stage of `InputCore`, also when no element holds that pointer. Such a pointer is not a judge pointer. The moves and release of a pointer are consumed only while an element holds that pointer. While the element that received the press of a pointer exists, the moves and release of that pointer go to no UI element outside the virtual pad, also when they are not consumed
 - A press outside the element areas and a press when not `Active` are not consumed
 - release handling: the element drops its pointer. A button injects a release, and a joystick injects the direction value (0, 0) and puts the base at its default position. A dropped pointer is held by no element until it is released
 - Every inject made with a pointer that an element holds, including the injects of release handling, passes the pointer ID of that pointer to `InputCore.inject_action` along with it
@@ -219,7 +219,7 @@ Common conditions: touch supported, input device `Touch`, no open popup, dead zo
 - A pointer inside an area is not received by the UI elements below and makes no gesture. A pointer outside the areas is not consumed
 - Without touch support, the state is `Hidden` and a press gives no action
 - When the input device changes to something other than `Touch` while a pointer is held, the state is `Hidden` and no action is pressed, and it is `Active` when the device returns to `Touch`
-- When a popup opens while a pointer is held, the state is `Inactive`, the pad is drawn, the action is not pressed, and the moves and release of that pointer make no gesture. When all popups close, it is `Active`
+- When a popup opens while a pointer is held, the state is `Inactive`, the pad is drawn, the action is not pressed, and the moves and release of that pointer make no gesture and are not received by the popup. When all popups close, it is `Active`
 - After an input cancel, the `Floating` base is at its default position, and after a release and a new press the joystick holds the new pointer
 - Opening B during the load of A makes A `false` and B `true`, and the current layout is B
 - `open_layout` with the same key and scope is `true` and the pressed action stays as it is. With a different key, it creates a new virtual pad after release handling
