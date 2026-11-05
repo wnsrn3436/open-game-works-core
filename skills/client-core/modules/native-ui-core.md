@@ -84,6 +84,7 @@ Opens the OS store review request window and share window with a per-platform na
 ### screen capture
 
 - `capture_screen` waits until the engine has fully drawn the next frame and returns that frame at the window resolution as PNG. A wait ends when its frame is drawn: `capture_screen` calls made before that return the same frame, and a call after that starts a new wait. The `Debug` layer of `UICore` is not in the image, and when a wait ends it gets back the visibility it had when the first capture of that wait was called
+- While the engine draws no frame (e.g. the window is minimized or fully covered), a wait does not end until a frame is drawn or `release`
 - Content code hides the UI to leave out of the screen before calling it
 - In a headless run of `QACore`, it returns empty bytes without waiting for a frame and without hiding the `Debug` layer. NativeUiCore reads whether it is headless from the engine without calling `QACore`. The method is in the engine-specific implementation rules
 
@@ -112,7 +113,7 @@ none
 | `request_review`, `share` of the adapter report a failure | `Failed` | error |
 | text length or image size exceeded in `share` | `Failed` | error |
 | the text of `share` is an empty string and there is no image either | `Failed` | error |
-| `capture_screen` failure, headless run | empty bytes | error. warn for a headless run |
+| `capture_screen` when `UICore` gives no `Debug` layer, the engine refuses the wait for a drawn frame, gives no screen image or fails the PNG encoding, and in a headless run | empty bytes | error. warn for a headless run |
 | `Unsupported`, `Throttled`, `Busy` | each result | none |
 | `set_native_adapter` after `init` | ignored. The adapter stays the same | error |
 | empty text in `copy_text` | `false` | error |

@@ -357,10 +357,10 @@ none
 
 | condition | failure value | log |
 |---|---|---|
-| prefab root of `open_root_panel`, `open_panel`, `open_panels` or `open_popup` is not `UIPanel` or `UIPopup` | `false`. `prepare` is not called | error |
-| `accepts_param` is `false` | `false`. `prepare` is not called. A close flow with force on continues with the item below | error |
+| prefab root of `open_root_panel`, `open_panel` or `open_panels` is not `UIPanel`, or prefab root of `open_popup` is not `UIPopup` | `false`, `Failed` for `open_popup`. `prepare` is not called | error |
+| `accepts_param` is `false` | `false`, `Failed` for `open_popup`. `prepare` is not called. A close flow with force on continues with the item below | error |
 | prefab root of a close flow destination is not `UIPanel` | the close flow continues with the item below regardless of force, and ends with the stack empty when there is none | error |
-| `prepare` is `false` | `false`. a close flow with force on continues with the item below | none |
+| `prepare` is `false` | `false`, `Failed` for `open_popup`. A close flow with force on continues with the item below | none |
 | `accepts_param` or `prepare` of the root item is `false` in a close flow | `false` when force is off; when force is on, shows the root item and calls `on_opened(Returned)` | error |
 | panel transition operation during a transition or a panel lock | `false`. stack unchanged | warn |
 | `close_panel` when there is no current panel or it is the root item | `false`. stack unchanged | warn |
