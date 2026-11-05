@@ -54,11 +54,13 @@ describe('format args', () => {
     const sc = memContext({
       ...data,
       'server/handlers/Login.ts': [
-        "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: 'name', value: { text_value: 'a' } }, { name: 'count', value: { int_value: 5n } }], 0n, '');",
+        "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: 'name', text_value: 'a' }, { name: 'count', int_value: 5n }], 0n, '');",
         "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: 'name', text_value: 'a' }, { name: 'count', text_value: 'x' }], 0n, '');",
-        "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: 'name', value: { text_value: 'a' } }], 0n, '');",
-        "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: key, value: { text_value: 'a' } }, 5], 0n, '');",
-        "core.mailbox.send_mail(ctx, { template_id: ReservedId.gift_mail(), args: [{ name: 'count', kind: MailArgKind.Text, text_value: '1' }, { name: 'rank', kind: MailArgKind.Int, int_value: 1n }] });",
+        "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: 'name', text_value: 'a' }], 0n, '');",
+        "core.push.queue_push(ctx, user, ReservedId.welcome_push(), [{ name: key, text_value: 'a' }, 5], 0n, '');",
+        "core.mailbox.send_mail(ctx, { template_id: ReservedId.gift_mail(), args: [{ name: 'count', kind: CoreContract.MailArgKind.MAIL_ARG_KIND_TEXT, int_value: 1n }, { name: 'rank', kind: MailArgKind.MAIL_ARG_KIND_INT, text_value: '' }] });",
+        "core.mailbox.send_mail(ctx, { template_id: ReservedId.gift_mail(), args: [{ name: 'count', kind: argKind, int_value: 1n }, { name: 'rank', ...rest }] });",
+        "core.mailbox.send_mail(ctx, { template_id: ReservedId.gift_mail(), args: [{ name: 'count', int_value }, { name: 'rank', kind: MailArgKind['MAIL_ARG_KIND_INT'] }] });",
         "core.mailbox.grant_or_mail(ctx, items, source, GameData.ReservedId.gift_mail(), [{ name: 'count', int_value: 3n }, { name: 'rank', int_value: 1n }]);",
         "core.mailbox.grant_or_mail(ctx, items, source, templateId, [{ name: 'zzz', int_value: 3n }]);",
         "core.mailbox.grant_or_mail(ctx, items, source, ReservedId.gift_mail(), args);",
@@ -74,6 +76,9 @@ describe('format args', () => {
       'server/handlers/Login.ts:4 | format args: `args` element `name` is not a string literal',
       'server/handlers/Login.ts:4 | format args: `args` names {} differ from the format arguments {count, name} of the `push_message` row of `[welcome_push]`',
       'server/handlers/Login.ts:5 | format args: formatter `n` of `{count}` does not take a string value',
+      'server/handlers/Login.ts:6 | format args: `args` element `count` has no value kind the check can read',
+      'server/handlers/Login.ts:6 | format args: `args` element `rank` has no value kind the check can read',
+      'server/handlers/Login.ts:7 | format args: `args` element `rank` has no value kind the check can read',
     ]));
   });
 });

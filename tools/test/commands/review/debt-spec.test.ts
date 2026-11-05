@@ -1,6 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { lastSpecReviewPath } from '../../../src/commands/review/lib/spec-debt.ts';
 import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeAgentCli } from '../agent/helpers.ts';
@@ -38,7 +39,31 @@ describe('ogw review spec: scope and lists', () => {
     rmSync(spec);
     const without = commitAll(ws.harness, 'no routing spec');
     sh(ws.harness, 'git', ['checkout', '--quiet', head, '--', 'skills/server-core/modules/routing.md']);
-    expect((await specReview(ws, ['--since', without], env)).input).toContain('## spec changes\n\nnone\n\n## debt\n\n- D1: skills/server-core/modules/routing.md:9: medium a slow loop\n');
+    expect((await specReview(ws, ['--since', without], env)).input).toMatch(/## spec changes\n\nnone\n\n## previous review\n\n\S+\n\n## debt\n\n- D1: skills\/server-core\/modules\/routing\.md:9: medium a slow loop\n/);
+  });
+
+  it('moves a finding of a review of the changes outside every hunk of its diff to the spec debt list, and gives the last review file as the previous review', async () => {
+    const ws = makeWorkspace();
+    const spec = join(ws.harness, 'skills', 'server-core', 'modules', 'routing.md');
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    writeFileSync(spec, `${readFileSync(spec, 'utf8')}\n- changed rule\n`);
+    const changedLine = readFileSync(spec, 'utf8').split('\n').indexOf('- changed rule') + 1;
+    const row = (id: string, line: number): string => `| ${id} | \`spec\` | medium | skills/server-core/modules/routing.md:${String(line)} | two readings ${id} | settle it | yes | 90 |`;
+    const env = reviewer(ws, { 1: reviewFile([row('R1-1', changedLine), row('R1-2', 1)]), 2: reviewFile([], ['| R1-1 | fixed | settled |']) });
+    const first = await specReview(ws, ['--since', head], env);
+    expect(first.input).toContain('## previous review\n\nnone\n');
+    expect(first.waited.code).toBe(0);
+    expect(first.waited.stdout).toContain('finding outside the spec changes: R1-2\n');
+    expect(first.waited.stdout).not.toContain('finding outside the spec changes: R1-1');
+    expect(first.waited.stdout).toContain('review debt added: spec routing D1: skills/server-core/modules/routing.md:1: medium two readings R1-2\n');
+    expect(ids(ws.coreImpl, 'debt', 'spec-routing.json')).toEqual(['D1']);
+    const last = await lastSpecReviewPath('routing', ws.env);
+    expect(readFileSync(last, 'utf8')).toContain('two readings R1-1');
+    const second = await specReview(ws, ['--since', head], env);
+    expect(second.input).toContain(`## previous review\n\n${last}\n`);
+    expect(readFileSync(last, 'utf8')).toContain('| R1-1 | fixed | settled |');
+    expect(second.waited.code).toBe(0);
+    expect(second.waited.stdout).not.toContain('finding outside the spec changes');
   });
 
   it('writes out of scope items to the spec lists at agent wait once, pays the debt only with --full or --debt, and gives must-fix items to every spec review', async () => {

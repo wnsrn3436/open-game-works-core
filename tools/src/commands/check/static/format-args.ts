@@ -8,8 +8,11 @@ import { calledName, lineOf, stringText, ts, tsChain, tsSource, walkTs } from '.
  * format args (`push`, `mailbox`, `data` `### format`): a `queue_push`, `send_mail` or `grant_or_mail` call in server
  * content code that picks the message or mail template with a `ReservedId` accessor and passes `args` as an array
  * literal, where an element `name` is not a string literal, the `name` set differs from the format argument names of
- * the row `title` and `body`, or a formatter in the source text or a translation does not take the element's value kind.
- * The value kind of an element is `integer` for `int_value` and `string` for `text_value` (directly or in `value`).
+ * the row `title` and `body`, a formatter in the source text or a translation does not take the element's value kind, or
+ * an element has no value kind (`mailbox` `send_mail` TypeScript form). An element with a `kind` property has the value
+ * kind `integer` when that property is a property access named `MAIL_ARG_KIND_INT`, `string` when one named
+ * `MAIL_ARG_KIND_TEXT`, and none otherwise; an element without one is `integer` when it has an `int_value` property,
+ * otherwise `string` when it has a `text_value` property. An element with a spread property has no value kind.
  */
 export const NAME = 'format args';
 
@@ -21,8 +24,10 @@ interface Target {
   args: ts.Expression | undefined;
 }
 
+/** The value of property `name` (a shorthand property gives its identifier), or undefined when there is none. */
 function property(obj: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
   for (const p of obj.properties) {
+    if (ts.isShorthandPropertyAssignment(p) && p.name.text === name) return p.name;
     if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === name) return p.initializer;
   }
   return undefined;
@@ -47,14 +52,14 @@ function reservedAccessor(e: ts.Expression | undefined): string | null {
   return m ? (m[1] as string) : null;
 }
 
+const KIND_NAMES: Record<string, Kind> = { MAIL_ARG_KIND_INT: 'integer', MAIL_ARG_KIND_TEXT: 'string' };
+
 function kindOf(obj: ts.ObjectLiteralExpression): Kind | null {
-  const holder = property(obj, 'value');
-  const target = holder && ts.isObjectLiteralExpression(holder) ? holder : obj;
-  if (property(target, 'int_value')) return 'integer';
-  if (property(target, 'text_value')) return 'string';
-  const kind = tsChain(property(obj, 'kind') ?? obj);
-  if (kind?.endsWith('.Int')) return 'integer';
-  if (kind?.endsWith('.Text')) return 'string';
+  if (obj.properties.some((p) => ts.isSpreadAssignment(p))) return null;
+  const kind = property(obj, 'kind');
+  if (kind) return ts.isPropertyAccessExpression(kind) ? (KIND_NAMES[kind.name.text] ?? null) : null;
+  if (property(obj, 'int_value')) return 'integer';
+  if (property(obj, 'text_value')) return 'string';
   return null;
 }
 
@@ -121,8 +126,13 @@ function elementKinds(args: ts.ArrayLiteralExpression, where: string, out: Findi
   for (const el of args.elements) {
     const name = ts.isObjectLiteralExpression(el) ? property(el, 'name') : undefined;
     const text = name ? stringText(name) : null;
-    if (!ts.isObjectLiteralExpression(el) || text === null) out.push(finding(NAME, where, '`args` element `name` is not a string literal'));
-    else kinds.set(text, kindOf(el));
+    if (!ts.isObjectLiteralExpression(el) || text === null) {
+      out.push(finding(NAME, where, '`args` element `name` is not a string literal'));
+      continue;
+    }
+    const kind = kindOf(el);
+    if (kind === null) out.push(finding(NAME, where, `\`args\` element \`${text}\` has no value kind the check can read`));
+    kinds.set(text, kind);
   }
   return kinds;
 }

@@ -2,13 +2,14 @@ import { rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { expectPositionals, flag, positional, str, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { writeFileAtomic } from '../../lib/fsx.ts';
+import { exists, writeFileAtomic } from '../../lib/fsx.ts';
 import { git, gitRaw, revParse } from '../../lib/git.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import { startAgent } from '../agent/lib/prepare.ts';
 import { debtRepo, itemLine, readList, specDebtTarget } from './lib/debt.ts';
 import { coreDefinitions, moduleSpecs } from './lib/definitions.ts';
 import { formatSpecReviewInput, targetSlug } from './lib/input.ts';
+import { lastSpecReviewPath } from './lib/spec-debt.ts';
 
 const USAGE = 'ogw review spec core <module> <--since <commit>|--full|--debt>';
 
@@ -44,7 +45,7 @@ async function noChanges(folder: string): Promise<string> {
  * `--since` it reviews the changes of the module's spec since that harness commit, the whole spec for a spec new since
  * it; with `--full` the whole spec; with `--debt` the items of the module's spec debt list, which must have one. The
  * input gives every item of the module's spec must-fix list, and the items of its spec debt list in a review of the
- * whole spec or with `--debt`. Prints the agent job id; the result file is what `ogw agent wait <id>` prints. The input goes in an owner-only folder of `ogw-temp/`
+ * whole spec or with `--debt`, and the review file of the module's last spec review (`## previous review`). Prints the agent job id; the result file is what `ogw agent wait <id>` prints. The input goes in an owner-only folder of `ogw-temp/`
  * (ogw.md `## temp folder`), removed when the review does not start.
  */
 export const spec: CommandDef = {
@@ -74,7 +75,8 @@ export const spec: CommandDef = {
       const input = join(folder, `${targetSlug(target)}-input.md`);
       // a review of the whole spec, and a `--debt` review, pay the spec debt
       const items = { debt: changes === null || paying ? debt : [], mustFix };
-      await writeFileAtomic(input, formatSpecReviewInput(target, definitions, changes, items));
+      const last = await lastSpecReviewPath(target, ctx.env);
+      await writeFileAtomic(input, formatSpecReviewInput(target, definitions, changes, items, exists(last) ? last : null));
       const id = await startAgent(ctx, { role: 'review', input });
       return { text: id, data: { job: id } };
     } catch (error) {
