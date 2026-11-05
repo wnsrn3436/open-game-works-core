@@ -49,7 +49,8 @@ describe('ogw review spec: scope and lists', () => {
     writeFileSync(spec, `${readFileSync(spec, 'utf8')}\n- changed rule\n`);
     const changedLine = readFileSync(spec, 'utf8').split('\n').indexOf('- changed rule') + 1;
     const row = (id: string, line: number, cell = id): string => `| ${cell} | \`spec\` | medium | skills/server-core/modules/routing.md:${String(line)} | two readings ${id} | settle it | yes | 90 |`;
-    const env = reviewer(ws, { 1: reviewFile([row('R1-1', changedLine), row('R1-2', 1, '`R1-2`')]), 2: reviewFile([], ['| R1-1 | fixed | settled |']), 3: reviewFile([]) });
+    // id cells with backticks and an indented row are read as the review file is read
+    const env = reviewer(ws, { 1: reviewFile([row('R1-1', changedLine, '`R1-1`'), ` ${row('R1-2', 1, '`R1-2`')}`]), 2: reviewFile([], ['| R1-1 | fixed | settled |']), 3: reviewFile([]) });
     const first = await specReview(ws, ['--since', head], env);
     expect(first.input).toContain('## previous review\n\nnone\n');
     expect(first.waited.code).toBe(0);

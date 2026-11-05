@@ -6,7 +6,7 @@ import { markdownSection } from '../../agent/lib/prompt.ts';
 import { changeAgentMeta, readAgentJob, resultFile } from '../../agent/lib/meta.ts';
 import { changeLists, checkoutLine, specDebtTarget, specDebtTargetOf } from './debt.ts';
 import { inputListIds, inputWhole, parseReviewInput, targetSlug } from './input.ts';
-import { debtMismatch, parseReviewFile, type Finding, type ReviewFile } from './review-file.ts';
+import { debtMismatch, findingRowId, parseReviewFile, type Finding, type ReviewFile } from './review-file.ts';
 
 /** Folder of `ogw-temp/` that keeps the review file of each module's last spec review; `ogw review clear core` removes it. */
 const LAST_FOLDER = 'ogw-review-spec-last';
@@ -27,10 +27,8 @@ function withoutFindings(text: string, ids: ReadonlySet<string>): string {
   const start = text.indexOf('## findings');
   const end = text.indexOf('\n## ', start + 1);
   const section = text.slice(start, end === -1 ? text.length : end);
-  // an id cell is read as `parseReviewFile` reads it: without surrounding code span backticks
-  const idOf = (line: string): string | null => /^\|\s*`?(R\d+-\d+)`?\s*\|/.exec(line)?.[1] ?? null;
-  const kept = section.split('\n').filter((line) => !ids.has(idOf(line) ?? ''));
-  const rows = kept.filter((line) => idOf(line) !== null);
+  const kept = section.split('\n').filter((line) => !ids.has(findingRowId(line) ?? ''));
+  const rows = kept.filter((line) => findingRowId(line) !== null);
   // a findings table left without rows is `none`
   const body = rows.length === 0 ? ['## findings', '', 'none', ''] : kept;
   return text.slice(0, start) + body.join('\n') + (end === -1 ? '' : text.slice(end));

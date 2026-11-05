@@ -78,6 +78,14 @@ function plain(cell: string): string {
   return cell.replace(/^`(.*)`$/, '$1').replace(/\\\|/g, '|').trim();
 }
 
+/** The finding id of a line of a `## findings` table, read as `parseReviewFile` reads its id cell; null for any other line. */
+export function findingRowId(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return null;
+  const id = plain(tableCells(trimmed)[0] ?? '');
+  return /^R\d+-\d+$/.test(id) ? id : null;
+}
+
 /** Rows of the section's table with exactly `columns`; `[]` for `none`; null when the section is not in that form. */
 function sectionTable(text: string, heading: string, columns: readonly string[]): string[][] | null {
   const section = markdownSection(text, heading);
