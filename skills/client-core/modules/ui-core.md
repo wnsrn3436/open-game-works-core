@@ -349,7 +349,7 @@ none
 | `PanelFlowFinishedEvent` | after a panel transition operation that started a transition ends with success, failure, or cancel and the transition has ended. Not published for a call that ended without starting a transition | open flag(`true` for `open_root_panel`, `open_panel`, `open_panels`), success flag |
 | `ExitConfirmedEvent` | the `[ui_exit_quit]` button callback of the exit confirm | none |
 
-- `UIClosedEvent` is not published for a panel or popup object for which `UIOpenedEvent` was not published. The events one operation publishes are in the order closed, opened, `PanelFlowFinishedEvent`. A panel transition operation that a subscriber of that `UIOpenedEvent` calls publishes that `PanelFlowFinishedEvent` first
+- `UIClosedEvent` is not published for a panel or popup object for which `UIOpenedEvent` was not published. The events one operation publishes are in the order closed, opened, `PanelFlowFinishedEvent`. A panel transition operation that a subscriber of that `UIOpenedEvent` calls publishes that `PanelFlowFinishedEvent` first, and is received when that publish returns
 - `UIOpenedEvent` and `UIClosedEvent` are not published for system popups
 - Content code and tests wait for the end of a flow with these events. They do not wait by counting frames
 
@@ -357,7 +357,7 @@ none
 
 | condition | failure value | log |
 |---|---|---|
-| prefab root is not `UIPanel` or `UIPopup` outside a close flow | `false`. `prepare` is not called | error |
+| prefab root of `open_root_panel`, `open_panel`, `open_panels` or `open_popup` is not `UIPanel` or `UIPopup` | `false`. `prepare` is not called | error |
 | `accepts_param` is `false` | `false`. `prepare` is not called. A close flow with force on continues with the item below | error |
 | prefab root of a close flow destination is not `UIPanel` | the close flow continues with the item below regardless of force, and ends with the stack empty when there is none | error |
 | `prepare` is `false` | `false`. a close flow with force on continues with the item below | none |

@@ -69,7 +69,7 @@ admin operation. Collection and handling follow `admin-api`.
 - `memo`: description the operator leaves. Not sent to the client
 - field types: `kind` is `enum{shared, unique}`, `code`, `after_code` and `memo` are `string`, `count`, `max_uses` and `extra_id` are `int32`, `coupon_id` is `int64`
 - `get_coupon` takes exactly one of `coupon_id` and `code`. When both or neither are given, `bad_request`. `code` is looked up by its normalized value
-- `after_code`: when it is the empty string, returns from the first code; otherwise returns only codes after that code in byte order
+- `after_code`: when it is the empty string, returns from the first code; otherwise returns only codes after that code in byte order. `after_code` takes no code format check
 - output of `list_coupon_codes`: `redeemed_by` and `redeemed_at` are `null` for a `unique` code that no user redeemed and for the code of a `shared` coupon
 
 ## behavior

@@ -88,7 +88,7 @@ One message is shown in the order below. From the start of 1 to the end of 5 it 
 
 ### close
 
-- kind close: takes down the message of that kind on display without presentation and empties the queue. Stops the tweens of the message object, and for a black box, releases the block
+- kind close: takes down the message of that kind on display without presentation and empties the queue. Stops with `TweenCore.stop` the tweens it played on the message object, and for a black box, releases the block
 - `close_black_box` does a kind close only for black box messages
 - `close_all` does a kind close for both kinds
 - `release` takes them down the same as `close_all`, then returns borrowed toast objects to the pool and destroys the toast object made by code and the black box object
@@ -100,7 +100,7 @@ The messages below stop display and are taken down, and then the request at the 
 - A toast whose toast object could not be borrowed
 - A black box message whose block could not be set. The black box object is not shown
 - A message whose message object was destroyed outside MessageCore while on display
-- MessageCore does not give a destroyed borrowed toast object back to `PoolCore`, which has already removed it
+- Before each operation on the message object, MessageCore judges whether it is destroyed: it plays no tween on a destroyed message object, and does not give a destroyed borrowed toast object back to `PoolCore`, which has already removed it
 
 ## hook
 

@@ -86,7 +86,7 @@ routing is the entry point of the server process. Modules other than `testing` d
   - A core `rpc` of a prepared module has no server field validator made by the contract tool. On a server instance that includes DEV code, the same applies to the core cheats of the prepared modules
   - `client_data_version` is missing or is not in the `<protocol hash>-<data hash>` format
   - `compat_client_data_version` exists and is not in the `<protocol hash>-<data hash>` format, or its protocol hash equals that of `client_data_version`
-- At server start, routing registers job `storage_sweep` (period `routing.storageSweepIntervalMs`) with `server-time.schedule_job`. The job calls `storage.sweep_expired` and right after it `run_user_changes`. For each table of the failed table list of `sweep_expired`, leaves one `error` log holding the table name and the DB error code. When `run_user_changes` is `FAILED`, leaves an `error` log
+- At server start, routing registers job `storage_sweep` (period `routing.storageSweepIntervalMs`) with `server-time.schedule_job`. The job calls `storage.sweep_expired` and right after it `run_user_changes`. For each table of the failed table list of `sweep_expired`, leaves one `error` log holding the table name and the DB error code. When `run_user_changes` is `FAILED`, leaves an `error` log, and when it throws, leaves an `error` log that holds the thrown error
 - When a module returns a failure during server start, leaves the reason in an `error` log and the server does not start
 
 ### path
