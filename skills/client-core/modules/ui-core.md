@@ -124,7 +124,7 @@ A row further down the table is drawn above the rows before it. The scene's worl
 
 ### panel and popup
 
-- Panels, the screen-unit UI, are opened on the `Panel` layer. One panel is visible. Popups open on the `Popup` layer, and several open together. A popup that became visible later is above. System popups are above other popups
+- Panels, the screen-unit UI, are opened on the `Panel` layer. One panel is visible. Popups open on the `Popup` layer, and several open together. A popup that became visible later is above. System popups are above other popups, and of two system popups, the one whose `open_system_popup` was called later is above
 - The panel key and popup key are the resource keys of the panel and popup prefabs. The prefab root is a class that inherits `UIPanel` or `UIPopup`
 - UI property: a value set on the panel and popup prefab root. back policy(default `Close`), modal(default `true`), dim(default `false`), open tween preset key(default none), close tween preset key(default none), initial focus(a UI element in that prefab with `UIButton` attached. default none). The engine mapping is in the engine-specific implementation rules
 - While a panel or popup with modal on is visible, the UI and world below it do not receive pointer input. A modal blocker is placed directly below it. On the `Popup` layer, only one is placed, below the topmost modal popup
@@ -449,6 +449,7 @@ none
 - Each condition of the error table gives the log and failure value of the table
 - Calling `open_popup` twice in a row calls the second `prepare` after the first popup flow ends, and the second is shown on top. Back input received after `Opened` of the first and before `Opened` of the second is ignored, and the first stays open. An `open_popup` during a panel transition opens before that transition ends
 - A system popup opens even while another system popup is open and while waiting for the `prepare` of a popup, and is shown above regular popups opened after it
+- When two `UICore.systemPopupResource` system popups are opened in one frame while their open and close tween presets are not loaded, the one opened later is above the other after both are visible, and back input applies to it
 - `close_popup` runs in the order `on_closed`, close tween, destruction, hidden callback, `UIClosedEvent`, after-close callback, and each of the two callbacks runs once
 - The after-close callback of a popup closed by `close_all_popups` is not called
 - After `close_all_popups` the popups and the queue are empty, the hidden callback runs once per closed popup, and queued requests get `Failed`

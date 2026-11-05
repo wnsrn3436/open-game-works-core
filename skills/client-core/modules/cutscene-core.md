@@ -116,7 +116,7 @@ Plays a cutscene that shows dialogue and presentation by running the steps writt
 
 ### line progress
 
-- advance input: an advance button click, a press of the `cutscene_advance` action in this frame. An advance button click while `cutscene_advance` is held down is not an advance input: a press of the same key or gamepad button and the click are one advance input. A press of `cutscene_advance` while a view button other than the advance button has UICore focus is not an advance input: that accept input is a click of that button
+- advance input: an advance button click, a press of the `cutscene_advance` action in this frame. An advance button click while `cutscene_advance` is held down, or by a key, gamepad button or gamepad axis direction that is in the binding of `cutscene_advance` at that click, is not an advance input: a press of the same key or gamepad button and the click are one advance input. A press of `cutscene_advance` while a view button other than the advance button has UICore focus is not an advance input: that accept input is a click of that button
 - advance input during `Line`: during typing it shows the whole text, and when the whole text is shown it ends the `Line`. Advance input outside `Line` is ignored
 - typing: visible character count = the quotient of the time elapsed since `Line` start ÷ `CutsceneCore.typingIntervalMs`. It does not exceed the character count of the text. When `CutsceneCore.typingIntervalMs` is 0, it shows the whole text at start. The character count of the text counts an inline icon as one character
 - auto advance: when on, it ends the `Line` `CutsceneCore.autoAdvanceDelayMs` after the whole text is shown and voice end is reached. The wait is measured from the later of the two
@@ -280,6 +280,7 @@ none
 
 - During a `Line`, while the line history button has UICore focus, pressing and releasing a gamepad button bound to both the accept input and `cutscene_advance` opens the line history window, and the `Line` does not end
 - Clicking the advance button with the mouse while holding the `cutscene_advance` key gives one advance input, that of the key press
+- During a `Line` in focus mode with the advance button focused, after `InputCore.set_keys`(`cutscene_advance`, [Space key]), the accept input of the Enter key gives one advance input, and the accept input of the Space key gives one advance input
 - Steps run in `step` order from the first step, and the next step runs after a wait-optional command with `wait` `true` ends, and right after one with `false` starts
 - With the test clock, `Wait` does not end before the in-progress commands have ended and `duration` has passed, and ends once it has passed
 - At playback end, `status` of the result is `Completed`, there is no cutscene view and no block with reason tag `cutscene`, and the line history is empty
