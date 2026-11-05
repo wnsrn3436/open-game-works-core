@@ -96,7 +96,7 @@ Opens the OS store review request window and share window with a per-platform na
 
 ### release
 
-- Ends a `share` in progress with `Failed` and the captures of a `capture_screen` wait in progress with empty bytes, and deletes the adapter. Before those captures return, the `Debug` layer gets back the visibility it had right before the first of them hid it. Saved values are not deleted
+- Ends a `share` in progress with `Failed`, then every `capture_screen` that has not returned, also one of a wait that has ended, with empty bytes in the order they were called, and deletes the adapter. When a wait is in progress, the `Debug` layer gets back the visibility it had right before the first capture of that wait hid it, before any of those captures returns. Saved values are not deleted
 
 ## hook
 
@@ -118,7 +118,7 @@ none
 | `set_native_adapter` after `init` | ignored. The adapter stays the same | error |
 | empty text in `copy_text` | `false` | error |
 | `copy_text` of text that is not empty on a platform without a clipboard or in a headless run | `false` | warn |
-| `share` or `capture_screen` in progress at `release` | `Failed` for `share`, empty bytes for `capture_screen` | none |
+| `share` in progress, or `capture_screen` that has not returned, at `release` | `Failed` for `share`, empty bytes for `capture_screen` | none |
 
 ## settings
 
@@ -160,6 +160,6 @@ none
 - Of two `capture_screen` calls made in the same frame, the first returns before the second. When the caller of the first, right after it returns, hides a UI element and calls `capture_screen` again, the second call returns the same bytes as the first, the third returns a PNG without that UI element and without elements of the `Debug` layer, and when the third returns the `Debug` layer has the visibility it had before the first call
 - In a run that is not a headless run, while the engine draws no frame, `capture_screen` does not return and the `Debug` layer stays hidden. When the engine draws a frame again, it returns the PNG of that frame, and the `Debug` layer has the visibility it had before the call
 - `get_fake_record` of the fake adapter returns the text and image byte count passed to `share`
-- A `share` during `release` ends with `Failed` without a log, and after `init` again there is no adapter. In a run that is not a headless run, one `capture_screen`, and two, called right before `release` in the same frame return empty bytes without a log, and when they return the `Debug` layer has the visibility it had before the first call
+- A `share` during `release` ends with `Failed` without a log, and after `init` again there is no adapter. In a run that is not a headless run, one `capture_screen`, and two, called right before `release` in the same frame return empty bytes without a log, and when they return the `Debug` layer has the visibility it had before the first call. When the caller of the first of two `capture_screen` calls made in the same frame calls `release` right after the first returns, the second returns empty bytes without a log before `release` returns
 - `set_native_adapter` after `init` leaves an error log and does not change the adapter
 - In a run that is not a headless run on a platform that provides a clipboard, `copy_text`(`12345`) is `true` and the text of the engine clipboard is `12345`. Empty text gives `false` and an error log, and the clipboard stays the same. In a headless run `copy_text`(`12345`) gives `false` and a warn log, and empty text gives `false` and an error log without a warn log

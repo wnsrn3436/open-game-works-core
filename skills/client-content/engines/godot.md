@@ -61,7 +61,7 @@ client/
 
 - A scene is `resource/scene/<feature>/<name>.tscn`, and a prefab is `resource/prefab/<feature>/<name>.tscn`. Their resource keys are `scene/<feature>/<name>` and `prefab/<feature>/<name>`. A prefab that several features use is `prefab/common/<name>`. `common` is not used as a feature name
 - Scenes and prefabs are text `.tscn`. `.scn` and `.res` are not used. A shared resource is `.tres`
-- The root script of a scene resource inherits `SceneBase`
+- The root node of a scene resource is of type `Node`, and its script inherits `SceneBase`
 - `_ready()` and `@onready var` of a scene run in stage 4 of `SceneCore`, so they can be used from `on_preload` on. `_process()`, `_physics_process()` and input callbacks are called from stage 7 on
 - Before stage 7, `visible` of the top visual node of the `client-core` Godot rules and `process_mode` of a node under the scene are not changed. A node to hide at first has `visible` set to `false` in the `.tscn`, and a node with its own `process_mode` from the start has it set in the `.tscn`
 - `ext_resource` of a `.tscn` points only to files under `res://resource/`, `res://features/<own feature>/`, `res://common/` and `res://core/`. A `.tscn` of `prefab/common/` does not point to `res://features/`

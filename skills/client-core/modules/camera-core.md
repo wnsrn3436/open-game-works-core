@@ -59,14 +59,14 @@ Owns following, camera shake, zoom, screen bounds, and the conversion between sc
 - The caller reads the values of `FollowOptions` from data and passes them
 - `screen_to_world` of a 3D camera is the intersection of the camera ray through that screen point with the height-0 horizontal plane
 - `world_to_screen` of a 3D camera is the screen point onto which the camera projects the world position. When the depth of the world position along the camera view direction is less than the near plane distance (on the camera side of the near plane, or behind the camera), it leaves an error log and returns the origin
-- view range: for a 2D camera, the world rectangle visible on screen. For a 3D camera, the smallest rectangle over the two horizontal axes that holds all four points made by projecting the four corners of the visible game area of `ResolutionCore` onto the height-0 horizontal plane in the same way as `screen_to_world`
+- view range: the smallest rectangle with sides parallel to the axes of the bounds (x and y for a 2D camera, the two horizontal axes for a 3D camera) that holds the four points to which the four corners of the visible game area of `ResolutionCore` convert in the same way as `screen_to_world`, with the camera object placed at the base position and, for a 2D camera, at the base rotation
 
 ## behavior
 
 ### attach
 
 - There is one game camera at a time. `attach_camera` detaches the previous camera the same way as `detach_camera`, then attaches the new camera
-- It sets the position of the attached camera as the base position and the zoom factor to 1, and for a 2D camera it sets the rotation of the camera object relative to its parent as the base rotation. Factor 1 is the zoom that the camera object has when it is attached (for a 3D camera, its field of view or orthographic size), so `attach_camera` does not change the zoom of the camera object
+- It sets the world position of the attached camera as the base position and the zoom factor to 1, and for a 2D camera it sets the rotation of the camera object relative to its parent as the base rotation. Factor 1 is the zoom that the camera object has when it is attached (for a 3D camera, its field of view or orthographic size), so `attach_camera` does not change the zoom of the camera object
 - `detach_camera` deletes all of follow, `move_to`, `zoom_to`, shake and bounds. A `move_to` and a `zoom_to` in progress end with `Cancelled`
 - `detach_camera` (also the one that `attach_camera` does) and `release` put the camera object, inside the operation, at the base position and, for a 2D camera, at the base rotation, without the shake offset and shake rotation. They leave its zoom, field of view and orthographic size as they are, so the same camera attached again takes that zoom as its factor 1
 - When the attached camera object is destroyed, it cleans up the same way as `detach_camera`. It leaves no log
@@ -80,7 +80,6 @@ Each frame, it sets the camera position in the order below.
 2. When there are bounds, fit the base position inside the bounds
 3. Apply to the camera object the base position with the shake offset added and, for a 2D camera, the base rotation with the shake rotation added
 
-- Shake is added after bounds fitting. During a shake, the screen can show up to `CameraCore.shakeMaxOffset` outside the bounds
 - For a 3D camera, the point on the height-0 horizontal plane that the screen center shows is `screen_to_world`(center of the visible game area)
 - `snap_to`, a `move_to` with duration 0 (also the one that `move_by_preset` does when loading ends) and a `zoom_to` with duration 0 apply their value inside the operation: they set the base position or the zoom factor to that value, apply the zoom factor to the camera object, then do steps 2 and 3 with the current shake offset and shake rotation. `set_bounds` fits the base position at step 2 of the next frame
 
@@ -106,15 +105,14 @@ Each frame, it sets the camera position in the order below.
 
 ### screen bounds
 
-- When there are bounds, it fits the base position so that the view range is inside the bounds. A 3D camera moves only the two horizontal axis values of the base position
+- When there are bounds, it fits the base position on each axis of the bounds: when the view range is longer than the bounds on that axis, it puts the center of the view range at the center of the bounds on that axis, and otherwise it moves the base position by the shortest distance that puts the view range inside the bounds on that axis. A 3D camera moves only the two horizontal axis values of the base position
 - For a 3D camera, when one of the four corners has no intersection with the height-0 horizontal plane, it does no bounds fitting in that frame
-- When the view range is longer than the bounds on an axis, it puts that axis at the center of the bounds
 - When `ResolutionCore.GameAreaChangedEvent` occurs, the bounds fitting of the next frame uses the changed view range
 
 ### shake
 
 - The trauma holds a value of at least 0 and at most 1. `shake` adds the received amount to trauma, clamps it to 1, then publishes `CameraShakeStartedEvent`
-- Each frame, it reduces trauma by `CameraCore.shakeDecayPerSecond` × elapsed seconds and stops at 0
+- Each frame, before step 3 of `### position calculation order`, it reduces trauma by `CameraCore.shakeDecayPerSecond` × elapsed seconds, stopping at 0, then sets the shake offset and shake rotation from the reduced trauma
 - The shake intensity is trauma². Each offset axis is `CameraCore.shakeMaxOffset` × intensity × noise, and the 2D rotation is `CameraCore.shakeMaxRotationDeg` × intensity × noise. A 3D camera adds no rotation
 - The noise holds a value of at least -1 and at most 1 made with the random of `UtilCore`; per axis it draws the next value at the frequency of `CameraCore.shakeFrequencyHz` and interpolates linearly between values
 - Shake progresses in real elapsed time. It decreases even during a game time pause
@@ -205,15 +203,15 @@ none
 - A `zoom_to` with duration 0 applies the end factor inside the operation and is `Completed`. Calling a new `zoom_to` while one is in progress makes the previous one `Cancelled`, and the new one starts from the factor at that time
 - `attach_camera` does not change the zoom, field of view or orthographic size of the camera object, and `get_zoom` is then 1. For a 2D camera without bounds and shake at factor 2, right after `zoom_to`(1, 0) and before the next frame, the distance between the `screen_to_world` points of the top-left and bottom-right corners of the visible game area is twice that right before the call, and after each frame of a `zoom_to` with a duration more than 0 that distance is the distance at factor 1 ÷ `get_zoom` (tolerance 1%)
 - After `attach_camera`(c) of a 2D camera c, `zoom_to`(2, 0) and `detach_camera`, the zoom of c is still the zoom that `zoom_to` gave it. After `attach_camera`(c) again, `get_zoom` is 1 and the distance between the `screen_to_world` points of the top-left and bottom-right corners of the visible game area is half that right after the first `attach_camera` (tolerance 1%). The same holds with `release` and `init` in place of `detach_camera`
-- For a 2D camera c whose rotation relative to its parent is r0 = 10 degrees when it is attached, the rotation of c is r0 while there is no shake, and in every frame of a shake the absolute value of the rotation of c minus r0 is at most `CameraCore.shakeMaxRotationDeg` × trauma² degrees. After `shake`(1), one frame and `detach_camera`, the position of c equals the `get_view_center` from right before `detach_camera` (tolerance 0.01 world units) and the rotation of c is r0. The same holds with `release` in place of `detach_camera`, and for a 3D camera the same holds for the position
-- With bounds, for any follow goal the view range based on `get_view_center` is inside the bounds, and an axis on which the view range is longer than the bounds is at the center of the bounds. When `set_bounds` is called after `snap_to`(p) with a p whose view range is outside the bounds, `get_view_center` after one frame is not p and its view range is inside the bounds, and after `clear_bounds` and one more frame it is unchanged
-- With bounds longer than the view range on each axis, right after `snap_to`(p) with a p whose view range is outside the bounds and before the next frame, `get_view_center` is not p and the `screen_to_world` points of the four corners of the visible game area are inside the bounds (tolerance 0.01 world units). The same holds right after a `move_to` to p with duration 0
+- For a 2D camera c whose rotation relative to its parent is r0 = 10 degrees when it is attached, that rotation is r0 while there is no shake, and in every frame of a shake that rotation minus r0 is at most `CameraCore.shakeMaxRotationDeg` × t² degrees in absolute value, where t is the trauma after the reduction of that frame. After `shake`(1), one frame and `detach_camera`, the world position of c equals the `get_view_center` from right before `detach_camera` (tolerance 0.01 world units) and its rotation relative to its parent is r0. The same holds with `release` in place of `detach_camera`, and for a 3D camera the same holds for the world position
+- With bounds, for any follow goal, on each axis of the bounds the view range based on `get_view_center` is inside the bounds, or, when it is longer than the bounds on that axis, its center is at the center of the bounds. When `set_bounds` is called after `snap_to`(p) with a p whose view range is outside the bounds, `get_view_center` after one frame is not p and its view range is inside the bounds, and after `clear_bounds` and one more frame it is unchanged
+- With bounds longer than the view range on each axis, right after `snap_to`(p) with a p whose view range is outside the bounds and before the next frame, `get_view_center` is not p and the `screen_to_world` points of the four corners of the visible game area are inside the bounds (tolerance 0.01 world units). The same holds right after a `move_to` to p with duration 0, and for a 2D camera whose base rotation is 10 degrees
 - For a 3D perspective camera tilted down with bounds, for any follow goal and zoom, the `screen_to_world` points of the four corners of the visible game area are inside the range of the two horizontal axes of the bounds (tolerance 0.01 world units) and the height of the base position stays as it is. A camera looking above the horizon has no bounds fitting and one error log
 - In the frame after `GameAreaChangedEvent`, bounds fitting uses the changed view range
 - With a base position whose view range touches an edge of the bounds and a factor z smaller than the current factor at which the bounds are longer than the view range on each axis, right after a `zoom_to` to z with duration 0, and after each frame of a `zoom_to` to z with a duration more than 0, the `screen_to_world` points of the four corners of the visible game area are inside the bounds (tolerance 0.01 world units)
 - For both a 2D camera and a 3D camera, `get_view_center` is the base position after bounds fitting and does not add the shake offset even during a shake. For a 3D camera it equals the camera position
 - Two `shake(0.5)` calls publish `CameraShakeStartedEvent` twice and make trauma 1, and without `shake` it is 0 after 1 / `CameraCore.shakeDecayPerSecond` seconds. When trauma is 0, offset and rotation are 0
-- In every frame, the absolute value of each axis of the shake offset is at most `CameraCore.shakeMaxOffset` × trauma²
+- In every frame, the absolute value of each axis of the shake offset is at most `CameraCore.shakeMaxOffset` × t², where t is the trauma after the reduction of that frame
 - With the same seed and the same `shake`, the offset with `set_shake_scale`(500) is half that at 1000, and at 0 the offset is 0 and `CameraShakeStartedEvent` is still published
 - With the same `set_shake_seed` and the same order of `shake` calls, the offset of each frame is the same
 - For a 2D camera, `screen_to_world(world_to_screen(p))` equals p (tolerance 0.01 world units). It is the same during zoom and shake. For a 3D camera, the same holds for a point p at height 0

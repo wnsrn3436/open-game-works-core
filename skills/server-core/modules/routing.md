@@ -117,10 +117,10 @@ Handles one game request in the following order. When a step fails, responds wit
 10. decode: `INVALID_REQUEST` when the body cannot be decoded into the request message
 11. field validation: `INVALID_REQUEST` when `validation.validate_request` fails
 12. request start: calls the `on_request_start` operations of the request start table in order. Each operation opens and closes its own user transaction. Goes to the next step even when one fails
-13. transaction start: opens a user transaction with `storage.run_request_transaction` and makes ctx. Steps 14 to 16 run inside that function. `UNAUTHORIZED` on `WITHDRAWN`, `INTERNAL` on `FAILED`
+13. transaction start: opens a user transaction with `storage.run_request_transaction` and makes ctx. Steps 14 to 16 run inside that function. `UNAUTHORIZED` on `WITHDRAWN`, `INTERNAL` on `FAILED`. When `storage` makes the transaction `FAILED`, whatever steps 14 to 16 returned or threw (e.g. after a lock wait of a statement of the handler went over its limit on PostgreSQL), this step handles that `FAILED`
 14. idempotency: when `idempotency.find_response` finds a saved response, closes the transaction and responds with those bytes. On `NAME_MISMATCH`, saves nothing and gives `INVALID_REQUEST` and a `security` log
-15. handler run: on `GameError` or `CoreError`, rolls back and responds with that error. When `storage` makes the transaction `FAILED`, whatever the handler returned or threw (e.g. after a lock wait of a statement of the handler went over its limit on PostgreSQL), step 13 handles that `FAILED` instead. When a `GameError` that a core `rpc` handler returned is not in the `(ogw.core_errors)` list of that core `rpc` in the contract generated code, responds with `INTERNAL` instead of that `GameError` and leaves the request name and the `GameError` value in an `error` log
-16. commit: gets the response delta and the unknown kind row list with `storage.take_response_delta` and makes the `ResponseEnvelope`. When that list is not empty, calls `logging.annotate_request_log`(ctx, field `unknown_kinds`: the list joined with `,` as one string, minimum level `warn`). Saves with `idempotency.save_response` and `save_withdrawn_response`(ctx, access token hash of `Authorization`, the bytes of that `ResponseEnvelope`) and commits. On failure, rolls back and gives `INTERNAL`
+15. handler run: on `GameError` or `CoreError`, rolls back and responds with that error. When a `GameError` that a core `rpc` handler returned is not in the `(ogw.core_errors)` list of that core `rpc` in the contract generated code, responds with `INTERNAL` instead of that `GameError` and leaves the request name and the `GameError` value in an `error` log
+16. commit: gets the response delta and the unknown kind row list with `storage.take_response_delta` and makes the `ResponseEnvelope`. When that list is not empty, calls `logging.annotate_request_log`(ctx, field `unknown_kinds`: the list joined with `,` as one string, minimum level `warn`). Saves with `idempotency.save_response` and `save_withdrawn_response`(ctx, access token hash of `Authorization`, the bytes of that `ResponseEnvelope`) and commits
 17. response: sends the `ResponseEnvelope` with HTTP 200
 
 request start
@@ -144,7 +144,7 @@ request prepare
 | `VerifyPurchase`, `RecoverPurchase` | `iap.prepare_verify_purchase` |
 | `SyncSubscriptions` | `iap.prepare_sync_subscriptions` |
 
-- An unhandled exception is an exception that a handler or core did not handle, other than a throw of the handler on a transaction that `storage` makes `FAILED` (step 15). On an unhandled exception, routing rolls back, responds with `INTERNAL` and leaves an `error` log with the stack trace. When a route handler throws, routing leaves that `error` log and responds with HTTP 500, no body, no CORS header, and to a WebSocket upgrade request it closes the connection without a response
+- An unhandled exception is an exception that a handler or core did not handle, other than a throw inside the function of `storage.run_request_transaction` on a transaction that `storage` makes `FAILED` (step 13). On an unhandled exception, routing rolls back, responds with `INTERNAL` and leaves an `error` log with the stack trace. When a route handler throws, routing leaves that `error` log and responds with HTTP 500, no body, no CORS header, and to a WebSocket upgrade request it closes the connection without a response
 - `storage`, `session`, `idempotency`, `validation` and `server-time` do not leave logs. routing leaves the `request`, `error` and `security` logs for failures of those modules
 - For a request among `NoAccessTokenRpc` that is not `NoUserRpc`, routing calls the core `rpc` handler without a token instead of steps 5 to 9 and 12 to 16, and that handler does the handling that `auth` defines. Steps 1 to 4, 10 to 11 and 17 are the same. Rate limit is counted with the IP counter after step 4 and before step 10
   - The `Authorization` of `RefreshToken` is the login token, and `auth` checks the request signature with the session signing key of that session
@@ -214,7 +214,7 @@ none
 | same request ID, different request name | `NAME_MISMATCH` from `idempotency` | `INVALID_REQUEST` | `security` log (`reason` `request_name_mismatch`) |
 | kill switch | `FEATURE_DISABLED` | `FEATURE_DISABLED` | none |
 | cheat path `POST` in STG·PROD | `UNAUTHORIZED`. The body is not read | `UNAUTHORIZED` | `security` log (`reason` `cheat_path_closed`) |
-| unhandled exception, commit failure | rolls back | `INTERNAL` | `error` log, stack trace |
+| unhandled exception | rolls back | `INTERNAL` | `error` log, stack trace |
 | throw of a route handler | HTTP 500, no body, no CORS header. A WebSocket upgrade request: the connection is closed | none | `error` log, stack trace |
 | `GameError` of a core `rpc` handler that is not in `(ogw.core_errors)` of that core `rpc` | rolls back | `INTERNAL` | `error` log. request name, `GameError` value |
 
@@ -264,7 +264,7 @@ none
 - An `rpc` without a handler, a duplicate registration, an `rpc` name not in `service Game`, `register_hook` with an unknown module name or hook name, and `register_handler` and `register_hook` outside `register` each block server start
 - A hook registered with `register_hook` is called at the hook point of that module, and for a hook that is not registered, the module behaves by its `default`
 - The core `rpc` path of a module not in the server module list is HTTP 404, and `register_hook` with that module name blocks server start
-- A `GameError` or an exception of a handler does not change the saved state. An exception gives `INTERNAL` and an `error` log with the stack trace
+- A `GameError` or an exception of a handler does not change the saved state. An unhandled exception of a handler gives `INTERNAL` and an `error` log with the stack trace
 - When a core `rpc` handler returns `CoreError` after a write, the saved state is the same as before the request, and the response is that `CoreError`
 - When a hook inside a core `rpc` returns a `GameError` written for that core `rpc` in `(ogw.core_errors)`, the response is that `GameError`, and when it returns a `GameError` not written there, `INTERNAL` and an `error` log. In both cases, the saved state is the same as before the request
 - The operations of the request start table are called in table order before the transaction start, and their changes are carried in the response delta of the same request. The handler is called even when an operation fails

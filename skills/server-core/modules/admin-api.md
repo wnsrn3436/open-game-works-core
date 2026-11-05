@@ -282,7 +282,7 @@ Added `CoreError`: none
 | `admin-api.maxBodyBytes` | integer | core | content | max bytes of a JSON body |
 | `admin-api.bodyReadTimeoutMs` | integer | core | content | total time limit for reading the body. 1 or more |
 | `admin-api.authFailuresPerMinute` | integer | core | content | authentication failure limit per IP in one minute window. 1 or more |
-| `admin-api.maxStringBytes` | integer | core | content | max bytes of a body string |
+| `admin-api.maxStringBytes` | integer | core | content | max bytes of a value of field type `string` |
 | `admin-api.maxSearchRangeMs` | integer | core | content | max length of a query time range. 1 or more |
 | `admin-api.maxSearchRows` | integer | core | content | max number of rows of a query result. 1 or more |
 | `admin-api.operationIdRetentionMs` | integer | core | content | duration that `operation_id` records are kept |
