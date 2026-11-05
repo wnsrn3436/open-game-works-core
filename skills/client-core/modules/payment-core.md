@@ -208,6 +208,7 @@ none
 | `prepare`, `restore_purchases` without a store adapter | `false` | error |
 | `recover_purchases` without a store adapter | `false` | none |
 | `connect`, `query_prices` failure | `false` for `prepare`, `StoreFailed` for `purchase` | error |
+| `list_unfinished`, `list_owned` failure | `false` for `recover_purchases`, `restore_purchases` | error |
 | `query_prices` gives no price for a product in the SKU table | empty string for `get_price` | error once per product |
 | `get_price` when not in the ready state or for a product not in the SKU table | empty string | error |
 | `buy` is `Failed` | `StoreFailed` | error |
