@@ -223,7 +223,7 @@ Common conditions: touch supported, input device `Touch`, no open popup, dead zo
 - With the engine making mouse input from touch and the input device `Gamepad`, a touch pressed and released inside a button area that lies over a `SceneUI` button clicks that `SceneUI` button, and the action of that button is pressed and then released
 - Without touch support, the state is `Hidden` and a press gives no action
 - When the input device changes to something other than `Touch` while a pointer is held, the state is `Hidden` and no action is pressed, and it is `Active` when the device returns to `Touch`
-- With the input device `Gamepad`, the elements are not visible UI elements. When the input device changes to `Gamepad` while a touch pressed in a button area is held, the elements become not visible UI elements when that touch is released
+- With the input device `Gamepad`, the elements are not visible UI elements. When touch support is turned off with `set_test_touch_support(false)` while a touch pressed in a button area is held, the elements stay visible UI elements until that touch is released and are not visible UI elements after the release
 - When a popup opens while a pointer is held, the state is `Inactive`, the pad is drawn, the action is not pressed, and the moves and release of that pointer make no gesture and are not received by the popup. When all popups close, it is `Active`
 - After an input cancel, the `Floating` base is at its default position, and after a release and a new press the joystick holds the new pointer
 - Opening B during the load of A makes A `false` and B `true`, and the current layout is B
