@@ -175,7 +175,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 - The time range is from `from_at` inclusive to `to_at` exclusive, and `to_at − from_at` is at least 1 and at most `admin-api.maxSearchRangeMs`
 - `limit` is at least 1 and at most `admin-api.maxSearchRows`
 - `after_seq` is an integer of 0 or more. In an operation whose only cursor field is `after_seq`, 0 means from the start of the range and another value is the sequence of the last row of the previous query
-- A string is at most `admin-api.maxStringBytes` and holds no U+0000, and `operation_id` is not empty
+- A value of field type `string` is at most `admin-api.maxStringBytes`, and `operation_id` is not empty
 - `request_name` is in request name format (`<Name>`, `core/<Name>`, `cheat/<Name>`, `core/cheat/<Name>`) or is `MATCH_REQUEST`
 
 ### user-targeted operation
@@ -309,7 +309,6 @@ none. The admin API exists in every environment
 - The results of `ban_user`, `set_maintenance`, `set_kill_switch` stay after `restart_test_server`, and after `unban_user` and `enabled` `false` the row is gone
 - At each step of the processing order, a failing request ends with the set status, saved state does not change, and one line of `audit` log is left
 - An unknown field, a bool for an integer field, a decimal `user_id`, a `send_mail` whose `mail` has `expire_ms` `1e3` or `1.5`, and an out-of-range `limit` are 400
-- A `grant_items` whose `operation_id` is `a\u0000b`, a `resolve_report` whose `resolution` is `a\u0000b` (the report stays `Open`), and a binary body operation whose `string` query field is `name=a%00b` are 400 `bad_request` on SQLite and PostgreSQL
 - A binary body operation with `int32` query field `count` accepts the query texts `count=3` and `count=%33` as 3, and is 400 for `count=3.0`, `count=abc`, `count=2147483648`, `count=03`, `count=+3` and `count=3&count=4`. Its `string` query field `name` given the query text `name=a+b%2Bc` receives `a b+c`
 - `get_user` with JSON integer `user_id` `9223372036854775807` is 404 and with `9223372036854775808` is 400
 - `send_mail` whose `mail` has an `args` element `{"name":"n","value":{"int_value":9007199254740993}}` with a JSON integer sends a mail whose `MailArg` `int_value` is 9007199254740993
