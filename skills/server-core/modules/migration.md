@@ -131,7 +131,7 @@ Added `CoreError`: none
 | `migration.batchLeaseMs` | integer | core | content | valid duration of a batch step lease |
 | `migration.maxRecordedFailures` | integer | core | content | maximum number of users kept in `failed_users` |
 | `migration.testSampleCount` | integer | core | human | number of PROD users that the migration test picks and number of game state rows it picks per kind |
-| `storage.userLockWaitMs` | integer | core | content | maximum duration of waiting for a per-user lock |
+| `storage.userLockWaitMs` | integer | core | content | the meaning in `## settings` of [`storage`](storage.md) |
 
 settings constraint
 

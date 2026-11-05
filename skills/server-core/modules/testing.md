@@ -136,7 +136,7 @@ none
 - TypeScript shape
   - A test server has the fields `url`, `port`, `dev_access`, and a test session has `user_id` (`bigint`), `access_token`, `login_token`, `session_signing_key`
   - The output of `send` and `send_cheat` is `{envelope, response}`, and `response` is `null` for an error response. The output of `send_raw` is `{status, headers, body}`, the output of `send_admin` is `{status, headers, body, json}`, and `json` is the body read as JSON, or `null` when it is not JSON
-  - The JSON body of `send_admin` is a JSON value or a JSON text string. A binary body is `{binary: Uint8Array, query: object}`, and `query` holds string values keyed by input field name
+  - The JSON body of `send_admin` is a JSON value or a JSON text string. A binary body is `{binary: Uint8Array, query: object}`, and `query` holds string values keyed by input field name, which `send_admin` writes as the query string with `URLSearchParams`
   - An output element of `read_user_state` and `read_server_state` is `{kind, item_id, value}` (`kind` is the kind message name, `value` is the decoded kind value), in the kind order of the contract, and in ascending order of item ID within the same kind
   - An output element of `read_logs` is a log line read as a JSON object. The input of `call_dev` is an array of operation inputs. The output of `load_data` is `{data, dev}`, and `dev` is `{find_id_value, find_id_name}`. `read_frame` returns `null` when the connection has ended. An element of `non_integer_values` is a JSON text string
 - gate: the gate that the peer process of `start_peer_process` uses. When a core test starts its own child process (e.g. `migration`), the child calls `wait_at_gate` and the test uses `reached` and `open` received from `gates_of`

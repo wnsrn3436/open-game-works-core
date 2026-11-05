@@ -73,7 +73,7 @@ Saves the user options for text size scale, color vision correction, voice subti
 - When subtitles are on, it shows the subtitle in the frame that requested playback. The text is the result of `LocalizationCore.get_text` when there are no `FormatArgs`, otherwise the result of `LocalizationCore.format`
 - A `voice` resource played with `play_voice` is a subtitled voice as defined in [`resource`](../../resource/SKILL.md)
 - The subtitle box is a black rectangle made in code (opacity `AccessibilityCore.subtitleBoxOpacity`) holding white text (the size set on that element is `AccessibilityCore.subtitleFontSize`, and the font size follows the text scale rules of `LocalizationCore`) with a padding of `AccessibilityCore.subtitlePadding`. It is placed in `UICore.get_layer(Message)`; its horizontal center is the horizontal center of the safe area of `SafeAreaCore`, and its bottom edge is `AccessibilityCore.subtitleBottomMargin` above the bottom edge of the safe area. Its width is safe area width × `AccessibilityCore.subtitleWidthPermille` ÷ 1000, and the text wraps
-- One subtitle is shown at a time. The subtitle of a new `play_voice` replaces the previous subtitle
+- One subtitle is shown at a time. The subtitle that a new `play_voice` shows replaces the previous subtitle
 - Each frame, when `SoundCore.is_playing`(that handle) is `false`, it hides the subtitle. A request whose playback did not start (invalid handle) shows no subtitle
 - Turning subtitles off hides the visible subtitle at once
 - Cutscene lines do not use `play_voice`, because `CutsceneCore` shows the line text
@@ -150,7 +150,7 @@ none
 - With the same `CameraCore.set_shake_seed` and the same `shake` call, the shake offset in each frame with reduce shake on is the offset with it off × `reducedShakePermille` ÷ 1000. With reduce flash on, in a `flash` with maximum opacity 1 the opacity of `ScreenEffectCore.get_overlay_state` is not more than `reducedFlashMaxOpacity` in any frame; with it off, it reaches 1
 - When `colorFilterEnabled` is `true` and the mode is `Deuteranopia`, a pure red screen pixel is the color multiplied by that matrix (tolerance 1/255 per component); with `None` it is unchanged. When it is `false`, the pixel is unchanged in every mode
 - After the color filter is on, the pixels of a loading icon shown with `UICore.show_loading_icon` are also filtered colors
-- With subtitles on, calling `play_voice` shows a subtitle, which hides in the frame where playback ends. With subtitles off there is no subtitle and playback happens. The subtitle of a second `play_voice` replaces the previous subtitle
+- With subtitles on, calling `play_voice` shows a subtitle, which hides in the frame where playback ends. With subtitles off there is no subtitle and playback happens. The subtitle of a second `play_voice` replaces the previous subtitle, and a second `play_voice` with an invalid handle or an empty subtitle translation key leaves the previous subtitle visible until its playback ends
 - The horizontal center of the subtitle box is the horizontal center of the safe area, and its bottom edge is `AccessibilityCore.subtitleBottomMargin` above the bottom edge of the safe area
 - The font size of the subtitle text, both for a subtitle shown after `set_test_text_scale`(1500) and for a subtitle that is visible when `set_test_text_scale`(1500) is called (after that call), is `subtitleFontSize` × 1500 ÷ 1000 rounded down
 - Each `set_*` that changes a value publishes `AccessibilityChangedEvent` once, and the same value publishes none

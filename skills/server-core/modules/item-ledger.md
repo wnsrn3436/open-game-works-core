@@ -31,7 +31,7 @@ As the only path that changes user items, this module owns the transactions and 
 | `get_recovery` | ctx, item ID value | `next_at` (next recovery time), `cap_at` (time the cap is reached). Both 0 when not recovering | both 0 when the item is not a recovery item or the item ID value is unknown | content handler, hook, core module |
 | `check_items` | ctx, list of `ItemAmount` | `true` when the user has everything in the list | `false` | content handler, hook, core module |
 | `amount_limit` | item ID value | amount limit of that item | 0 for an unknown item ID value | core module |
-| `read_amount` | `ItemAmount` | amount. The integer read from the big encoding pair `amount`, `big_amount` | none when `big_amount` is neither an empty string nor a big integer | core module |
+| `read_amount` | `ItemAmount` | amount. The integer read from the big encoding pair `amount`, `big_amount` | none when `amount`, `big_amount` is not the contract's big encoding of an integer (e.g. `big_amount` the empty string and `amount` more than 2^53−1) | core module |
 | `make_item_amount` | item ID value, amount | `ItemAmount` that carries the amount in the big encoding pair | none | core module |
 | `check_add_items` | list of `ItemAmount` | `ItemChangeResult.OK` | `INVALID_AMOUNT`, `UNKNOWN_ITEM`, `UNSUPPORTED_ITEM` of `ItemChangeResult` | `mailbox`, `coupon` |
 | `content_change_source` | ctx, change source passed by content code (optional) | change source whose `source`, `ref`, `once_key` are set by the change source rules below | none | `mailbox` |
@@ -67,7 +67,7 @@ As the only path that changes user items, this module owns the transactions and 
 | `NOT_ENOUGH` | the balance is less than the amount to subtract |
 | `LIMIT_EXCEEDED` | the balance after adding is more than `max_amount` and the item's `overflow` is `Reject`. The same for a `Convert` replacement grant item |
 | `UNKNOWN_ITEM` | an item ID value that is not in the `item` table |
-| `INVALID_AMOUNT` | the amount is less than 1 or more than the item's amount limit. Or the same item ID value is in the list twice |
+| `INVALID_AMOUNT` | `read_amount` has no amount, or the amount is less than 1 or more than the item's amount limit. Or the same item ID value is in the list twice |
 | `UNSUPPORTED_ITEM` | an item that the operation does not handle: a group item in `add_items`, `revoke_items`, `preview_add_items`, `check_add_items`, `set_balance` and the list to add of `exchange_items`, a timed item in the list to subtract of `subtract_items` and `exchange_items` |
 | `REJECTED` | the validation hook returned a `GameError`. That `GameError` is returned with it |
 
@@ -104,6 +104,7 @@ change order. `add_items`, `subtract_items` and `exchange_items` are handled in 
    - Balance more than `max_amount`: `LIMIT_EXCEEDED` when `overflow` is `Reject`; when `Discard`, sets the balance to `max_amount` and records the amount that did not fit as `overflow`. When `Convert`, makes the replacement grant below
    - `Convert` replacement grant: sets the balance to `max_amount` and records the overflowed amount n as `overflow`. For each `convert_to` element of the item's `item_overflow` row, adds to the same operation a replacement grant that adds `amount` × n to that replacement item. Replacement grants are calculated in this step after all changes of the list are calculated, one by one in list order and `convert_to` order. A replacement item's balance above its limit follows that item's `overflow`: when `Reject`, the whole operation is `LIMIT_EXCEEDED`; when `Discard`, sets the balance to `max_amount` and records the amount that did not fit as the `overflow` of that replacement grant
    - A product or sum more than the item's amount limit counts as more than `max_amount`
+   - A balance saved before a data change can be more than `max_amount`. A change whose net amount is negative is not judged against `max_amount`. An add to such a balance puts in nothing: instead of setting the balance to `max_amount`, `Discard` and `Convert` keep the balance and record the whole added amount as `overflow`
    - Group items and timed items are calculated by the group item and timed item rules below
 4. Call of hook `validate_item_change`. `REJECTED` when it returns a `GameError`
 5. Record of recovery application of recovery items, save of balances, save of history, save of `once_key`
@@ -147,7 +148,7 @@ timed item
 A timed item is an item whose effect lasts until an end time. Amount 1 is an effect of `duration` ms of `item_timed`.
 
 - The saved value is `ends_at` E of `ItemBalanceUserState`. The remaining duration R is max(0, E − request time). The balance is 1 when R > 0, otherwise 0
-- Add n: k = n when R + n × `duration` ≤ `max_amount` × `duration`. When it is more, `LIMIT_EXCEEDED` when `overflow` is `Reject`; when `Discard`, k = ⌊(`max_amount` × `duration` − R) ÷ `duration`⌋ and n − k is recorded as `overflow`. E becomes request time + R + k × `duration` and `delta` is k. Adding during the effect extends the end time; adding after the effect has ended starts from the request time
+- Add n: k = n when R + n × `duration` ≤ `max_amount` × `duration`. When it is more, `LIMIT_EXCEEDED` when `overflow` is `Reject`; when `Discard`, k = max(0, ⌊(`max_amount` × `duration` − R) ÷ `duration`⌋) and n − k is recorded as `overflow`. E becomes request time + R + k × `duration` and `delta` is k. Adding during the effect extends the end time; adding after the effect has ended starts from the request time
 - Revoke n: the revoked duration x = min(R, n × `duration`). E becomes request time + R − x, shortfall is ⌊(n × `duration` − x) ÷ `duration`⌋, and `delta` is −(n − shortfall)
 - When E after the change ≤ request time, the row is deleted
 - `preview_add_items` sets `applied` and `overflow` with the same k as add
@@ -360,6 +361,7 @@ core cheat request field
 - A recovery item does not grow at the time just before a `recovery_interval` boundary and grows by `recovery_amount` at the boundary time. When several intervals pass, it grows that many times and stops at `recovery_cap`
 - A recovery item at `recovery_cap` or more does not grow as time passes. `add_items` adds above `recovery_cap` up to `max_amount`
 - Even when `recovery_cap` in data becomes less than the saved A, the balance after time passes is A and does not shrink
+- Even when `max_amount` in data becomes less than the saved balance B of a `Discard` item, `add_items` of 1 keeps the balance B and records `overflow` 1, and `subtract_items` of 1 makes it B − 1. A timed `Discard` item whose remaining duration is more than `max_amount` × `duration` keeps its `ends_at` on an add and records the added amount as `overflow`
 - Subtracting from a recovering item continues the interval in progress, and subtracting from at least the cap to less than the cap starts an interval from that request time
 - Recovery application records source `Recovery` history and is not in `item_changes`. At a time when only recovery happened there is no delta
 - An operation whose list and `Convert` replacement grants do not have a recovering recovery item records no recovery application for that item and does not change its saved A and S. When that item is a `Convert` replacement item, recovery application is done
@@ -382,5 +384,6 @@ core cheat request field
 - For each case of the core test fixture `item-big` (ID name of the big item, saved balance, amount to add, expected `ItemAddPreview` element, `applied`, `overflow`, `add_items` result. Balance and amount are big integer strings), the row of `preview_add_items` and the result of `add_items` equal the expected values. The cases have an add whose balance goes above 2^53−1, an add set to 10^`max_digits` − 1 by `Discard`, and an add that is `Mailed` by `Reject` with `add_items` `LIMIT_EXCEEDED`. The `UserStateCore` test uses the same fixture
 - Adding more than 2^53−1 to a big item makes the balance, `big_amount` of `ItemBalanceUserState`, `big_delta` of `ItemChange`, and `big_delta`, `big_balance_after` of the history that value, with `amount` and `delta` 0. When it comes back to 2^53−1 or less, the `big_` fields are empty strings
 - Beyond the balance limit of a big item, `Reject` gives `LIMIT_EXCEEDED` and `Discard` sets it to 10^`max_digits` − 1. An amount more than 10^`max_digits` − 1 is `INVALID_AMOUNT`
+- For a big item whose `max_digits` is 20, `add_items` of an `ItemAmount` with `amount` 10^19 and `big_amount` the empty string, with `amount` 2^53 and `big_amount` the empty string, and with `amount` 1 and `big_amount` `9007199254740993` is `INVALID_AMOUNT` and changes nothing, and `send_mail` with such an attachment is `INVALID_INPUT`
 - The server does not start when an item is in two kind tables, a member item is a group item, timed item, big item or recovery item, a group item is in a core table item column other than a cost column, a timed item is in a cost column, or a row has `max_digits` more than `item-ledger.bigMaxDigits`
 - In DEV, `big_balance` of `SetItemBalance` changes the big item's balance to that value. A `big_balance` that is not a big integer is `INVALID_REQUEST`

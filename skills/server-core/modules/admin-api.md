@@ -238,7 +238,7 @@ Handles one admin request in the order below. When a step fails, responds with t
 
 - One line of `kind` `audit` log per admin request: `request` is the operation name, `user_id` is the target user (`null` when there is none), `actor`(the name of the operator that passed step 2. `null` when the request ended before that), `ip`(truncated IP), `status`(HTTP status), `error`(the reason, `null` on success), `args`(the input that passed the check)
 - When the spec of a collected operation sets `args` separately, the value that the audit args function of that operation returned is used. e.g. `import_user_snapshot`
-- `args` does not hold binary bodies or secrets. For a binary body, the SHA-256 hex is kept in `body_sha256`
+- `args` does not hold binary bodies or secrets. For a binary body, the SHA-256 hex is kept in `body_sha256`. A `bigint` in `args` is written as a decimal string
 - `args` of a request that ended in steps 1 to 5 is `null`
 - No admin operation deletes or changes the `audit` log
 
@@ -288,7 +288,7 @@ Added `CoreError`: none
 | `admin-api.operationIdRetentionMs` | integer | core | content | duration that `operation_id` records are kept |
 | `admin-api.switchCacheMs` | integer | core | content | interval at which the maintenance and kill switch cache is read again. 1 or more |
 | `admin-api.maxExportBytes` | integer | core | content | max bytes of the `export_personal_data` file |
-| `storage.userLockWaitMs` | integer | core | content | maximum duration to wait for the per-user lock and for the row lock of `lock_game_row` |
+| `storage.userLockWaitMs` | integer | core | content | the meaning in `## settings` of [`storage`](storage.md) |
 
 ## data
 
@@ -309,7 +309,7 @@ none. The admin API exists in every environment
 - The results of `ban_user`, `set_maintenance`, `set_kill_switch` stay after `restart_test_server`, and after `unban_user` and `enabled` `false` the row is gone
 - At each step of the processing order, a failing request ends with the set status, saved state does not change, and one line of `audit` log is left
 - An unknown field, a bool for an integer field, a decimal `user_id`, a `send_mail` whose `mail` has `expire_ms` `1e3` or `1.5`, and an out-of-range `limit` are 400
-- A binary body operation with `int32` query field `count` accepts `count=3` and `count=%33` as 3, and is 400 for `count=3.0`, `count=abc`, `count=2147483648`, `count=03`, `count=+3` and `count=3&count=4`. Its `string` query field given `a+b%2Bc` receives `a b+c`
+- A binary body operation with `int32` query field `count` accepts the query texts `count=3` and `count=%33` as 3, and is 400 for `count=3.0`, `count=abc`, `count=2147483648`, `count=03`, `count=+3` and `count=3&count=4`. Its `string` query field `name` given the query text `name=a+b%2Bc` receives `a b+c`
 - `get_user` with JSON integer `user_id` `9223372036854775807` is 404 and with `9223372036854775808` is 400
 - `send_mail` whose `mail` has an `args` element `{"name":"n","value":{"int_value":9007199254740993}}` with a JSON integer sends a mail whose `MailArg` `int_value` is 9007199254740993
 - A `grant_items` body with `user_id` given twice, and a `send_mail` body whose `mail` has `template_id` given twice, sent as JSON text with `testing.send_admin`, are 400 and change nothing
@@ -335,6 +335,7 @@ none. The admin API exists in every environment
 - Ban, maintenance and kill switch stay after a server restart
 - The JSON of `get_user` follows the rules for kind names, field names and `int64` strings
 - The `audit` log has no secrets and no binary bodies
+- `args` of the `audit` log of `grant_items` holds `user_id` and the `amount` of `items` as decimal strings, and `args` of `send_mail` whose `mail` has a JSON integer `int_value` 9007199254740993 holds it as the string `9007199254740993`
 - A request that is 400 at step 5 leaves an `audit` log whose `args` is `null`
 - The `ip` of the `audit` log is a truncated IP
 - For each operation of the collected admin operation table, a request of an operator that has its role calls the handling of that module, a wrong secret is 401, and an operator without that role gets 403 `forbidden`. The same holds per role for the admin operations of admin-api

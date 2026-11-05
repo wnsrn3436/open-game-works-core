@@ -134,7 +134,7 @@ broadcast
 
 - A broadcast is a mail sent to all users. It is not saved per user but kept as one `mailbox_broadcast` row
 - `broadcast_mail` locks the row with `id` 0 of `mailbox_broadcast_counter` with `storage.lock_game_row` in the game transaction, sets the broadcast ID to `last_broadcast_id` + 1 of that row (1 when there is no row), writes it to `last_broadcast_id` and inserts the broadcast row. The ID of a broadcast deleted by expiry is also never issued again
-- The `mail` of a broadcast row is the received mail input written as a JSON string, and the type of `args` is the JSON type of the mail input. Its `expire_ms` is the received `expire_ms`, changed to `mailbox.defaultExpireMs` when 0. `expires_at` is `start_at` + that `expire_ms`, and `cancelled` is `false` at first
+- The `mail` of a broadcast row is the JSON value of the received mail input written as a JSON string, with every `int64` value written as a decimal integer string. Its `expire_ms` is the received `expire_ms`, changed to `mailbox.defaultExpireMs` when 0. `expires_at` is `start_at` + that `expire_ms`, and `cancelled` is `false` at first
 - Users created after the broadcast start time also receive it
 - `cancel_broadcast` locks that broadcast row with `storage.lock_game_row` in the game transaction. When there is no row, `false`; otherwise it writes `cancelled` as `true` and returns `true`. It creates no more mail for users whose mail is not created yet. Mails already created stay
 
@@ -143,7 +143,7 @@ request start
 `on_request_start` does the following in one out-of-request change of that user opened with `storage.run_user_transaction`. The change becomes a pending delta and goes into the response of that request. When `WITHDRAWN`, does nothing.
 
 1. Only when `next_expires_at` is not 0 and `is_reached_strict(next_expires_at)` is `true`, reads the `MailUserState` list, deletes the expired mails, and changes `next_expires_at` to the smallest `expires_at` among the remaining mails whose `expires_at` is not 0 (0 when there is none)
-2. For each `mailbox_broadcast` row where `cancelled` is `false` and `start_at` ≤ request time < `expires_at`, when that user's `mailbox_once_key` has no `broadcast:<broadcast ID>` row, calls `send_mail` with the `mail` of that row to create the mail. The `once_key` is `broadcast:<broadcast ID>`. When `send_mail` returns `INVALID_INPUT`, skips that broadcast and leaves an `error` log
+2. For each `mailbox_broadcast` row where `cancelled` is `false` and `start_at` ≤ request time < `expires_at`, when that user's `mailbox_once_key` has no `broadcast:<broadcast ID>` row, calls `send_mail` with the mail input that `mail_input_from_json` makes from the `mail` of that row to create the mail. The `once_key` is `broadcast:<broadcast ID>`. When `mail_input_from_json` or `send_mail` returns `INVALID_INPUT`, skips that broadcast and leaves an `error` log
 
 - When the transaction fails, leaves an `error` log and continues handling the original request. The `on_request_start` of the next request does it again
 
@@ -231,6 +231,7 @@ none
 - The ID of a mail sent after a mail is claimed and deleted is larger than the ID of the deleted mail
 - When `grant_mail_extra` returns `GameError`, the attachment grant of that mail is also rolled back
 - A broadcast becomes a mail only once, in the first request where start time ≤ request time < `expires_at` of that broadcast row, and comes as a delta of that response, and users created after the start also receive it. It is also carried in the `Login` response
+- A `broadcast_mail` whose `mail` has an integer `MailArg` with `int_value` 9007199254740993 creates a mail with that `int_value`, and the `mail` of its `mailbox_broadcast` row holds it as the string `"9007199254740993"`
 - The original request succeeds when `on_request_start` fails
 - A user who first comes after `cancel_broadcast` does not receive the mail
 - After a `once_key` mail is claimed and deleted and more than `mailbox.maxExpireMs` has passed, `send_mail` with the same `once_key` is `ALREADY_SENT`, returns that mail ID and creates no mail. The `mailbox_once_key` row is included in the user snapshot clone

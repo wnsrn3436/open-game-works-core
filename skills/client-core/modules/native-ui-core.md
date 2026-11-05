@@ -60,9 +60,10 @@ Opens the OS store review request window and share window with a per-platform na
 
 - The OS decides whether to show the store review request window and how many times, and does not report the result. `Requested` means it was requested from the OS, not that the window was shown
 - On `android`, the request counts as made when `request_review` of the adapter has started `requestReviewFlow` of the Google Play In-App Review API: the adapter reports success then, so the result is `Requested` and `NativeUiCore.last_review_at` is saved. The adapter reports a failure only when it cannot start `requestReviewFlow`. A failure of `requestReviewFlow` or of `launchReviewFlow` after that is not reported, leaves no log and changes nothing, so `NativeUiCore.reviewMinIntervalMs` still applies to the next request
+- On `ios`, the adapter reports a failure only when `UIApplication.connectedScenes` holds no `UIWindowScene`. On `macos`, it does not report a failure
 - `request_review` processing order
   1. `Unsupported` when there is no adapter or `supports_review` is `false`
-  2. `Throttled` when `NativeUiCore.last_review_at` of the `device` file exists and its difference from the current device time is less than `NativeUiCore.reviewMinIntervalMs`
+  2. `Throttled` when `NativeUiCore.last_review_at` of the `device` file exists and the current device time minus it is less than `NativeUiCore.reviewMinIntervalMs`
   3. `Throttled` when it already returned `Requested` in this boot
   4. Calls `request_review` of the adapter. When it reports a failure, nothing is saved and the result is `Failed`. On success, it saves the current device time to `NativeUiCore.last_review_at` and the result is `Requested`
 - Content code calls it only on the result screen of a stage clear, level up, reward claim. It does not call it during a tutorial, during a purchase flow, or while a popup is open
@@ -115,7 +116,7 @@ none
 | `Unsupported`, `Throttled`, `Busy` | each result | none |
 | `set_native_adapter` after `init` | ignored. The adapter stays the same | error |
 | empty text in `copy_text` | `false` | error |
-| `copy_text` on a platform without a clipboard or in a headless run | `false` | warn |
+| `copy_text` of text that is not empty on a platform without a clipboard or in a headless run | `false` | warn |
 
 ## settings
 
@@ -147,7 +148,7 @@ none
 ## test
 
 - When there is no adapter, `request_review` and `share` are `Unsupported` with no log
-- The first `request_review` is `Requested` and `last_review_at` is saved, and the second in the same boot is `Throttled`. In a new boot before `reviewMinIntervalMs` passes it is also `Throttled`, and after it passes it is `Requested`
+- The first `request_review` is `Requested` and `last_review_at` is saved, and the second in the same boot is `Throttled`. In a new boot before `reviewMinIntervalMs` passes it is also `Throttled`, and after it passes it is `Requested`. In a new boot whose device time is earlier than `last_review_at` by more than `reviewMinIntervalMs`, it is `Throttled`
 - After `set_fake_review_result`(`false`), `request_review` gives `Failed` and an error log and `last_review_at` is not saved, and after `set_fake_review_result`(`true`), `request_review` in the same boot is `Requested`
 - When a `share` is in progress, a second `share` is `Busy` and the first `share` ends with the fake result
 - Text length exceeded, image size exceeded, and empty text with an empty image give `Failed` and an error log, and the adapter is not called
@@ -157,4 +158,4 @@ none
 - `get_fake_record` of the fake adapter returns the text and image byte count passed to `share`
 - A `share` during `release` ends with `Failed`, and after `init` again there is no adapter
 - `set_native_adapter` after `init` leaves an error log and does not change the adapter
-- In a run that is not a headless run on a platform that provides a clipboard, `copy_text`(`12345`) is `true` and the text of the engine clipboard is `12345`. Empty text gives `false` and an error log, and the clipboard stays the same. In a headless run it gives `false` and a warn log
+- In a run that is not a headless run on a platform that provides a clipboard, `copy_text`(`12345`) is `true` and the text of the engine clipboard is `12345`. Empty text gives `false` and an error log, and the clipboard stays the same. In a headless run `copy_text`(`12345`) gives `false` and a warn log, and empty text gives `false` and an error log without a warn log

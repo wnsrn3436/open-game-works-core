@@ -94,8 +94,8 @@ Draws virtual joysticks and virtual buttons on a touch screen and turns their po
 - One element holds only one pointer, and one pointer belongs to only one element. Several elements can each hold a pointer at the same time
 - When `Active`, a pointer pressed inside an element area is held by that element. Where areas overlap, the element drawn on top holds it. A pointer pressed in the area of an element that already holds a pointer is held by no element
 - An element holds its pointer until the pointer is released. The same holds when the pointer moves out of the area
-- When `Active`, the press, moves and release of a pointer pressed inside an element area are consumed at the UI stage of `InputCore`. The same applies to such a pointer that no element holds. Such a pointer is not a judge pointer
-- A pointer pressed outside the element areas and a pointer pressed when not `Active` are not consumed. While not `Active`, pointer moves and releases are not consumed
+- When `Active`, the press of a pointer pressed inside an element area is consumed at the UI stage of `InputCore`, also when no element holds that pointer. Such a pointer is not a judge pointer. The moves and release of a pointer are consumed only while an element holds that pointer
+- A press outside the element areas and a press when not `Active` are not consumed
 - release handling: the element drops its pointer. A button injects a release, and a joystick injects the direction value (0, 0) and puts the base at its default position. A dropped pointer is held by no element until it is released
 - Every inject made with a pointer that an element holds, including the injects of release handling, passes the pointer ID of that pointer to `InputCore.inject_action` along with it
 - Release handling runs for every element that holds a pointer at these times: a change from `Active` to another state, `close_layout`, an input cancel of `InputCore` (checked each frame by whether `InputCore.get_cancel_count` changed), receiving `SafeAreaCore.SafeAreaChangedEvent`
@@ -175,6 +175,7 @@ none
 |---|---|---|---|---|
 | `VirtualPadCore.deadZonePermille` | integer | core | content | upper limit of the distance ratio at which the direction value is (0, 0). permille |
 | `VirtualPadCore.sensitivityPermille` | integer | core | content | factor multiplied into the size of the direction value. In permille, and 1 or more |
+| `InputCore.maxJudgePointers` | integer | core | content | maximum number of concurrent judge pointers. Used in tests |
 
 ## data
 
@@ -212,7 +213,8 @@ Common conditions: touch supported, input device `Touch`, no open popup, dead zo
 - Pressing a button area makes its action pressed with strength 1, the action stays pressed when the pointer moves out of the area, and it is not pressed after the release
 - Under a block made by `InputBlockCore.block` whose pass list has only the joystick element, pressing the joystick area and moving out of the area makes a direction action pressed and changes `InputCore.get_vector`, and after the release no direction action is pressed. Under the same block, when a popup opens while the joystick is pressed, no direction action is pressed. Under the same block, a press on a button area does not change its action
 - When the joystick and a button are pressed together with different pointers, both are pressed, and releasing one leaves the other as it is
-- Pressing, moving and releasing another pointer in the area of an element that holds a pointer leaves the action of that element as it is, and UI and gestures do not receive that pointer
+- Pressing, moving and releasing another pointer in the area of an element that holds a pointer leaves the action of that element as it is, the UI elements below do not receive that pointer, and it makes no gesture
+- With `InputCore.maxJudgePointers` 50, while 40 pointers pressed in the area of one button are not yet released, a press at 0.5 times the radius to the right of the base center of a `Fixed` joystick gives `InputCore.get_vector` (0.5, 0), and the releases of those 40 pointers give no `TapEvent`
 - Pressing an overlapping area presses only the action of the later element
 - A pointer inside an area is not received by the UI elements below and makes no gesture. A pointer outside the areas is not consumed
 - Without touch support, the state is `Hidden` and a press gives no action

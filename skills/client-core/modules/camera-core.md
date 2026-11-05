@@ -41,7 +41,7 @@ Owns following, camera shake, zoom, screen bounds, and the conversion between sc
 | `shake` | trauma amount | none | none | content code |
 | `stop_shake` | none | none | none | content code |
 | `set_shake_scale` | shake scale permille(at least 0, at most 1000) | none | none | `AccessibilityCore` |
-| `get_view_center` | none | base position after bounds fitting (shake offset excluded). For a 2D camera, the world position at the screen center; for a 3D camera, the camera position | origin | core, content code |
+| `get_view_center` | none | base position (shake offset excluded). For a 2D camera, the world position at the screen center; for a 3D camera, the camera position | origin | core, content code |
 | `screen_to_world` | position in game coordinates of `ResolutionCore` | world position | origin | core, content code |
 | `world_to_screen` | world position | position in game coordinates of `ResolutionCore` | origin | core, content code |
 
@@ -80,7 +80,7 @@ Each frame, it sets the camera position in the order below.
 3. Apply to the camera object the value with the shake offset and the shake rotation added
 
 - Shake is added after bounds fitting. During a shake, the screen can show up to `CameraCore.shakeMaxOffset` outside the bounds
-- `get_view_center` is the value of step 2. For a 3D camera, the point on the height-0 horizontal plane that the screen center shows is `screen_to_world`(center of the visible game area)
+- For a 3D camera, the point on the height-0 horizontal plane that the screen center shows is `screen_to_world`(center of the visible game area)
 
 ### follow
 
@@ -97,7 +97,7 @@ Each frame, it sets the camera position in the order below.
 - `move_by_preset` loads the tween preset from `ResourceCore` with the kind of `TweenCore.get_preset_kind` and the received scope, and does `move_to` with the duration and easing of the first change of the first step of the definition. `TimeBasis` is `GameTime`. It does not use other values of the definition
 - `move_by_preset` counts as a `move_to` in progress also while it waits for loading: when it is called, it ends the follow and the `move_to` in progress the same as a `move_to` that starts. When `stop_move`, `snap_to`, a new `move_to`, `follow` or `detach_camera` ends it with `Cancelled` in that time, it does not move the camera even when loading ends
 - `stop_move` ends the `move_to` in progress with `Cancelled` and keeps the base position at its value at that time. It does not change the follow. When no `move_to` is in progress, it does nothing
-- `snap_to` ends the follow and the `move_to` in progress and changes the base position at once. The ended `move_to` is `Cancelled`
+- `snap_to` ends the follow and the `move_to` in progress and applies the position inside the operation, the same as a `move_to` with duration 0. The ended `move_to` is `Cancelled`
 - `zoom_to` changes the zoom factor from the current factor to the received factor over the duration with `Easing`. It clamps the received factor to at least `CameraCore.minZoom` and at most `CameraCore.maxZoom`. When a `zoom_to` is in progress, it ends that with `Cancelled` and starts from the current factor. Duration 0 applies the end factor inside the operation and ends with `Completed`
 - A new `move_to` ends the `move_to` in progress with `Cancelled` and starts from the current base position
 - A `move_to` and a `zoom_to` with a duration more than 0 progress by the elapsed time of the received `TimeBasis`. Each frame, with r the value that `TweenCore.evaluate_easing`(`Easing`, progress rate) makes from the progress rate (elapsed time since the start ÷ duration; 1 when it is more than 1), it sets start value + (end value − start value) × r. In the frame in which the progress rate becomes 1, it sets the end value and ends with `Completed`
@@ -122,7 +122,7 @@ Each frame, it sets the camera position in the order below.
 
 ### release
 
-- Cleans up the same way as `detach_camera` and discards the camera reference
+- Deletes follow, shake and bounds the same way as `detach_camera` and discards the camera reference
 
 ## hook
 
@@ -141,9 +141,9 @@ none
 | the object of `attach_camera` is missing, destroyed or not an engine camera | `false`. Does not change the attached camera | error |
 | `follow`, `move_to`, `move_by_preset`, `snap_to`, `zoom_to`, `get_zoom`, `set_bounds`, `shake`, `get_view_center`, `screen_to_world`, `world_to_screen` while no camera is attached | each failure value. `move_by_preset` does not load the tween preset | error |
 | `has_camera`, `is_3d_camera`, `detach_camera`, `stop_follow`, `stop_move`, `stop_shake`, `clear_bounds` while no camera is attached | `false` for `has_camera` and `is_3d_camera`, none for the rest | none |
-| the target of `follow` is missing or destroyed, smooth time is negative, any axis of the dead zone size is negative | `false`. The previous follow and the `move_to` in progress do not change | error |
+| the target of `follow` is missing or destroyed or has no world position for the attached camera, smooth time is negative, any axis of the dead zone size is negative | `false`. The previous follow and the `move_to` in progress do not change | error |
 | the duration of `move_to`, `zoom_to` is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` is not a member of `Easing`, the `TimeBasis` is not a member of `TimeBasis`, the factor of `zoom_to` is 0 or less | `Failed`. The base position, the zoom factor, the follow and the `move_to` or `zoom_to` in progress do not change | error |
-| the tween preset of `move_by_preset` cannot be loaded, there is no first change, the duration of the first change is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` of the first change is not a member of `Easing` | `Failed` when loading ends. The base position keeps its value at the call, and the follow that the call ended stays ended | error |
+| the tween preset of `move_by_preset` cannot be loaded, there is no first change, the duration of the first change is less than 0 or more than `TweenCore.maxDurationMs`, the `Easing` of the first change is not a member of `Easing` | `Failed` when loading ends. The follow that the call ended stays ended | error |
 | the bounds size of `set_bounds` is 0 or less on any axis | `false`. Does not change the previous bounds | error |
 | the amount of `shake` is 0 or less | none. Does not change trauma | error |
 | the value of `set_shake_scale` is not at least 0 and at most 1000 | shake scale unchanged | error |
@@ -199,9 +199,10 @@ none
 - After `follow`(target), `move_by_preset` of a preset whose first change has an `Easing` that is not a member ends the follow when it is called: while it waits for loading and after it is `Failed`, the base position stays at its value at the call even when the target moves
 - `zoom_to` with factor 0 and `zoom_to` with a NaN factor during a `zoom_to` in progress are `Failed`, and the one in progress ends with `Completed`. `move_to` with a NaN position while following is `Failed` and the follow continues, and during a `move_to` in progress it is `Failed` and that `move_to` ends with `Completed`
 - `follow` with a destroyed target during a `move_to` is `false` with one error log, and that `move_to` ends with `Completed`
+- `follow` of a target that has no world position for the attached camera is `false` with one error log, and the previous follow continues
 - When the factor of `zoom_to` is out of range, it stops at `CameraCore.minZoom` or `CameraCore.maxZoom`. At factor 2, the length of each axis of the view range is half that at factor 1
 - A `zoom_to` with duration 0 applies the end factor inside the operation and is `Completed`. Calling a new `zoom_to` while one is in progress makes the previous one `Cancelled`, and the new one starts from the factor at that time
-- With bounds, for any follow goal the view range based on `get_view_center` is inside the bounds, and an axis on which the view range is longer than the bounds is at the center of the bounds
+- With bounds, for any follow goal the view range based on `get_view_center` is inside the bounds, and an axis on which the view range is longer than the bounds is at the center of the bounds. When `set_bounds` is called after `snap_to`(p) with a p whose view range is outside the bounds, `get_view_center` after one frame is not p and its view range is inside the bounds, and after `clear_bounds` and one more frame it is unchanged
 - For a 3D perspective camera tilted down with bounds, for any follow goal and zoom, the `screen_to_world` points of the four corners of the visible game area are inside the range of the two horizontal axes of the bounds (tolerance 0.01 world units) and the height of the base position stays as it is. A camera looking above the horizon has no bounds fitting and one error log
 - In the frame after `GameAreaChangedEvent`, bounds fitting uses the changed view range
 - For both a 2D camera and a 3D camera, `get_view_center` is the base position after bounds fitting and does not add the shake offset even during a shake. For a 3D camera it equals the camera position
@@ -212,4 +213,4 @@ none
 - For a 2D camera, `screen_to_world(world_to_screen(p))` equals p (tolerance 0.01 world units). It is the same during zoom and shake. For a 3D camera, the same holds for a point p at height 0
 - For a 3D camera, `world_to_screen` of a world position behind the camera and of a world position between the camera and the near plane is the origin, with one error log each
 - A UI layer element at the same position does not change its screen position during camera movement, zoom and shake
-- After `release` there is no camera reference, and after `init` again, `attach_camera` succeeds
+- After `release` there is no camera reference, a `move_to` and a `zoom_to` that were in progress are `Failed`, and after `init` again, `attach_camera` succeeds

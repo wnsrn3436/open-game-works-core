@@ -157,6 +157,7 @@ Device input is handled in the order below.
 
 - key binding: the list of keys and mouse buttons (buttons that have a mouse button name) in the binding of an action. A changed key binding is used for input right away. `back` can also be changed. `get_keys` and `get_pad_buttons` also accept `back`
 - `set_keys` is `false` without a log and does not change the binding in these cases: an empty list, a duplicate key or mouse button, contains key none, more than `InputCore.maxKeysPerAction` keys and mouse buttons, a key or mouse button in the key binding of an overlapping action
+- `get_keys` fills at most the larger of `InputCore.maxKeysPerAction` and the length of the key binding of that action in the default bindings
 - `set_keys`, `reset_keys`, `load_keys` first release the pressed sources of the actions whose binding changes
 - When `set_keys` succeeds, it writes the key bindings that differ from the default bindings to the `device` file of `LocalDataCore` under key `InputCore.key_bindings`. There is one element per action, and it is `<action>=<name>,<name>,...`. A name is a name that `set_keys` accepts. `reset_keys` resets the key bindings of all actions to the key bindings of the default bindings and deletes that key. It does not change gamepad button bindings
 - `load_keys` does not apply the saved values of the actions below and leaves a warn log
@@ -333,6 +334,7 @@ none
 - Each non-applied case of `load_keys` gives a warn log, and the other actions are applied. Two actions with the same key are both not applied even when the saved order is swapped
 - `set_keys` with the same key succeeds for an action whose binding context is `Gameplay` and for `cutscene_advance`, and a key of an overlapping action gives `false`. `set_keys` of a `Gameplay` action with the key of `back` succeeds, and `set_keys` of a `menu_` action with it gives `false`. After the key of a `Gameplay` action is changed, a `set_keys` that changes it back to the same key as `cutscene_advance` succeeds
 - When two actions that are overlapping actions have the same key in the default bindings, `init` gives an error log and fails
+- When the key binding of an action in the default bindings is longer than `InputCore.maxKeysPerAction`, `init` succeeds, `get_keys` of that action with a buffer of that length fills the whole key binding without a log, and `set_keys` of that action with the same list gives `false`
 - After `release`, the bindings, the back callback, the pointer observer, action state, pointers, the pinch enabled state, the previous value of the block start check, the gamepad family, the previous gamepad axis inputs and the prompt table are their initial values, and `get_connected_gamepads` is 0
 - `wait_key` returns the next key press, and that press does not go to UI, back or action state
 - When a block is acquired while a judge pointer in a drag and two judge pointers in a pinch are pressed, at the first block stage or first frame the drag and pinch publish `Cancel` once, those pointers give no long press, and the releases of those pointers in the blocked state publish no gesture event

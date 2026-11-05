@@ -346,7 +346,7 @@ none
 |---|---|---|
 | `UIOpenedEvent` | after a panel transition that made a panel visible, or the open flow of a popup, ends | key, panel flag, `PanelOpenReason`(`New` for a popup) |
 | `UIClosedEvent` | after a panel or popup object is destroyed. Includes panel cover and immediate close, and for a popup it is after the hidden callback | key, panel flag, `PanelCloseReason`(`Closed` for a popup) |
-| `PanelFlowFinishedEvent` | after a panel transition operation that started a transition ends with success, failure, or cancel and the transition has ended. Not published for a call that ended without starting a transition | panel key, open flag(`true` for `open_root_panel`, `open_panel`, `open_panels`), success flag |
+| `PanelFlowFinishedEvent` | after a panel transition operation that started a transition ends with success, failure, or cancel and the transition has ended. Not published for a call that ended without starting a transition | open flag(`true` for `open_root_panel`, `open_panel`, `open_panels`), success flag |
 | `ExitConfirmedEvent` | the `[ui_exit_quit]` button callback of the exit confirm | none |
 
 - `UIClosedEvent` is not published for a panel or popup object for which `UIOpenedEvent` was not published. The events one operation publishes are in the order closed, opened
