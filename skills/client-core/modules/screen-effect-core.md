@@ -127,7 +127,7 @@ none
 | `get_overlay_state` | `ScreenEffectChannel` | rectangle, color, opacity and whether displayed of that channel's overlay | empty rectangle, black, opacity 0, `false` | core test |
 | `set_world_skip` | whether skipped | none | none | `QACore`, core test |
 
-- World skip: off at `init`, changed by `set_world_skip`, and turned off by `release`. While it is on, a `fade`, `flash` or `play_preset` on `World` that passes the input check returns an effect handle settled as `Completed`, does not replace the current handle of `World`, changes no overlay, starts no tween and publishes no `ScreenEffectStartedEvent`. A `World` effect that started before it turned on goes on. It does not change the `Cutscene` and `Transition` channels
+- World skip: off at `init`, changed by `set_world_skip`, and turned off by `release`. While it is on, a `fade`, `flash` or `play_preset` on `World` that passes the input check returns an effect handle settled as `Completed`, does not replace the current handle of `World`, changes no overlay, starts no tween and publishes no `ScreenEffectStartedEvent`. `skip_to_end` of such a handle changes no overlay, because the handle never controlled one, and `wait_result` of it gives `Completed` at once. A `World` effect that started before it turned on goes on. It does not change the `Cutscene` and `Transition` channels
 
 ## test
 

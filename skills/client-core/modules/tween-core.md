@@ -200,7 +200,7 @@ none
 |---|---|---|---|
 | `set_finite_skip` | whether skipped | none | `QACore`, core test |
 
-- finite skip: off at `init`, changed by `set_finite_skip`, and turned off by `release`. While it is on, a tween that starts playback and that `get_finite_playing_count` counts (a `play_value` tween, or a tween whose played definition has a repeat count other than 0) does not progress: it publishes no `TweenStartedEvent`, applies its end state and ends with `Completed`, at the time a tween whose definition has cycle time 0 ends (`### handle and end`). So the completion callback and `wait_end` of that tween go on. A tween whose played definition repeats infinitely plays as usual. A tween that started playback before it turned on goes on
+- finite skip: off at `init`, changed by `set_finite_skip`, and turned off by `release`. Whether a tween is skipped is decided when it is requested (`play_value`, `play_preset` or `play`), also when its playback starts later, such as a `play_preset` of a preset that loads first: while it is on, a tween requested then that `get_finite_playing_count` counts (a `play_value` tween, or a tween whose played definition has a repeat count other than 0) does not progress: it publishes no `TweenStartedEvent`, applies its end state and ends with `Completed`, at the time a tween whose definition has cycle time 0 ends (`### handle and end`). So the completion callback and `wait_end` of that tween go on. A tween whose played definition repeats infinitely plays as usual. A tween requested before it turned on goes on, also when its playback starts while it is on
 
 ## test
 
