@@ -67,6 +67,27 @@ export function child(nodes: readonly SchemaNode[], segment: string): SchemaNode
   return out;
 }
 
+/** The named child keys of the object the nodes describe (after `$ref` and `allOf`), in schema order, without duplicates. */
+export function propertyKeys(nodes: readonly SchemaNode[]): string[] {
+  const keys: string[] = [];
+  for (const start of nodes) {
+    for (const { node } of expand(start)) {
+      if (!isPlainObject(node.properties)) continue;
+      for (const key of Object.keys(node.properties)) if (!keys.includes(key)) keys.push(key);
+    }
+  }
+  return keys;
+}
+
+/** The schema nodes of an item of the array the nodes describe (after `$ref` and `allOf`). */
+export function itemNodes(nodes: readonly SchemaNode[]): SchemaNode[] {
+  const out: SchemaNode[] = [];
+  for (const start of nodes) {
+    for (const { node, root } of expand(start)) if (isPlainObject(node.items)) out.push({ node: node.items, root });
+  }
+  return out;
+}
+
 /** `x-owner` declared on any of the nodes (after `$ref` and `allOf`), or undefined. */
 export function ownerOf(nodes: readonly SchemaNode[]): string | undefined {
   for (const start of nodes) {

@@ -94,9 +94,24 @@ describe('ogw settings describe', () => {
       type: null,
       allowed: { enum: ['fake', 'turn-coturn'] },
       default: null,
+      properties: [],
+      itemProperties: [],
       xOwner: null,
       xScope: null,
     });
+  });
+
+  it('lists the child keys of an object and of the items of an array of objects', async () => {
+    const terms = (await describeCmd('game', 'mygame', 'termsDocuments')).stdout.split('\n');
+    expect(terms).toContain('properties: TERMS, PRIVACY');
+    expect(terms.some((line) => line.startsWith('item properties:'))).toBe(false);
+    const screens = (await describeCmd('game', 'mygame', 'uiCheckScreens')).stdout.split('\n');
+    expect(screens).toContain('item properties: name, window, fillMode, notch, keyboard');
+    expect(screens.some((line) => line.startsWith('properties:'))).toBe(false);
+    const json = JSON.parse((await ogw(ws, ['settings', 'describe', 'game', 'mygame', 'termsDocuments.TERMS', '--json'])).stdout) as { properties: string[]; itemProperties: string[] };
+    expect(json.properties).toEqual(['version', 'url']);
+    expect(json.itemProperties).toEqual([]);
+    expect((await describeCmd('game', 'mygame', 'termsDocuments.TERMS.url')).stdout).not.toContain('properties:');
   });
 
   it('fails for a path the schema does not have', async () => {

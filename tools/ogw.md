@@ -29,6 +29,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 - instance wait
 - instance measure
 - telemetry compare
+- settings describe
 - game init
 - game derive
 - game check
@@ -518,6 +519,10 @@ What the harness tool writes in the engine project of a game. The renderer table
 ## telemetry compare
 
 The tool counts an `input_latency_ms` difference of 17 ms or less as no difference.
+
+## settings describe
+
+- `ogw settings describe` of a path whose schema node is an object with named child keys prints the line `properties: <key>, <key>, ...` with those keys in schema order, and of a path whose schema node is an array of such objects prints the line `item properties: <key>, <key>, ...`, so that a value of that path can be written without knowing the schema
 
 ## game init
 

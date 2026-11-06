@@ -1,7 +1,7 @@
 import { expectPositionals, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { display } from './lib/json-path.ts';
-import { infoOf } from './lib/schema-nav.ts';
+import { infoOf, itemNodes, propertyKeys } from './lib/schema-nav.ts';
 import { locatePath, openTarget, parsePath, scopeOf } from './lib/target.ts';
 
 function allowedText(allowed: Record<string, unknown>): string {
@@ -12,6 +12,15 @@ function allowedText(allowed: Record<string, unknown>): string {
       return `${keyword} ${typeof value === 'string' ? value : JSON.stringify(value)}`;
     })
     .join(', ');
+}
+
+/** tools/ogw.md `## settings describe`: the child keys a value of this path holds, also added to `lines`. */
+function childKeys(nodes: Parameters<typeof propertyKeys>[0], lines: string[]): { properties: string[]; itemProperties: string[] } {
+  const properties = propertyKeys(nodes);
+  const itemProperties = propertyKeys(itemNodes(nodes));
+  if (properties.length > 0) lines.push(`properties: ${properties.join(', ')}`);
+  if (itemProperties.length > 0) lines.push(`item properties: ${itemProperties.join(', ')}`);
+  return { properties, itemProperties };
 }
 
 export const describe: CommandDef = {
@@ -30,6 +39,7 @@ export const describe: CommandDef = {
     if (info.type !== undefined) lines.push(`type: ${Array.isArray(info.type) ? info.type.join(' | ') : JSON.stringify(info.type).replaceAll('"', '')}`);
     if (Object.keys(info.allowed).length > 0) lines.push(`allowed: ${allowedText(info.allowed)}`);
     if (info.default !== undefined) lines.push(`default: ${JSON.stringify(info.default)}`);
+    const { properties, itemProperties } = childKeys(nodes, lines);
     if (owner !== undefined) lines.push(`x-owner: ${owner}`);
     const scope = scopeOf(target, segments);
     if (scope !== undefined) lines.push(`x-scope: ${scope}`);
@@ -41,6 +51,8 @@ export const describe: CommandDef = {
         type: info.type ?? null,
         allowed: info.allowed,
         default: info.default ?? null,
+        properties,
+        itemProperties,
         xOwner: owner ?? null,
         xScope: scope ?? null,
       },
