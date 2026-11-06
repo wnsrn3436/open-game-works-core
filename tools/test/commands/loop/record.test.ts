@@ -75,6 +75,27 @@ function together(fields: Record<string, unknown> = {}): Record<string, unknown>
   return { kind: 'completeness', elements: ['game feel'], votes: null, vsBaseline: null, vsReference: 'unknown', ...fields };
 }
 
+/** The `usage` of an agent job (ogw.md `### usage` of `## agent`). */
+function usage(fields: Record<string, unknown>): Record<string, unknown> {
+  return { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null, ...fields };
+}
+
+/**
+ * Agent jobs of run `update-1` of game `g` in iterations 1 and 2 (one content job still running, one play job whose CLI
+ * printed no usage, one Codex judge), and jobs of another run and of another game, which no cost section counts.
+ */
+async function addAgentJobs(g: TestGame): Promise<void> {
+  const of = (role: string, iteration: number, fields: Record<string, unknown> = {}): Record<string, unknown> => ({ role, game: 'g', run: 'update-1', iteration, ...fields });
+  const claude = usage({ inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, turns: 1 });
+  await addJob(g.ws, { status: 'done', meta: of('content', 2, { usage: claude }) });
+  await addJob(g.ws, { status: 'running', meta: of('content', 2) });
+  await addJob(g.ws, { status: 'done', meta: of('play', 2, { usage: usage({ model: 'claude-sonnet-5-5', effort: 'medium' }) }) });
+  await addJob(g.ws, { status: 'done', meta: of('judge', 2, { usage: usage({ cli: 'codex', model: 'gpt-x', inputTokens: 16552, cachedTokens: 13312, outputTokens: 5 }) }) });
+  await addJob(g.ws, { status: 'done', meta: of('resource', 1, { usage: usage({ inputTokens: 1000, cachedTokens: 0, outputTokens: 100, costUsd: 2.5, turns: 4 }) }) });
+  await addJob(g.ws, { status: 'done', meta: of('content', 2, { run: 'update-0', usage: claude }) });
+  await addJob(g.ws, { status: 'done', game: 'other', meta: of('content', 2, { game: 'other', usage: claude }) });
+}
+
 async function iterationOne(): Promise<{ g: TestGame; sha: string }> {
   const g = setupGame();
   await openLoopRun(g, { iteration: 1 });
@@ -561,6 +582,28 @@ describe('ogw loop record', () => {
     expect(record).toContain('## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n');
     expect(record).toContain('## measurements\n\nnone\n\n## load\n\nnone\n');
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).previous).toBeNull();
+    expect(record).toContain('## temporary resources\n\nnone\n\n## cost\n\nnone\n');
+  });
+
+  it('writes the cost of the agent jobs of the run and iteration per role', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 2 });
+    await addAgentJobs(g);
+    write(g.root, `${R}/check-2.json`, { commit: 'c', checks: [] });
+    write(g.root, `${R}/findings-2.json`, { findings: [], discarded: [] });
+    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
+    expect(read(g.root, `${R}/iteration-2.md`)).toContain(
+      [
+        '## cost',
+        '',
+        '| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |',
+        '|---|---|---|---|---|---|---|---|',
+        '| content | 2 | 31898 | 22611 | 63 | 0.02 | 1 | 1 |',
+        '| play | 1 | none | none | none | none | 1 | 1 |',
+        '| judge | 1 | 16552 | 13312 | 5 | none | 0 | 1 |',
+        '',
+      ].join('\n'),
+    );
   });
 
   it('records hardening findings into the defect list only', async () => {
@@ -820,6 +863,25 @@ describe('ogw loop end-record', () => {
     expect((await ogw(g.ws, ['loop', 'end-record', 'g', '--stopped-by-human'])).stderr).toContain('the loop already stopped with plateau');
   });
 
+  it('writes the cost of every agent job of the run per role and in total', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 2 });
+    await addAgentJobs(g);
+    expect((await ogw(g.ws, ['loop', 'end-record', 'g', '--stopped-by-human'])).code).toBe(0);
+    expect(read(g.root, `${R}/end.md`).split('## cost\n\n')[1]).toBe(
+      [
+        '| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |',
+        '|---|---|---|---|---|---|---|---|',
+        '| content | 2 | 31898 | 22611 | 63 | 0.02 | 1 | 1 |',
+        '| resource | 1 | 1000 | 0 | 100 | 2.50 | 0 | 0 |',
+        '| play | 1 | none | none | none | none | 1 | 1 |',
+        '| judge | 1 | 16552 | 13312 | 5 | none | 0 | 1 |',
+        '| total | 5 | 49450 | 35923 | 168 | 2.52 | 2 | 3 |',
+        '',
+      ].join('\n'),
+    );
+  });
+
   it('writes stopped by human with no verdict yet', async () => {
     const g = setupGame();
     await openLoopRun(g, { iteration: 0 });
@@ -874,6 +936,7 @@ describe('ogw loop end-record', () => {
         '## failures', '', '- placeholder icon/z', `- open defect open-one (found on ${sha}): broken`, '- not given again /r/1.md: boom', '',
         '## human', '', '- needs human: speed (decision: d)', '- core proposal: records/core-proposals/9-x.md', '- license unknown: icon/a',
         '- skipped core version: 1.3.0', '- banned word list missing: ko', '- judge calibration: never run (ogw judge calibrate g; labels: 0, added with ogw judge label g)', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
+        '## cost', '', 'none', '',
       ].join('\n'),
     );
     expect(git(g.root, 'log', '-1', '--name-only', '--format=')).toBe(`${R}/end.md`);
@@ -966,7 +1029,7 @@ describe('ogw loop end-record', () => {
         run.data.loop = { tasks: [], handled: [], merges: [], verdict: { iteration: 1, reason: 'limit reached', evidence: [] }, prepareMerge };
       });
       expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
-      return read(g.root, `${R}/end.md`).split('## human\n\n')[1] ?? '';
+      return read(g.root, `${R}/end.md`).split('## human\n\n')[1]?.split('\n## cost\n')[0] ?? '';
     };
     expect(await human({ commit: chosen, mainHead: 'm', baseCommit: 'm', created: true })).toBe(`- temporary resource (the next update game makes it again): icon/t\n${NEVER}\n`);
     expect(await human({ commit: null, mainHead: 'm', baseCommit: 'm', created: true })).toBe(`${NEVER}\n`);
@@ -986,7 +1049,7 @@ describe('ogw loop end-record', () => {
         run.data.loop = { tasks: [], handled: [], merges: [], verdict: { iteration: 1, reason: 'limit reached', evidence: [] }, prepareMerge: null };
       });
       expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
-      return read(g.root, `${R}/end.md`).split('## human\n\n')[1] ?? '';
+      return read(g.root, `${R}/end.md`).split('## human\n\n')[1]?.split('\n## cost\n')[0] ?? '';
     };
     expect(await human()).toBe('- judge calibration: never run (ogw judge calibrate g; labels: 1, added with ogw judge label g)\n');
     const rates = '## rates\n\n- false win rate: 0.33 (1 of 3)\n- order consistency: none\n- sensitivity: no\n- human agreement: none\n- labels: 1\n';

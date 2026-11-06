@@ -3,6 +3,7 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { gitRaw } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
+import { renderCost, type CostRow } from './cost.ts';
 import { DEFECT_COLUMNS, defectRow, type Defect } from './defects.ts';
 import { GATE_CHECKS, type Confirmation, type ElementVotes, type IterationKind, type JudgeAgent, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
 import { cell, column, document, parseTable, renderTable, section } from './markdown.ts';
@@ -45,6 +46,8 @@ export interface IterationRecordData {
   load: { platform: string | null; result: string; hostLoad: unknown }[] | null;
   /** Keys that became `temporary` since the previous iteration (ogw.md `## loop record`). */
   temporary: string[];
+  /** `## cost`: the agent jobs of the iteration per role. */
+  cost: CostRow[];
 }
 
 /** A row of `## variants`. */
@@ -146,6 +149,7 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ['measurements', measurements],
     ['load', load],
     ['temporary resources', data.temporary.length > 0 ? data.temporary.map((k) => `- \`${k}\``).join('\n') : 'none'],
+    ['cost', renderCost(data.cost)],
   ]);
 }
 

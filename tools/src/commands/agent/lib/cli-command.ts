@@ -20,16 +20,19 @@ export function agentCli(agent: AgentSettings): AgentCli {
   return agent.cli ?? 'claude-code';
 }
 
+/** Claude Code: print one JSON result object, with the usage, when the CLI ends (ogw.md `### usage` of `## agent`). */
+export const CLAUDE_JSON_OUTPUT: readonly string[] = ['--output-format', 'json'];
+
 /**
- * The agent CLI in the mode that asks no approval, with the role's model and effort.
- * The prompt goes to its stdin.
+ * The agent CLI in the mode that asks no approval, with the role's model and effort, printing its usage as JSON
+ * (Claude Code one result object, Codex one event per line). The prompt goes to its stdin.
  */
 export function agentCliCommand(agent: AgentSettings): CliCommand {
   const cli = agentCli(agent);
   if (cli === 'claude-code') {
     return {
       cmd: 'claude',
-      args: ['-p', '--model', agent.model, '--effort', agent.effort, '--permission-mode', 'bypassPermissions'],
+      args: ['-p', '--model', agent.model, '--effort', agent.effort, '--permission-mode', 'bypassPermissions', ...CLAUDE_JSON_OUTPUT],
     };
   }
   return {
@@ -42,9 +45,16 @@ export function agentCliCommand(agent: AgentSettings): CliCommand {
       `model_reasoning_effort="${agent.effort}"`,
       '--dangerously-bypass-approvals-and-sandbox',
       '--skip-git-repo-check',
+      '--json',
       '-',
     ],
   };
+}
+
+/** `args` without the first `--output-format json` of Claude Code (`CLAUDE_JSON_OUTPUT`). */
+export function withoutJsonOutput(args: readonly string[]): string[] {
+  const at = args.findIndex((arg, i) => arg === CLAUDE_JSON_OUTPUT[0] && args[i + 1] === CLAUDE_JSON_OUTPUT[1]);
+  return at < 0 ? [...args] : [...args.slice(0, at), ...args.slice(at + CLAUDE_JSON_OUTPUT.length)];
 }
 
 function real(path: string): string {

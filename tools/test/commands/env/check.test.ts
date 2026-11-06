@@ -452,10 +452,12 @@ describe('ogw env check', () => {
     expect(missing.agentLoginToken).toEqual({ needed: true, stored: false, valueProblem: null, run: null });
     expect((await ogw(ws, ['env', 'check'], { env })).stdout).toContain('agent login token claude-code-oauth-token: missing\n');
     writeFileSync(join(ws.root, 'secrets.json'), JSON.stringify({ 'ogw/harness/claude-code-oauth-token': 'token' }));
-    // the token check run: the play prompt run with the token and stream-json output
+    // the token check run: the play prompt run with the token and stream-json output in place of the JSON output
     const stored = (JSON.parse((await ogw(ws, ['env', 'check', '--json'], { env })).stdout) as EnvCheckResult).agentLoginToken;
     expect(stored).toMatchObject({ needed: true, stored: true, run: { role: 'play', ok: true, authFailed: false, exitCode: 0 } });
-    expect(stored?.run?.output).toBe(`sandboxed ok tmp own-tmp [${agentCliCommand({ model: 'm', effort: 'high' }).args.join(' ')} --no-session-persistence --output-format stream-json --verbose] Reply with the single word ok.`);
+    const agentArgs = agentCliCommand({ model: 'm', effort: 'high' }).args.join(' ');
+    expect(agentArgs).toContain(' --output-format json');
+    expect(stored?.run?.output).toBe(`sandboxed ok tmp own-tmp [${agentArgs.replace(' --output-format json', '')} --no-session-persistence --output-format stream-json --verbose] Reply with the single word ok.`);
     // Claude Code with stream-json output: `token` passes, `offline` fails otherwise, any other token fails to authenticate
     fakeBin(join(ws.root, 'bin'), {
       claude: [

@@ -10,6 +10,7 @@ import { placeholderFailures } from '../check/api.ts';
 import { needsHumanLines } from './lib/assumptions.ts';
 import { addedCoreProposals } from '../build/lib/report-sections.ts';
 import { LIST_PATH, temporaryKeys, unknownLicenseKeys } from '../resource/lib/list.ts';
+import { costRows, renderCost, runAgentJobs } from './lib/cost.ts';
 import type { DefectsFile } from './lib/defects.ts';
 import { checkResult, COMPLETENESS_CHECKS, mainJudge, type CheckFile, type EvaluateFile } from './lib/files.ts';
 import { iterationRecords, type ParsedRecord } from './lib/iteration-record.ts';
@@ -188,6 +189,7 @@ export const loopEndRecord: CommandDef = {
       ['result', await resultSection(game, run)],
       ['failures', await failuresSection(ctx, game, run)],
       ['human', await humanSection(ctx, game, run, humanFile)],
+      ['cost', renderCost(costRows(await runAgentJobs(ctx.env, game.name, run.name, null), true))],
     ]);
     const rel = runRel(run, 'end.md');
     await writeFileAtomic(abs(game, rel), text);

@@ -94,12 +94,16 @@ const DATA: IterationRecordData = {
   measurements: [{ metric: 'fps', min: 30, max: 60, value: null, result: 'unknown', data: null }],
   load: [{ platform: 'web', result: 'unknown (host CPU 99%)', hostLoad: { cpuMaxPercent: 99 } }],
   temporary: ['icon/a', 'image/b'],
+  cost: [
+    { role: 'content', jobs: 1, inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, withoutUsage: 0, withoutCost: 0 },
+    { role: 'judge', jobs: 2, inputTokens: 16552, cachedTokens: 13312, outputTokens: 5, costUsd: null, withoutUsage: 1, withoutCost: 2 },
+  ],
 };
 
 describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
-    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
+    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## load', '## temporary resources', '## cost']);
     expect(text).toContain('- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n');
     expect(text).toContain('- status: done\n- agent: claude-code m1 high\n- A: c1\n- B: b0\n- vs reference: pass\n- omitted moments: boss\n');
     expect(text).toContain('- agent: codex m2 medium\n');
@@ -112,6 +116,9 @@ describe('iteration record', () => {
     expect(text).toContain('| fps | none | 30..60 | unknown |');
     expect(text).toContain('| web | unknown (host CPU 99%) | {"cpuMaxPercent":99} |');
     expect(text).toContain('#### loser better\n\nnone');
+    expect(text).toContain(
+      '## cost\n\n| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |\n|---|---|---|---|---|---|---|---|\n| content | 1 | 31898 | 22611 | 63 | 0.02 | 0 | 0 |\n| judge | 2 | 16552 | 13312 | 5 | none | 1 | 2 |\n',
+    );
     const parsed = parseIterationRecord(text, 1, 'p1');
     expect(parsed.commit).toBe('c1');
     expect(parsed.baseline).toBe(DATA.baseline);
@@ -203,9 +210,9 @@ describe('iteration record', () => {
   });
 
   it('writes none for steps that did not run', () => {
-    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [] });
+    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [], cost: [] });
     expect(text).toBe(
-      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n',
+      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n\n## cost\n\nnone\n',
     );
     const parsed = parseIterationRecord(text, 2, 'p');
     expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0, vsBaseline: null, vsReference: null });

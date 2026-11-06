@@ -91,3 +91,8 @@ export const CORE_TEST_PASSED =
 export async function readRunLog(ws: TestWorkspace, id: string): Promise<unknown> {
   return JSON.parse(readFileSync(await runLogPath(id, ws.env), 'utf8')) as unknown;
 }
+
+/** The `usage` of a job whose agent CLI printed no usage (ogw.md `### usage` of `## agent`). */
+export function noUsage(model: string, effort: string, cli: 'claude-code' | 'codex' = 'claude-code'): object {
+  return { cli, model, effort, inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null };
+}

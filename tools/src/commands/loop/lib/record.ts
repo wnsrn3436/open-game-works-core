@@ -15,6 +15,7 @@ import {
   type FindingsFile,
   type ReportRow,
 } from './defects.ts';
+import { costRows, runAgentJobs } from './cost.ts';
 import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
 import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
@@ -184,6 +185,7 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
       ? check.checks.filter((c) => c.name === 'performance').map((c) => ({ platform: c.platform, result: loadResult(c), hostLoad: c.hostLoad ?? null }))
       : null,
     temporary: await newTemporary(game, run, check?.commit ?? null),
+    cost: costRows(await runAgentJobs(env, game.name, run.name, run.iteration), false),
   }));
   return rel;
 }
@@ -200,7 +202,10 @@ async function baseDefects(game: GameRepo, defectsRel: string, label: string): P
   return existing && existing.recordedBy === label ? existing.previous : existing;
 }
 
-/** Records the finding file of this iteration (or with `hardening`, the latest hardening round) into the defect list. */
+/**
+ * Records the finding file of this iteration (or with `hardening`, the latest hardening round) into the defect list.
+ * `env` finds the agent jobs of the iteration for `## cost`.
+ */
 export async function recordFindings(game: GameRepo, run: RunState, hardening: boolean, env: NodeJS.ProcessEnv = process.env): Promise<RecordResult> {
   const label = await labelOf(game, run, hardening);
   const file = await readJsonIfExists<FindingsFile>(abs(game, label.findingsRel));

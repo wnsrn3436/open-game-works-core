@@ -13,7 +13,7 @@ import { newTempFolder } from '../../../src/commands/agent/lib/files.ts';
 import { ogw, makeGame, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { startAgentJob } from '../../../src/commands/agent/api.ts';
-import { fakeAgentCli, gameWithRun, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, noUsage, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () => {
   it('runs play in a sandboxed temp folder, then moves the result and captures; its run log is in the jobs folder, out of its reach', async () => {
@@ -39,7 +39,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(existsSync(call?.cwd as string)).toBe(false);
     expect(call?.prompt).not.toContain('## purpose');
     expect(call?.prompt).toContain(`- input: ${call?.cwd as string}/input/input.json`);
-    expect(await readRunLog(ws, id)).toEqual({ runs: [] });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], usage: noUsage('claude-sonnet-5-5', 'medium') });
     // nothing is committed, and the checkout has only the result file and the evidence
     expect(sh(root, 'git', ['rev-parse', 'loop/r1'])).toBe(before);
     expect(sh(root, 'git', ['status', '--porcelain', '--untracked-files=all']).split('\n').filter((line) => line !== '' && !line.startsWith('?? records/loops/r1/evidence/'))).toEqual(['?? records/loops/r1/play-1-1.md']);
@@ -64,7 +64,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(readFileSync(output, 'utf8')).toBe(`capture ${evidence}/shot.png\n`);
     expect(readFileSync(join(evidence, 'shot.png'), 'utf8')).toBe('png');
     expect(fake.calls()[0]?.prompt).not.toContain('- run:');
-    expect(await readRunLog(ws, id)).toEqual({ runs: [] });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], usage: noUsage('claude-opus-5-5', 'high') });
     expect(sh(root, 'git', ['ls-files', 'records/calibration'])).toBe('');
     expect((await readJob(id, ws.env)).meta).toMatchObject({ run: null, iteration: null, k: null });
     expect((await readJob(id, ws.env)).timeLimitMs).toBe(3_600_000);

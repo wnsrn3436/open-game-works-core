@@ -11,7 +11,7 @@ import { LIMITS } from '../../../lib/limits.ts';
 import { killTree, run, spawnTracked } from '../../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
-import { agentCli } from '../../agent/lib/cli-command.ts';
+import { agentCli, withoutJsonOutput } from '../../agent/lib/cli-command.ts';
 import { newAgentFolder } from '../../agent/lib/files.ts';
 import { cliToRun, SANDBOXED_ROLES, type CliToRun } from '../../agent/lib/launch.ts';
 import { loginTokenAgent } from '../../secret/lib/login-token.ts';
@@ -100,10 +100,11 @@ interface PromptRun {
 
 /**
  * Runs the short prompt, on stdin, with the command and env `ogw agent` runs for that agent settings and role:
- * for play and judge in the OS sandbox, whose profile folder is removed after the run. `extra` adds arguments to the
- * end of the command and sets environment variables.
+ * for play and judge in the OS sandbox, whose profile folder is removed after the run. `extra` sets environment
+ * variables, and with `output` the command leaves out the `--output-format json` of Claude Code and has `output`
+ * added at the end.
  */
-async function promptRun(ctx: Context, agent: AgentSettings, role: string, extra: { args: string[]; env: NodeJS.ProcessEnv } = { args: [], env: {} }): Promise<PromptRun> {
+async function promptRun(ctx: Context, agent: AgentSettings, role: string, extra: { output: readonly string[] | null; env: NodeJS.ProcessEnv } = { output: null, env: {} }): Promise<PromptRun> {
   // a sandboxed CLI starts in an agent folder like play and judge; a CLI outside the sandbox starts in the temp folder
   // of ogw, where no sandboxed agent plants config
   const sandboxed = SANDBOXED_ROLES.includes(role);
@@ -116,8 +117,9 @@ async function promptRun(ctx: Context, agent: AgentSettings, role: string, extra
     return { code: null, timedOut: false, stdout: '', stderr: (error as Error).message };
   }
   const { command, env, profileFolder } = cli;
+  const args = extra.output === null ? command.args : [...withoutJsonOutput(command.args), ...extra.output];
   try {
-    return await run(command.cmd, [...command.args, ...extra.args], { cwd: dir, env: { ...env, ...extra.env }, input: AGENT_PROBE_PROMPT, timeoutMs: agentProbeMs }).catch(
+    return await run(command.cmd, args, { cwd: dir, env: { ...env, ...extra.env }, input: AGENT_PROBE_PROMPT, timeoutMs: agentProbeMs }).catch(
       (error: unknown) => ({ code: null, timedOut: false, stdout: '', stderr: (error as Error).message }),
     );
   } finally {
@@ -156,7 +158,7 @@ export async function tokenCheckRun(ctx: Context, settings: HarnessSettings, tok
   const user = loginTokenAgent(settings);
   if (user === null) return null;
   const { role, agent } = user;
-  const result = await promptRun(ctx, agent, role, { args: [...TOKEN_CHECK_ARGS], env: { CLAUDE_CODE_OAUTH_TOKEN: token } });
+  const result = await promptRun(ctx, agent, role, { output: TOKEN_CHECK_ARGS, env: { CLAUDE_CODE_OAUTH_TOKEN: token } });
   const messages = jsonLines(result.stdout);
   // Agent SDK `SDKAssistantMessage` `error`
   const authFailed = messages.some((m) => m.type === 'assistant' && m.error === 'authentication_failed');

@@ -4,6 +4,7 @@ import { exists } from '../../../lib/fsx.ts';
 import { jobsDir, readJob, updateJob, type JobRecord } from '../../../lib/jobs.ts';
 import type { AgentSettings, Role } from '../../../lib/settings.ts';
 import type { AgentSession } from './cli-command.ts';
+import type { AgentUsage, SessionUsage } from './usage.ts';
 
 /** Roles that work in a game: every role except `core` and `review`. */
 export const GAME_ROLES: readonly Role[] = [
@@ -94,6 +95,10 @@ export interface AgentMeta {
   session?: AgentSession | null;
   /** spec review: the lines of what `ogw agent wait` wrote to the spec debt lists, once (`recordSpecDebt`). */
   debtLines?: string[];
+  /** Set when the agent CLI ended: the usage of the job (ogw.md `### usage` of `## agent`). */
+  usage?: AgentUsage;
+  /** Claude Code with a session: the token counts and cost of the session that its result object printed. */
+  sessionUsage?: SessionUsage;
   [key: string]: unknown;
 }
 

@@ -8,7 +8,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { BROKER_ENV, BROKER_RUN, BROKER_WORKER } from '../../../lib/broker-client.ts';
 import { commitPaths, commonDir, gitDir, gitIdentity, gitLine, head, withGitConfig, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
-import { AGENT_KEY_ENV, endJobsOfAgent, jobsDir } from '../../../lib/jobs.ts';
+import { AGENT_KEY_ENV, endJobsOfAgent, jobsDir, listJobs } from '../../../lib/jobs.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { escapeRegExp } from '../../../lib/regexp.ts';
 import { cliEntry, harnessRoot } from '../../../lib/paths.ts';
@@ -37,6 +37,8 @@ import {
   withoutSessionFiles,
   withSession,
   macosFoldersProfile,
+  type AgentCli,
+  type AgentSession,
   type Blocked,
   type CliCommand,
 } from './cli-command.ts';
@@ -47,6 +49,7 @@ import { instancesDir } from '../../instance/lib/records.ts';
 import { stopInstancesOfAgent } from '../../instance/api.ts';
 import { readTranslationFiles } from './translation-files.ts';
 import { translationCounts } from './rowmerge.ts';
+import { jobUsage, printedUsage, sessionUsageOf, withResultText, type SessionUsage } from './usage.ts';
 
 /** The pre-commit hook command core worktrees need. */
 export const PRE_COMMIT_COMMAND = 'meta sync core --staged';
@@ -682,19 +685,52 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder, meta.game);
   if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = withSession(agentCli(agent), toRun.command, meta.session ?? null);
   const cli = await runWithBroker(id, ctx, meta, toRun, { prompt, logPath, socket, runLog: meta.runLog, afterEnv });
+  await recordUsage(id, ctx, meta, agent, logPath, meta.runLog);
   const written = await wroteOutput(meta.output, before);
   await changeAgentMeta(id, ctx.env, (m) => {
     m.outputWritten = written;
   });
   const finished = await finish(id, ctx, meta);
   const output = finished.meta.output;
-  return jobResult(cli, written && output !== undefined && exists(output) ? output : null, finished.problem, logPath);
+  return jobResult(cli, written && output !== undefined && exists(output) ? output : null, finished.problem, logPath, agentCli(agent));
 }
 
-/** The result of the job: the result file, or why the agent failed with the tail of its CLI log. */
-async function jobResult(cli: CliRun, result: string | null, problem: string | null, logPath: string): Promise<CommandResult> {
+/** The `sessionUsage` of the job of Claude Code session `session` that started last before job `id`; null without one. */
+async function earlierSessionUsage(id: string, session: string, env: NodeJS.ProcessEnv): Promise<SessionUsage | null> {
+  const jobs = (await listJobs(env)).filter((job) => job.command === 'agent');
+  const startedAt = jobs.find((job) => job.id === id)?.startedAt ?? Number.POSITIVE_INFINITY;
+  const earlier = jobs
+    .filter((job) => job.id !== id && job.startedAt <= startedAt && (job.meta.session as AgentSession | null | undefined)?.id === session)
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .at(-1);
+  return (earlier?.meta.sessionUsage as SessionUsage | undefined) ?? null;
+}
+
+/**
+ * Reads the usage the agent CLI printed in its log and writes it as `usage` in the job record and the run log
+ * (ogw.md `### usage` of `## agent`). A CLI that printed none leaves the values null; the job does not fail for it.
+ */
+async function recordUsage(id: string, ctx: Context, meta: AgentMeta, agent: AgentSettings, logPath: string, runLog: string): Promise<void> {
+  const cli = agentCli(agent);
+  const printed = printedUsage(cli, await readFile(logPath, 'utf8').catch(() => ''));
+  const session = cli === 'claude-code' ? (meta.session ?? null) : null;
+  const before = session?.resume === true ? await earlierSessionUsage(id, session.id, ctx.env) : null;
+  const usage = jobUsage(agent, printed, session?.resume === true, before);
+  await changeAgentMeta(id, ctx.env, (m) => {
+    m.usage = usage;
+    if (session !== null && printed !== null) m.sessionUsage = sessionUsageOf(printed);
+  });
+  await addRunLogFields(runLog, { usage });
+}
+
+/**
+ * The result of the job: the result file, or why the agent failed with the tail of its CLI log, in which a Claude Code
+ * result object is shown as its `result` text.
+ */
+async function jobResult(cli: CliRun, result: string | null, problem: string | null, logPath: string, agent: AgentCli): Promise<CommandResult> {
   if (cli.code === 0 && cli.error === null && result !== null && problem === null) return { text: result, data: { output: result } };
   const reason = cli.error ?? (cli.code !== 0 ? `agent CLI ended with code ${String(cli.code)}` : (problem ?? 'the agent left no result file'));
-  const log = await tail(logPath, LOG_TAIL_LINES);
+  const tailed = await tail(logPath, LOG_TAIL_LINES);
+  const log = agent === 'claude-code' ? withResultText(tailed) : tailed;
   return { exitCode: 1, text: [`failed: ${reason}`, `output: ${result ?? 'none'}`, log].filter((line) => line !== '').join('\n'), data: { reason, output: result } };
 }

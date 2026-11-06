@@ -14,9 +14,14 @@ import { privateTempDir } from '../../../src/lib/secret-files.ts';
 import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/launch.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
 import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
-import { fakeAgentCli, gameWithRun, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, noUsage, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
+
+/** Real output of the agent CLIs on this host (`test/commands/agent/lib/usage.test.ts`). */
+function usageFixture(name: string): string {
+  return join(import.meta.dirname, '..', '..', 'fixtures', 'agent-usage', name);
+}
 
 function log(root: string, rev: string, path: string): string {
   return sh(root, 'git', ['show', `${rev}:${path}`]);
@@ -61,7 +66,7 @@ describe('ogw agent: content', () => {
       });
       const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, `records/loops/r1/content-input-${String(n)}.md`)], fake.env, root);
       expect(waited.code).toBe(0);
-      return fake.calls().at(-1)?.argv.slice(7) ?? [];
+      return fake.calls().at(-1)?.argv.slice(9) ?? [];
     };
     // iteration 1: a new session
     const [flag1, first] = await iterate(1);
@@ -115,14 +120,14 @@ describe('ogw agent: content', () => {
     const call = fake.calls().at(-1);
     expect(call?.cwd).toBe(worktree);
     expect(call?.prompt).toContain(`- output: ${output}\n- run: r1\n- iteration: 2`);
-    expect(call?.argv[7]).toBe('--session-id');
+    expect(call?.argv[9]).toBe('--session-id');
     expect((await readJob(id, ws.env)).meta).toMatchObject({ variant: 2, branch: `agent/${id}`, place: { kind: 'game-worktree', branch: 'loop/r1', baseCommit: base } });
     expect(sh(root, 'git', ['log', '--format=%s', `${base}..agent/${id}`]).trim().split('\n')).toContain('variant');
     expect(sh(root, 'git', ['rev-parse', 'HEAD']).trim()).toBe(base);
     // iteration 3 after the variant iteration: no session of a content agent that was not a variant agent, so a new one
     await iteration(3);
     expect((await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'records/loops/r1/content-input-3.md')], fake.env, root)).waited.code).toBe(0);
-    expect(fake.calls().at(-1)?.argv[7]).toBe('--session-id');
+    expect(fake.calls().at(-1)?.argv[9]).toBe('--session-id');
     await expect(startAgentJob(ctx, { role: 'resource', game: 'g', input: join(root, 'records/loops/r1/content-input-3.md'), variant: 1 })).rejects.toThrow('a variant is a positive integer given only to role content');
   });
 
@@ -134,7 +139,7 @@ describe('ogw agent: content', () => {
     const id = await startAgentJob(ctx, { role: 'content', game: 'g', input: join(root, 'records/loops/r1/content-input-1.md'), agent: { cli: 'codex', model: 'gpt-x', effort: 'low' } });
     expect((await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
     // Codex: no session option
-    expect(fake.calls()[0]?.argv).toEqual(['exec', '--model', 'gpt-x', '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+    expect(fake.calls()[0]?.argv).toEqual(['exec', '--model', 'gpt-x', '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json', '-']);
     expect((await readJob(id, ws.env)).meta).toMatchObject({ agent: { cli: 'codex', model: 'gpt-x', effort: 'low' }, session: null });
   });
 
@@ -149,13 +154,13 @@ describe('ogw agent: content', () => {
     expect(waited).toMatchObject({ code: 0, stdout: `${output}\n` });
     const [call] = fake.calls();
     // a new Claude Code session with the id kept in the job
-    expect(call?.argv.slice(0, 8)).toEqual(['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--permission-mode', 'bypassPermissions', '--session-id']);
-    expect(call?.argv[8]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-    expect(call?.argv).toHaveLength(9);
+    expect(call?.argv.slice(0, 10)).toEqual(['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--permission-mode', 'bypassPermissions', '--output-format', 'json', '--session-id']);
+    expect(call?.argv[10]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(call?.argv).toHaveLength(11);
     expect(call?.cwd).toBe(root);
     expect(call?.prompt).toContain('## purpose');
     expect(call?.prompt).toContain(`- input: ${input}\n- output: ${output}\n- run: r1\n- iteration: 1\n`);
-    expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw job status nojob', startedAt: expect.any(Number) as number, exitCode: 1, summary: null }] });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw job status nojob', startedAt: expect.any(Number) as number, exitCode: 1, summary: null }], usage: noUsage('claude-opus-5-5', 'high') });
     const jobs = await jobsDir(ws.env);
     const job = await readJob(id, ws.env);
     expect(job.meta).toMatchObject({ role: 'content', output, runLog: join(jobs, 'run-logs', `${id}.json`), game: 'g', run: 'r1', iteration: 1 });
@@ -210,7 +215,7 @@ describe('ogw agent: content', () => {
     const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
     expect(waited.code).toBe(0);
     const job = readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8');
-    expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw check nogame', startedAt: expect.any(Number) as number, exitCode: 1, summary: null, job }] });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw check nogame', startedAt: expect.any(Number) as number, exitCode: 1, summary: null, job }], usage: noUsage('claude-opus-5-5', 'high') });
   });
 
   it('fails without a result file and reports why', async () => {
@@ -231,6 +236,90 @@ describe('ogw agent: content', () => {
     expect(waited.code).toBe(1);
     expect(waited.stdout).toContain(`failed: agent CLI ended with code 3\noutput: ${join(root, 'records/loops/r1/content-1.md')}`);
     expect((await ogw(ws, ['agent', 'status', id, '--json'])).stdout).toContain('"status": "failed"');
+  });
+
+  it('records the usage that Claude Code printed in the job record and the run log', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'in.md': 'x' });
+    const fake = fakeAgentCli(ws, `process.stdout.write(fs.readFileSync(${JSON.stringify(usageFixture('claude-result.json'))}, 'utf8')); ${WRITE_OUTPUT}`);
+    const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
+    expect(waited.code).toBe(0);
+    const usage = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, turns: 1 };
+    const { meta } = await readJob(id, ws.env);
+    expect(meta.usage).toEqual(usage);
+    // a new session: the session totals are those of the job
+    expect(meta.sessionUsage).toEqual({ inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411 });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], usage });
+  });
+
+  it('records null usage for a CLI that printed none, and the job does not fail for it', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'in.md': 'x' });
+    const fake = fakeAgentCli(ws, `console.log('plain text, no JSON'); ${WRITE_OUTPUT}`);
+    const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
+    expect(waited).toMatchObject({ code: 0, stdout: `${join(root, 'records/loops/r1/content-1.md')}\n` });
+    expect(await ogw(ws, ['agent', 'status', id])).toMatchObject({ code: 0, stdout: 'done\n' });
+    const { meta } = await readJob(id, ws.env);
+    expect(meta.usage).toEqual(noUsage('claude-opus-5-5', 'high'));
+    expect(meta.sessionUsage).toBeUndefined();
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], usage: noUsage('claude-opus-5-5', 'high') });
+  });
+
+  it('records the tokens that Codex printed, with no cost and no turn count', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'in.md': 'x' });
+    const fake = fakeAgentCli(ws, `process.stderr.write('Reading additional input from stdin...\\n'); process.stdout.write(fs.readFileSync(${JSON.stringify(usageFixture('codex-command.jsonl'))}, 'utf8')); ${WRITE_OUTPUT}`);
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const id = await startAgentJob(ctx, { role: 'content', game: 'g', input: join(root, 'in.md'), agent: { cli: 'codex', model: 'gpt-x', effort: 'low' } });
+    expect((await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
+    const usage = { cli: 'codex', model: 'gpt-x', effort: 'low', inputTokens: 33201, cachedTokens: 23552, outputTokens: 51, costUsd: null, turns: null };
+    expect((await readJob(id, ws.env)).meta).toMatchObject({ usage, session: null });
+    expect((await readJob(id, ws.env)).meta.sessionUsage).toBeUndefined();
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], usage });
+  });
+
+  it('records the usage of a content agent that continues a session as the session totals minus those of the job before', async () => {
+    const ws = makeWorkspace();
+    const inputs = Object.fromEntries([1, 2].map((n) => [`records/loops/r1/content-input-${String(n)}.md`, '## kind\nfun\n']));
+    const { root, game } = await gameWithRun(ws, inputs, { data: { loop: { kinds: [1, 2].map((iteration) => ({ iteration, kind: 'fun' })) } } });
+    // the fake Claude Code keeps the session file, and prints the result object of a new session or of the resumed one
+    const behavior = [
+      "const at = process.argv.indexOf('--session-id');",
+      "if (at > 0) { const dir = process.env.CLAUDE_CONFIG_DIR + '/projects/-games-g'; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(dir + '/' + process.argv[at + 1] + '.jsonl', '{}\\n'); }",
+      `const printed = process.argv.includes('--resume') ? ${JSON.stringify(usageFixture('claude-session-resumed.json'))} : ${JSON.stringify(usageFixture('claude-session-new.json'))};`,
+      "process.stdout.write(fs.readFileSync(printed, 'utf8'));",
+      WRITE_OUTPUT,
+    ].join('\n');
+    const fake = fakeAgentCli(ws, behavior);
+    const iterate = async (n: number): Promise<string> => {
+      await changeRuns(game, (runs) => {
+        (runs[0] as { iteration: number }).iteration = n;
+      });
+      const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, `records/loops/r1/content-input-${String(n)}.md`)], fake.env, root);
+      expect(waited.code).toBe(0);
+      return id;
+    };
+    const first = await iterate(1);
+    const second = await iterate(2);
+    expect(fake.calls().at(-1)?.argv).toContain('--resume');
+    expect((await readJob(first, ws.env)).meta.usage).toMatchObject({ inputTokens: 31228, cachedTokens: 26720, outputTokens: 63, costUsd: 0.011994000000000001, turns: 1 });
+    const { meta } = await readJob(second, ws.env);
+    expect(meta.usage).toMatchObject({ inputTokens: 63305 - 31228, cachedTokens: 57939 - 26720, outputTokens: 112 - 63, turns: 1 });
+    expect((meta.usage as { costUsd: number }).costUsd).toBeCloseTo(0.0170679 - 0.011994, 10);
+    expect(meta.sessionUsage).toEqual({ inputTokens: 63305, cachedTokens: 57939, outputTokens: 112, costUsd: 0.0170679 });
+  });
+
+  it('shows the result object of Claude Code as its result text in the failure content', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'in.md': 'x' });
+    const fake = fakeAgentCli(ws, `process.stdout.write(fs.readFileSync(${JSON.stringify(usageFixture('claude-result.json'))}, 'utf8'));`);
+    const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
+    expect(waited.code).toBe(1);
+    expect(waited.stdout).toContain("failed: the agent left no result file\noutput: none\nOk, I'm ready to help! What would you like to work on?");
+    expect(waited.stdout).not.toContain('modelUsage');
+    // the CLI log keeps the result object as the CLI printed it
+    expect(readFileSync(join(await jobsDir(ws.env), 'agent-logs', `${id}.cli.log`), 'utf8')).toContain('"modelUsage"');
+    expect((await readJob(id, ws.env)).meta.usage).toMatchObject({ inputTokens: 31898, costUsd: 0.0211411 });
   });
 
   it('runs in the foreground without --background and prints the result path', async () => {
@@ -387,7 +476,7 @@ describe('ogw agent: worktree roles', () => {
     expect(waited.stdout).toBe(`${join(worktree, 'records/loops/r1/resource-requests/hero-result.md')}\n`);
     expect(fake.calls()[0]?.cwd).toBe(worktree);
     expect(sh(worktree, 'git', ['branch', '--show-current']).trim()).toBe(`agent/${id}`);
-    expect(await readRunLog(ws, id)).toEqual({ runs: [] });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], usage: noUsage('claude-opus-5-5', 'high') });
     // the agent committed nothing, and neither did `ogw agent`
     expect(sh(root, 'git', ['rev-parse', `agent/${id}`])).toBe(sh(root, 'git', ['rev-parse', 'loop/r1']));
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
@@ -439,7 +528,7 @@ describe('ogw agent: worktree roles', () => {
     const { id, waited } = await runAgent(ws, ['translation', '--game', 'g', '--input', join(root, 'records/loops/r1/translation-input-ko-123.md')], fake.env, root);
     const worktree = join(ws.worktrees, 'g', `agent-${id}`);
     expect(waited.stdout).toBe(`${join(worktree, 'records/loops/r1/translation-ko-123.md')}\n`);
-    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ko: { text: 2, glossary: 1 } } });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ko: { text: 2, glossary: 1 } }, usage: noUsage('claude-sonnet-5-5', 'medium') });
   });
 
   it('reads the translation counts with git that reads no global config the agent wrote', async () => {
@@ -464,7 +553,7 @@ describe('ogw agent: worktree roles', () => {
     const env = { ...fake.env, GIT_CONFIG_GLOBAL: globalConfig };
     const { id, waited } = await runAgent(ws, ['translation', '--game', 'g', '--input', join(root, 'records/loops/r1/translation-input-ko-1.md')], env, root);
     expect(waited.code).toBe(0);
-    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ko: { text: 1, glossary: 0 } } });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ko: { text: 1, glossary: 0 } }, usage: noUsage('claude-sonnet-5-5', 'medium') });
     const traced = existsSync(trace) ? readFileSync(trace, 'utf8') : '';
     expect(traced).not.toMatch(/ls-tree|git show|rev-parse HEAD/);
   });
@@ -489,7 +578,7 @@ describe('ogw agent: worktree roles', () => {
     const { id, waited } = await runAgent(ws, ['translation', '--game', 'g', '--input', join(root, 'records/loops/r1/translation-input-ko-1.md')], fake.env, root);
     const worktree = join(ws.worktrees, 'g', `agent-${id}`);
     expect(waited).toMatchObject({ code: 0, stdout: `${join(worktree, 'records/loops/r1/translation-ko-1.md')}\n` });
-    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ja: { text: 1, glossary: 0 } } });
+    expect(await readRunLog(ws, id)).toEqual({ runs: [], translation: { ja: { text: 1, glossary: 0 } }, usage: noUsage('claude-sonnet-5-5', 'medium') });
   });
 
   it('rejects a translation input that does not hold one language', async () => {

@@ -17,6 +17,7 @@ import {
   SANDBOX_DROPPED_ENV,
   sandboxed,
   userServicesBlocked,
+  withoutJsonOutput,
   withoutSessionFiles,
 } from '../../../../src/commands/agent/lib/cli-command.ts';
 import { move, newTempFolder } from '../../../../src/commands/agent/lib/files.ts';
@@ -117,18 +118,24 @@ describe('prompt', () => {
 describe('agent CLI', () => {
   const settings = { agents: { content: { model: 'm1', effort: 'high' }, core: { cli: 'codex', model: 'm2', effort: 'low' } } } as unknown as HarnessSettings;
 
-  it('runs Claude Code without approvals with model and effort', () => {
+  it('runs Claude Code without approvals with model and effort, printing its usage as one JSON result object', () => {
     expect(agentCliCommand(agentSettings(settings, 'content'))).toEqual({
       cmd: 'claude',
-      args: ['-p', '--model', 'm1', '--effort', 'high', '--permission-mode', 'bypassPermissions'],
+      args: ['-p', '--model', 'm1', '--effort', 'high', '--permission-mode', 'bypassPermissions', '--output-format', 'json'],
     });
   });
 
-  it('runs Codex without approvals and git repo check', () => {
+  it('runs Codex without approvals and git repo check, printing its usage as JSON events', () => {
     expect(agentCliCommand(agentSettings(settings, 'core'))).toEqual({
       cmd: 'codex',
-      args: ['exec', '--model', 'm2', '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'],
+      args: ['exec', '--model', 'm2', '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json', '-'],
     });
+  });
+
+  it('leaves out the JSON output of Claude Code from the arguments of a sandboxed command', () => {
+    const args = ['-f', 'p.sb', 'claude', '-p', '--output-format', 'json', '--no-session-persistence'];
+    expect(withoutJsonOutput(args)).toEqual(['-f', 'p.sb', 'claude', '-p', '--no-session-persistence']);
+    expect(withoutJsonOutput(['exec', '--json', '-'])).toEqual(['exec', '--json', '-']);
   });
 
   it('fails without settings for the role', () => {
