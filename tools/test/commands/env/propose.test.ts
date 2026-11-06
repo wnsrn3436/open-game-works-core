@@ -195,6 +195,7 @@ function setup(): { ws: TestWorkspace; env: NodeJS.ProcessEnv; uv: string } {
       '  in="$4"; all="$*"',
       '  while [ $# -gt 0 ]; do case "$1" in --python-platform) p="$2";; --output-file) o="$2";; esac; shift; done',
       '  { echo "$all" | sed "s#$in#IN#; s#$o#OUT#"; pwd; echo "$in"; cat "$in"; } > "$OGW_TEST_UV/call-$p.log"',
+      '  if [ -f "$o" ]; then cp "$o" "$OGW_TEST_UV/pre-$p.txt"; else rm -f "$OGW_TEST_UV/pre-$p.txt"; fi',
       '  if [ -f "$OGW_TEST_UV/$p.err" ]; then cat "$OGW_TEST_UV/$p.err" >&2; exit 1; fi',
       '  cp "$OGW_TEST_UV/$p.txt" "$o"; exit 0',
       'fi',
@@ -917,6 +918,31 @@ dependencies = [
     expect(settled.input).toEqual(['setuptools==80.9.0', ...torch, 'Numpy>=2', 'rich', 'pillow<12']);
     expect(settled.proposal).toBeUndefined();
     expect((await proposalFor([git, pip], 'external-service')).proposal).toBeUndefined();
+  });
+
+  it('starts each platform resolution from the current pip pin items that hold on that platform', async () => {
+    const MUSIC = 'https://x/music.git';
+    const M = 'd'.repeat(40);
+    const write = (ws: TestWorkspace, pins: unknown[]): void => {
+      const settingsPath = join(ws.harness, 'settings.json');
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { resourceGeneration: Record<string, unknown>[] };
+      settings.resourceGeneration = [{ name: 'music', kind: 'local-model', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins }];
+      writeFileSync(settingsPath, JSON.stringify(settings));
+    };
+    const pre = (uv: string, target: string): string | null => (existsSync(join(uv, `pre-${target}.txt`)) ? readFileSync(join(uv, `pre-${target}.txt`), 'utf8') : null);
+    const { ws, env, uv } = setup();
+    const git = { kind: 'git', source: MUSIC, revision: M };
+    write(ws, [git, { kind: 'pip', source: "numpy==1.26.4,rich==13.9.4 ; sys_platform == 'darwin',pywin32==311 ; sys_platform == 'win32',torch==2.7.1+cu128" }]);
+    setNet(fakeNet(routes(), { files: { [`${MUSIC} ${M} pyproject.toml`]: '[project]\ndependencies = ["rich>=13"]\n' } }));
+    expect(await ogw(ws, ['env', 'propose', '--json'], { env })).toMatchObject({ code: 0, stderr: '' });
+    // a pinned version of a dependency is kept as a preference, also for a project the dependencies name
+    expect(pre(uv, TARGETS['macos-arm64'])).toBe('numpy==1.26.4\nrich==13.9.4\ntorch==2.7.1\n');
+    expect(pre(uv, TARGETS['linux-x64'])).toBe('numpy==1.26.4\ntorch==2.7.1\n');
+    expect(pre(uv, TARGETS['windows-x64'])).toBe('numpy==1.26.4\npywin32==311\ntorch==2.7.1\n');
+    // without a pip pin there is no output file to start from
+    write(ws, [git]);
+    expect(await ogw(ws, ['env', 'propose', '--json'], { env })).toMatchObject({ code: 0, stderr: '' });
+    expect(Object.values(TARGETS).map((target) => pre(uv, target))).toEqual([null, null, null]);
   });
 
   it('resolves pip pin items without their local version labels', async () => {

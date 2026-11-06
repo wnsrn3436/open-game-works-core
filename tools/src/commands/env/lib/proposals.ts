@@ -335,12 +335,16 @@ async function dependencyRequirements(
  * `uv pip compile` resolves the requirements to on the host platform with CPython `3.<minor>`, by normalized name.
  * uv runs in a new private temp folder with no uv config file; a failed resolution fails with uv's message.
  */
-async function compileFor(ctx: Context, requirements: readonly string[], platform: HostPlatform, minor: number): Promise<Map<string, string>> {
+async function compileFor(ctx: Context, requirements: readonly string[], platform: HostPlatform, minor: number, current: readonly string[]): Promise<Map<string, string>> {
   const dir = await newPrivateTempFolder('ogw-uv-compile-', ctx.env);
   try {
     const input = join(dir, 'requirements.in');
     const output = join(dir, 'requirements.txt');
     await writeFileAtomic(input, `${requirements.join('\n')}\n`);
+    // tools/ogw.md `## env propose` `pin:<method>`: the current pins of this platform are the existing output file, whose
+    // versions uv keeps while the requirements allow them
+    const preferred = pinsOn(current, platform, minor);
+    if (preferred.length > 0) await writeFileAtomic(output, `${preferred.join('\n')}\n`);
     const python = `3.${String(minor)}`;
     const args = ['--no-config', 'pip', 'compile', input, '--python-platform', UV_PLATFORMS[platform], '--python-version', python, '--no-header', '--no-annotate', '--output-file', output];
     const env = platform === 'macos-arm64' ? { ...ctx.env, MACOSX_DEPLOYMENT_TARGET: MACOS_TARGET } : ctx.env;
@@ -358,6 +362,16 @@ async function compileFor(ctx: Context, requirements: readonly string[], platfor
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** The pip pin items that hold on the host platform, without their markers. */
+function pinsOn(items: readonly string[], platform: HostPlatform, minor: number): string[] {
+  return items.flatMap((text) => {
+    const requirement = parseRequirement(text);
+    if (!requirement || !holdsOn(requirement.marker ?? '', platform, minor)) return [];
+    const marker = text.indexOf(';');
+    return [(marker === -1 ? text : text.slice(0, marker)).trim()];
+  });
 }
 
 /**
@@ -382,8 +396,8 @@ export function mergePlatformPins(resolved: ReadonlyMap<HostPlatform, ReadonlyMa
  * `uv pip compile` of the requirements for each host platform (`compileFor`), together. A host platform that cannot
  * resolve is left out and named in `failed` (the method gets no packages there); fails when no host platform resolves.
  */
-async function compileAll(ctx: Context, requirements: readonly string[], minor: number): Promise<{ resolved: Map<HostPlatform, Map<string, string>>; failed: string[] }> {
-  const results = await Promise.allSettled(WHEEL_PLATFORMS.map((platform) => compileFor(ctx, requirements, platform, minor)));
+async function compileAll(ctx: Context, requirements: readonly string[], minor: number, current: readonly string[]): Promise<{ resolved: Map<HostPlatform, Map<string, string>>; failed: string[] }> {
+  const results = await Promise.allSettled(WHEEL_PLATFORMS.map((platform) => compileFor(ctx, requirements, platform, minor, current)));
   const resolved = new Map<HostPlatform, Map<string, string>>();
   const failed: string[] = [];
   for (const [i, result] of results.entries()) {
@@ -450,7 +464,8 @@ async function resolvedPip(ctx: Context, pypi: Pypi, pins: readonly GenerationPi
   const reasons: string[] = [];
   let source: string | null = null;
   if (pip.length + requirements.length > 0) {
-    const compiled = await compileAll(ctx, [...pip, ...requirements], minor);
+    const current = pins.filter((p) => p.kind === 'pip').flatMap((p) => pipRequirements(p.source)).map(pipItemWithoutLocalLabels);
+    const compiled = await compileAll(ctx, [...pip, ...requirements], minor, current);
     source = mergePlatformPins(compiled.resolved).join(',');
     const extra = added.length === 0 ? '' : ` with the pyproject.toml dependencies (${added.join(', ')}), which win over pip pin items of the same project,`;
     reasons.push(`pip pins${extra} resolved with uv pip compile for ${WHEEL_PLATFORMS.join(', ')} CPython 3.${String(minor)}`);
