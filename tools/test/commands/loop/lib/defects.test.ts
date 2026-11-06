@@ -78,8 +78,16 @@ describe('finding checks', () => {
         f({ id: 'e', severity: null, owner: null, why: null, what: 'e1' }),
         f({ id: 'e', severity: 'blocker', owner: 'data', why: 'from the file', what: 'e2' }),
         f({ id: 'n', severity: null, owner: null, why: null }),
+        f({ id: 'b', severity: '' as 'minor', owner: 'client content', why: '  ' }),
+        // only `id`: left for the drop decision, not filled from the defect list
+        f({ id: 'u', severity: null, owner: null, why: null }),
       ],
-      [d({ id: 'c', severity: 'major', owner: 'design', why: 'earlier why' }), d({ id: 'e', severity: 'minor', owner: 'design', why: 'earlier' })],
+      [
+        d({ id: 'c', severity: 'major', owner: 'design', why: 'earlier why' }),
+        d({ id: 'e', severity: 'minor', owner: 'design', why: 'earlier' }),
+        d({ id: 'b', severity: 'major', owner: 'design', why: 'listed why' }),
+        d({ id: 'u', severity: 'major', owner: 'client content', why: 'listed' }),
+      ],
     );
     expect(out.map((x) => [x.id, x.severity, x.owner, x.why])).toEqual([
       // a field the finding filled stays; the empty owner comes from the defect list
@@ -88,8 +96,11 @@ describe('finding checks', () => {
       ['e', 'blocker', 'data', 'from the file'],
       ['e', 'blocker', 'data', 'from the file'],
       ['n', null, null, null],
+      // a blank field is empty
+      ['b', 'major', 'client content', 'listed why'],
+      ['u', null, null, null],
     ]);
-    expect(incompleteFindings(out).map((x) => x.id)).toEqual(['n']);
+    expect(incompleteFindings(out).map((x) => x.id)).toEqual(['n', 'u']);
   });
 
   it('finds findings record refuses', () => {
