@@ -260,6 +260,25 @@ describe('ogw loop resume limits and harness pin', () => {
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).toContain(`harness: ${changed} (repinned from ${old}), counts for iteration 1\n`);
   });
 
+  it('repins for the next iteration to a harness HEAD of another core, and leaves the core version check to ogw loop next', async () => {
+    const { g, old } = await pinnedRun(1);
+    // iteration 1 is recorded on the run branch: a repin counts for iteration 2
+    git(g.root, 'checkout', '-q', 'loop/update-1');
+    write(g.root, `${R}/iteration-1.md`, 'r');
+    commit(g.root);
+    git(g.root, 'checkout', '-q', 'main');
+    const changed = changeHarness(g);
+    git(g.ws.harness, 'tag', 'core-v99.0.0');
+    const out = await ogw(g.ws, ['loop', 'resume', 'g', '--repin']);
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain(`harness: ${changed} (repinned from ${old}), counts for iteration 2\n`);
+    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0 }, { commit: changed, iteration: 2 }]);
+    const next = await ogw(g.ws, ['loop', 'next', 'g']);
+    expect(next.code).toBe(1);
+    expect(next.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 99.0.0');
+    expect((await currentRun(g)).iteration).toBe(1);
+  });
+
   it('replaces the limits given, and refuses a bad value or limits in a build run', async () => {
     const { g } = await pinnedRun(2);
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--limit', '4'])).stdout).toContain('limits: --limit 4, --until 9000000000000\n');
