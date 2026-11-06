@@ -154,10 +154,17 @@ async function variantsOf(game: GameRepo, run: RunState): Promise<RecordVariant[
   return (await readRunJson<VariantsFile>(game, run, `variants-${String(run.iteration)}.json`))?.variants ?? null;
 }
 
+/** The `result` cell of `## load`: the item result, and for an `unknown` item the message of its first failure, which says why. */
+function loadResult(item: CheckFile['checks'][number]): string {
+  const why = item.result === 'unknown' ? item.failures[0]?.message : undefined;
+  return why === undefined ? item.result : `${item.result} (${why})`;
+}
+
 async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[], env: NodeJS.ProcessEnv): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
-  const performanceFailed = check !== null && checkResult(check, 'performance') === 'fail';
+  // a fun iteration has no performance item, and no `## load`
+  const performanceNotPassed = check !== null && check.checks.some((c) => c.name === 'performance') && checkResult(check, 'performance') !== 'pass';
   const rel = runRel(run, `iteration-${n}.md`);
   const variants = await variantsOf(game, run);
   await writeFileAtomic(abs(game, rel), renderIterationRecord({
@@ -173,8 +180,8 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
     plays: evaluate ? await playsOf(game, evaluate) : null,
     defects,
     measurements: measure?.targets ?? null,
-    load: performanceFailed
-      ? check.checks.filter((c) => c.name === 'performance').map((c) => ({ platform: c.platform, hostLoad: c.hostLoad ?? null }))
+    load: performanceNotPassed
+      ? check.checks.filter((c) => c.name === 'performance').map((c) => ({ platform: c.platform, result: loadResult(c), hostLoad: c.hostLoad ?? null }))
       : null,
     temporary: await newTemporary(game, run, check?.commit ?? null),
   }));

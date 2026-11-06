@@ -1,9 +1,27 @@
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
-import { withReader, withWriter, withWriterLock } from '../../src/lib/rwlock.ts';
+import { hostBootId, pidNamespace } from '../../src/lib/proc.ts';
+import { withReader, withWriter, withWriterLock, withWriterWithin } from '../../src/lib/rwlock.ts';
+
+/** An owner file of `pid` as `ownerText` writes it. */
+function ownerOf(pid: number): string {
+  return `${String(pid)}\n${pidNamespace() ?? ''}\n${hostBootId() ?? ''}\n${String(Math.random())}\n`;
+}
+
+/** A pid whose process has ended. */
+function goneProcess(): number {
+  return Number(spawnSync('sh', ['-c', 'echo $$'], { encoding: 'utf8' }).stdout.trim());
+}
+
+/** Leaves the lock, slot or entry folder `folder` with the owner file `owner`, as a process that took it does. */
+function leave(folder: string, owner: string): void {
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'pid'), owner);
+}
 
 describe('rwlock', () => {
   it('lets readers run together, and a writer wait for them while it keeps new readers of other processes out', async () => {
@@ -104,5 +122,70 @@ describe('rwlock', () => {
     await writer;
     expect(wrote).toBe(true);
     expect(readdirSync(`${lock.base}-readers`)).toEqual([]);
+  });
+});
+
+describe('withWriterWithin', () => {
+  it('runs once the readers end within the wait, and gives up on a reader that outlasts it without running', async () => {
+    const lock = { base: join(mkdtempSync(join(tmpdir(), 'ogw-rwlock-')), 'lock'), waitMs: 60_000 };
+    let endReader: () => void = () => undefined;
+    const reader = withReader(lock, () => new Promise<void>((resolve) => {
+      endReader = resolve;
+    }));
+    await sleep(50);
+    let ran = false;
+    const short = await withWriterWithin({ ...lock, waitMs: 300 }, () => {
+      ran = true;
+      return Promise.resolve();
+    });
+    expect(short).toEqual({ ran: false, waited: 'readers' });
+    expect(ran).toBe(false);
+    expect(readdirSync(`${lock.base}-writers`)).toEqual([]);
+    const long = withWriterWithin(lock, () => Promise.resolve('wrote'));
+    await sleep(200);
+    endReader();
+    await reader;
+    expect(await long).toEqual({ ran: true, value: 'wrote' });
+  });
+
+  it('gives up on another writer that holds the writer lock past the wait', async () => {
+    const lock = { base: join(mkdtempSync(join(tmpdir(), 'ogw-rwlock-')), 'lock'), waitMs: 60_000 };
+    const other = withWriter(lock, () => sleep(800));
+    await sleep(50);
+    expect(await withWriterWithin({ ...lock, waitMs: 200 }, () => Promise.resolve('wrote'))).toEqual({ ran: false, waited: 'writer' });
+    await other;
+    expect(await withWriterWithin({ ...lock, waitMs: 200 }, () => Promise.resolve('wrote'))).toEqual({ ran: true, value: 'wrote' });
+  });
+
+  it('keeps a reader that starts while it waits for the reader of another process out until it ran', async () => {
+    const lock = { base: join(mkdtempSync(join(tmpdir(), 'ogw-rwlock-')), 'lock'), waitMs: 60_000 };
+    const other = spawn('sleep', ['30'], { stdio: 'ignore' });
+    try {
+      // the reader entry of a live process that reads the lock (a generation run of another process)
+      const entry = join(`${lock.base}-readers`, 'other');
+      leave(entry, ownerOf(other.pid as number));
+      const order: string[] = [];
+      const writer = withWriterWithin(lock, () => Promise.resolve(order.push('writer')));
+      await sleep(200);
+      const reader = withReader(lock, () => Promise.resolve(order.push('reader')));
+      await sleep(600);
+      expect(order).toEqual([]);
+      rmSync(entry, { recursive: true });
+      await Promise.all([writer, reader]);
+      expect(order).toEqual(['writer', 'reader']);
+    } finally {
+      other.kill('SIGKILL');
+    }
+  });
+
+  it('does not wait for a reader, a waiting writer or a writer lock left by a process that is gone, nor does a reader', async () => {
+    const lock = { base: join(mkdtempSync(join(tmpdir(), 'ogw-rwlock-')), 'lock'), waitMs: 2000 };
+    const gone = ownerOf(goneProcess());
+    for (const folder of [join(`${lock.base}-readers`, 'r'), join(`${lock.base}-writers`, 'w'), lock.base]) leave(folder, gone);
+    expect(await withWriterWithin(lock, () => Promise.resolve('wrote'))).toEqual({ ran: true, value: 'wrote' });
+    expect(readdirSync(`${lock.base}-readers`)).toEqual([]);
+    for (const folder of [join(`${lock.base}-writers`, 'w'), lock.base]) leave(folder, ownerOf(goneProcess()));
+    expect(await withReader(lock, () => Promise.resolve('read'))).toBe('read');
+    expect(readdirSync(`${lock.base}-writers`)).toEqual([]);
   });
 });

@@ -526,5 +526,6 @@
     }
   },
   "webSmokeBootTimeoutMs": 120000,
-  "hosts": {}
+  "hosts": {},
+  "performanceLeaseWaitTimeoutMs": 1800000
 }

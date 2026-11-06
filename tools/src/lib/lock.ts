@@ -15,16 +15,26 @@ const NO_PID_STALE_MS = 10_000;
  * inside. A lock whose owner process is gone is taken over; a lock of another PID namespace is never taken over by pid.
  */
 export async function withLock<T>(lockPath: string, fn: () => Promise<T>, timeoutMs = 10 * 60_000): Promise<T> {
+  const taken = await withLockWithin(lockPath, fn, timeoutMs);
+  if (!taken.ran) throw new OgwError(`lock busy: ${lockPath}`);
+  return taken.value;
+}
+
+/** What `withLockWithin` did: ran `fn` holding the lock, with its value, or did not run it. */
+export type LockOutcome<T> = { ran: true; value: T } | { ran: false };
+
+/** `withLock` that, when the lock is not free within `timeoutMs`, does not run `fn` instead of throwing. */
+export async function withLockWithin<T>(lockPath: string, fn: () => Promise<T>, timeoutMs: number): Promise<LockOutcome<T>> {
   await mkdir(dirname(lockPath), { recursive: true });
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await takeFolder(lockPath)) break;
     if (await removeIfStale(lockPath)) continue;
-    if (Date.now() >= deadline) throw new OgwError(`lock busy: ${lockPath}`);
+    if (Date.now() >= deadline) return { ran: false };
     await sleep(POLL_MS);
   }
   try {
-    return await fn();
+    return { ran: true, value: await fn() };
   } finally {
     await releaseFolder(lockPath);
   }

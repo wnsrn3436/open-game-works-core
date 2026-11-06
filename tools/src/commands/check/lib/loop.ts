@@ -8,6 +8,7 @@ import { commitPaths, head } from '../../../lib/git.ts';
 import { requireOpenRun } from '../../../lib/runstate.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { gameModules, mergedCoreSettings } from '../../generate/api.ts';
+import { performanceLeaseBase } from '../../generation/api.ts';
 import { CHECK_ORDER, GATE_CHECKS, mergedResult, placeholderFailures, type CheckResult } from '../api.ts';
 import { staticCheck } from '../static-api.ts';
 import { botPlaytest, readScenario, type InstanceCheckOptions } from './bot-playtest.ts';
@@ -15,7 +16,7 @@ import { coreSetting, importClient } from './engine.ts';
 import { checkResult, failure, type Evidence } from './evidence.ts';
 import { hostProbe, type HostProbe } from './host-load.ts';
 import { Slots } from './instances.ts';
-import { performanceCheck, platformProfiles } from './performance.ts';
+import { performanceChecks, platformProfiles } from './performance.ts';
 import { regressionTest } from './regression.ts';
 import { rowSimulationCheck } from './row-simulation.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
@@ -114,6 +115,7 @@ export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSet
     quality: modules.client.includes('QualityCore'),
     probe,
     sampleMs: options.sampleMs,
+    lease: { base: await performanceLeaseBase(ctx), waitMs: (await ctx.settings()).performanceLeaseWaitTimeoutMs },
   };
   const ui = {
     ...instance,
@@ -137,7 +139,7 @@ export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSet
     guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client)),
     guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })),
     botPlaytest(ctx, game.name, scenario, instance),
-    ...(fun ? [] : profiles.map((p) => performanceCheck(ctx, game.name, p, scenario, performance))),
+    ...(fun ? [] : [performanceChecks(ctx, game.name, profiles, scenario, performance)]),
     ...(fun ? [] : profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui))),
     ...(all ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
     ...(all ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),

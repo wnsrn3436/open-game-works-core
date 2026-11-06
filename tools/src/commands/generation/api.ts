@@ -7,11 +7,14 @@ import { listJobs } from '../../lib/jobs.ts';
 import { toolProgram } from '../env/api.ts';
 import { installCommand } from './install.ts';
 import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice } from './lib/select.ts';
+import { performanceLeaseBase } from './lib/lease.ts';
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
 
 export type { CatalogFile, MethodChoice };
 /** The logotype method and the prefix of the logo keys it letters (`production.md` `## logo`). */
 export { LOGO_PREFIX, LOGOTYPE_METHOD };
+/** The lock of the performance lease that the performance measurement of `ogw check` holds exclusively (ogw.md `### performance lease`). */
+export { performanceLeaseBase };
 
 /** Methods a resource key can use and the stage of each, as `ogw generation methods <game> <key>` gives them. */
 export async function generationMethods(ctx: Context, game: GameRepo, resourceKey: string): Promise<MethodChoice[]> {

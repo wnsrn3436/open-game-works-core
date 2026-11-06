@@ -251,10 +251,23 @@ How `ogw check` judges performance.
   - frame limit: the `frame_limit_fps` of `QualityCore` for the level that `quality_level` of `get_stats` of that tick names, with `QualityCore.levels` of the game's merged core settings. It is left out when `quality_level` names no level of `QualityCore.levels` (the empty string when `QualityCore` is not in the module list)
 - A scene with 2 or more kept samples is judged. It keeps the fps when, at the 5th percentile of its kept samples ordered by fps − fps bound (nearest rank: the ⌈5n/100⌉-th smallest of n samples), the fps is at least the fps bound. A scene with 1 kept sample is `unknown`, and a scene with no kept sample is not judged unless a tick that would be kept had no numeric `fps` in that scene, which makes it `unknown`. When no scene has a kept sample, the fps is `unknown`
 - Judgement: `pass` when every judged scene keeps the fps and every `duration_ms` of telemetry `scene_loads` is at most game settings `loadingTimeLimitMs`. `boot_ms` is not compared
+- `ogw check` measures holding the performance lease (`### performance lease`), and a measured item whose host was busy is `unknown` (`### host load`). The text output shows an `unknown` item as the line `performance (<platform>): unknown`, then per `<failure>`, which says why it is `unknown`, the line `<where> <message>` and one line per `evidence` path, then its `hostLoad` line. An `unknown` item gives no finding (`## loop findings`)
+
+### performance lease
+
+The performance lease is a lock of this host that keeps `local-model` generation and the performance measurement of `ogw check` from running at the same time.
+
+- `ogw generation run` of a `local-model` method holds the lease shared while its calls run
+- The performance measurements of one `ogw check`, those of all its platform profiles together, hold the lease exclusively from before their instances start until they stop: meanwhile no `ogw generation run` call and no performance measurement of another `ogw check` runs
+- A waiting measurement goes first: while it waits, no `ogw generation run` takes the lease, so it waits only for the holders it found
+- A measurement waits for the lease at most harness settings `performanceLeaseWaitTimeoutMs`. When that passes, the check does not measure, and each performance item is `unknown` with one `<failure>` whose `where` is `client/dev/bot/scenario.json:1` and whose `message` is `host busy: local generation` when an `ogw generation run` still holds the lease, or `host busy: performance measurement` when another `ogw check` holds it. Its `hostLoad` holds the readings of `### host load` taken during the wait
+- The holders and waiting measurements of the lease are file locks and reader items (`## agent`): one whose process is gone or that was recorded in another boot holds nothing and is removed
 
 ### host load
 
 While `ogw check` measures performance for a platform profile, `cpuMaxPercent` is the maximum of the whole-host CPU usage (%) read every 1000ms, `memoryMaxPercent` the maximum of the memory usage (%), and `instancesMax` the maximum of the number of instances that the runner started during that time. `ogw check` writes them in the `performance` item of that platform profile in `check-<iteration>.json` as `"hostLoad": {"cpuMaxPercent": <number>, "memoryMaxPercent": <number>, "instancesMax": <integer>}`.
+
+A measured item whose judgement is `fail` is `unknown` instead when its `memoryMaxPercent` is at least 95 or its `cpuMaxPercent` is at least 90 (95 and 90 are fixed values of the check, not settings), because the fps and loading time of a busy host do not show those of the game. Its `failures` are then one `<failure>` per value reached, memory first, with `where` `client/dev/bot/scenario.json:1`, `message` `host memory <memoryMaxPercent>%` or `host CPU <cpuMaxPercent>%`, and `evidence` the file `performance-<platform>/samples.json` of the check evidence folder, which holds the kept samples, the telemetry `scene_loads` and the `hostLoad` of that measurement. An item whose judgement is `pass` or `unknown` keeps it.
 
 ## UI quality
 
@@ -361,7 +374,7 @@ A play of `evaluate-<iteration>.json` with an empty `result` (its save fixture d
 | `## play` | A table with columns `feedback`, `blocker`, `major`, `minor`, `none`. Per play agent, the feedback file path and the count per severity of `## observations` |
 | `## defects` | A table with the fields of `## defect list` of [game-loop](../skills/game-loop/SKILL.md) as columns in that order. `evidence` is joined with ", ", and when `status` is `refused`, it is `refused (<reason>)` |
 | `## measurements` | A table with columns `metric`, `value`, `range`, `result`. Per target of design.md, the value of `ogw measure` (`none` if absent), `<min>..<max>`, and the judgement (`in`, `out`, `unknown`) |
-| `## load` | For an iteration whose `performance` check failed, a table with columns `platform`, `hostLoad`: per `performance` item of `check-<iteration>.json`, `platform` and the JSON of `hostLoad`. Otherwise `none` |
+| `## load` | For an iteration whose `performance` check is `fail` or `unknown`, a table with columns `platform`, `result`, `hostLoad`: per `performance` item of `check-<iteration>.json`, `platform`, the `result` of that item (for an `unknown` item, followed by ` (<message of its first <failure>>)`) and the JSON of `hostLoad`. Otherwise `none` |
 | `## temporary resources` | The rows of `resources.csv` whose `status` is `temporary` at the instance commit and was not `temporary` at the instance commit of the previous iteration (the main commit the work branch was created from for iteration 1): one line `` - `<key>` `` per row |
 
 - A heading without content is `none`. An iteration that did not do steps 3 and 4 writes `## judge`, `## play`, `## measurements` as `none`

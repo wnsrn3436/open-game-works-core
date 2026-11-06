@@ -1,5 +1,6 @@
 import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
+import { withWriterWithin, type RwLock } from '../../../lib/rwlock.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import type { CheckFailure, CheckResult, HostLoad } from '../api.ts';
 import { SCENARIO_WHERE, type InstanceCheckOptions } from './bot-playtest.ts';
@@ -160,6 +161,8 @@ export interface PerformanceOptions extends InstanceCheckOptions {
   quality: boolean;
   probe: HostProbe;
   sampleMs: number;
+  /** The performance lease, with harness settings `performanceLeaseWaitTimeoutMs` as its wait (ogw.md `### performance lease`). */
+  lease: RwLock;
 }
 
 interface SceneLoad {
@@ -183,6 +186,17 @@ function loadFailures(loads: readonly SceneLoad[], limit: number, evidence: (str
 
 function withLoad(result: CheckResult, hostLoad: HostLoad): CheckResult {
   return { ...result, hostLoad };
+}
+
+/** The host load at or above which a `fail` of a measurement is `unknown` (ogw.md `### host load`): fixed values of the check. */
+const BUSY_HOST = { memoryPercent: 95, cpuPercent: 90 };
+
+/** One failure per value of `BUSY_HOST` that the host load of a measurement reached, memory first. */
+function busyHost(hostLoad: HostLoad, evidence: (string | null)[]): CheckFailure[] {
+  return [
+    ...(hostLoad.memoryMaxPercent >= BUSY_HOST.memoryPercent ? [failure(SCENARIO_WHERE, `host memory ${String(hostLoad.memoryMaxPercent)}%`, evidence)] : []),
+    ...(hostLoad.cpuMaxPercent >= BUSY_HOST.cpuPercent ? [failure(SCENARIO_WHERE, `host CPU ${String(hostLoad.cpuMaxPercent)}%`, evidence)] : []),
+  ];
 }
 
 /**
@@ -294,7 +308,9 @@ async function measure(ctx: Context, id: string, platform: string, scenario: Sce
   if (measured.kind === 'quality') return withLoad(checkResult('performance', platform, [failure(SCENARIO_WHERE, measured.message)], true), hostLoad);
   const record = { samples: Object.fromEntries(measured.samples), scene_loads: measured.sceneLoads, hostLoad };
   const evidence = [await writeEvidence(options.evidence, `performance-${platform}/samples.json`, `${JSON.stringify(record, null, 2)}\n`)];
-  return withLoad(performanceVerdict(measured, platform, options, evidence), hostLoad);
+  const verdict = performanceVerdict(measured, platform, options, evidence);
+  const busy = verdict.result === 'fail' ? busyHost(hostLoad, evidence) : [];
+  return withLoad(busy.length > 0 ? checkResult('performance', platform, busy, true) : verdict, hostLoad);
 }
 
 /** performance of one platform profile: the bot playtest scenario again in an instance that draws the screen. */
@@ -309,5 +325,31 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
   } catch (error) {
     const hostLoad = await (started.sampler ?? new HostLoadSampler(options.probe, options.sampleMs)).stop();
     return withLoad(checkResult('performance', platform, [failure(SCENARIO_WHERE, `performance did not run: ${(error as Error).message}`)], true), hostLoad);
+  }
+}
+
+/**
+ * performance of every platform profile, measured together holding the performance lease exclusively (ogw.md
+ * `### performance lease`). When the lease does not come within its wait, nothing is measured and each item is
+ * `unknown`, with the host load read during the wait.
+ */
+export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
+  const each = (): Promise<CheckResult[]> => Promise.all(platforms.map((p) => performanceCheck(ctx, game, p, scenario, options)));
+  // nothing to measure: the items say why without waiting for the lease
+  if (platforms.length === 0 || typeof scenario === 'string') return each();
+  const waiting = new HostLoadSampler(options.probe, options.sampleMs);
+  const unknown = async (message: string): Promise<CheckResult[]> => {
+    const hostLoad = await waiting.stop();
+    return platforms.map((p) => withLoad(checkResult('performance', p, [failure(SCENARIO_WHERE, message)], true), hostLoad));
+  };
+  try {
+    const leased = await withWriterWithin(options.lease, async () => {
+      await waiting.stop();
+      return each();
+    });
+    if (leased.ran) return leased.value;
+    return await unknown(leased.waited === 'readers' ? 'host busy: local generation' : 'host busy: performance measurement');
+  } catch (error) {
+    return unknown(`performance did not run: ${(error as Error).message}`);
   }
 }

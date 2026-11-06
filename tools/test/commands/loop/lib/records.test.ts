@@ -92,7 +92,7 @@ const DATA: IterationRecordData = {
   plays: [{ result: 'records/loops/r/play-1-1.md', counts: { blocker: 1, major: 0, minor: 2, none: 3 } }],
   defects: [],
   measurements: [{ metric: 'fps', min: 30, max: 60, value: null, result: 'unknown', data: null }],
-  load: [{ platform: 'web', hostLoad: { cpuMaxPercent: 99 } }],
+  load: [{ platform: 'web', result: 'unknown (host CPU 99%)', hostLoad: { cpuMaxPercent: 99 } }],
   temporary: ['icon/a', 'image/b'],
 };
 
@@ -110,7 +110,7 @@ describe('iteration record', () => {
     expect(text).toContain('- omitted moments: boss');
     expect(text).toContain('| records/loops/r/play-1-1.md | 1 | 0 | 2 | 3 |');
     expect(text).toContain('| fps | none | 30..60 | unknown |');
-    expect(text).toContain('| web | {"cpuMaxPercent":99} |');
+    expect(text).toContain('| web | unknown (host CPU 99%) | {"cpuMaxPercent":99} |');
     expect(text).toContain('#### loser better\n\nnone');
     const parsed = parseIterationRecord(text, 1, 'p1');
     expect(parsed.commit).toBe('c1');

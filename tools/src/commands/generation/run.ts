@@ -10,6 +10,7 @@ import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import type { GenerationMethod } from '../../lib/settings.ts';
 import { dataDir } from '../env/lib/host.ts';
 import { methodDir, methodMarker, withMethodLock } from './lib/install.ts';
+import { withGenerationLease } from './lib/lease.ts';
 import { IMAGE_METHOD, keyChoices, keySpec, type Stage } from './lib/select.ts';
 import { outputsPresent, runCall, standardJob, type CallInput, type StageValues, type StandardJob } from './lib/standard.ts';
 import type { MeasuredRun } from '../env/lib/results.ts';
@@ -164,8 +165,9 @@ export const runCommand: CommandDef = {
     const batch = str(args, 'batch') !== undefined;
     const outcome = await withLock(
       join(await dataDir(ctx), 'generation', 'run.lock'),
+      // The lease keeps the calls off the host while `ogw check` measures performance (ogw.md `### performance lease`).
       // The method lock keeps `generation install` from emptying the folder while the call uses it.
-      () =>
+      () => withGenerationLease(ctx, () =>
         withMethodLock(ctx, name, async () => {
           const marker = await methodMarker(ctx, method);
           if (!marker) throw new OgwError(notInstalled);
@@ -198,7 +200,7 @@ export const runCommand: CommandDef = {
             await rm(work, { recursive: true, force: true });
             await rm(join(dir, 'tmp'), { recursive: true, force: true });
           }
-        }),
+        })),
       LIMITS.jobMs,
     );
     const failed = outcome.results.some((r) => r.result !== 'ok');

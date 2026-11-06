@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { gameChecks, type CheckSet } from '../../../../src/commands/check/lib/loop.ts';
 import { placeholderFailures, type CheckResult } from '../../../../src/commands/check/api.ts';
 import { botPlaytest } from '../../../../src/commands/check/lib/bot-playtest.ts';
-import { performanceCheck } from '../../../../src/commands/check/lib/performance.ts';
+import { performanceChecks } from '../../../../src/commands/check/lib/performance.ts';
 import { regressionTest } from '../../../../src/commands/check/lib/regression.ts';
 import { rowSimulationCheck } from '../../../../src/commands/check/lib/row-simulation.ts';
 import { uiQualityCheck } from '../../../../src/commands/check/lib/ui-quality.ts';
@@ -20,7 +20,7 @@ vi.mock('../../../../src/commands/check/api.ts', async (importOriginal) => ({
 vi.mock('../../../../src/commands/check/lib/bot-playtest.ts', () => ({ BOT_PLAYTEST_POLL_MS: 200, botPlaytest: vi.fn(), readScenario: vi.fn(() => Promise.resolve('no scenario')) }));
 vi.mock('../../../../src/commands/check/lib/performance.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/lib/performance.ts')>()),
-  performanceCheck: vi.fn(),
+  performanceChecks: vi.fn(),
 }));
 vi.mock('../../../../src/commands/check/lib/regression.ts', () => ({ regressionTest: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/row-simulation.ts', () => ({ rowSimulationCheck: vi.fn() }));
@@ -39,7 +39,7 @@ function pass(name: string, platform: string | null = null): CheckResult {
   return { name, platform, result: 'pass', failures: [], warnings: [] };
 }
 
-const ctx = { settings: () => Promise.resolve({ maxConcurrentInstances: 2 }) } as unknown as Context;
+const ctx = { settings: () => Promise.resolve({ maxConcurrentInstances: 2, performanceLeaseWaitTimeoutMs: 1234 }), workspace: () => Promise.resolve({ root: '/ws' }) } as unknown as Context;
 const game = { name: 'g', root: '/nowhere' } as GameRepo;
 const UI_QUALITY = { settleLimitMs: 0, maxFontSizes: 4, minFontPx: 18, minContrast: 3, maxEmptyShare: 0.6 };
 const settings = { buildPlatforms: ['ios', 'web'], targetFps: 60, loadingTimeLimitMs: 1000, rowSimulationSeeds: 2, uiQuality: UI_QUALITY } as GameSettings;
@@ -53,7 +53,7 @@ beforeEach(() => {
   vi.mocked(regressionTest).mockReset().mockResolvedValue(pass('regression test'));
   vi.mocked(staticCheck).mockReset().mockResolvedValue(pass('static check'));
   vi.mocked(botPlaytest).mockReset().mockResolvedValue([pass('no blocker'), pass('full flow')]);
-  vi.mocked(performanceCheck).mockReset().mockImplementation((_c, _g, platform) => Promise.resolve(pass('performance', platform)));
+  vi.mocked(performanceChecks).mockReset().mockImplementation((_c, _g, platforms) => Promise.resolve(platforms.map((p) => pass('performance', p))));
   vi.mocked(uiQualityCheck).mockReset().mockImplementation((_c, _g, platform) => Promise.resolve(pass('UI quality', platform)));
   vi.mocked(rowSimulationCheck).mockReset().mockResolvedValue(pass('row simulation'));
   vi.mocked(placeholderFailures).mockReset().mockResolvedValue([]);
@@ -74,6 +74,16 @@ describe('gameChecks', () => {
     expect(placeholderFailures).not.toHaveBeenCalled();
     expect(rowSimulationCheck).not.toHaveBeenCalled();
     expect(vi.mocked(uiQualityCheck).mock.calls.map((c) => c[3].quality)).toEqual([UI_QUALITY, UI_QUALITY]);
+  });
+
+  it('measures the performance of every platform profile under one hold of the performance lease of this host', async () => {
+    await names('core try');
+    expect(vi.mocked(performanceChecks).mock.calls.map((c) => [c[2], c[4].lease])).toEqual([
+      [['ios', 'web'], { base: '/ws/.ogw/generation/performance-lease', waitMs: 1234 }],
+    ]);
+    vi.mocked(performanceChecks).mockClear();
+    await names('fun');
+    expect(performanceChecks).not.toHaveBeenCalled();
   });
 
   it('gives the regression test the run and start limits of the merged core settings of the game', async () => {

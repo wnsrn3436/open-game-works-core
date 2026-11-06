@@ -41,8 +41,8 @@ export interface IterationRecordData {
   plays: RecordPlay[] | null;
   defects: Defect[];
   measurements: MeasureTarget[] | null;
-  /** null when the `performance` check did not fail. */
-  load: { platform: string | null; hostLoad: unknown }[] | null;
+  /** null when the `performance` check is `pass` or has no item. */
+  load: { platform: string | null; result: string; hostLoad: unknown }[] | null;
   /** Keys that became `temporary` since the previous iteration (ogw.md `## loop record`). */
   temporary: string[];
 }
@@ -118,7 +118,7 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ]))
     : 'none';
   const load = data.load
-    ? renderTable(['platform', 'hostLoad'], data.load.map((l) => [l.platform ?? 'none', JSON.stringify(l.hostLoad ?? null)]))
+    ? renderTable(['platform', 'result', 'hostLoad'], data.load.map((l) => [l.platform ?? 'none', l.result, JSON.stringify(l.hostLoad ?? null)]))
     : 'none';
   return document([
     [

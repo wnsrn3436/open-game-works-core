@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { OgwError } from './errors.ts';
-import { isStale, ownerText, withLock } from './lock.ts';
+import { isStale, ownerText, withLock, withLockWithin } from './lock.ts';
 
 const READERS_POLL_MS = 500;
 
@@ -38,6 +38,28 @@ export async function withWriter<T>(lock: RwLock, fn: () => Promise<T>): Promise
       await noReaders(lock);
       return fn();
     }, lock.waitMs);
+  } finally {
+    await waiting();
+  }
+}
+
+/** What a writer that gave up waited for: the writer lock, which another writer held, or the end of the readers. */
+export type WriterWait = 'writer' | 'readers';
+
+/**
+ * `withWriter` that waits at most `lock.waitMs` in all for the writer lock and then the end of the readers. When either
+ * does not come by then, it does not run `fn` and says which it waited for.
+ */
+export async function withWriterWithin<T>(lock: RwLock, fn: () => Promise<T>): Promise<{ ran: true; value: T } | { ran: false; waited: WriterWait }> {
+  const deadline = Date.now() + lock.waitMs;
+  const waiting = await addEntry(writersDir(lock));
+  try {
+    const taken = await withLockWithin(lock.base, async () => {
+      await waiting();
+      if (!(await liveEntriesEnd(readersDir(lock), deadline))) return { ran: false as const, waited: 'readers' as const };
+      return { ran: true as const, value: await fn() };
+    }, Math.max(0, deadline - Date.now()));
+    return taken.ran ? taken.value : { ran: false, waited: 'writer' };
   } finally {
     await waiting();
   }
@@ -118,10 +140,16 @@ async function liveEntries(dir: string): Promise<number> {
 }
 
 async function noLiveEntries(dir: string, deadline: number, what: string): Promise<void> {
+  if (!(await liveEntriesEnd(dir, deadline))) throw new OgwError(`${what} did not end in time`);
+}
+
+/** Waits until `dir` has no live entry; false when the deadline came first. */
+async function liveEntriesEnd(dir: string, deadline: number): Promise<boolean> {
   while ((await liveEntries(dir)) > 0) {
-    if (Date.now() >= deadline) throw new OgwError(`${what} did not end in time`);
+    if (Date.now() >= deadline) return false;
     await sleep(READERS_POLL_MS);
   }
+  return true;
 }
 
 async function noReaders(lock: RwLock): Promise<void> {

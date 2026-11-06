@@ -347,7 +347,7 @@ describe('ogw loop record', () => {
     expect(record).toContain('| start-stuck | blocker | design | lobby |');
     expect(record).toContain('| fps | 20 | 30..60 | out |');
     expect(record).toContain('| content.gold | 9007199254740994 | 9007199254740993..9007199254740995 | in |');
-    expect(record).toContain('## load\n\n| platform | hostLoad |\n|---|---|\n| web | {"cpuMaxPercent":95} |\n| android | {"cpuMaxPercent":20} |');
+    expect(record).toContain('## load\n\n| platform | result | hostLoad |\n|---|---|---|\n| web | fail | {"cpuMaxPercent":95} |\n| android | pass | {"cpuMaxPercent":20} |');
     expect(git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual([`${R}/defects.json`, `${R}/findings-1.json`, `${R}/iteration-1.md`]);
     expect(git(g.root, 'status', '--porcelain')).toBe('');
   });
@@ -522,6 +522,33 @@ describe('ogw loop record', () => {
       ['jdg', 'awaiting confirmation', 0],
       ['hrd', 'awaiting confirmation', 0],
     ]);
+  });
+
+  it('writes the load of an unknown performance check with the reason of each unknown item, and makes no defect of it', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 2 });
+    const busy = { where: 'client/dev/bot/scenario.json:1', message: 'host busy: local generation', evidence: [] };
+    const memory = { where: 'client/dev/bot/scenario.json:1', message: 'host memory 97.3%', evidence: ['ev/performance-web/samples.json'] };
+    const load = { cpuMaxPercent: 40, memoryMaxPercent: 97.3, instancesMax: 2 };
+    write(g.root, `${R}/check-2.json`, {
+      commit: 'c',
+      gate: 'pass',
+      checks: [
+        { name: 'performance', platform: 'android', result: 'unknown', failures: [busy], warnings: [], hostLoad: load },
+        { name: 'performance', platform: 'web', result: 'unknown', failures: [memory], warnings: [], hostLoad: load },
+      ],
+    });
+    expect((await ogw(g.ws, ['loop', 'findings', 'g'])).code).toBe(0);
+    expect((readJsonFile(g.root, `${R}/findings-2.json`) as FindingsFile).findings).toEqual([]);
+    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
+    const record = read(g.root, `${R}/iteration-2.md`);
+    expect(record).toContain('| performance | unknown | records/loops/update-1/check-2.json |');
+    expect(record).toContain(
+      '## load\n\n| platform | result | hostLoad |\n|---|---|---|\n' +
+        '| android | unknown (host busy: local generation) | {"cpuMaxPercent":40,"memoryMaxPercent":97.3,"instancesMax":2} |\n' +
+        '| web | unknown (host memory 97.3%) | {"cpuMaxPercent":40,"memoryMaxPercent":97.3,"instancesMax":2} |',
+    );
+    expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects).toEqual([]);
   });
 
   it('writes empty judge, play, measurement and load sections without an evaluate file', async () => {
