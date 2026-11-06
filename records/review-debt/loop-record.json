@@ -1,18 +1,5 @@
 {
   "target": "loop record",
   "nextId": 3,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/src/commands/loop/lib/defects.ts:88",
-      "problem": "`fillFromSameId` replaces a field only when it is `null` (`f.severity ?? from.severity`, also for `owner` and `why`), while skills/game-loop/SKILL.md:76 fills each field \"that a finding leaves empty\" and `incompleteFindings` (defects.ts:98) counts a blank `why` (`\"\"`, whitespace) or `\"\"` severity/owner as not filled. A finding whose `why` the lead agent wrote as `\"\"` is refused even when a finding of the same `id` or a defect of the list has all three. The `??` predates this range",
-      "foundBy": "loop record round 1"
-    },
-    {
-      "id": "D2",
-      "location": "tools/src/commands/loop/lib/defects.ts:101",
-      "problem": "`incompleteFindings` refuses a finding without `id` only when it is `null` (`f.id === null`), and `KEBAB.test(f.id)` turns a missing `id` into the string `\"undefined\"`, which is kebab-case. A finding of the finding file whose `id` key the lead agent removed (`{source: 'play', severity: 'major', owner: 'design', why: 'y', drop: null, ...}` without `id`) passes `incompleteFindings` (reproduced in a scratch copy: 0 refused), and `groupFindings` (defects.ts:116) makes a defect keyed `undefined` that is written to `defects.json` without `id`, while skills/game-loop/SKILL.md:78 says a finding not filled in makes `ogw loop record` fail. The check predates this range",
-      "foundBy": "loop record round 2"
-    }
-  ]
+  "items": []
 }
