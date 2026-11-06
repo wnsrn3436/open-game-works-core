@@ -1117,6 +1117,7 @@ What `ogw core spec` and `ogw core test` do beyond `## core spec file` of [core 
   - `source` of `collectedData` is `module` or a name in `adapters` of some module
   - Of `left` and `right` of `settingsConstraints` of the modules with an implementation, the keys of modules with an implementation are in `core-settings.json`. The module of a key is the name before the first `.` of the key
   - In `settings` of the modules with an implementation, the `key` of each row whose `source` is `core` is in `core-settings.json`, and the set of `key` of the rows whose `owner` is `human` equals the set of keys of modules with an implementation among the keys that have `"x-owner": "human"` in `core-settings.schema.json`
+- The module runs of all `ogw core test` runs on this host together hold at most the CPU count of this host, because each run sizes its parallel module runs to the whole host, and runs that overlap (several core agents, `ogw review run` jobs) would otherwise push module tests past their test time limit. A module run holds 2 in the native run of an engine (an engine process keeps about two CPUs busy), 3 in `server` (a module test is two vitest runs with workers of their own), and 1 in a browser run and in `tools`; a share above the CPU count is the CPU count. A module run holds its share from before its first process starts until its last process ends, and waits for it without a time limit, so the wait counts toward neither its run time limit nor its test time limits. A share whose holder process is gone is freed
 
 ### Godot core test
 
