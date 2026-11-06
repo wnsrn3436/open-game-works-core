@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BuildRunResult } from '../../../src/commands/build/lib/buildrun.ts';
 import { devicePerformance } from '../../../src/commands/build/lib/device-performance.ts';
 import { buildBundle, buildPlatforms } from '../../../src/commands/build/lib/platform.ts';
+import { saveSchemaCheck } from '../../../src/commands/build/lib/saveschema.ts';
 import { webSmoke } from '../../../src/commands/build/lib/web-smoke.ts';
 import { placeholderFailures } from '../../../src/commands/check/api.ts';
 import { staticCheck } from '../../../src/commands/check/static-api.ts';
@@ -30,6 +31,10 @@ vi.mock('../../../src/commands/build/lib/web-smoke.ts', async (orig) => {
 vi.mock('../../../src/commands/build/lib/device-performance.ts', async (orig) => {
   const real = await orig<typeof import('../../../src/commands/build/lib/device-performance.ts')>();
   return { ...real, devicePerformance: vi.fn(real.devicePerformance) };
+});
+vi.mock('../../../src/commands/build/lib/saveschema.ts', async (orig) => {
+  const real = await orig<typeof import('../../../src/commands/build/lib/saveschema.ts')>();
+  return { ...real, saveSchemaCheck: vi.fn(real.saveSchemaCheck) };
 });
 
 const DOCKER = `case "$1 $2" in
@@ -218,6 +223,52 @@ describe('build run', () => {
     expect(failed.code).toBe(1);
     expect(result(second.dir, 'stg-0.2.0')).toMatchObject({ webSmokeLoadingMs: 900, artifacts: [] });
     expect(buildPlatforms).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: 'device performance', platform: 'android' },
+    { name: 'web smoke', platform: 'web' },
+  ])('does not build STG when check $name is unknown, and prints its reason', async ({ name, platform }) => {
+    const ws = makeWorkspace();
+    const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
+    (environments.STG as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
+    const { dir, env } = prepare(ws, { buildPlatforms: [platform], environments, privacy: { contentData: [] } });
+    vi.mocked(gameModules).mockResolvedValue({ client: [], server: ['game-update'] });
+    await openBuildRun(ws, dir, { env: 'STG', version: '0.2.0', platforms: [platform] });
+    const unknown = { name, result: 'unknown' as const, details: [`${name}: export failed: godot exited with code 1`] };
+    if (name === 'device performance') vi.mocked(devicePerformance).mockResolvedValueOnce(unknown);
+    else vi.mocked(webSmoke).mockResolvedValueOnce({ check: unknown, loadingMs: null });
+    vi.mocked(buildPlatforms).mockClear();
+    const out = await ogw(ws, ['build', 'run', 'g'], { env });
+    expect([out.code, out.stderr]).toEqual([1, '']);
+    const r = result(dir, 'stg-0.2.0');
+    // the unknown is the only check that does not pass
+    expect(r.checks.filter((c) => c.result !== 'pass')).toEqual([unknown]);
+    expect([r.human, r.artifacts, r.serverImage]).toEqual([[], [], null]);
+    expect(buildPlatforms).not.toHaveBeenCalled();
+    expect(out.stdout).toContain(`check ${name}: unknown\n  ${name}: export failed: godot exited with code 1`);
+  });
+
+  it('does not build DEV when check backward compatibility, which warns in no DEV build, is unknown', async () => {
+    const ws = makeWorkspace();
+    const { dir, env } = prepare(ws);
+    write(dir, 'server/generated/contract/game_contract.ts', 'export const CONTRACT_VERSION = 1;\n');
+    commit(dir, 'contract 1');
+    git(dir, 'tag', 'prod-0.1.0');
+    write(dir, 'server/generated/contract/game_contract.ts', 'export const CONTRACT_VERSION = 2;\n');
+    commit(dir, 'contract 2');
+    await openBuildRun(ws, dir, { version: '0.2.0', platforms: ['linux'] });
+    vi.mocked(saveSchemaCheck).mockResolvedValueOnce({ failures: [], unknownKinds: ['QuestUserState'] });
+    vi.mocked(buildPlatforms).mockClear();
+    const out = await ogw(ws, ['build', 'run', 'g'], { env });
+    expect([out.code, out.stderr]).toEqual([1, '']);
+    expect(vi.mocked(saveSchemaCheck).mock.calls.at(-1)?.[0]).toMatchObject({ currentVersion: 2 });
+    const r = result(dir, 'dev-0.2.0');
+    const reason = 'save schema: unknown: no sampled QuestUserState record has a contract version below 2';
+    expect(r.checks.filter((c) => c.result !== 'pass')).toEqual([{ name: 'backward compatibility', result: 'unknown', details: [reason] }]);
+    expect([r.human, r.artifacts, r.serverImage]).toEqual([[], [], null]);
+    expect(buildPlatforms).not.toHaveBeenCalled();
+    expect(out.stdout).toContain(`check backward compatibility: unknown\n  ${reason}`);
   });
 
   it('gives a bundle patch build the app version for the check exports', async () => {
