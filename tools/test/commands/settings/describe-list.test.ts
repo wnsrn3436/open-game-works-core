@@ -112,6 +112,13 @@ describe('ogw settings describe', () => {
     expect(json.properties).toEqual(['version', 'url']);
     expect(json.itemProperties).toEqual([]);
     expect((await describeCmd('game', 'mygame', 'termsDocuments.TERMS.url')).stdout).not.toContain('properties:');
+    // items and an object reached through $ref
+    const methods = (await describeCmd('harness', 'resourceGeneration')).stdout.split('\n');
+    expect(methods.find((line) => line.startsWith('item properties:'))).toMatch(/^item properties: name, kind, resourceTypes, /);
+    const operators = (await describeCmd('game', 'mygame', 'environments.DEV.adminOperators')).stdout.split('\n');
+    expect(operators.find((line) => line.startsWith('item properties:'))).toContain('secret');
+    const method = (await describeCmd('harness', 'resourceGeneration.0')).stdout.split('\n');
+    expect(method.find((line) => line.startsWith('properties:'))).toMatch(/^properties: name, kind, resourceTypes, /);
   });
 
   it('fails for a path the schema does not have', async () => {
