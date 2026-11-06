@@ -581,7 +581,7 @@ The versions to get are all those written in the `engine.json` of the core relea
 - Among `procedural` methods, the methods other than `blender` and `rig-2d` have no standard test task. One `ok` stage without resolution and length is written
 - For `rig-2d`, one `ok` stage is written when `flux2-klein` has an `ok` stage (the result measured in this measurement; when this measurement did not measure it, the result in the result file; when it could not be measured, harness settings `measured`) and `ogw resource rig-split`, `rig-check`, `rig-mesh` pass the fixtures fixed in the tool, and otherwise one `failed` stage is written
 - When the sandbox blocked an access, it is written in the result
-- An `external-service` method not in `--allow` is not called, and that fact is written in the result. The result of an `external-service` method that was called holds the duration taken and the cost; memory is not measured
+- An `external-service` method not in `--allow` is not called. The result keeps the item that the result file has for that method when it has a stage, and otherwise writes that it was not called. The result of an `external-service` method that was called holds the duration taken and the cost; memory is not measured
 - An `external-service` method without `provider` has no standard test call, so it is not called, and that fact is written in the result
 - For a method with `provider`, the cost in the result is 0 for every billing
 - `catalog` methods have no standard test task. When the files that `ogw generation install` fetched are the same as the pinned information, one `ok` stage without resolution and length is written

@@ -568,6 +568,25 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     expect(text.stdout).toMatch(/codex-gen: 1 step\(s\)\n {2}single: ok \d+ms cost 0 USD output /);
   });
 
+  it('keeps the earlier item of a method that a run does not call, and writes not called for one without an item', async () => {
+    const { ws, env } = workspace([external('codex-gen', 'codex'), external('grok-gen', 'grok')]);
+    installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
+    installed(ws, external('grok-gen', 'grok'), { cli: providerCli(ws) });
+    const earlier = { kind: 'external-service', steps: [{ result: 'ok', maxMemoryBytes: null, output: null, blocked: [], jobMs: 5, costUsd: 0 }], error: null };
+    writeMeasure(ws, { 'codex-gen': earlier });
+    const run = await ogw(ws, ['generation', 'measure'], { env });
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('codex-gen: not called: the human did not allow it (ogw generation measure --allow codex-gen); the result keeps its earlier item\n');
+    expect(readMeasure(ws).methods['codex-gen']).toEqual(earlier);
+    expect(readMeasure(ws).methods['grok-gen']).toEqual({ kind: 'external-service', steps: [], error: 'not called: the human did not allow it (ogw generation measure --allow grok-gen)' });
+    // a call replaces the kept item, and a later run that does not call it keeps the new one
+    await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen'], { env });
+    const called = readMeasure(ws).methods['codex-gen'];
+    expect(called?.steps[0]?.output).toBe(join(ws.root, '.ogw', 'generation', 'codex-gen', 'measure', 'single', 'out'));
+    await ogw(ws, ['generation', 'measure', 'codex-gen'], { env });
+    expect(readMeasure(ws).methods['codex-gen']).toEqual(called);
+  });
+
   it('records a failed or timed out provider call', async () => {
     const { ws, env } = workspace([external('codex-gen', 'codex')]);
     installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });

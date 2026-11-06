@@ -89,9 +89,11 @@ async function measureProviderLocked(ctx: Context, method: GenerationMethod): Pr
   return { ...base, steps: [step(outcome, extra)], error: null };
 }
 
+const NOT_ALLOWED = 'not called: the human did not allow it';
+
 async function measureExternal(ctx: Context, method: GenerationMethod, allow: ReadonlySet<string>): Promise<MethodResult> {
   const base = { kind: method.kind, steps: [] as MeasuredRun[] };
-  if (!allow.has(method.name)) return { ...base, error: `not called: the human did not allow it (ogw generation measure --allow ${method.name})` };
+  if (!allow.has(method.name)) return { ...base, error: `${NOT_ALLOWED} (ogw generation measure --allow ${method.name})` };
   if (method.provider === undefined) return { ...base, error: 'an external-service method without provider has no standard test call' };
   return measureProvider(ctx, method);
 }
@@ -177,12 +179,21 @@ export const measureCommand: CommandDef = {
     for (const method of order) measured[method.name] = await measureMethod(ctx, method, allow, { ...kept, ...measured });
     const methods: Results = Object.fromEntries(chosen.map((m) => [m.name, measured[m.name] as MethodResult]));
     // Another measure job may write the result file meanwhile: read, merge and write it under one lock.
-    const { result, path } = await withLock(`${await envResultPath(ctx.env, 'generation-measure')}.lock`, async () => {
-      const previous = only.size === 0 ? null : await readEnvResult(ctx, 'generation-measure');
-      const merged: GenerationMeasureResult = { measuredAt, methods: { ...(previous?.methods ?? {}), ...methods } };
-      return { result: merged, path: await writeEnvResult(ctx, 'generation-measure', merged) };
+    const { result, path, written } = await withLock(`${await envResultPath(ctx.env, 'generation-measure')}.lock`, async () => {
+      const previous = await readEnvResult(ctx, 'generation-measure');
+      // tools/ogw.md `## generation measure`: a method not called keeps the item of the result file that has a stage
+      const written = Object.fromEntries(Object.entries(methods).map(([name, m]) => {
+        const kept = previous?.methods[name];
+        const notCalled = m.steps.length === 0 && m.error?.startsWith(NOT_ALLOWED) === true;
+        return [name, notCalled && kept !== undefined && kept.steps.length > 0 ? kept : m];
+      }));
+      const merged: GenerationMeasureResult = { measuredAt, methods: { ...(only.size === 0 ? {} : (previous?.methods ?? {})), ...written } };
+      return { result: merged, path: await writeEnvResult(ctx, 'generation-measure', merged), written };
     });
-    const lines = Object.entries(methods).flatMap(([name, m]) => [`${name}: ${m.error ?? `${String(m.steps.length)} step(s)`}`, ...m.steps.map(stepText)]);
+    const lines = Object.entries(methods).flatMap(([name, m]) => {
+      const keep = written[name] !== m ? '; the result keeps its earlier item' : '';
+      return [`${name}: ${m.error ?? `${String(m.steps.length)} step(s)`}${keep}`, ...m.steps.map(stepText)];
+    });
     return { text: [...lines, `result: ${path}`].join('\n'), data: { ...result, resultFile: path } };
   },
 };
