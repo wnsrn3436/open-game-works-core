@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CheckResult } from '../../src/commands/check/api.ts';
@@ -123,6 +123,23 @@ describe('no gate maps unknown to pass', () => {
     expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', head, all, ws.env)).toBeNull();
     await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 4 });
     expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', head, all, ws.env)).toBeNull();
+  });
+
+  it('passes over a render pass that failed on other code, such as a core agent run of a changed module', async () => {
+    const ws = makeWorkspace();
+    writeImpl(ws.coreImpl);
+    commitAll(ws.coreImpl, 'impl');
+    const main = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    const all = await readCoreSpecDir(ws.coreImpl);
+    await addTestRecord(ws.coreImpl, { commit: main, target: 'godot', modules: { LogCore: 'pass', UICore: 'pass' }, recordedAt: 1 });
+    // a later run on a commit whose UICore folder differs fails its render pass
+    const uiFile = join(ws.coreImpl, 'client', 'godot', 'core', 'ui_core', 'ui_core.gd');
+    writeFileSync(uiFile, `${readFileSync(uiFile, 'utf8')}# agent fix\n`);
+    const agent = commitAll(ws.coreImpl, 'agent fix');
+    await addTestRecord(ws.coreImpl, { commit: agent, target: 'godot', modules: { UICore: 'fail' }, recordedAt: 2 });
+    expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', main, all, ws.env)).toBe(main);
+    // on the agent's code the failed render pass is the last one: nothing to take
+    expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', agent, all, ws.env)).toBeNull();
   });
 
   it('reads a test, check or job result through outcomeOf only: no other source file compares a result with skipped', () => {
