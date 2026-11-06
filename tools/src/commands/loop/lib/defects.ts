@@ -70,13 +70,17 @@ function isFilled(value: unknown): boolean {
 
 /**
  * Findings with `severity`, `owner` and `why` that a finding of the same `id` left empty takes from the first finding of
- * that `id` that has all three, so that the lead agent fills them once per defect (`game-loop` `## defect list`).
+ * that `id` that has all three, or, when the file has none, from the defect of that `id` in the defect list, so that the
+ * lead agent fills them once per defect (`game-loop` `## defect list`).
  */
-export function fillFromSameId(findings: readonly Finding[]): Finding[] {
+export function fillFromSameId(findings: readonly Finding[], defects: readonly Defect[] = []): Finding[] {
   const filled = new Map<string, Pick<Finding, 'severity' | 'owner' | 'why'>>();
   for (const f of findings) {
     if (f.drop !== null || f.id === null || filled.has(f.id)) continue;
     if (isSeverity(f.severity) && isOwner(f.owner) && isFilled(f.why)) filled.set(f.id, { severity: f.severity, owner: f.owner, why: f.why });
+  }
+  for (const d of defects) {
+    if (!filled.has(d.id)) filled.set(d.id, { severity: d.severity, owner: d.owner, why: d.why });
   }
   return findings.map((f) => {
     const from = f.drop === null && f.id !== null ? filled.get(f.id) : undefined;

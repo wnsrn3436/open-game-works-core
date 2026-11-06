@@ -262,6 +262,18 @@ describe('ogw loop record', () => {
     expect((await ogw(g2.ws, ['loop', 'record', 'g'])).stderr).toContain('finding file missing');
   });
 
+  it('fills the empty fields of a finding from the defect of its id in the defect list', async () => {
+    const { g } = await iterationOne();
+    const earlier = { id: 'slow', severity: 'major', owner: 'design', where: 'w', what: 'x', why: 'earlier why', evidence: [], source: 'judge', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 };
+    write(g.root, `${R}/defects.json`, { defects: [earlier], previous: null, recordedBy: 'iteration-0' });
+    write(g.root, `${R}/findings-1.json`, { findings: [{ source: 'judge', severity: 'minor', owner: null, where: 'w2', what: 'x2', why: 'judge why', evidence: ['e'], id: 'slow', drop: null }], discarded: [] });
+    const out = await ogw(g.ws, ['loop', 'record', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const defects = readJsonFile(g.root, `${R}/defects.json`) as DefectsFile;
+    expect(defects.defects.find((d) => d.id === 'slow')).toMatchObject({ owner: 'design', severity: 'minor', why: 'judge why' });
+  });
+
   it('records the agent of a judge as unknown when the evaluate file has none', async () => {
     const { g } = await iterationOne();
     const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as { judges: Record<string, unknown>[] };

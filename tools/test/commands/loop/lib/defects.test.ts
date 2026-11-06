@@ -71,6 +71,27 @@ describe('finding checks', () => {
     expect(incompleteFindings(out).map((x) => x.id)).toEqual(['b']);
   });
 
+  it('fills an empty field from the defect of the same id in the defect list when no finding of that id has all three', () => {
+    const out = fillFromSameId(
+      [
+        f({ id: 'c', severity: 'minor', owner: null, why: 'judge why', what: 'c1' }),
+        f({ id: 'e', severity: null, owner: null, why: null, what: 'e1' }),
+        f({ id: 'e', severity: 'blocker', owner: 'data', why: 'from the file', what: 'e2' }),
+        f({ id: 'n', severity: null, owner: null, why: null }),
+      ],
+      [d({ id: 'c', severity: 'major', owner: 'design', why: 'earlier why' }), d({ id: 'e', severity: 'minor', owner: 'design', why: 'earlier' })],
+    );
+    expect(out.map((x) => [x.id, x.severity, x.owner, x.why])).toEqual([
+      // a field the finding filled stays; the empty owner comes from the defect list
+      ['c', 'minor', 'design', 'judge why'],
+      // a finding of the same id in the file wins over the defect list
+      ['e', 'blocker', 'data', 'from the file'],
+      ['e', 'blocker', 'data', 'from the file'],
+      ['n', null, null, null],
+    ]);
+    expect(incompleteFindings(out).map((x) => x.id)).toEqual(['n']);
+  });
+
   it('finds findings record refuses', () => {
     const bad = [f({ id: null }), f({ severity: null }), f({ owner: null }), f({ why: null }), f({ id: 'Not-Kebab' }), f({ id: 'a--b' })];
     expect(incompleteFindings([...bad, f({}), f({ id: null, drop: 'placeholder' })])).toEqual(bad);

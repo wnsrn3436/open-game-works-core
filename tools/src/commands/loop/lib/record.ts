@@ -185,12 +185,20 @@ export interface RecordResult {
   label: string;
 }
 
+/** The defect list this record starts from: the one before the earlier record of the same label when this label is recorded again. */
+async function baseDefects(game: GameRepo, defectsRel: string, label: string): Promise<DefectsFile | null> {
+  const existing = await readJsonIfExists<DefectsFile>(abs(game, defectsRel));
+  return existing && existing.recordedBy === label ? existing.previous : existing;
+}
+
 /** Records the finding file of this iteration (or with `hardening`, the latest hardening round) into the defect list. */
 export async function recordFindings(game: GameRepo, run: RunState, hardening: boolean): Promise<RecordResult> {
   const label = await labelOf(game, run, hardening);
   const file = await readJsonIfExists<FindingsFile>(abs(game, label.findingsRel));
   if (!file) throw new OgwError(`finding file missing: ${label.findingsRel}`);
-  const findings: FindingsFile = { ...file, findings: fillFromSameId(file.findings) };
+  const defectsRel = runRel(run, 'defects.json');
+  const base = await baseDefects(game, defectsRel, label.label);
+  const findings: FindingsFile = { ...file, findings: fillFromSameId(file.findings, base?.defects ?? []) };
   const incomplete = incompleteFindings(findings.findings);
   if (incomplete.length > 0) {
     const what = 'findings without id, severity, owner or why, with a non-kebab-case id or an owner not in the defect list, or with a blank drop';
@@ -198,9 +206,6 @@ export async function recordFindings(game: GameRepo, run: RunState, hardening: b
       findings: incomplete,
     });
   }
-  const defectsRel = runRel(run, 'defects.json');
-  const existing = await readJsonIfExists<DefectsFile>(abs(game, defectsRel));
-  const base = existing && existing.recordedBy === label.label ? existing.previous : existing;
   const report = hardening ? null : reportRows((await readGameText(game, runRel(run, `content-${String(run.iteration)}.md`))) ?? '');
   const results: IterationResults = hardening
     ? { checkRel: '', check: null, evaluate: null, measure: null }
