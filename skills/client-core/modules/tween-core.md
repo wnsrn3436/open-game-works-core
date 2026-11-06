@@ -163,7 +163,7 @@ none
 |---|---|---|
 | `TweenStartedEvent` | when a tween starts playback. For `play` and `play_value` inside the operation, for `play_preset` when loading finishes and playback starts. `QACore` counts it as feedback | none |
 
-- Not published for a `play_preset` tween that ended before starting playback or for a request that returned an invalid handle
+- Not published for a `play_preset` tween that ended before starting playback, for a request that returned an invalid handle, or for a tween that the finite skip of `## DEV` skips
 
 ## error
 
@@ -196,7 +196,11 @@ none
 
 ## DEV
 
-none
+| operation | input | output | caller |
+|---|---|---|---|
+| `set_finite_skip` | whether skipped | none | `QACore`, core test |
+
+- finite skip: off at `init`, changed by `set_finite_skip`, and turned off by `release`. While it is on, a tween that starts playback and that `get_finite_playing_count` counts (a `play_value` tween, or a tween whose played definition has a repeat count other than 0) does not progress: it publishes no `TweenStartedEvent`, applies its end state and ends with `Completed`, at the time a tween whose definition has cycle time 0 ends (`### handle and end`). So the completion callback and `wait_end` of that tween go on. A tween whose played definition repeats infinitely plays as usual. A tween that started playback before it turned on goes on
 
 ## test
 
@@ -229,3 +233,4 @@ none
 - For each `TweenValueKind`, `play_value` calls the receiver with values between the start value and end value, applies the end value after the duration and ends with `Completed`
 - For each definition check item, `check_definition` of a definition that violates only that item is `false` without a log, a passing definition gives `true`, and in both cases the property values of the target object stay the same
 - For every `Easing`, `evaluate_easing` returns 0 for progress ratio 0 and 1 for 1. `QuadIn` returns 0.25 for 0.5 and 1 for 1.5. A NaN progress ratio gives an error log and `0`
+- After `set_finite_skip`(`true`), a `play` of a 500 ms `Position` change with repeat count 2 is playing when the operation returns, and before that frame ends the property value is the target value, the completion callback and `wait_end` got `Completed`, and there was no `TweenStartedEvent`. A `play_value` calls the receiver with the end value once and ends with `Completed`. A `play` of the same definition with repeat count 0 plays and publishes `TweenStartedEvent`, and a tween started before `set_finite_skip`(`true`) keeps progressing. With input block on, the block is released when the skipped tween ends. After `set_finite_skip`(`false`), the same `play` progresses over its duration

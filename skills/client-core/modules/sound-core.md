@@ -149,7 +149,7 @@ none
 
 | event | when | payload |
 |---|---|---|
-| `SoundPlayedEvent` | when the playback of a `play` request starts. `QACore` counts it as feedback | `bus`: `SoundBus` |
+| `SoundPlayedEvent` | when the playback of a `play` request starts. `QACore` counts it as feedback. Not published for playback on a bus whose DEV mute is on (`## DEV`) | `bus`: `SoundBus` |
 
 ## error
 
@@ -198,8 +198,12 @@ none
 | `get_playing` | caller buffer | count filled. Resource key, `SoundBus` and priority per `play` request in playback | `0` | `QACore`, core test |
 | `get_haptic_log` | caller buffer | count filled. Resource key, whether played, and haptic target (`Device` or `Gamepad`) of the last `SoundCore.devHapticLogCount` `play_haptic` requests | `0` | `QACore` |
 | `inject_focus_change` | whether the app has focus | none | none | core test |
+| `set_dev_mute` | `SoundBus`, whether muted | none | none | `QACore`, core test |
+| `set_play_skip` | whether skipped | none | none | `QACore`, core test |
 
 - `inject_focus_change` does, without an engine notification, the same handling as the app losing focus for `false` and the app regaining focus for `true`
+- DEV mute: a mute per bus that only `set_dev_mute` changes. It is off for every bus at `init`, and `release` turns it off. A bus whose DEV mute is on is silent, the same as a bus with mute on, content positional players included. DEV mute does not change `get_mute`, does not write `LocalDataCore`, and `set_mute` and `load_volume_settings` do not change it. A `play` on a bus whose DEV mute is on plays as usual (handle, playback count, end) and publishes no `SoundPlayedEvent`. A bus that is not an element of `SoundBus` follows the bus row of `## error`
+- play skip: off at `init`, changed by `set_play_skip`, and turned off by `release`. While it is on, a `play` whose bus and resource scope pass the checks of `## error` is decided not to play: it returns the invalid handle, does not load, leaves no log, and publishes no `SoundPlayedEvent`. A request made before it turned on plays as usual
 
 ## test
 
@@ -234,3 +238,5 @@ none
 - After a gamepad button press through `InputCore.inject_device_input` makes `InputCore.get_device` `Gamepad`, `play_haptic` of a loaded haptic resource in the right format is `true` even on a platform without the `Device` vibration feature, and the haptic target in `get_haptic_log` is `Gamepad`. `play_haptic` after only `InputCore.set_test_device`(`Gamepad`) without gamepad input is `false` without a log. When `InputCore.get_device` is `Touch`, the haptic target is `Device`
 - `play_haptic` of a loaded haptic resource in the right format is `true` on a platform with the vibration feature and is recorded as played in `get_haptic_log`. A key that is not loaded is `false` with no SoundCore log. A file with empty `segments`, `duration_ms` 0, `intensity` 1001 or an unknown key is `false` regardless of the vibration feature, and playing the same key twice leaves one error log
 - After `release` there is no player; after `init` again there is no current BGM and no previous BGM, no pause, and all volumes are 1
+- After `set_dev_mute`(`Sfx`, `true`), `Sfx` playback and a content positional player are silent, `get_mute`(`Sfx`) and the `LocalDataCore` value are unchanged, and a `play` on `Sfx` returns a handle that is playing, is in `get_playing` and publishes no `SoundPlayedEvent`, while a `play` on `Ui` publishes one. `set_mute`(`Sfx`, `false`) leaves it silent. After `set_dev_mute`(`Sfx`, `false`), the bus is at the level of its volume and mute again. After `release` and `init`, no bus has DEV mute
+- After `set_play_skip`(`true`), a `play` of a loaded sound and of a sound that is not loaded each return the invalid handle, start no loading and publish no `SoundPlayedEvent`, and a playback started before it goes on. After `set_play_skip`(`false`), `play` plays and publishes `SoundPlayedEvent`
