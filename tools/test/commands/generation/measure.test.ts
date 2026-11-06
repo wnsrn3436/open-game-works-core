@@ -587,6 +587,23 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     expect(readMeasure(ws).methods['codex-gen']).toEqual(called);
   });
 
+  it('keeps no earlier item without a stage, and no earlier item of a method the run calls or cannot call', async () => {
+    const { ws, env } = workspace([external('codex-gen', 'codex'), external('gone', 'codex'), external('keyed')]);
+    installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
+    const stage = { kind: 'external-service', steps: [{ result: 'ok', maxMemoryBytes: null, output: null, blocked: [], jobMs: 5, costUsd: 0 }], error: null };
+    const stageless = { kind: 'external-service', steps: [], error: 'not installed as pinned: run ogw generation install' };
+    writeMeasure(ws, { 'codex-gen': stageless, gone: stage, keyed: stage });
+    // codex-gen is not allowed and its earlier item has no stage: the run writes not called
+    const run = await ogw(ws, ['generation', 'measure', '--allow', 'gone,keyed'], { env });
+    expect(run.code).toBe(0);
+    expect(run.stdout).not.toContain('the result keeps its earlier item');
+    const result = readMeasure(ws).methods;
+    expect(result['codex-gen']).toEqual({ kind: 'external-service', steps: [], error: 'not called: the human did not allow it (ogw generation measure --allow codex-gen)' });
+    // an allowed method that is not installed, and one without provider, replace their earlier items with a stage
+    expect(result.gone).toEqual({ kind: 'external-service', steps: [], error: 'not installed as pinned: run ogw generation install' });
+    expect(result.keyed).toEqual({ kind: 'external-service', steps: [], error: 'an external-service method without provider has no standard test call' });
+  });
+
   it('records a failed or timed out provider call', async () => {
     const { ws, env } = workspace([external('codex-gen', 'codex')]);
     installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
