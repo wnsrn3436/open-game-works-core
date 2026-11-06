@@ -233,6 +233,33 @@ describe('ogw loop resume limits and harness pin', () => {
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).not.toContain('repinned');
   });
 
+  it('refuses a repin for the current iteration to a harness HEAD of another core, with the output of ogw loop next', async () => {
+    const { g, old } = await pinnedRun(1);
+    const changed = changeHarness(g);
+    // the moved HEAD holds the specs of a core other than the game's core 1.0.0
+    git(g.ws.harness, 'tag', 'core-v99.0.0');
+    const before = await currentRun(g);
+    // without --repin the pin output comes first
+    const plain = await ogw(g.ws, ['loop', 'resume', 'g']);
+    expect(plain.code).toBe(1);
+    expect(plain.stderr).toContain(`harness repo HEAD ${changed} is not the pinned harness commit ${old} of run update-1`);
+    expect(plain.stderr).not.toContain('the specs of this harness are of core');
+    const refused = await ogw(g.ws, ['loop', 'resume', 'g', '--repin']);
+    expect(refused.code).toBe(1);
+    const next = await ogw(g.ws, ['loop', 'next', 'g', '--repin']);
+    expect(next.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 99.0.0');
+    expect(refused.stderr).toBe(next.stderr);
+    expect(await currentRun(g)).toEqual(before);
+    expect(git(g.root, 'branch', '--show-current')).toBe('main');
+    expect(mocks.listInstances).not.toHaveBeenCalled();
+    // the core version is that of the branch of the run, not of the checkout
+    git(g.root, 'checkout', '-q', 'loop/update-1');
+    write(g.root, 'settings.json', { coreVersion: '99.0.0', buildPlatforms: ['android', 'web'], loopIterationLimit: 3 });
+    commit(g.root);
+    git(g.root, 'checkout', '-q', 'main');
+    expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).toContain(`harness: ${changed} (repinned from ${old}), counts for iteration 1\n`);
+  });
+
   it('replaces the limits given, and refuses a bad value or limits in a build run', async () => {
     const { g } = await pinnedRun(2);
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--limit', '4'])).stdout).toContain('limits: --limit 4, --until 9000000000000\n');

@@ -126,12 +126,27 @@ export async function fetchCoreRelease(ctx: Context, version: string): Promise<C
   return release;
 }
 
+function coreVersionOf(game: GameRepo, version: unknown, where: string): string {
+  if (typeof version !== 'string') throw new OgwError(`game settings of ${game.name}${where} have no coreVersion`);
+  return requireVersion(version, `coreVersion of ${game.name}${where}`);
+}
+
 /** game settings `coreVersion` of a checkout. */
 export async function gameCoreVersion(game: GameRepo): Promise<string> {
-  const settings = await loadGameSettings(game.root);
-  const version = settings.coreVersion;
-  if (typeof version !== 'string') throw new OgwError(`game settings of ${game.name} have no coreVersion`);
-  return requireVersion(version, `coreVersion of ${game.name}`);
+  return coreVersionOf(game, (await loadGameSettings(game.root)).coreVersion, '');
+}
+
+/** game settings `coreVersion` at revision `rev` of the game repo. */
+export async function gameCoreVersionAt(game: GameRepo, rev: string): Promise<string> {
+  const bytes = await showFile(game.root, rev, 'settings.json');
+  if (bytes === null) throw new OgwError(`${rev} of ${game.name} has no settings.json`);
+  let settings: { coreVersion?: unknown };
+  try {
+    settings = JSON.parse(bytes.toString('utf8')) as { coreVersion?: unknown };
+  } catch (error) {
+    throw new OgwError(`settings.json at ${rev} of ${game.name} is not JSON: ${(error as Error).message}`);
+  }
+  return coreVersionOf(game, settings.coreVersion, ` at ${rev}`);
 }
 
 /** The release of the game settings `coreVersion` of this checkout. */

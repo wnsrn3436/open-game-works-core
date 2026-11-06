@@ -6,6 +6,8 @@ import { waitJob } from '../../lib/jobs.ts';
 import { changeOpenRun, requireOpenRun, type RunState } from '../../lib/runstate.ts';
 import { isBuildRunMerge } from '../build/lib/buildrun.ts';
 import { buildTagName, parseEnv } from '../build/lib/names.ts';
+import { gameCoreVersionAt } from '../core/api.ts';
+import { requireHarnessCore } from '../core/lib/harness-core.ts';
 import { listInstances, stopInstance } from '../instance/api.ts';
 import { removeVariantLeftovers } from './lib/agent-worktrees.ts';
 import { harnessHead, pinHarness, pinnedHarness, requirePinned } from './lib/harness-pin.ts';
@@ -51,8 +53,9 @@ async function checkoutRunBranch(game: GameRepo, run: RunState): Promise<string[
 }
 
 /**
- * Steps 2 and 3 of ogw.md `## loop resume`: fails, changing nothing, on a limit it refuses or a harness repo HEAD that is
- * not the pinned harness commit without `--repin`; then repins and replaces the limits given.
+ * Steps 2 and 3 of ogw.md `## loop resume`: fails, changing nothing, on a limit it refuses, a harness repo HEAD that is
+ * not the pinned harness commit without `--repin`, or a repin for the current iteration to a harness whose core version
+ * is not the game's; then repins and replaces the limits given.
  */
 async function pinAndLimit(ctx: Context, game: GameRepo, run: RunState, args: CommandArgs): Promise<string[]> {
   if (run.kind === 'build' && (args.values.limit !== undefined || args.values.until !== undefined)) {
@@ -66,6 +69,10 @@ async function pinAndLimit(ctx: Context, game: GameRepo, run: RunState, args: Co
   const n = run.iteration;
   const recorded = n >= 1 && (await showFile(game.root, run.branch, runRel(run, `iteration-${String(n)}.md`))) !== null;
   const counts = n >= 1 && !recorded ? n : n + 1;
+  // no `ogw loop next` checks the core version for the current iteration, whose content agent reads the specs of the new pin
+  if (harness !== null && repin && counts === n && pinnedHarness(run) !== harness) {
+    await requireHarnessCore(ctx, game.name, await gameCoreVersionAt(game, run.branch));
+  }
   return changeOpenRun(game, (open) => {
     const notes: string[] = [];
     const pinned = pinnedHarness(open);
