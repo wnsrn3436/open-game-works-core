@@ -76,7 +76,7 @@
     "degradedPairs": 15,
     "degradeLatencyMs": 150,
     "degradeNetworkDelayMs": 3000,
-    "minDecisions": 30
+    "minDecisions": 15
   },
   "reviewRounds": 4,
   "codeCheck": {
