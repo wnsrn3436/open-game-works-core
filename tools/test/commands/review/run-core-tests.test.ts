@@ -8,8 +8,9 @@ import { agents, coreSpec, finding, GOOD_FIX, implementServer, reviewFile, spec,
 
 /**
  * The `ogw core test` jobs of `ogw review run`, faked in this process: after the fix (in the core main checkout)
- * `routing` passes and `mailbox` fails; before the fix (in another checkout) `mailbox` fails when `failsBeforeFix`,
- * or when that checkout has the file `brokenBy`. Each run records its argv, its checkout and that checkout's HEAD.
+ * `routing` passes and `mailbox` fails, or the next of `mainOutputs` is the output; before the fix (in another checkout)
+ * `mailbox` fails when `failsBeforeFix`, or when that checkout has the file `brokenBy`. Each run records its argv, its
+ * checkout, that checkout's HEAD and the number of rounds in the review state of `routing` when it started.
  */
 const fake = vi.hoisted(() => ({
   coreImpl: '',
@@ -19,12 +20,31 @@ const fake = vi.hoisted(() => ({
   landsBeforeTest: null as string | null,
   /** The index of a run that stops before its tests (`{ error }`). */
   errorAtRun: null as number | null,
-  runs: [] as { argv: string[]; cwd: string; head: string }[],
+  /** The outputs of the next core test runs in the core main checkout, in order; exit code 1 unless every module passes. */
+  mainOutputs: [] as { modules: Record<string, string>; failures: Record<string, string[]>; unknown?: Record<string, string> }[],
+  runs: [] as { argv: string[]; cwd: string; head: string; rounds: number }[],
   results: new Map<string, Jobs.WaitResult>(),
 }));
 
 vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
   const original = await importOriginal<typeof Jobs>();
+  /** The number of rounds in the review state of `routing`. */
+  const rounds = (): number => {
+    const state = join(fake.coreImpl, '.git', 'ogw-review', 'routing', 'state.json');
+    return existsSync(state) ? (JSON.parse(readFileSync(state, 'utf8')) as { rounds: unknown[] }).rounds.length : 0;
+  };
+  /** The output and exit code of the run at `index` in the checkout `cwd`. */
+  const output = (cwd: string, index: number): { stdout: string; exitCode: number } => {
+    const queued = cwd === fake.coreImpl ? fake.mainOutputs.shift() : undefined;
+    if (queued !== undefined) return { stdout: JSON.stringify(queued), exitCode: Object.values(queued.modules).every((result) => result === 'pass') ? 0 : 1 };
+    const modules = cwd === fake.coreImpl ? { routing: 'pass', mailbox: 'fail' } : { mailbox: fake.failsBeforeFix || (fake.brokenBy !== null && existsSync(join(cwd, fake.brokenBy))) ? 'fail' : 'pass' };
+    const stopped = index === fake.errorAtRun;
+    const failed = modules.mailbox === 'fail' || stopped;
+    const stdout = stopped
+      ? JSON.stringify({ error: 'godot not found', tests: 1, passed: 0 })
+      : JSON.stringify({ modules, failures: failed ? { mailbox: ['sqlite run: mail.test.ts broke'] } : {} });
+    return { stdout, exitCode: failed ? 1 : 0 };
+  };
   return {
     ...original,
     startJob: (options: Jobs.StartJobOptions): Promise<string> => {
@@ -37,14 +57,9 @@ vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
         fake.landsBeforeTest = null;
       }
       const head = execFileSync('git', ['-C', options.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-      fake.runs.push({ argv: options.argv, cwd: options.cwd, head });
-      const modules = options.cwd === fake.coreImpl ? { routing: 'pass', mailbox: 'fail' } : { mailbox: fake.failsBeforeFix || (fake.brokenBy !== null && existsSync(join(options.cwd, fake.brokenBy))) ? 'fail' : 'pass' };
-      const stopped = fake.runs.length - 1 === fake.errorAtRun;
-      const failed = modules.mailbox === 'fail' || stopped;
-      const stdout = stopped
-        ? JSON.stringify({ error: 'godot not found', tests: 1, passed: 0 })
-        : JSON.stringify({ modules, failures: failed ? { mailbox: ['sqlite run: mail.test.ts broke'] } : {} });
-      fake.results.set(id, { job: { id, status: 'done', exitCode: failed ? 1 : 0 } as Jobs.JobRecord, finished: true, stdout, stderr: '' });
+      fake.runs.push({ argv: options.argv, cwd: options.cwd, head, rounds: rounds() });
+      const { stdout, exitCode } = output(options.cwd, fake.runs.length - 1);
+      fake.results.set(id, { job: { id, status: 'done', exitCode } as Jobs.JobRecord, finished: true, stdout, stderr: '' });
       return Promise.resolve(id);
     },
     waitJob: (id: string, timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<Jobs.WaitResult> => {
@@ -62,6 +77,7 @@ function workspace(failsBeforeFix: boolean): TestWorkspace {
   fake.brokenBy = null;
   fake.landsBeforeTest = null;
   fake.errorAtRun = null;
+  fake.mainOutputs = [];
   coreSpec(ws, { routing: spec('routing', 'server'), mailbox: spec('mailbox', 'server', ['routing']) });
   implementServer(ws, ['routing', 'mailbox']);
   return ws;
@@ -158,6 +174,38 @@ describe('ogw review run: core tests of the dependents after a fix', () => {
     const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: agents(ws, FILES, GOOD_FIX).env });
     expect(run).toMatchObject({ code: 1, stdout: ['result: test fail', 'round: 1', 'open finding: R1-1 correctness high src/a.ts:3 spec change: no', ...MAILBOX_LINES, ''].join('\n') });
     expect(fake.runs.slice(1).map((r) => r.head)).toEqual([beforeMerge(ws), fixMergeOf(ws)]);
+  });
+
+  it('stops at test unknown when a dependent is unknown with no fail, and a rerun goes on at the core test of the same fix', async () => {
+    const ws = workspace(false);
+    fake.mainOutputs = [
+      { modules: { routing: 'pass', mailbox: 'unknown' }, failures: { routing: [], mailbox: [] }, unknown: { mailbox: 'screen locked' } },
+      { modules: { routing: 'pass', mailbox: 'pass' }, failures: { routing: [], mailbox: [] } },
+    ];
+    const fakeAgents = agents(ws, FILES, GOOD_FIX);
+    const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fakeAgents.env });
+    expect(run).toMatchObject({
+      code: 1,
+      stdout: ['result: test unknown', 'round: 1', 'open finding: R1-1 correctness high src/a.ts:3 spec change: no', 'ogw core test server mailbox routing: mailbox unknown: screen locked; rerun with the screen unlocked', ''].join('\n'),
+    });
+    // an unknown module is no failure: it does not run again before the fix merge
+    expect(fake.runs.map((r) => r.argv)).toEqual([AFTER]);
+    // the rerun tests the merged fix again before round 2 starts, and does not fix again
+    const rerun = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fakeAgents.env });
+    expect(rerun).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
+    expect(fake.runs.map((r) => [r.argv, r.rounds])).toEqual([[AFTER, 1], [AFTER, 1]]);
+    expect(fakeAgents.calls().filter((call) => call.prompt.includes('round-1-fix.md'))).toHaveLength(1);
+  });
+
+  it('stops at test fail when a fail that stops and an unknown come in the core tests after the fix', async () => {
+    const ws = workspace(false);
+    fake.mainOutputs = [{ modules: { routing: 'fail', mailbox: 'unknown' }, failures: { routing: ['sqlite run: route.test.ts broke'], mailbox: [] }, unknown: { mailbox: 'screen locked' } }];
+    const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: agents(ws, FILES, GOOD_FIX).env });
+    expect(run).toMatchObject({
+      code: 1,
+      stdout: ['result: test fail', 'round: 1', 'open finding: R1-1 correctness high src/a.ts:3 spec change: no', 'ogw core test server mailbox routing: routing fail', '  sqlite run: route.test.ts broke', ''].join('\n'),
+    });
+    expect(fake.runs.map((r) => r.argv)).toEqual([AFTER]);
   });
 
   it('hands the pre-existing lines to the process of the changed harness code', async () => {
