@@ -15,14 +15,20 @@ describe('withToolReaders', () => {
     }
     const order: string[] = [];
     let release: () => void = () => undefined;
+    let started: () => void = () => undefined;
+    const readersHeld = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     const reading = withToolReaders(ws.env, ws.coreImpl, async () => {
       order.push('read start');
+      started();
       await new Promise<void>((resolve) => {
         release = resolve;
       });
       order.push('read end');
     });
-    await new Promise((r) => setTimeout(r, 100));
+    // the build starts only once the readers are held, however long taking them takes
+    await readersHeld;
     const lock = { base: await checkoutLock(ws.coreImpl, 'ogw-data-tool-build.lock', { env: ws.env }), waitMs: 10_000 };
     const building = withWriter(lock, () => {
       order.push('build');

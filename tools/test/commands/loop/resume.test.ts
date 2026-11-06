@@ -10,7 +10,20 @@ const mocks = vi.hoisted(() => ({
   stopInstance: vi.fn(),
   agentOutcome: vi.fn(),
   mergeAgentJobs: vi.fn(),
+  // runs when a command starts to wait for a job, before the wait reads it
+  onWaitJob: vi.fn(),
 }));
+
+vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/lib/jobs.ts')>();
+  return {
+    ...original,
+    waitJob: async (...args: Parameters<typeof original.waitJob>) => {
+      await mocks.onWaitJob(...args);
+      return original.waitJob(...args);
+    },
+  };
+});
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({ listInstances: mocks.listInstances, stopInstance: mocks.stopInstance, startInstance: vi.fn() }));
 vi.mock('../../../src/commands/agent/api.ts', () => ({
@@ -90,15 +103,16 @@ describe('ogw loop resume', () => {
     write(g.root, 'client/edit.gd', 'half done');
     const content = await addJob(g.ws, { meta: { role: 'content', input: '/c.md' } });
     let during: { branch: string; edit: boolean } | null = null;
-    const timer = setTimeout(() => {
+    // the job ends once resume waits for it, so what resume did before the wait is seen whatever the host load
+    mocks.onWaitJob.mockImplementation(async (id: string) => {
+      if (id !== content.id) return;
       during = { branch: git(g.root, 'branch', '--show-current'), edit: existsSync(join(g.root, 'client/edit.gd')) };
-      void updateJob(content.id, (job) => {
+      await updateJob(content.id, (job) => {
         job.status = 'done';
         job.endedAt = Date.now();
       }, g.ws.env);
-    }, 300);
+    });
     const out = await ogw(g.ws, ['loop', 'resume', 'g']);
-    clearTimeout(timer);
     expect(out.code).toBe(0);
     expect(during).toEqual({ branch: 'loop/update-1', edit: true });
     expect(out.stdout).toBe(
