@@ -104,6 +104,10 @@ export interface JudgePair {
   baselineLatencyMs: number;
   /** `--network-delay` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent or 0 for none. */
   baselineNetworkDelayMs?: number;
+  /** `--feedback-off` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent for not. */
+  baselineFeedbackOff?: boolean;
+  /** `--reward-presentation-off` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent for not. */
+  baselineRewardPresentationOff?: boolean;
 }
 
 /** Where the judging puts its files: the run of `ogw loop evaluate`, or the calibration folders of `ogw judge calibrate`. */
@@ -151,6 +155,10 @@ interface Spec {
   inputLatencyMs?: number;
   /** `--network-delay` of the instance; absent or 0 for none. */
   networkDelayMs?: number;
+  /** `--feedback-off` of the instance; absent for not. */
+  feedbackOff?: boolean;
+  /** `--reward-presentation-off` of the instance; absent for not. */
+  rewardPresentationOff?: boolean;
   /** The id the instance gets: one a judge input named before the start. */
   id?: string;
 }
@@ -401,16 +409,27 @@ function startFailureReason(error: unknown): StartFailure['reason'] | null {
   return error instanceof OgwError ? ((error.data as Partial<StartFailure> | undefined)?.reason ?? null) : null;
 }
 
+/** The degradation flags of an instance: `--input-latency`, `--network-delay`, `--feedback-off`, `--reward-presentation-off`. */
+type Degrade = Pick<Spec, 'inputLatencyMs' | 'networkDelayMs' | 'feedbackOff' | 'rewardPresentationOff'>;
+
+/** The `startInstance` options of the degradation flags of an instance. */
+function degradeOptions(degrade: Degrade): Pick<InstanceOptions, 'inputLatencyMs' | 'networkDelayMs' | 'feedbackOff' | 'rewardPresentationOff'> {
+  return {
+    ...(degrade.inputLatencyMs !== undefined && degrade.inputLatencyMs > 0 ? { inputLatencyMs: degrade.inputLatencyMs } : {}),
+    ...(degrade.networkDelayMs !== undefined && degrade.networkDelayMs > 0 ? { networkDelayMs: degrade.networkDelayMs } : {}),
+    ...(degrade.feedbackOff === true ? { feedbackOff: true } : {}),
+    ...(degrade.rewardPresentationOff === true ? { rewardPresentationOff: true } : {}),
+  };
+}
+
 /** Starts an instance; null when a save fixture step failed (ogw.md `## loop evaluate` "An instance that could not be started with its save fixture is not put in"). */
 async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
   checkStopped(state);
-  const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: spec.headless === true ? 'headless' : 'window' };
+  const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: spec.headless === true ? 'headless' : 'window', ...degradeOptions(spec) };
   if (spec.platform !== undefined) options.platform = spec.platform;
   if (spec.fixture !== undefined) options.fixture = spec.fixture;
   else if (spec.headless !== true) options.played = true;
   if (state.plan.db) options.db = state.plan.db;
-  if (spec.inputLatencyMs !== undefined && spec.inputLatencyMs > 0) options.inputLatencyMs = spec.inputLatencyMs;
-  if (spec.networkDelayMs !== undefined && spec.networkDelayMs > 0) options.networkDelayMs = spec.networkDelayMs;
   if (spec.id !== undefined) options.id = spec.id;
   const reserved: string[] = [];
   try {
@@ -474,14 +493,19 @@ function sides(slot: JudgeSlot): { A: string; B: string | null } {
   return slot.side === 'A' ? { A: commit, B: baseline } : { A: baseline, B: commit };
 }
 
-/** The `--input-latency` and `--network-delay` of the instances of the baseline commit of a pair. */
-function baselineDegrade(pair: JudgePair): Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'> {
+/** The degradation flags of the instances of the baseline commit of a pair. */
+function baselineDegrade(pair: JudgePair): Degrade {
   const delay = pair.baselineNetworkDelayMs ?? 0;
-  return { ...(pair.baselineLatencyMs > 0 ? { inputLatencyMs: pair.baselineLatencyMs } : {}), ...(delay > 0 ? { networkDelayMs: delay } : {}) };
+  return {
+    ...(pair.baselineLatencyMs > 0 ? { inputLatencyMs: pair.baselineLatencyMs } : {}),
+    ...(delay > 0 ? { networkDelayMs: delay } : {}),
+    ...(pair.baselineFeedbackOff === true ? { feedbackOff: true } : {}),
+    ...(pair.baselineRewardPresentationOff === true ? { rewardPresentationOff: true } : {}),
+  };
 }
 
-/** The `--input-latency` and `--network-delay` of the instances of side `side` of the judge: those of the baseline commit on its side. */
-function sideDegrade(slot: JudgeSlot, side: 'A' | 'B'): Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'> {
+/** The degradation flags of the instances of side `side` of the judge: those of the baseline commit on its side. */
+function sideDegrade(slot: JudgeSlot, side: 'A' | 'B'): Degrade {
   return side !== slot.side ? baselineDegrade(slot.pair) : {};
 }
 
@@ -868,7 +892,7 @@ const SHARED_TELEMETRY_RUNS = 3;
 const SHARED_TELEMETRY_RETRIES = 3;
 
 /** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
-async function botRunOf(state: State, commit: string, scenario: Scenario, degrade: Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'> = {}): Promise<BotRun | null> {
+async function botRunOf(state: State, commit: string, scenario: Scenario, degrade: Degrade = {}): Promise<BotRun | null> {
   let instance: InstanceInfo | null = null;
   try {
     instance = await start(state, { commit, headless: true, ...degrade });
@@ -892,7 +916,7 @@ async function completeRuns(
   state: State,
   commit: string,
   scenario: Scenario,
-  degrade: Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'>,
+  degrade: Degrade,
   first: readonly (BotRun | null)[],
 ): Promise<BotRun[] | null> {
   const runs = first.filter((r): r is BotRun => r !== null);

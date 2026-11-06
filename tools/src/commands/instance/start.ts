@@ -1,4 +1,4 @@
-import { expectPositionals, nonNegativeInt, positional, str, type CommandDef } from '../../lib/command.ts';
+import { expectPositionals, flag, nonNegativeInt, positional, str, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { startInstance } from './api.ts';
@@ -6,7 +6,7 @@ import { START_LIMIT_MS } from './lib/supervisor.ts';
 
 export const start: CommandDef = {
   name: ['instance', 'start'],
-  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--network-delay <ms>]',
+  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--network-delay <ms>] [--feedback-off] [--reward-presentation-off]',
   options: {
     commit: { type: 'string' },
     platform: { type: 'string' },
@@ -14,6 +14,8 @@ export const start: CommandDef = {
     db: { type: 'string' },
     'input-latency': { type: 'string' },
     'network-delay': { type: 'string' },
+    'feedback-off': { type: 'boolean' },
+    'reward-presentation-off': { type: 'boolean' },
   },
   background: {
     game: (args) => args.positionals[0] ?? null,
@@ -33,6 +35,8 @@ export const start: CommandDef = {
       db,
       ...(inputLatencyMs === undefined ? {} : { inputLatencyMs }),
       ...(networkDelayMs === undefined ? {} : { networkDelayMs }),
+      ...(flag(args, 'feedback-off') ? { feedbackOff: true } : {}),
+      ...(flag(args, 'reward-presentation-off') ? { rewardPresentationOff: true } : {}),
     });
     return {
       text: [`id: ${info.id}`, `address: ${info.serverUrl}`].join('\n'),

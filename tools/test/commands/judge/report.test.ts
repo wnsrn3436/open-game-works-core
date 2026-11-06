@@ -27,7 +27,7 @@ import { FUN_ITERATION_ELEMENTS } from '../../../src/commands/loop/lib/files.ts'
 const ELEMENTS = ['game feel', 'tension and release', 'no friction'];
 
 function pair(kind: CalibrationPair['kind'], fields: Partial<CalibrationPair> = {}): CalibrationPair {
-  return { name: kind, kind, commit: 'c', baseline: 'b', baselineLatencyMs: 0, baselineNetworkDelayMs: 0, judgings: [2], first: 'A', degradation: null, label: null, missing: null, ...fields };
+  return { name: kind, kind, commit: 'c', baseline: 'b', baselineLatencyMs: 0, baselineNetworkDelayMs: 0, baselineFeedbackOff: false, baselineRewardPresentationOff: false, judgings: [2], first: 'A', degradation: null, label: null, missing: null, ...fields };
 }
 
 function judge(k: number, side: 'A' | 'B', votes: Record<string, Vote>): { k: number; entry: JudgeEntry } {
@@ -113,16 +113,40 @@ describe('judge calibration rates', () => {
     expect(gameFeel?.kappa).toBeCloseTo(0.5, 10);
   });
 
+  it('degrades the baseline instances per degradation with its flags only, for its target element', () => {
+    const c = { nullPairs: 0, orderPairs: 0, orderRuns: 1, retestPairs: 0, degradedPairs: 1, degradeLatencyMs: 150, degradeNetworkDelayMs: 3000, minDecisions: 1 };
+    const none = { latencyMs: 0, networkDelayMs: 0, feedbackOff: false, rewardPresentationOff: false };
+    expect(DEGRADATIONS.map((d) => [d.name, d.element, d.baseline(c)])).toEqual([
+      ['latency', 'game feel', { ...none, latencyMs: 150 }],
+      ['network', 'no friction', { ...none, networkDelayMs: 3000 }],
+      ['feedback', 'game feel', { ...none, feedbackOff: true }],
+      ['reward', 'tension and release', { ...none, rewardPresentationOff: true }],
+    ]);
+  });
+
   it('counts sensitivity per degradation by the decision of its target element', () => {
-    const degraded = (name: 'latency' | 'network', element: string, decision: ElementVotes['decision']): PairOutcome =>
-      outcome(pair('degraded', { degradation: { name, element } }), [decided({ 'game feel': 'indistinguishable', 'no friction': 'indistinguishable', [element]: decision })]);
-    const outcomes = [degraded('latency', 'game feel', 'this'), degraded('latency', 'game feel', 'uncertain'), degraded('network', 'no friction', 'this'), degraded('network', 'no friction', 'this')];
+    const degraded = (name: 'latency' | 'network' | 'feedback' | 'reward', element: string, decision: ElementVotes['decision']): PairOutcome =>
+      outcome(pair('degraded', { degradation: { name, element } }), [
+        decided({ 'game feel': 'indistinguishable', 'tension and release': 'indistinguishable', 'no friction': 'indistinguishable', [element]: decision }),
+      ]);
+    const outcomes = [
+      degraded('latency', 'game feel', 'this'),
+      degraded('latency', 'game feel', 'uncertain'),
+      degraded('network', 'no friction', 'this'),
+      degraded('network', 'no friction', 'this'),
+      degraded('feedback', 'game feel', 'this'),
+      degraded('feedback', 'game feel', 'baseline'),
+      degraded('reward', 'tension and release', 'this'),
+      degraded('reward', 'tension and release', 'indistinguishable'),
+    ];
     expect(sensitivity(outcomes, DEGRADATIONS)).toEqual([
-      { name: 'all', rate: { count: 3, total: 4 } },
+      { name: 'all', rate: { count: 5, total: 8 } },
       { name: 'latency (game feel)', rate: { count: 1, total: 2 } },
       { name: 'network (no friction)', rate: { count: 2, total: 2 } },
+      { name: 'feedback (game feel)', rate: { count: 1, total: 2 } },
+      { name: 'reward (tension and release)', rate: { count: 1, total: 2 } },
     ]);
-    expect(sensitivity([], DEGRADATIONS).map((v) => v.rate.total)).toEqual([0, 0, 0]);
+    expect(sensitivity([], DEGRADATIONS).map((v) => v.rate.total)).toEqual([0, 0, 0, 0, 0]);
     // every degradation targets an element the calibration judges vote on
     for (const d of DEGRADATIONS) expect(FUN_ITERATION_ELEMENTS).toContain(d.element);
   });
@@ -171,7 +195,7 @@ describe('judge calibration rates', () => {
       'false win rate: none (0 of 30)',
       'order consistency: all none (0 of 30) kappa none, game feel none (0 of 30) kappa none, tension and release none (0 of 30) kappa none, no friction none (0 of 30) kappa none',
       'retest agreement: all none (0 of 30) kappa none, game feel none (0 of 30) kappa none, tension and release none (0 of 30) kappa none, no friction none (0 of 30) kappa none',
-      'sensitivity: all none (0 of 30), latency (game feel) none (0 of 30), network (no friction) none (0 of 30)',
+      'sensitivity: all none (0 of 30), latency (game feel) none (0 of 30), network (no friction) none (0 of 30), feedback (game feel) none (0 of 30), reward (tension and release) none (0 of 30)',
       'human agreement: none',
       'labels: 0',
     ];

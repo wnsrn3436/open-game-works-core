@@ -79,6 +79,10 @@ export interface InstanceOptions {
   inputLatencyMs?: number;
   /** `--network-delay`: the client `main` takes each server response as received this many ms after it arrived. */
   networkDelayMs?: number;
+  /** `--feedback-off`: the client `main` runs with feedback off of `QACore` from each boot. */
+  feedbackOff?: boolean;
+  /** `--reward-presentation-off`: the client `main` runs with reward presentation off of `QACore` from each boot. */
+  rewardPresentationOff?: boolean;
   /** The id of the instance, made with `newId` by a caller that names the instance before it starts (a judge input); a new id otherwise. */
   id?: string;
 }
@@ -357,6 +361,8 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
         ...(options.movie === undefined ? {} : { movie: { ...options.movie, resolution: baseResolution(gameSettings) } }),
         ...(options.inputLatencyMs === undefined || options.inputLatencyMs <= 0 ? {} : { inputLatencyMs: options.inputLatencyMs }),
         ...(options.networkDelayMs === undefined || options.networkDelayMs <= 0 ? {} : { networkDelayMs: options.networkDelayMs }),
+        ...(options.feedbackOff === true ? { feedbackOff: true as const } : {}),
+        ...(options.rewardPresentationOff === true ? { rewardPresentationOff: true as const } : {}),
       };
     }, ctx.env);
     checkAborted(signal);

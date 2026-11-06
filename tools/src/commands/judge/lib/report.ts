@@ -18,6 +18,10 @@ export interface CalibrationPair {
   baselineLatencyMs: number;
   /** `--network-delay` of the baseline instances; 0 for none. */
   baselineNetworkDelayMs: number;
+  /** `--feedback-off` of the baseline instances. */
+  baselineFeedbackOff: boolean;
+  /** `--reward-presentation-off` of the baseline instances. */
+  baselineRewardPresentationOff: boolean;
   /** The number of judges of each judging, in order: two judgings for a retest pair, one for every other pair. */
   judgings: number[];
   /** The side of `this` of the first judge; the sides alternate. */

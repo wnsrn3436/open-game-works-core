@@ -230,3 +230,93 @@ describe('ogw instance start --network-delay', () => {
     expect(bad.stderr).toContain('invalid --network-delay: x');
   });
 });
+
+describe('ogw instance start --feedback-off and --reward-presentation-off', () => {
+  let runner: Runner;
+
+  beforeAll(() => {
+    runner = setupRunner();
+  });
+
+  afterAll(async () => {
+    await stopAll(runner);
+  });
+
+  const ctx = () => createContext({ cwd: runner.ws.root, env: runner.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+  const SWITCHES = ['set_feedback_off', 'set_reward_presentation_off'];
+  const isSwitch = (line: string): boolean => SWITCHES.includes(line.split(' ')[0] ?? '');
+  /** The requests of the client main from the `from`-th, as `<command> <args>`. */
+  const sentFrom = (from: number): string[] => runner.requests('main').slice(from).map((r) => [r.command, ...r.args].join(' '));
+  /** The requests of each connection of main from the `from`-th: a `restart` ends a connection. */
+  const connections = (from: number): string[][] => {
+    const all: string[][] = [[]];
+    for (const line of sentFrom(from)) {
+      (all.at(-1) as string[]).push(line);
+      if (line === 'restart') all.push([]);
+    }
+    return all;
+  };
+
+  for (const [option, command] of [['--feedback-off', 'set_feedback_off on'], ['--reward-presentation-off', 'set_reward_presentation_off on']] as const) {
+    it(`sends ${command} to the client main before any other command on each connection of its automation channel with ${option}`, async () => {
+      const from = runner.requests('main').length;
+      const id = await startFor(runner, [option]);
+      const plan = (await readRecord(id, runner.ws.env)).plan;
+      expect([plan?.feedbackOff, plan?.rewardPresentationOff]).toEqual(option === '--feedback-off' ? [true, undefined] : [undefined, true]);
+      // a restart connects the channel again: the new boot gets it again, first
+      await restartClient(ctx(), id);
+      await restartClient(ctx(), id);
+      const connected = connections(from);
+      expect(connected).toHaveLength(3);
+      for (const connection of connected) {
+        expect(connection[0]).toBe(command);
+        expect(connection.slice(1)).toContain('get_state');
+        expect(connection.filter(isSwitch)).toEqual([command]);
+      }
+      await stopAll(runner);
+      // an instance without the option gets none
+      const without = runner.requests('main').length;
+      await startFor(runner);
+      expect(sentFrom(without).filter(isSwitch)).toEqual([]);
+      await stopAll(runner);
+    });
+  }
+
+  it('sends both switches, both before set_network_delay and any other command of each connection, when both are given', async () => {
+    const from = runner.requests('main').length;
+    const id = await startFor(runner, ['--feedback-off', '--reward-presentation-off', '--network-delay', '3000']);
+    await restartClient(ctx(), id);
+    const connected = connections(from);
+    expect(connected).toHaveLength(2);
+    for (const connection of connected) {
+      expect(connection.slice(0, 2).sort()).toEqual(['set_feedback_off on', 'set_reward_presentation_off on']);
+      expect(connection[2]).toBe('set_network_delay 3000');
+    }
+    await stopAll(runner);
+  });
+
+  for (const command of SWITCHES) {
+    it(`fails the start when the first ${command} is not ok, and writes a later one that is not ok to runner.log`, async () => {
+      runner.config({ clients: { main: { fail: { [command]: 'QACore refused' } } } });
+      const run = await ogw(runner.ws, ['instance', 'start', 'g', '--feedback-off', '--reward-presentation-off']);
+      expect(run.code).not.toBe(0);
+      expect(run.stderr).toContain(`main: ${command} failed: "QACore refused"`);
+      runner.config({});
+      const id = await startFor(runner, ['--feedback-off', '--reward-presentation-off']);
+      runner.config({ clients: { main: { fail: { [command]: 'QACore refused' } } } });
+      await restartClient(ctx(), id);
+      const log = join(await instanceFolder(id, runner.ws.env), 'runner.log');
+      const line = `main: ${command} failed: "QACore refused"`;
+      const logged = (): boolean => existsSync(log) && readFileSync(log, 'utf8').includes(line);
+      const started = Date.now();
+      while (!logged() && Date.now() - started < 5000) await new Promise((r) => setTimeout(r, 20));
+      expect(readFileSync(log, 'utf8')).toContain(line);
+      // the other switch was ok: only the one that failed is logged
+      const other = SWITCHES.find((c) => c !== command) ?? '';
+      expect(readFileSync(log, 'utf8')).not.toContain(`main: ${other} failed`);
+      expect((await readRecord(id, runner.ws.env)).status).toBe('running');
+      runner.config({});
+      await stopAll(runner);
+    });
+  }
+});

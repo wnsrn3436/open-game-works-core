@@ -66,6 +66,10 @@ export interface InstancePlan {
   inputLatencyMs?: number;
   /** `--network-delay`: the ms of `set_network_delay` the supervisor sends the client `main` on each connection; absent: none. */
   networkDelayMs?: number;
+  /** `--feedback-off`: the supervisor sends the client `main` `set_feedback_off on` first on each connection; absent: not. */
+  feedbackOff?: true;
+  /** `--reward-presentation-off`: the supervisor sends the client `main` `set_reward_presentation_off on` first on each connection; absent: not. */
+  rewardPresentationOff?: true;
 }
 
 /** Dev account of the client `main` when no play or judge agent plays it. */

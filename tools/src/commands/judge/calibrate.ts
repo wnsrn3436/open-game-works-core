@@ -41,6 +41,8 @@ async function calibrationPairs(ctx: Context, game: GameRepo, main: string, sett
     baseline,
     baselineLatencyMs: 0,
     baselineNetworkDelayMs: 0,
+    baselineFeedbackOff: false,
+    baselineRewardPresentationOff: false,
     judgings: [votes],
     first: drawSide(),
     degradation: null,
@@ -54,9 +56,15 @@ async function calibrationPairs(ctx: Context, game: GameRepo, main: string, sett
   judged.slice(0, c.orderPairs).forEach((j, i) => pairs.push(pair(`order-${String(i + 1)}`, 'order', j.commit, j.baseline, { judgings: [2 * c.orderRuns], first: 'A' })));
   judged.slice(0, c.retestPairs).forEach((j, i) => pairs.push(pair(`retest-${String(i + 1)}`, 'retest', j.commit, j.baseline, { judgings: [votes, votes] })));
   for (const degradation of DEGRADATIONS) {
-    const { latencyMs, networkDelayMs } = degradation.baseline(c);
+    const { latencyMs, networkDelayMs, feedbackOff, rewardPresentationOff } = degradation.baseline(c);
     for (let n = 1; n <= c.degradedPairs; n++) {
-      const rest = { baselineLatencyMs: latencyMs, baselineNetworkDelayMs: networkDelayMs, degradation: { name: degradation.name, element: degradation.element } };
+      const rest = {
+        baselineLatencyMs: latencyMs,
+        baselineNetworkDelayMs: networkDelayMs,
+        baselineFeedbackOff: feedbackOff,
+        baselineRewardPresentationOff: rewardPresentationOff,
+        degradation: { name: degradation.name, element: degradation.element },
+      };
       pairs.push(pair(`degraded-${degradation.name}-${String(n)}`, 'degraded', main, main, rest));
     }
   }
@@ -85,7 +93,15 @@ function groupsOf(plan: JudgingPlan, pairs: readonly CalibrationPair[]): { group
   const groups: Group[] = [];
   const judgePairs = new Map<JudgePair, CalibrationPair>();
   for (const p of pairs.filter((x) => x.missing === null)) {
-    const judgePair: JudgePair = { name: p.name, commit: p.commit, baseline: p.baseline, baselineLatencyMs: p.baselineLatencyMs, baselineNetworkDelayMs: p.baselineNetworkDelayMs };
+    const judgePair: JudgePair = {
+      name: p.name,
+      commit: p.commit,
+      baseline: p.baseline,
+      baselineLatencyMs: p.baselineLatencyMs,
+      baselineNetworkDelayMs: p.baselineNetworkDelayMs,
+      baselineFeedbackOff: p.baselineFeedbackOff,
+      baselineRewardPresentationOff: p.baselineRewardPresentationOff,
+    };
     judgePairs.set(judgePair, p);
     const judges = judgeCount(p);
     for (let k = 1; k <= judges; k++) {
