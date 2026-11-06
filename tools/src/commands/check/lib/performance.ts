@@ -156,9 +156,9 @@ export function judgeFrames(frames: ReadonlyMap<string, readonly FrameTick[]>, m
   if (keptMs < FRAMES.minKeptMs) {
     unknown.push({ where: SCENARIO_WHERE, message: `kept frame intervals add up to ${String(Math.floor(keptMs / 10) / 100)} s, less than ${String(FRAMES.minKeptMs / 1000)} s` });
   }
-  if (unknown.length > 0) return { failures: [], unknown };
   const failures: PerformanceFinding[] = [];
-  const ratio = sum(scenes.map((s) => s.hitchMs)) / (keptMs / 1000);
+  // the hitch ratio needs every kept tick's intervals over the least kept time; a long frame fails on its own
+  const ratio = unknown.length > 0 ? 0 : sum(scenes.map((s) => s.hitchMs)) / (keptMs / 1000);
   if (ratio >= FRAMES.maxHitchRatio) {
     const worst = scenes.reduce((a, b) => (b.hitchMs > a.hitchMs ? b : a));
     const seconds = (keptMs / 1000).toFixed(1);
@@ -175,7 +175,7 @@ export function judgeFrames(frames: ReadonlyMap<string, readonly FrameTick[]>, m
       message: `frame interval ${String(longest)} ms is longer than ${String(FRAMES.maxIntervalMs)} ms (${String(s.long.length)} of ${String(s.count)} kept intervals of this scene)`,
     });
   }
-  return { failures, unknown: [] };
+  return { failures, unknown: failures.length > 0 ? [] : unknown };
 }
 
 /** The sample at the 5 percentile of `fps − boundFps` by the nearest-rank method, or null for no samples. */

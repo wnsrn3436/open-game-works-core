@@ -187,10 +187,12 @@ describe('frame intervals', () => {
     });
   });
 
-  it('is unknown below 10 s of kept intervals, even with a long frame, and judged from 10 s summed over ticks and scenes', () => {
+  it('is unknown below 10 s of kept intervals, whatever the hitch ratio, fails on a long frame there, and is judged from 10 s summed over ticks and scenes', () => {
     const short = { failures: [], unknown: [{ where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 9.99 s, less than 10 s' }] };
     expect(judge({ lobby: [...fill(499, 20), 10] })).toEqual(short);
-    expect(judge({ lobby: [130, ...fill(493, 20)] })).toEqual(short);
+    // 6 s of 60 ms frames is far above 10 ms/s, but the ratio is not judged below 10 s
+    expect(judge({ lobby: fill(100, 60) })).toEqual({ failures: [], unknown: [{ where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 6 s, less than 10 s' }] });
+    expect(judge({ lobby: [130, ...fill(493, 20)] })).toEqual({ failures: [{ where: 'lobby', message: 'frame interval 130 ms is longer than 100 ms (1 of 494 kept intervals of this scene)' }], unknown: [] });
     expect(judge({})).toEqual({ failures: [], unknown: [{ where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 0 s, less than 10 s' }] });
     expect(judge({ lobby: fill(500, 20) })).toEqual(KEEP);
     // 8 s in two ticks of lobby and 2.001 s in battle
@@ -199,10 +201,11 @@ describe('frame intervals', () => {
     expect(twoTicks.failures.map((f) => f.where)).toEqual(['battle']);
   });
 
-  it('is unknown when a kept tick has no frame_intervals_ms array, whatever the other ticks show', () => {
+  it('is unknown when a kept tick has no frame_intervals_ms array, whatever the hitch ratio of the other ticks, and fails on a long frame of the other ticks', () => {
     const missing = { where: 'battle', message: 'get_stats of a kept tick has no frame_intervals_ms array of numbers' };
     expect(judge({ lobby: fill(600, 20) }, ['battle'])).toEqual({ failures: [], unknown: [missing] });
-    expect(judge({ lobby: [500, ...fill(600, 40)] }, ['battle'])).toEqual({ failures: [], unknown: [missing] });
+    expect(judge({ lobby: fill(600, 40) }, ['battle'])).toEqual({ failures: [], unknown: [missing] });
+    expect(judge({ lobby: [500, ...fill(600, 20)] }, ['battle'])).toEqual({ failures: [{ where: 'lobby', message: 'frame interval 500 ms is longer than 100 ms (1 of 601 kept intervals of this scene)' }], unknown: [] });
     const { frames, missed } = keptFrames([frameTick('lobby', null), frameTick('lobby', null), frameTick('lobby', fill(600, 20)), frameTick('lobby', null)]);
     expect([...missed]).toEqual(['lobby']);
     expect(judgeFrames(frames, missed).unknown).toEqual([{ ...missing, where: 'lobby' }]);
@@ -542,13 +545,17 @@ describe('performanceCheck: frame intervals', () => {
     expect(slow.failures.map((f) => f.where)).toEqual(['lobby']);
   });
 
-  it('is unknown when the kept intervals add up to less than 10 s', async () => {
+  it('is unknown when the kept intervals add up to less than 10 s, and fails on a long frame there', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    // 10 ms per tick: far less than 10 s over the run, with a long frame that is not judged
-    fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? [130] : [10]));
+    // 10 ms per tick: far less than 10 s over the run
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, () => [10]);
     const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
     expect(result.result).toBe('unknown');
     expect(result.failures).toEqual([{ where: 'client/dev/bot/scenario.json:1', message: expect.stringMatching(/^kept frame intervals add up to \d+(\.\d+)? s, less than 10 s$/) as unknown, evidence: ev }]);
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? [130] : [10]));
+    const long = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect(long.result).toBe('fail');
+    expect(long.failures).toEqual([{ where: 'battle', message: expect.stringMatching(/^frame interval 130 ms is longer than 100 ms \(\d+ of \d+ kept intervals of this scene\)$/) as unknown, evidence: ev }]);
   });
 });
 
