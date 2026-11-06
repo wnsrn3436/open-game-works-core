@@ -1427,6 +1427,24 @@ describe('ogw loop evaluate confirmation pair', () => {
     ]);
   });
 
+  it('calls a judge that fell back again with loop.confirmFallback, and the fallback call uses up no call again', async () => {
+    const loaded = await loop({ playInstances: 1, backgroundRetryLimit: 1, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1, confirmJudge: CONFIRM, confirmFallback: FALLBACK } });
+    await setRun(loaded.g, (run) => {
+      run.data.loop = { kinds: [{ iteration: 1, kind: 'fun' }] };
+    });
+    const { g, head } = loaded;
+    // the first judge of the pair hits the limit; its fallback job fails without a limit message; its call again passes
+    fake.respond = (agent) => ([2, 4].includes(judgeAgents().indexOf(agent)) ? null : funJudge(agent, head, { 'game feel': 'this' }));
+    fake.limited = (agent, cli) => cli === 'codex' && judgeAgents().indexOf(agent) === 2;
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, CONFIRM, CONFIRM, FALLBACK, FALLBACK]);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.slice(2).map((j) => [j.agent, j.fallback, j.status])).toEqual([
+      [FALLBACK, 'usage limit', 'done'],
+      [CONFIRM, undefined, 'done'],
+    ]);
+  });
+
   it('does not fall back without loop.confirmFallback, nor for a judge that does not run with loop.confirmJudge', async () => {
     const { g, head } = await funLoop({ confirmJudge: CONFIRM });
     fake.respond = (agent) => (judgeAgents().indexOf(agent) === 2 ? null : funJudge(agent, head, { 'game feel': 'this' }));

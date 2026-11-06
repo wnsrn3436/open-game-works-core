@@ -585,6 +585,23 @@ describe('ogw loop record', () => {
     expect(record).toContain('## temporary resources\n\nnone\n\n## cost\n\nnone\n');
   });
 
+  it('writes no load table when every performance item passed', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 2 });
+    const hostLoad = { cpuMaxPercent: 40, memoryMaxPercent: 60, instancesMax: 2 };
+    write(g.root, `${R}/check-2.json`, {
+      commit: 'c',
+      gate: 'pass',
+      checks: [
+        { name: 'performance', platform: 'web', result: 'pass', failures: [], warnings: [], hostLoad },
+        { name: 'performance', platform: 'macos', result: 'pass', failures: [], warnings: [], hostLoad },
+      ],
+    });
+    write(g.root, `${R}/findings-2.json`, { findings: [], discarded: [] });
+    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
+    expect(read(g.root, `${R}/iteration-2.md`)).toContain('## load\n\nnone\n');
+  });
+
   it('writes the cost of the agent jobs of the run and iteration per role', async () => {
     const g = setupGame();
     await openLoopRun(g, { iteration: 2 });
