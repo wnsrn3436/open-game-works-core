@@ -97,8 +97,10 @@ export function fillFromSameId(findings: readonly Finding[], defects: readonly D
  */
 export function incompleteFindings(findings: readonly Finding[]): Finding[] {
   return findings.filter((f) => {
-    if (f.drop !== null) return !isFilled(f.drop) || f.id !== null;
-    return f.id === null || !KEBAB.test(f.id) || !isSeverity(f.severity) || !isOwner(f.owner) || !isFilled(f.why);
+    // a missing `id` key reads as null, and an `id` that is not a string as no `id`
+    const id: unknown = f.id ?? null;
+    if (f.drop !== null) return !isFilled(f.drop) || id !== null;
+    return typeof id !== 'string' || !KEBAB.test(id) || !isSeverity(f.severity) || !isOwner(f.owner) || !isFilled(f.why);
   });
 }
 

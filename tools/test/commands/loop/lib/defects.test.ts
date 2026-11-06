@@ -103,6 +103,14 @@ describe('finding checks', () => {
     expect(incompleteFindings(out).map((x) => x.id)).toEqual(['n', 'u']);
   });
 
+  it('refuses a finding whose id key is missing or not a string, and takes a dropped finding without an id key', () => {
+    const withoutId = (finding: Finding): Finding => Object.fromEntries(Object.entries(finding).filter(([key]) => key !== 'id')) as unknown as Finding;
+    const noId = withoutId(f({}));
+    const droppedNoId = withoutId(f({ drop: 'placeholder' }));
+    const numeric = f({ id: 5 as unknown as string });
+    expect(incompleteFindings([noId, numeric, droppedNoId])).toEqual([noId, numeric]);
+  });
+
   it('finds findings record refuses', () => {
     const bad = [f({ id: null }), f({ severity: null }), f({ owner: null }), f({ why: null }), f({ id: 'Not-Kebab' }), f({ id: 'a--b' })];
     expect(incompleteFindings([...bad, f({}), f({ id: null, drop: 'placeholder' })])).toEqual(bad);
