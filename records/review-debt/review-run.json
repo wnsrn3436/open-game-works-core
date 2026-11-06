@@ -1,0 +1,12 @@
+{
+  "target": "review run",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/core/test.ts:327",
+      "problem": "When the CPU share ledger (`withShare` in tools/src/lib/shares.ts) cannot be read or written (e.g. `mkdir`/`readdir` of `<jobs dir>/core-test-cpu-shares/holders` throws before `fn` runs), the `.catch` marks the module `fail` with a `CPU share: <message>` failure, although none of its tests ran. AGENTS.md `## rules` says what could not be checked is `unknown` with its reason. Through `ogw review run`, such an error on the target's run stops the job with `test fail` (run.ts `sortFixRuns` puts a run whose failed modules include the target into `stopping`) instead of `test unknown`, and the lead agent then treats a fix that broke nothing as a failing fix",
+      "foundBy": "review run round 3"
+    }
+  ]
+}
