@@ -60,10 +60,11 @@ describe('browser run with no result', () => {
     const exportDir = join(dir, 'export');
     mkdirSync(exportDir);
     writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
-    // a browser that never sends a result and prints why
+    // a browser that never sends a result and prints why, in this process so its print does not wait for a boot
     const chromium = join(dir, 'chromium');
-    writeFileSync(chromium, `#!${process.execPath}\nprocess.stderr.write('ERROR:gpu_init.cc(1)] WebGL2 not available\\n'); setTimeout(() => undefined, 60000);\n`);
-    chmodSync(chromium, 0o755);
+    fakeProgram(chromium, (child) => {
+      child.stderr?.write('ERROR:gpu_init.cc(1)] WebGL2 not available\n');
+    });
     // a workspace env keeps the private temp folders out of the real harness repo
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const outcome = await webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 1500, startLimitMs: null });
