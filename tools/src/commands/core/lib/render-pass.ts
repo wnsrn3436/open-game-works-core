@@ -19,9 +19,9 @@ export function inKeyPaths(path: string, engine: string, module: string, all: re
 
 /**
  * The commit of the render pass `pass` that `module` of the native run of `engine` at `commit` takes for its render pass
- * not run on a locked screen (ogw.md `### Godot core test`), or null: the module's last recorded render pass `pass`,
- * when no file under the paths of the module's key differs between its commit and `commit`. A commit git no longer
- * has takes none.
+ * not run on a locked screen (ogw.md `### Godot core test`), or null: the module's last recorded render pass, when it is
+ * `pass` and no file under the paths of the module's key differs between its commit and `commit`. A last recorded
+ * render pass that is `fail` gives none, and so does a commit git no longer has.
  */
 export async function inheritedRenderPass(
   implDir: string,
@@ -31,11 +31,12 @@ export async function inheritedRenderPass(
   all: readonly CoreSpecModule[],
   env: NodeJS.ProcessEnv,
 ): Promise<string | null> {
+  // the last record in which the module's render pass ran or was taken: a `fail` there leaves nothing to take
   const last = (await readTestRecords(implDir))
-    .filter((record) => record.target === engine && recordOutcome(record, module).result === 'pass')
+    .filter((record) => record.target === engine && recordOutcome(record, module).result !== 'unknown')
     .sort((a, b) => a.recordedAt - b.recordedAt)
     .at(-1);
-  if (last === undefined) return null;
+  if (last === undefined || recordOutcome(last, module).result !== 'pass') return null;
   const from = last.inherited?.[module] ?? last.commit;
   const diff = await gitRaw(implDir, ['diff', '--name-only', '--no-renames', '-z', from, commit, '--'], { env });
   if (diff.code !== 0) return null;

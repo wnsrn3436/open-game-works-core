@@ -517,6 +517,17 @@ describe('release condition parts', () => {
     expect(constraintViolations({ a: '1', b: 2 }, [{ left: 'a', factor: 1, right: 'b' }])).toHaveLength(1);
   });
 
+  it('blocks the release when a later record of the same commit and target fails a module that passed before', async () => {
+    const ws = makeWorkspace();
+    const commit = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    await addTestRecord(ws.coreImpl, { commit, target: 'server', modules: { a: 'pass' }, recordedAt: 1 });
+    await addTestRecord(ws.coreImpl, { commit, target: 'server', modules: { a: 'fail' }, recordedAt: 2 });
+    expect(Object.fromEntries((await mergedResults(ws.coreImpl, commit)).get('server') ?? [])).toEqual({ a: 'fail' });
+    // a later unknown keeps the fail: it is no run of the whole module
+    await addTestRecord(ws.coreImpl, { commit, target: 'server', modules: { a: 'unknown' }, reasons: { a: 'not recorded' }, recordedAt: 3 });
+    expect(Object.fromEntries((await mergedResults(ws.coreImpl, commit)).get('server') ?? [])).toEqual({ a: 'fail' });
+  });
+
   it('merges records of a commit, later ones winning', async () => {
     const ws = makeWorkspace();
     const commit = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();

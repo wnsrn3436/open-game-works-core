@@ -137,15 +137,20 @@ export async function clientCorePassed(repo: string, engine: string): Promise<bo
     .filter((record) => record.target === engine && mainCommits.has(record.commit))
     .sort((a, b) => a.recordedAt - b.recordedAt);
   const clients = new Map<string, string[]>();
-  const latest = new Map<string, ModuleResult>();
+  const latest = new Map<string, Outcome>();
+  // a client core that compiles: `pass`, or `unknown` only because a locked screen left out a render pass after its headless pass passed
+  const compiles = (name: string): boolean => {
+    const outcome = latest.get(name);
+    return outcome !== undefined && (outcome.result === 'pass' || (outcome.result === 'unknown' && outcome.reason === SCREEN_LOCKED));
+  };
   for (const record of records) {
-    for (const name of Object.keys(record.modules)) latest.set(name, recordOutcome(record, name).result);
+    for (const name of Object.keys(record.modules)) latest.set(name, recordOutcome(record, name));
     let client = clients.get(record.commit);
     if (client === undefined) {
       client = (await coreSpecSides(repo, record.commit)).filter(([, side]) => side === 'client').map(([name]) => name);
       clients.set(record.commit, client);
     }
-    if (client.length > 0 && client.every((name) => latest.get(name) === 'pass')) return true;
+    if (client.length > 0 && client.every(compiles)) return true;
   }
   return false;
 }

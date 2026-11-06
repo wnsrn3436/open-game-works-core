@@ -6,7 +6,7 @@ import { mergedResult } from '../../src/commands/check/api.ts';
 import { gateOf } from '../../src/commands/check/lib/loop.ts';
 import { blocksBuild, DEV_WARN_ONLY } from '../../src/commands/build/lib/settingschecks.ts';
 import { ENVS } from '../../src/commands/build/lib/names.ts';
-import { inKeyPaths } from '../../src/commands/core/lib/render-pass.ts';
+import { inheritedRenderPass, inKeyPaths } from '../../src/commands/core/lib/render-pass.ts';
 import { readCoreSpecDir } from '../../src/commands/core/lib/impl.ts';
 import { addTestRecord, clientCorePassed, recordOutcome } from '../../src/commands/core/lib/test-records.ts';
 import { NOT_RECORDED, outcomeOf, passes, rerunHint, runOutcome, SCREEN_LOCKED } from '../../src/lib/outcome.ts';
@@ -84,16 +84,45 @@ describe('no gate maps unknown to pass', () => {
     expect(mergedResult([])).toBe('unknown');
   });
 
-  it('does not count an unknown module as a passed client core of an engine', async () => {
+  it('counts a client core as compiled when a module is unknown only for a locked screen, and not for another unknown', async () => {
     const ws = makeWorkspace();
     writeImpl(ws.coreImpl);
     commitAll(ws.coreImpl, 'impl');
     const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 1 });
-    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'skipped' }, skips: { UICore: 'render pass not run: the macOS screen is locked or the display sleeps' }, recordedAt: 2 });
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: 'not recorded' }, recordedAt: 1 });
     expect(await clientCorePassed(ws.coreImpl, 'godot')).toBe(false);
-    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { UICore: 'pass' }, recordedAt: 3 });
+    // the headless pass passed and only the render pass was left out: the client core compiles
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 2 });
     expect(await clientCorePassed(ws.coreImpl, 'godot')).toBe(true);
+  });
+
+  it('counts the legacy locked-screen skip as compiled too, and a fail as not compiled', async () => {
+    const ws = makeWorkspace();
+    writeImpl(ws.coreImpl);
+    commitAll(ws.coreImpl, 'impl');
+    const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'fail' }, recordedAt: 1 });
+    expect(await clientCorePassed(ws.coreImpl, 'godot')).toBe(false);
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'skipped' }, skips: { UICore: 'render pass not run: the macOS screen is locked or the display sleeps' }, recordedAt: 2 });
+    expect(await clientCorePassed(ws.coreImpl, 'godot')).toBe(true);
+  });
+
+  it('takes no render pass for a locked screen when the last render pass that ran on that code failed', async () => {
+    const ws = makeWorkspace();
+    writeImpl(ws.coreImpl);
+    commitAll(ws.coreImpl, 'impl');
+    const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    const all = await readCoreSpecDir(ws.coreImpl);
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'pass' }, recordedAt: 1 });
+    expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', head, all, ws.env)).toBe(head);
+    // a locked-screen unknown after it does not hide the pass
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 2 });
+    expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', head, all, ws.env)).toBe(head);
+    // the render pass ran again and failed: a locked screen takes nothing
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'fail' }, recordedAt: 3 });
+    expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', head, all, ws.env)).toBeNull();
+    await addTestRecord(ws.coreImpl, { commit: head, target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 4 });
+    expect(await inheritedRenderPass(ws.coreImpl, 'godot', 'UICore', head, all, ws.env)).toBeNull();
   });
 
   it('reads a test, check or job result through outcomeOf only: no other source file compares a result with skipped', () => {
