@@ -260,7 +260,7 @@ UICore registers a back handler with `InputCore.set_back_handler` in `init`. Bac
 
 - focus: the one UI element pressed with keys and gamepad. A `UIButton` that has focus is clicked by the engine's accept input. This click follows the `UICore.buttonClickIntervalMs` and `[ui_button_click]` rules the same as a pointer click
 - Focus is set only during focus mode. Focus mode lasts while `InputCore.get_device` is `Gamepad`, and, while it is `KeyboardMouse`, from receiving a key direction input until receiving a mouse movement or a mouse button press. A key direction input received by a text input element that has engine focus does not start focus mode
-- UICore sets focus on the focus target in the next frame when the device becomes `Gamepad` through `InputCore.InputDeviceChangedEvent`, in that frame when focus mode starts by a key direction input, and in that frame when the focus target changes during focus mode. The direction input that started focus mode does not move focus. When focus mode ends, focus is removed at once
+- UICore sets focus on the focus target in the next frame when the device becomes `Gamepad` through `InputCore.InputDeviceChangedEvent`, in that frame when focus mode starts by a key direction input, and in that frame when the focus target changes during focus mode. The direction input that started focus mode does not move focus and is not consumed in the UI stage of `InputCore`. When focus mode ends, focus is removed at once
 - focus target: the focus element of the first of the following that exists. When none exists, there is no focus target and no focus
   1. the topmost popup object among visible system popups
   2. `Tutorial` view focus
@@ -504,7 +504,7 @@ none
 - `is_system_popup_visible` equals whether the system popup root is visible each time a system popup opens and closes, and is `false` when only regular popups are open
 - When a system popup opens and closes, `get_open_popups` is unchanged and there is no `UIOpenedEvent` or `UIClosedEvent`
 - In the frame after the input device becomes `Gamepad`, the initial focus element of the topmost modal popup has focus, and gamepad accept input is one click of that `UIButton`. When the input device becomes `Touch`, there is no focus
-- When the input device is `KeyboardMouse`, on one key direction input the initial focus element of the topmost modal popup has focus in that frame, and focus does not move. The next key direction input moves focus, and a key accept input is one click of the `UIButton` that has focus. After that, one mouse movement leaves no focus. A key direction input received by a text input element with engine focus creates no focus
+- When the input device is `KeyboardMouse`, on one key direction input the initial focus element of the topmost modal popup has focus in that frame, focus does not move, and an action bound to that key is pressed. The next key direction input moves focus, and a key accept input is one click of the `UIButton` that has focus. After that, one mouse movement leaves no focus. A key direction input received by a text input element with engine focus creates no focus
 - In a popup without initial focus, the first `UIButton` has focus, and direction input does not move focus to an element outside that popup
 - While the input device is `Gamepad`, when popup B opens above popup A, the focus element of B has focus, and when B closes, the element in A that had focus before B opened has focus again
 - When only a panel with modal off is open, there is no focus and gamepad presses do not go to UI elements
