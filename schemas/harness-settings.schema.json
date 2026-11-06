@@ -245,6 +245,14 @@
             "$ref": "#/$defs/agent"
           }
         },
+        "confirmJudge": {
+          "description": "Agent CLI, model and effort of the judges of the confirmation pair, which a `better` of a fun iteration has to pass, and of the success confirmation judges. Absent: no confirmation pair, and the success confirmation judges use the agent CLI, model and effort of the first step 4 judge",
+          "$ref": "#/$defs/agent"
+        },
+        "confirmFallback": {
+          "description": "Agent CLI, model and effort that a judge running with `confirmJudge` runs with once more when its agent CLI output shows that the usage limit or the rate limit was hit. Absent: no fallback",
+          "$ref": "#/$defs/agent"
+        },
         "variants": {
           "description": "The number of variant agents that `ogw loop variants` starts in a fun iteration. 1: the lead agent calls one content agent",
           "type": "integer",
@@ -266,7 +274,7 @@
           "minimum": 10000
         },
         "judgeTimeLimitMs": {
-          "description": "The time limit of one judge agent job, step 4, success confirmation, variant and calibration judges alike. A job that reaches it is stopped and counts as failed",
+          "description": "The time limit of one judge agent job, step 4, confirmation pair, success confirmation, variant and calibration judges alike. A job that reaches it is stopped and counts as failed",
           "type": "integer",
           "minimum": 60000
         }

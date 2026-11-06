@@ -12,15 +12,26 @@ export function loginTokenRoles(settings: HarnessSettings): string[] {
   });
 }
 
+/** The judge agents of harness settings `loop` in order: the items of `judgePanel`, then `confirmJudge` and `confirmFallback`. */
+function loopJudges(settings: HarnessSettings): { path: string; agent: AgentSettings }[] {
+  const { judgePanel, confirmJudge, confirmFallback } = settings.loop;
+  return [
+    ...judgePanel.map((agent) => ({ path: 'loop.judgePanel', agent })),
+    ...(confirmJudge === undefined ? [] : [{ path: 'loop.confirmJudge', agent: confirmJudge }]),
+    ...(confirmFallback === undefined ? [] : [{ path: 'loop.confirmFallback', agent: confirmFallback }]),
+  ];
+}
+
 /**
- * The agent the token check run uses: the first of `agents.play`, `agents.judge` and the items of `loop.judgePanel`
- * (as the judge role) whose agent CLI is Claude Code; null when none is.
+ * The agent the token check run uses: the first of `agents.play`, `agents.judge`, the items of `loop.judgePanel`,
+ * `loop.confirmJudge` and `loop.confirmFallback` (these as the judge role) whose agent CLI is Claude Code; null when
+ * none is.
  */
 export function loginTokenAgent(settings: HarnessSettings): { role: 'play' | 'judge'; agent: AgentSettings } | null {
   const role = loginTokenRoles(settings)[0] as 'play' | 'judge' | undefined;
   if (role !== undefined) return { role, agent: settings.agents[role] as AgentSettings };
-  const panel = settings.loop.judgePanel.find((agent) => agentCli(agent) === 'claude-code');
-  return panel === undefined ? null : { role: 'judge', agent: panel };
+  const judge = loopJudges(settings).find((j) => agentCli(j.agent) === 'claude-code');
+  return judge === undefined ? null : { role: 'judge', agent: judge.agent };
 }
 
 /** The agent login token in the host secret store; null when it is missing or empty. */
@@ -32,17 +43,22 @@ export function storedLoginToken(ctx: Context): string | null {
 /** How a human makes the agent login token and stores it on one line. */
 export const STORE_LOGIN_TOKEN = `make a long-lived token with \`claude setup-token\` and store it on one line, for example on macOS: pbpaste | tr -d '[:space:]' | tools/bin/ogw secret set --harness ${AGENT_LOGIN_TOKEN_SECRET}`;
 
-/** The harness settings paths whose agent CLI is Claude Code among `agents.play`, `agents.judge` and the items of `loop.judgePanel`. */
+/**
+ * The harness settings paths whose agent CLI is Claude Code among `agents.play`, `agents.judge`, the items of
+ * `loop.judgePanel`, `loop.confirmJudge` and `loop.confirmFallback`.
+ */
 function loginTokenUsers(settings: HarnessSettings): string[] {
   const users = loginTokenRoles(settings).map((role) => `agents.${role}`);
-  if (settings.loop.judgePanel.some((agent) => agentCli(agent) === 'claude-code')) users.push('loop.judgePanel');
+  for (const judge of loopJudges(settings)) {
+    if (agentCli(judge.agent) === 'claude-code' && !users.includes(judge.path)) users.push(judge.path);
+  }
   return users;
 }
 
 /**
  * `ogw loop start`, `ogw build start`, `ogw judge calibrate`: why they do not start, when the agent CLI of play, of
- * judge or of an item of `loop.judgePanel` is Claude Code and the host secret store lacks the agent login token; null
- * otherwise.
+ * judge, of an item of `loop.judgePanel`, of `loop.confirmJudge` or of `loop.confirmFallback` is Claude Code and the
+ * host secret store lacks the agent login token; null otherwise.
  */
 export function missingLoginToken(ctx: Context, settings: HarnessSettings): string | null {
   const users = loginTokenUsers(settings);

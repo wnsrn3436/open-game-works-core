@@ -85,10 +85,16 @@ export interface JudgeAgent {
   effort: string;
 }
 
+/** A step 4 judge, a judge of the confirmation pair, or a success confirmation judge (ogw.md `## loop evaluate`). */
+export type JudgeKind = 'main' | 'confirm' | 'success';
+
 export interface JudgeEntry {
-  kind: 'main' | 'success';
+  kind: JudgeKind;
   result: string;
+  /** The agent the judge ended with: `loop.confirmFallback` for a judge that fell back. */
   agent: JudgeAgent;
+  /** Set when the judge ran with `loop.confirmFallback` after a limit message of `loop.confirmJudge`. */
+  fallback?: 'usage limit';
   A: string;
   B: string | null;
   instanceSide: 'A' | 'B';
@@ -104,6 +110,14 @@ export interface JudgeEntry {
   status: 'done' | 'failed';
 }
 
+/** What the confirmation pair gave: its votes and element decisions, and whether it confirmed the `better` of step 4. */
+export interface Confirmation {
+  outcome: 'confirmed' | 'overturned';
+  votes: ElementVotes[];
+  /** True when a judge of the pair ran with `loop.confirmFallback`. */
+  fallback: boolean;
+}
+
 /** `records/loops/<run>/evaluate-<iteration>.json`. */
 export interface EvaluateFile {
   commit: string;
@@ -115,8 +129,10 @@ export interface EvaluateFile {
   judges: JudgeEntry[];
   /** Per element of `elements`, the votes of the step 4 judges; null without a baseline game. */
   votes: ElementVotes[] | null;
-  /** `vs baseline` of the step 4 judges together; null without a baseline game. */
+  /** `vs baseline` of the iteration: that of the confirmation pair when it was called, else of the step 4 judges together; null without a baseline game. */
   vsBaseline: VsBaseline | null;
+  /** Set when the confirmation pair was called (ogw.md `## loop evaluate`). */
+  confirmation?: Confirmation;
   /** `vs reference` of the step 4 judges together; null in a fun iteration. */
   vsReference: VsReference | null;
   measure: string | null;

@@ -3,11 +3,29 @@ import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { runBaseline } from './lib/baseline.ts';
 import { evaluate } from './lib/evaluate.ts';
-import { gateOf, type CheckFile } from './lib/files.ts';
+import { gateOf, type CheckFile, type EvaluateFile } from './lib/files.ts';
 import { gameSettings, iterationKind, memorableMomentAsked, openTarget, readRunJson, runRel } from './lib/run.ts';
 import { hypothesisMoments, readJudgeMoments, requireReference } from './lib/setup.ts';
 
 const USAGE = 'ogw loop evaluate <game> [--db postgresql]';
+
+/** The lines after the path of `evaluate-<n>.json`: the judges, the votes, the confirmation, the plays and the measure. */
+function outputLines(file: EvaluateFile): string[] {
+  const fallback = (fell: boolean): string => (fell ? ' (fallback: usage limit)' : '');
+  const votes = (prefix: string, v: { element: string; this: number; baseline: number; decision: string }): string =>
+    `${prefix} ${v.element}: this ${String(v.this)} baseline ${String(v.baseline)} ${v.decision}`;
+  return [
+    `kind ${file.kind}`,
+    ...file.judges.map((j) => `judge ${j.kind} ${j.status} ${j.agent.cli} ${j.agent.model} ${j.agent.effort}${fallback(j.fallback !== undefined)} side ${j.instanceSide} vs reference ${j.vsReference ?? 'none'}`),
+    ...(file.votes ?? []).map((v) => votes('votes', v)),
+    ...(file.confirmation?.votes ?? []).map((v) => votes('confirm votes', v)),
+    ...(file.confirmation === undefined ? [] : [`confirmation ${file.confirmation.outcome}${fallback(file.confirmation.fallback)}`]),
+    `vs baseline ${file.vsBaseline ?? 'none'}`,
+    `vs reference ${file.vsReference ?? 'none'}`,
+    ...file.plays.map((p) => `play ${p.status} ${p.result}`),
+    `measure ${file.measure ?? 'none'}`,
+  ];
+}
 
 export const loopEvaluate: CommandDef = {
   name: ['loop', 'evaluate'],
@@ -53,16 +71,7 @@ export const loopEvaluate: CommandDef = {
       db,
       memorableMoment: run.kind === 'loop' && memorableMomentAsked(run),
     });
-    const lines = [
-      path,
-      `kind ${file.kind}`,
-      ...file.judges.map((j) => `judge ${j.kind} ${j.status} ${j.agent.cli} ${j.agent.model} ${j.agent.effort} side ${j.instanceSide} vs reference ${j.vsReference ?? 'none'}`),
-      ...(file.votes ?? []).map((v) => `votes ${v.element}: this ${String(v.this)} baseline ${String(v.baseline)} ${v.decision}`),
-      `vs baseline ${file.vsBaseline ?? 'none'}`,
-      `vs reference ${file.vsReference ?? 'none'}`,
-      ...file.plays.map((p) => `play ${p.status} ${p.result}`),
-      `measure ${file.measure ?? 'none'}`,
-    ];
+    const lines = [path, ...outputLines(file)];
     return { text: lines.join('\n'), data: { path, ...file } };
   },
 };

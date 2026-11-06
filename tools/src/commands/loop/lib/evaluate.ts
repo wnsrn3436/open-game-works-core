@@ -10,7 +10,7 @@ import { newId } from '../../../lib/ids.ts';
 import { killJob, readJob } from '../../../lib/jobs.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
-import { agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
+import { agentHitLimit, agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
 import { clearPlayBudget } from '../../agent/lib/play-budget.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
 import { clearReleases, takeReleases } from '../../instance/lib/releases.ts';
@@ -22,10 +22,12 @@ import {
   elementsOf,
   successPrecondition,
   type CheckFile,
+  type Confirmation,
   type EvaluateFile,
   type IterationKind,
   type JudgeAgent,
   type JudgeEntry,
+  type JudgeKind,
   type PlayEntry,
   type VsBaseline,
   type VsReference,
@@ -35,7 +37,7 @@ import { abs, runRel } from './run.ts';
 import { botRun, comparisonText, scenarioAtHead, withInputLatency, type BotRun } from './shared-telemetry.ts';
 import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
-import { combinedVsBaseline, combinedVsReference, countVotes } from './votes.ts';
+import { CONFIRMATION_JUDGES, combinedVsBaseline, combinedVsReference, confirmationOutcome, countVotes } from './votes.ts';
 import { MEMORABLE_MOMENT, readGameNamesAt, type Moment, type Reference } from './setup.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
@@ -132,6 +134,8 @@ export interface JudgingPlan {
   site: EvaluateSite;
   /** Whether the success judges start, once every step 4 judge ended; absent: no success judge opens. */
   successOpen?: (main: readonly JudgeEntry[]) => boolean;
+  /** Whether the judges of the confirmation pair start, once every step 4 judge ended; absent: none opens. */
+  confirmOpen?: (main: readonly JudgeEntry[]) => boolean;
 }
 
 /** An instance to start. A start that fails for another reason than a save fixture step ends `ogw loop evaluate`. */
@@ -164,11 +168,15 @@ interface PlaySlot {
 
 export interface JudgeSlot {
   role: 'judge';
-  kind: 'main' | 'success';
+  kind: JudgeKind;
   pair: JudgePair;
-  /** The order of a step 4 judge from 1; 0 for a success judge. */
+  /** The order of a step 4 judge from 1; 0 for a success judge and a judge of the confirmation pair. */
   k: number;
   agent: AgentSettings;
+  /** `loop.confirmFallback` for a judge that runs with `loop.confirmJudge` and has not fallen back; else null. */
+  fallback: AgentSettings | null;
+  /** True once the judge runs with `loop.confirmFallback` after a limit message. */
+  fellBack: boolean;
   /** Absolute path of the judge input `telemetry`, or null. */
   telemetry: string | null;
   side: 'A' | 'B';
@@ -186,11 +194,14 @@ export interface JudgeSlot {
 
 export type Slot = PlaySlot | JudgeSlot;
 
+/** What a group waits for: nothing, the rest of `success` (success judges), or a `better` of step 4 (the confirmation pair). */
+type Gate = 'none' | 'success' | 'confirm';
+
 export interface Group {
   size: number;
   slots: Slot[];
-  /** Success judges wait for the step 4 judges and start only when the rest of `success` holds. */
-  gate: 'none' | 'success';
+  /** Success judges and the confirmation pair wait for the step 4 judges and start only when their gate opens. */
+  gate: Gate;
 }
 
 interface State {
@@ -206,6 +217,7 @@ interface State {
   starting: Set<string>;
   jobs: Set<string>;
   successGate: 'pending' | 'open' | 'closed';
+  confirmGate: 'pending' | 'open' | 'closed';
   lastInputMs: number;
   /** When the first queued group began waiting for room while this run held no instance; null when not waiting. */
   waitingSince: number | null;
@@ -257,16 +269,17 @@ function judgeMoments(plan: Pick<JudgingPlan, 'moments' | 'settings'>, pair: Jud
 export function judgeGroup(
   plan: Pick<JudgingPlan, 'moments' | 'settings'>,
   pair: JudgePair,
-  kind: 'main' | 'success',
+  kind: JudgeKind,
   k: number,
   side: 'A' | 'B',
   agent: AgentSettings,
   together: number,
+  fallback: AgentSettings | null = null,
 ): Group {
   const { included, omitted, size } = judgeMoments(plan, pair);
   const budget = judgeBudget(plan.settings.maxConcurrentInstances, pair.baseline === null ? 1 : 2, included.length, together);
-  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], job: null, entry: null };
-  return { size: slot.budget, slots: [slot], gate: kind === 'success' ? 'success' : 'none' };
+  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, fallback, fellBack: false, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], job: null, entry: null };
+  return { size: slot.budget, slots: [slot], gate: kind === 'main' ? 'none' : kind };
 }
 
 /**
@@ -311,34 +324,63 @@ function playSlot(spec: Spec, platform: string, moment: Moment | null, measure: 
 /**
  * Groups in start order (ogw.md `## loop evaluate`): each step 4 judge (`loop.judgeVotes` with a baseline game,
  * else one; the first on a random side, each next on the other side), the `playInstances` plays, a play per judge
- * moment, and in a completeness iteration of a loop run the success judges (a random side each, with the agent of the
- * first step 4 judge).
+ * moment, in a completeness iteration of a loop run the success judges (a random side each, with `loop.confirmJudge`
+ * or else the agent of the first step 4 judge), and in a fun iteration with a baseline game and `loop.confirmJudge`
+ * the confirmation pair (the first on a random side, the second on the other side).
  */
 export function planGroups(plan: EvaluatePlan): Group[] {
-  const groups: Group[] = [];
   const pair: JudgePair = { name: '', commit: plan.commit, baseline: plan.baseline, baselineLatencyMs: 0 };
   const count = plan.baseline === null ? 1 : plan.settings.loop.judgeVotes;
   const first = plan.baseline === null ? 'A' : drawSide();
+  const groups: Group[] = [];
   for (let k = 1; k <= count; k++) {
     groups.push(judgeGroup(plan, pair, 'main', k, alternateSide(first, k), judgeAgent(plan.settings, k), count));
   }
-  const plays: Slot[] = [];
+  return [...groups, ...playGroups(plan), ...successGroups(plan, pair), ...confirmGroups(plan, pair)];
+}
+
+/** The `playInstances` plays and a play per judge moment; none in a fun iteration. */
+function playGroups(plan: EvaluatePlan): Group[] {
   // no play agent plays in a fun iteration: its findings would wait for a completeness iteration, and the bot playtest gates blockers
-  for (let k = 0; k < (plan.kind === 'fun' ? 0 : plan.settings.playInstances); k++) {
+  if (plan.kind === 'fun') return [];
+  const groups: Group[] = [];
+  const plays: Slot[] = [];
+  for (let k = 0; k < plan.settings.playInstances; k++) {
     const platform = plan.platforms[k % plan.platforms.length] as string;
     plays.push(playSlot({ commit: plan.commit, platform }, platform, null, true));
   }
   if (plays.length > 0) groups.push({ size: plays.length, slots: plays, gate: 'none' });
   const firstPlatform = plan.platforms[0] as string;
-  for (const moment of plan.kind === 'fun' ? [] : plan.moments) {
+  for (const moment of plan.moments) {
     groups.push({ size: 1, slots: [playSlot({ commit: plan.commit, fixture: fixturePath(plan, moment) }, firstPlatform, moment, false)], gate: 'none' });
   }
-  if (plan.run.kind === 'loop' && plan.kind === 'completeness') {
-    for (let i = 0; i < plan.settings.loopStop.successJudges; i++) {
-      groups.push(judgeGroup(plan, pair, 'success', 0, plan.baseline === null ? 'A' : drawSide(), judgeAgent(plan.settings, 1), plan.settings.loopStop.successJudges));
-    }
-  }
   return groups;
+}
+
+/** `loop.confirmFallback` for a judge that runs with `loop.confirmJudge`, which falls back once after a limit message; else null. */
+function confirmFallbackOf(plan: EvaluatePlan): AgentSettings | null {
+  const { confirmJudge, confirmFallback } = plan.settings.loop;
+  return confirmJudge === undefined ? null : (confirmFallback ?? null);
+}
+
+/** The success judges of a completeness iteration of a loop run: a random side each. */
+function successGroups(plan: EvaluatePlan, pair: JudgePair): Group[] {
+  if (plan.run.kind !== 'loop' || plan.kind !== 'completeness') return [];
+  const agent = plan.settings.loop.confirmJudge ?? judgeAgent(plan.settings, 1);
+  const successJudges = plan.settings.loopStop.successJudges;
+  return Array.from({ length: successJudges }, () =>
+    judgeGroup(plan, pair, 'success', 0, plan.baseline === null ? 'A' : drawSide(), agent, successJudges, confirmFallbackOf(plan)),
+  );
+}
+
+/** The confirmation pair of a fun iteration with a baseline game and `loop.confirmJudge`: the first on a random side. */
+function confirmGroups(plan: EvaluatePlan, pair: JudgePair): Group[] {
+  const agent = plan.settings.loop.confirmJudge;
+  if (plan.run.kind !== 'loop' || plan.kind !== 'fun' || plan.baseline === null || agent === undefined) return [];
+  const first = drawSide();
+  return Array.from({ length: CONFIRMATION_JUDGES }, (_v, i) =>
+    judgeGroup(plan, pair, 'confirm', 0, alternateSide(first, i + 1), agent, CONFIRMATION_JUDGES, confirmFallbackOf(plan)),
+  );
 }
 
 async function inputFile(state: State, role: 'play' | 'judge', input: unknown): Promise<string> {
@@ -561,11 +603,12 @@ async function launchQueued(state: State): Promise<boolean> {
   let launched = false;
   while (state.queue.length > 0) {
     const group = state.queue[0] as Group;
-    if (group.gate === 'success' && state.successGate === 'closed') {
+    const gate = group.gate === 'none' ? 'open' : group.gate === 'success' ? state.successGate : state.confirmGate;
+    if (gate === 'closed') {
       state.queue.shift();
       continue;
     }
-    if (group.gate === 'success' && state.successGate === 'pending') break;
+    if (gate === 'pending') break;
     if (!(await hasRoom(state, group.size))) {
       waitForRoom(state);
       break;
@@ -621,6 +664,7 @@ function judgeEntry(state: State, slot: JudgeSlot, output: string | null, verdic
     kind: slot.kind,
     result: rel(state, output),
     agent: judgeAgentOf(slot.agent),
+    ...(slot.fellBack ? { fallback: 'usage limit' as const } : {}),
     A,
     B,
     instanceSide: slot.side,
@@ -641,23 +685,41 @@ export function together(plan: Pick<EvaluatePlan, 'baseline' | 'kind' | 'setting
   return { votes, vsBaseline, vsReference };
 }
 
+/**
+ * The votes, `vs baseline` and `vs reference` of the iteration: those of the step 4 judges together, with the `vs baseline`
+ * the confirmation pair gives when it was called (ogw.md `## loop evaluate`).
+ */
+export function judged(
+  plan: Pick<EvaluatePlan, 'baseline' | 'kind' | 'settings'>,
+  judges: readonly JudgeEntry[],
+): Pick<EvaluateFile, 'votes' | 'vsBaseline' | 'vsReference' | 'confirmation'> {
+  const step4 = together(plan, judges.filter((j) => j.kind === 'main'));
+  const pair = judges.filter((j) => j.kind === 'confirm');
+  if (pair.length === 0 || step4.votes === null) return step4;
+  const votes = countVotes(pair, elementsOf(plan.kind), CONFIRMATION_JUDGES);
+  const confirmation: Confirmation = { outcome: confirmationOutcome(step4.votes, votes), votes, fallback: pair.some((j) => j.fallback !== undefined) };
+  return { ...step4, vsBaseline: confirmation.outcome === 'confirmed' ? 'better' : 'indistinguishable', confirmation };
+}
+
 function mainEntries(state: State): JudgeEntry[] | null {
   const main = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.kind === 'main');
   return main.every((s) => s.entry !== null) ? main.map((s) => s.entry as JudgeEntry) : null;
 }
 
 /**
- * Opens or closes the success judges once every step 4 judge ended (ogw.md `## loop evaluate`); closes them after a success
- * judge that did not pass.
+ * Opens or closes the success judges and the confirmation pair once every step 4 judge ended (ogw.md `## loop
+ * evaluate`); closes the success judges after a success judge that did not pass.
  */
-function updateSuccessGate(state: State, slot: JudgeSlot, entry: JudgeEntry): void {
+function updateGates(state: State, slot: JudgeSlot, entry: JudgeEntry): void {
   if (slot.kind === 'success') {
     if (entry.vsReference !== 'pass') state.successGate = 'closed';
     return;
   }
+  if (slot.kind === 'confirm') return;
   const main = mainEntries(state);
   if (main === null) return;
   state.successGate = state.plan.successOpen?.(main) === true ? 'open' : 'closed';
+  state.confirmGate = state.plan.confirmOpen?.(main) === true ? 'open' : 'closed';
 }
 
 async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> {
@@ -694,7 +756,7 @@ async function retryOrFail(state: State, slot: Slot): Promise<void> {
     slot.entry = { result: rel(state, output), instance: slot.instance?.id ?? '', platform: slot.platform, moment: slot.moment?.name ?? null, status: 'failed' };
   } else {
     slot.entry = judgeEntry(state, slot, output, null);
-    updateSuccessGate(state, slot, slot.entry);
+    updateGates(state, slot, slot.entry);
   }
 }
 
@@ -732,11 +794,29 @@ async function poll(state: State, slot: Slot): Promise<boolean> {
     if (verdict) {
       await stopJudgeInstances(state, slot);
       slot.entry = judgeEntry(state, slot, outcome.output, verdict);
-      updateSuccessGate(state, slot, slot.entry);
+      updateGates(state, slot, slot.entry);
       return true;
     }
   }
+  if (slot.role === 'judge' && (await fallBack(state, slot))) return true;
   await retryOrFail(state, slot);
+  return true;
+}
+
+/**
+ * The confirmation fallback (ogw.md `## loop evaluate`): a judge that runs with `loop.confirmJudge` and ended without a
+ * judge result is called again once with `loop.confirmFallback` when its agent CLI output has a limit message of that
+ * CLI. The call is not counted in the call-again count; true when it made it.
+ */
+async function fallBack(state: State, slot: JudgeSlot): Promise<boolean> {
+  if (slot.fallback === null || slot.job === null) return false;
+  if (!(await agentHitLimit(state.ctx, slot.job, judgeAgentOf(slot.agent).cli))) return false;
+  state.ctx.log(`judge ${slot.job} hit the limit of ${judgeAgentOf(slot.agent).cli}: calling it again with loop.confirmFallback`);
+  await stopJudgeInstances(state, slot);
+  slot.agent = slot.fallback;
+  slot.fallback = null;
+  slot.fellBack = true;
+  await launch(state, slot);
   return true;
 }
 
@@ -811,7 +891,7 @@ async function completeRuns(state: State, commit: string, scenario: Scenario, in
 /**
  * The shared telemetry of one pair (ogw.md `## loop evaluate`): the bot runs of the scenario on this commit and the
  * baseline commit, compared with `A` and `B` of each step 4 judge of the pair in the site's telemetry file. A success
- * judge gets the file of the first step 4 judge of its side. Without both runs the judges of the pair get `telemetry`
+ * judge and a judge of the confirmation pair get the file of the first step 4 judge of its side. Without both runs the judges of the pair get `telemetry`
  * null.
  */
 async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scenario): Promise<void> {
@@ -834,7 +914,7 @@ async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scena
     await writeFileAtomic(path, slot.side === 'A' ? comparisonText(mine, theirs) : comparisonText(theirs, mine));
     slot.telemetry = path;
   }
-  for (const slot of judges.filter((j) => j.kind === 'success')) {
+  for (const slot of judges.filter((j) => j.kind !== 'main')) {
     slot.telemetry = judges.find((j) => j.kind === 'main' && j.side === slot.side)?.telemetry ?? null;
   }
 }
@@ -916,6 +996,7 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
     ...(plan.fixtureDir === undefined ? {} : { fixtureDir: plan.fixtureDir }),
     site: runSite(plan.game, plan.run),
     successOpen: (main) => successPrecondition({ kind: plan.kind, ...together(plan, main) }, (name) => checkResult(plan.check, name)),
+    confirmOpen: (main) => together(plan, main).vsBaseline === 'better',
   };
 }
 
@@ -946,6 +1027,7 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     starting: new Set(),
     jobs: new Set(),
     successGate: 'pending',
+    confirmGate: 'pending',
     lastInputMs: 0,
     waitingSince: null,
     stoppedBy: null,
@@ -990,7 +1072,7 @@ async function evaluateWith(ctx: Context, plan: EvaluatePlan): Promise<{ file: E
     elements: elementsOf(plan.kind),
     plays,
     judges,
-    ...together(plan, judges.filter((j) => j.kind === 'main')),
+    ...judged(plan, judges),
     measure,
     ...(gap === undefined ? {} : { memorableMoment: gap }),
   };

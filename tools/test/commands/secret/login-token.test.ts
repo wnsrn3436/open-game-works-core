@@ -156,12 +156,18 @@ describe('ogw secret set --harness claude-code-oauth-token', () => {
     expect((await setToken('good')).code).toBe(0);
     const panelArgs = readFileSync(log, 'utf8').trim().split('\n').at(-1)?.split('|')[3];
     expect(panelArgs?.startsWith('-p --model claude-sonnet-5-5 --effort low ')).toBe(true);
+    // only loop.confirmFallback uses Claude Code: the check runs with it as the judge
+    ws = makeWorkspace({ agents: { ...agents, play: codex, judge: codex }, loop: { ...loop, confirmJudge: codex, confirmFallback: { cli: 'claude-code', model: 'claude-haiku-5-5', effort: 'medium' } } });
+    env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
+    expect((await setToken('good')).code).toBe(0);
+    const fallbackArgs = readFileSync(log, 'utf8').trim().split('\n').at(-1)?.split('|')[3];
+    expect(fallbackArgs?.startsWith('-p --model claude-haiku-5-5 --effort medium ')).toBe(true);
     ws = makeWorkspace({ agents: { ...agents, play: codex, judge: codex } });
     env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
     expect(await setToken('good')).toEqual({
       code: 1,
       stdout: '',
-      stderr: 'claude-code-oauth-token not stored: harness settings agents play and judge and loop.judgePanel do not use Claude Code, so no agent uses it\n',
+      stderr: 'claude-code-oauth-token not stored: harness settings agents play and judge, loop.judgePanel, loop.confirmJudge and loop.confirmFallback do not use Claude Code, so no agent uses it\n',
     });
     expect(store()).toEqual({});
   });

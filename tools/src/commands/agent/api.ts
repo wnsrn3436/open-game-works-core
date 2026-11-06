@@ -1,5 +1,7 @@
 import type { Context } from '../../lib/command.ts';
 import type { AgentSettings, Role } from '../../lib/settings.ts';
+import type { AgentCli } from './lib/cli-command.ts';
+import { agentHitLimit as hitLimit } from './lib/limit.ts';
 import { mergeAgents, type MergeFailure, type MergeOptions } from './lib/merge.ts';
 import { outcomeOf } from './lib/outcome.ts';
 import { startAgent, type CalibrationPlace } from './lib/prepare.ts';
@@ -40,6 +42,11 @@ export interface AgentOutcome {
 /** Status of an agent job; an agent that ended without a result file is `failed`. */
 export function agentOutcome(ctx: Context, id: string): Promise<AgentOutcome> {
   return outcomeOf(id, ctx.env);
+}
+
+/** True when the agent CLI output of the job has a limit message of `cli` (ogw.md `## loop evaluate`). */
+export function agentHitLimit(ctx: Context, id: string, cli: AgentCli): Promise<boolean> {
+  return hitLimit(id, cli, ctx.env);
 }
 
 export interface MergeOutcome {

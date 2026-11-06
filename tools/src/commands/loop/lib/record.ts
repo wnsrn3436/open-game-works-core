@@ -143,10 +143,10 @@ function kindOf(run: RunState, evaluate: EvaluateFile | null): IterationKind {
   return evaluate?.kind ?? iterationKind(run, run.iteration);
 }
 
-/** `## votes`: the step 4 judges together; null without a baseline game or an evaluate file. */
+/** `## votes`: the `vs baseline` of the iteration, the step 4 judges together and the confirmation pair; null without a baseline game or an evaluate file. */
 function votesOf(evaluate: EvaluateFile | null): RecordVotes | null {
   if (evaluate === null || evaluate.baseline === null) return null;
-  return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [] };
+  return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [], ...(evaluate.confirmation === undefined ? {} : { confirmation: evaluate.confirmation }) };
 }
 
 /** `## variants`: the variants of `variants-<n>.json`; null without that file. */

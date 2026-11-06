@@ -133,7 +133,20 @@ export interface HarnessSettings {
   webSmokeCpuThrottleRate: number;
   webSmokeBootTimeoutMs: number;
   loopStop: { repeatedDefect: number; oscillation: number; plateau: number; successJudges: number };
-  loop: { funIterations: number; judgeVotes: number; judgePanel: AgentSettings[]; variants: number; playTimeLimitMs: number; playBudgetMs: number; judgeInstanceBudgetMs: number; judgeTimeLimitMs: number };
+  loop: {
+    funIterations: number;
+    judgeVotes: number;
+    judgePanel: AgentSettings[];
+    /** The judges of the confirmation pair and the success confirmation judges; absent: no confirmation pair. */
+    confirmJudge?: AgentSettings;
+    /** What a judge running with `confirmJudge` runs with once more after a limit message; absent: no fallback. */
+    confirmFallback?: AgentSettings;
+    variants: number;
+    playTimeLimitMs: number;
+    playBudgetMs: number;
+    judgeInstanceBudgetMs: number;
+    judgeTimeLimitMs: number;
+  };
   calibration: { nullPairs: number; orderRuns: number; degradeLatencyMs: number };
   reviewRounds: number;
   codeCheck: { maxComplexity: number };

@@ -53,6 +53,8 @@ interface Fake {
   agentStarting: (id: string) => void;
   /** Wait for a slot with the start's abort signal, before the instance id is reserved. */
   reserving: (signal: AbortSignal | undefined) => Promise<void>;
+  /** Whether the agent CLI output of the agent has a limit message of `cli`. */
+  limited: (agent: FakeAgent, cli: string) => boolean;
 }
 
 const fake = vi.hoisted(
@@ -71,6 +73,7 @@ const fake = vi.hoisted(
     booting: () => Promise.resolve(),
     agentStarting: () => undefined,
     reserving: () => Promise.resolve(),
+    limited: () => false,
   }),
 );
 
@@ -133,6 +136,7 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
       fs.writeFileSync(agent.output, text);
       return Promise.resolve({ status: 'done', output: agent.output });
     }),
+    agentHitLimit: vi.fn((_ctx: unknown, id: string, cli: string) => Promise.resolve(fake.limited(fake.agents.find((a) => a.id === id) as FakeAgent, cli))),
     mergeAgentJobs: vi.fn(),
     retryAgentJob: vi.fn(),
   };
@@ -266,6 +270,7 @@ beforeEach(() => {
   fake.booting = () => Promise.resolve();
   fake.agentStarting = () => undefined;
   fake.reserving = () => Promise.resolve();
+  fake.limited = () => false;
   fake.failStart = (opts) => (typeof opts.fixture === 'string' && opts.fixture.endsWith('broken.json') ? 'fixture' : null);
   counters.play = 0;
   counters.judge = 0;
@@ -1120,6 +1125,9 @@ describe('ogw loop evaluate', () => {
     expect(file.plays).toEqual([]);
     expect(out.stdout).toContain('judge main done codex gpt-x high side A vs reference none');
     expect(out.stdout).toContain('votes game feel: this 4 baseline 0 this');
+    // without loop.confirmJudge no confirmation pair checks the better
+    expect(file.confirmation).toBeUndefined();
+    expect(out.stdout).not.toContain('confirmation');
   });
 
   it('gives the judges of a fun iteration the save fixture instances of the moment that the hypothesis names', async () => {
@@ -1212,5 +1220,234 @@ describe('ogw loop evaluate', () => {
     expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
     expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([null, null, null, null]);
     expect(existsSync(first)).toBe(false);
+  });
+});
+
+const OPUS = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' };
+const CONFIRM = { cli: 'codex', model: 'gpt-6.1-sol', effort: 'high' };
+const FALLBACK = { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'high' };
+const FUN_VOTES = ['game feel', 'tension and release', 'no friction'];
+
+/** A fun iteration of a loop run with the given `loop` settings added, and no call again of a failed agent. */
+async function funLoop(confirm: Record<string, unknown>): Promise<{ g: TestGame; head: string; base: string }> {
+  const loaded = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1, ...confirm } });
+  await setRun(loaded.g, (run) => {
+    run.data.loop = { kinds: [{ iteration: 1, kind: 'fun' }] };
+  });
+  return loaded;
+}
+
+/** A judge result of a fun iteration: per element of `winners`, this commit or the baseline game wins. */
+function funJudge(agent: FakeAgent, head: string, winners: Record<string, 'this' | 'baseline'>): string {
+  const thisSide = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+  const rows = Object.entries(winners).map(([element, winner]) => `| ${element} | ${winner === 'this' ? thisSide : thisSide === 'A' ? 'B' : 'A'} | clear | r | e |`);
+  return ['## vs baseline', '', '| element | winner | margin | reason | evidence |', '|---|---|---|---|---|', ...rows, '', '## vs reference', '', 'none', ''].join('\n');
+}
+
+function judgeAgents(): FakeAgent[] {
+  return fake.agents.filter((a) => a.role === 'judge');
+}
+
+/** The commits of the `A` and `B` instances of a judge. */
+function sideCommits(agent: FakeAgent): (string | undefined)[] {
+  return (['A', 'B'] as const).map((side) => fake.instances.find((i) => i.id === (agent.input[side] as { instance: string }).instance)?.commit);
+}
+
+/** The judge input without the instances of `A` and `B`. */
+function inputBesidesSides(agent: FakeAgent): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(agent.input).filter(([key]) => key !== 'A' && key !== 'B'));
+}
+
+function resetRun(): void {
+  fake.instances = [];
+  fake.agents = [];
+  fake.running = new Set();
+  fake.stopped = [];
+  fake.runningAtStart = [];
+  counters.judge = 0;
+  counters.play = 0;
+}
+
+describe('ogw loop evaluate confirmation pair', () => {
+  it('confirms a better of a fun iteration with two judges on loop.confirmJudge, one per side, on new instances after the step 4 judges', async () => {
+    const { g, head, base } = await funLoop({ confirmJudge: CONFIRM });
+    // the step 4 judges draw `A` for this commit, the confirmation pair draws `B` for its first judge
+    const coins = [0.1, 0.7];
+    evaluateDeps.random = () => coins.shift() ?? 0.1;
+    fake.respond = (agent) => funJudge(agent, head, { 'game feel': 'this' });
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.map((j) => [j.kind, j.instanceSide, j.agent, j.status, j.fallback])).toEqual([
+      ['main', 'A', OPUS, 'done', undefined],
+      ['main', 'B', OPUS, 'done', undefined],
+      ['confirm', 'B', CONFIRM, 'done', undefined],
+      ['confirm', 'A', CONFIRM, 'done', undefined],
+    ]);
+    expect(file.votes?.map((v) => v.decision)).toEqual(['this', 'indistinguishable', 'indistinguishable']);
+    expect(file.confirmation).toEqual({
+      outcome: 'confirmed',
+      fallback: false,
+      votes: [
+        { element: 'game feel', this: 2, baseline: 0, decision: 'this' },
+        { element: 'tension and release', this: 0, baseline: 0, decision: 'indistinguishable' },
+        { element: 'no friction', this: 0, baseline: 0, decision: 'indistinguishable' },
+      ],
+    });
+    expect(file.vsBaseline).toBe('better');
+    const [first, , pairB, pairA] = judgeAgents() as [FakeAgent, FakeAgent, FakeAgent, FakeAgent];
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, CONFIRM, CONFIRM]);
+    expect(sideCommits(pairB)).toEqual([base, head]);
+    expect(sideCommits(pairA)).toEqual([head, base]);
+    // the input of the first step 4 judge with the assignment of each judge of the pair
+    expect(inputBesidesSides(pairB)).toEqual(inputBesidesSides(first));
+    expect(inputBesidesSides(pairA)).toEqual(inputBesidesSides(first));
+    expect(first.input).toMatchObject({ elements: FUN_VOTES, fixtures: [], reference: null });
+    // the pair starts once the step 4 judges ended and stopped their instances, both judges at once, on new instances
+    expect(fake.runningAtStart).toEqual([0, 1, 2, 3, 0, 1, 2, 3]);
+    expect(new Set(fake.instances.map((i) => i.id)).size).toBe(8);
+    expect(fake.running.size).toBe(0);
+    expect(out.stdout).toContain('judge confirm done codex gpt-6.1-sol high side B vs reference none');
+    expect(out.stdout).toContain('confirm votes game feel: this 2 baseline 0 this');
+    expect(out.stdout).toContain('confirmation confirmed\nvs baseline better');
+    expect(git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n')).toContain(`${R}/judge-1-4.md`);
+  });
+
+  it('overturns a better that the pair decides this for no element of step 4, or decides baseline for an element', async () => {
+    const { g, head } = await funLoop({ confirmJudge: CONFIRM });
+    // the pair decides `this` only for an element that step 4 did not decide `this`
+    fake.respond = (agent) => funJudge(agent, head, agent.agent?.model === CONFIRM.model ? { 'tension and release': 'this' } : { 'game feel': 'this' });
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(0);
+    let file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.votes?.map((v) => v.decision)).toEqual(['this', 'indistinguishable', 'indistinguishable']);
+    expect(file.confirmation?.outcome).toBe('overturned');
+    expect(file.confirmation?.votes.map((v) => v.decision)).toEqual(['indistinguishable', 'this', 'indistinguishable']);
+    expect(file.vsBaseline).toBe('indistinguishable');
+    expect(out.stdout).toContain('confirmation overturned\nvs baseline indistinguishable');
+
+    // the pair confirms the element but decides `baseline` for another
+    resetRun();
+    fake.respond = (agent) => funJudge(agent, head, agent.agent?.model === CONFIRM.model ? { 'game feel': 'this', 'no friction': 'baseline' } : { 'game feel': 'this' });
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.confirmation?.votes.map((v) => v.decision)).toEqual(['this', 'indistinguishable', 'baseline']);
+    expect(file.confirmation?.outcome).toBe('overturned');
+    expect(file.vsBaseline).toBe('indistinguishable');
+
+    // the two judges of the pair differ on the element: `uncertain` confirms nothing
+    resetRun();
+    fake.respond = (agent) => {
+      const pair = judgeAgents().filter((a) => a.agent?.model === CONFIRM.model);
+      return funJudge(agent, head, { 'game feel': pair.indexOf(agent) === 1 ? 'baseline' : 'this' });
+    };
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.confirmation?.votes[0]).toEqual({ element: 'game feel', this: 1, baseline: 1, decision: 'uncertain' });
+    expect(file.vsBaseline).toBe('indistinguishable');
+  });
+
+  it('calls no confirmation pair when the step 4 judges do not decide better', async () => {
+    const { g, head } = await funLoop({ confirmJudge: CONFIRM });
+    fake.respond = (agent) => funJudge(agent, head, { 'game feel': 'baseline' });
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.map((j) => j.kind)).toEqual(['main', 'main']);
+    expect(file.vsBaseline).toBe('worse');
+    expect(file.confirmation).toBeUndefined();
+    expect(judgeAgents()).toHaveLength(2);
+  });
+
+  it('runs the success confirmation judges with loop.confirmJudge, and one that hit its limit once more with loop.confirmFallback', async () => {
+    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1, confirmJudge: CONFIRM, confirmFallback: FALLBACK } });
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      // the first success judge ends without a result
+      if (judgeAgents().indexOf(agent) === 2) return null;
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === head ? 'A' : 'B';
+      return judgeText(side, side, 'pass');
+    };
+    // ... and its Codex output says it hit the usage limit
+    fake.limited = (agent, cli) => cli === 'codex' && judgeAgents().indexOf(agent) === 2;
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    // the step 4 judges keep agents.judge; the success judges run with loop.confirmJudge, the first then on the fallback
+    expect(file.judges.map((j) => [j.kind, j.agent, j.fallback, j.status, j.vsReference])).toEqual([
+      ['main', OPUS, undefined, 'done', 'pass'],
+      ['main', OPUS, undefined, 'done', 'pass'],
+      ['success', FALLBACK, 'usage limit', 'done', 'pass'],
+      ['success', CONFIRM, undefined, 'done', 'pass'],
+    ]);
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, CONFIRM, CONFIRM, FALLBACK]);
+    expect(file.confirmation).toBeUndefined();
+    expect(out.stdout).toContain('judge success done claude-code claude-sonnet-5-5 high (fallback: usage limit) side A vs reference pass');
+  });
+
+  it('calls a judge of the pair once more with loop.confirmFallback after a limit message, not after another failure, and only once', async () => {
+    const { g, head } = await funLoop({ confirmJudge: CONFIRM, confirmFallback: FALLBACK });
+    // the first judge of the pair hits the Codex usage limit; the second fails for another reason
+    fake.respond = (agent) => ([2, 3].includes(judgeAgents().indexOf(agent)) ? null : funJudge(agent, head, { 'game feel': 'this' }));
+    fake.limited = (agent, cli) => cli === 'codex' && judgeAgents().indexOf(agent) === 2;
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(0);
+    expect(out.stderr).toContain('hit the limit of codex: calling it again with loop.confirmFallback');
+    let file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.map((j) => [j.kind, j.agent, j.fallback, j.status])).toEqual([
+      ['main', OPUS, undefined, 'done'],
+      ['main', OPUS, undefined, 'done'],
+      ['confirm', FALLBACK, 'usage limit', 'done'],
+      ['confirm', CONFIRM, undefined, 'failed'],
+    ]);
+    // with backgroundRetryLimit 0 the fallback call is not counted, and the other failure is not called again
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, CONFIRM, CONFIRM, FALLBACK]);
+    const [, , limited, , fallback] = judgeAgents() as [FakeAgent, FakeAgent, FakeAgent, FakeAgent, FakeAgent];
+    expect(inputBesidesSides(fallback)).toEqual(inputBesidesSides(limited));
+    expect(sideCommits(fallback)).toEqual(sideCommits(limited));
+    expect(fallback.input.A).not.toEqual(limited.input.A);
+    // one vote of the pair decides no element: overturned, on the fallback
+    expect(file.confirmation).toMatchObject({ outcome: 'overturned', fallback: true });
+    expect(file.vsBaseline).toBe('indistinguishable');
+    expect(out.stdout).toContain('judge confirm done claude-code claude-sonnet-5-5 high (fallback: usage limit) side');
+    expect(out.stdout).toContain('confirmation overturned (fallback: usage limit)');
+    expect(fake.running.size).toBe(0);
+
+    // a judge falls back once: a limit message of the fallback agent is not fallen back again
+    resetRun();
+    fake.respond = (agent) => (judgeAgents().indexOf(agent) >= 2 ? null : funJudge(agent, head, { 'game feel': 'this' }));
+    fake.limited = () => true;
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, CONFIRM, CONFIRM, FALLBACK, FALLBACK]);
+    expect(file.judges.slice(2).map((j) => [j.agent, j.fallback, j.status])).toEqual([
+      [FALLBACK, 'usage limit', 'failed'],
+      [FALLBACK, 'usage limit', 'failed'],
+    ]);
+  });
+
+  it('does not fall back without loop.confirmFallback, nor for a judge that does not run with loop.confirmJudge', async () => {
+    const { g, head } = await funLoop({ confirmJudge: CONFIRM });
+    fake.respond = (agent) => (judgeAgents().indexOf(agent) === 2 ? null : funJudge(agent, head, { 'game feel': 'this' }));
+    fake.limited = () => true;
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    let file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, CONFIRM, CONFIRM]);
+    expect(file.judges.map((j) => [j.kind, j.status])).toEqual([['main', 'done'], ['main', 'done'], ['confirm', 'failed'], ['confirm', 'done']]);
+
+    // loop.confirmFallback alone: the success judges run with the agent of the first step 4 judge and do not fall back
+    const alone = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1, confirmFallback: FALLBACK } });
+    resetRun();
+    fake.respond = (agent) => {
+      if (agent.role === 'play' || judgeAgents().indexOf(agent) === 2) return null;
+      const side = fake.instances.find((i) => i.id === (agent.input.A as { instance: string }).instance)?.commit === alone.head ? 'A' : 'B';
+      return judgeText(side, side, 'pass');
+    };
+    expect((await ogw(alone.g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    file = readJsonFile(alone.g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    // both success judges started together; the one that failed is not called again
+    expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, OPUS, OPUS]);
+    expect(file.judges.map((j) => [j.kind, j.status, j.fallback])).toEqual([['main', 'done', undefined], ['main', 'done', undefined], ['success', 'failed', undefined], ['success', 'done', undefined]]);
   });
 });
