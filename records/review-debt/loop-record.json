@@ -1,0 +1,12 @@
+{
+  "target": "loop record",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/loop/lib/defects.ts:88",
+      "problem": "`fillFromSameId` replaces a field only when it is `null` (`f.severity ?? from.severity`, also for `owner` and `why`), while skills/game-loop/SKILL.md:76 fills each field \"that a finding leaves empty\" and `incompleteFindings` (defects.ts:98) counts a blank `why` (`\"\"`, whitespace) or `\"\"` severity/owner as not filled. A finding whose `why` the lead agent wrote as `\"\"` is refused even when a finding of the same `id` or a defect of the list has all three. The `??` predates this range",
+      "foundBy": "loop record round 1"
+    }
+  ]
+}
