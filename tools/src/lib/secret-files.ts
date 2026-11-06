@@ -22,7 +22,14 @@ async function checkoutCommonDir(root: string): Promise<string> {
 
 /** Folder `name` in the harness repo's git common dir, which the play and judge sandbox and the broker sandbox block (ogw.md `## agent`). */
 async function harnessGitFolder(name: string, env: NodeJS.ProcessEnv): Promise<string> {
-  return join(await checkoutCommonDir(harnessRoot(env)), name);
+  const common = await checkoutCommonDir(harnessRoot(env));
+  // the tests of tools/ name the git dir of the real harness repo: ogw code a test calls without a workspace env stops
+  // here, before it writes into the real repo, and the concurrent ogw jobs of the host, which do not have it, go on
+  const real = process.env.OGW_TEST_REAL_GIT_DIR ?? env.OGW_TEST_REAL_GIT_DIR;
+  if (real !== undefined && real !== '' && realpathSync(common) === real) {
+    throw new OgwError(`a test ran ogw code on ${join(common, name)} of the real harness repo: give the ogw code it calls a makeWorkspace() env`);
+  }
+  return join(common, name);
 }
 
 /** Makes `dir` owner-only (0700) and returns its path. */

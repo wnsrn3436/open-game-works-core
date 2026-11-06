@@ -1,5 +1,6 @@
 // Files with secret values (signing material, the deploy SSH key) and the temp folders of ogw go to owner-only folders
 // the play and judge sandbox and the broker sandbox block.
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
@@ -13,6 +14,23 @@ import { newPrivateTempFolder, newSecretFolder, privateTempDir, privateTempPath,
 import { makeWorkspace, sh } from '../helpers/workspace.ts';
 
 describe('secret files and temp folders', () => {
+  it('stops ogw code a test calls without a workspace env before it writes into the real harness repo', async () => {
+    const real = process.env.OGW_TEST_REAL_GIT_DIR ?? '';
+    expect(real).not.toBe('');
+    const message = /^a test ran ogw code on .*ogw-temp of the real harness repo: give the ogw code it calls a makeWorkspace\(\) env$/;
+    const noWorkspace = { ...process.env, OGW_HARNESS_ROOT: undefined };
+    await expect(privateTempDir(noWorkspace)).rejects.toThrow(message);
+    await expect(newPrivateTempFolder('ogw-x-', noWorkspace)).rejects.toThrow(message);
+    await expect(newSecretFolder('ogw-x-', noWorkspace)).rejects.toThrow(/ogw-secret-files of the real harness repo/);
+    // a process the test starts with its env stops the same way
+    const script = `import(${JSON.stringify(resolve('src/lib/secret-files.ts'))}).then((m) => m.privateTempDir()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(3); })`;
+    const child = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', script], { env: noWorkspace, encoding: 'utf8' });
+    expect(child.status).toBe(3);
+    expect(child.stderr.trim()).toMatch(message);
+    // a workspace env goes on
+    expect(await privateTempDir(makeWorkspace().env)).not.toContain(real);
+  });
+
   it('makes owner-only folders in ogw-secret-files of the harness git common dir', async () => {
     const ws = makeWorkspace();
     const dir = await secretFilesDir(ws.env);

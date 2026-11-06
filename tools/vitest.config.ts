@@ -7,6 +7,5 @@ export default defineConfig({
     hookTimeout: 60_000,
     pool: 'forks',
     setupFiles: ['test/helpers/tmp-setup.ts'],
-    globalSetup: ['test/helpers/real-repo-guard.ts'],
   },
 });
