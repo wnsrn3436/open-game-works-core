@@ -539,6 +539,25 @@ describe('ogw env check', () => {
     expect(await tokenCheck({ judgePanel: [codex, { cli: 'claude-code', model: 'panel-model', effort: 'high' }], confirmJudge })).toEqual(runWith('panel-model', 'high'));
   });
 
+  it('prompt-runs the agent CLI of each judge setting as the judge, in its agent sandbox, and names the setting', async () => {
+    const { ws, env } = setup();
+    const settingsFile = join(ws.harness, 'settings.json');
+    const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { loop: Record<string, unknown> };
+    // the panel item has the model and effort of play and judge; the two confirm judges have their own
+    settings.loop = { ...settings.loop, judgePanel: [{ cli: 'claude-code', model: 'm', effort: 'high' }], confirmJudge: { cli: 'codex', model: 'cm', effort: 'high' }, confirmFallback: { cli: 'claude-code', model: 'fb', effort: 'medium' } };
+    writeFileSync(settingsFile, JSON.stringify(settings));
+    const result = JSON.parse((await ogw(ws, ['env', 'check', '--json'], { env })).stdout) as EnvCheckResult;
+    const groups = result.agentClis.map((c) => [c.roles, c.cli, c.model, c.sandboxed]);
+    expect(groups).toContainEqual([['play', 'judge', 'loop.judgePanel[0]'], 'claude-code', 'm', true]);
+    expect(groups).toContainEqual([['loop.confirmJudge'], 'codex', 'cm', true]);
+    expect(groups).toContainEqual([['loop.confirmFallback'], 'claude-code', 'fb', true]);
+    const fallback = result.agentClis.find((c) => c.roles[0] === 'loop.confirmFallback');
+    expect(fallback?.run?.output).toContain('sandboxed ');
+    expect(fallback?.run?.output).toContain(agentCliCommand({ model: 'fb', effort: 'medium' }).args.join(' ').replace(' --output-format json', ''));
+    const confirm = result.agentClis.find((c) => c.roles[0] === 'loop.confirmJudge');
+    expect(confirm?.run?.output).toContain('cm');
+  });
+
   it('with --for, only checks the tools items of that core command', async () => {
     const { ws, env } = setup();
     expect(await ogw(ws, ['env', 'check', '--for', 'create-server-core'], { env })).toMatchObject({ code: 1, stdout: 'missing: tools.postgresql\nRun update env first.\n' });

@@ -196,21 +196,30 @@ export function cliStates(env: NodeJS.ProcessEnv): CliStates {
 }
 
 /**
- * Each agent CLI, model, effort and sandbox harness settings `agents` uses: the CLI installed and logged in, and
+ * Each agent CLI, model, effort and sandbox that harness settings `agents` and the judges of `loop.judgePanel`,
+ * `loop.confirmJudge` and `loop.confirmFallback` use: the CLI installed and logged in, and
  * the short prompt run with the `ogw agent` command of those settings. The prompts run together, each in its own
  * new folder.
  */
 export async function agentCliChecks(ctx: Context, settings: HarnessSettings, cliState: CliStates = cliStates(ctx.env)): Promise<AgentCliCheck[]> {
-  const groups = new Map<string, { agent: AgentSettings; sandbox: boolean; roles: string[] }>();
-  for (const [role, agent] of Object.entries(settings.agents)) {
-    const sandbox = SANDBOXED_ROLES.includes(role);
+  // `runAs` is the role whose `ogw agent` command the prompt runs with; `roles` names every user of the group
+  const groups = new Map<string, { agent: AgentSettings; sandbox: boolean; roles: string[]; runAs: string }>();
+  const add = (user: string, runAs: string, agent: AgentSettings): void => {
+    const sandbox = SANDBOXED_ROLES.includes(runAs);
     const key = JSON.stringify([agentCli(agent), agent.model, agent.effort, sandbox]);
-    const group = groups.get(key) ?? { agent, sandbox, roles: [] };
-    group.roles.push(role);
+    const group = groups.get(key) ?? { agent, sandbox, roles: [], runAs };
+    group.roles.push(user);
     groups.set(key, group);
-  }
+  };
+  for (const [role, agent] of Object.entries(settings.agents)) add(role, role, agent);
+  // the judges of `ogw loop evaluate` run as the judge, in its agent sandbox
+  settings.loop.judgePanel.forEach((agent, i) => {
+    add(`loop.judgePanel[${String(i)}]`, 'judge', agent);
+  });
+  if (settings.loop.confirmJudge !== undefined) add('loop.confirmJudge', 'judge', settings.loop.confirmJudge);
+  if (settings.loop.confirmFallback !== undefined) add('loop.confirmFallback', 'judge', settings.loop.confirmFallback);
   return Promise.all(
-    [...groups.values()].map(async ({ agent, sandbox, roles }): Promise<AgentCliCheck> => {
+    [...groups.values()].map(async ({ agent, sandbox, roles, runAs }): Promise<AgentCliCheck> => {
       const cli = agentCli(agent);
       const def = CLI_DEFS[cli] as CliDef;
       const state = await cliState(def);
@@ -222,7 +231,7 @@ export async function agentCliChecks(ctx: Context, settings: HarnessSettings, cl
         roles,
         installed: state.installed,
         loggedIn: state.loggedIn,
-        run: state.installed ? await probeRun(ctx, agent, roles[0] as string) : { ok: false, exitCode: null, output: `${def.program} is not installed` },
+        run: state.installed ? await probeRun(ctx, agent, runAs) : { ok: false, exitCode: null, output: `${def.program} is not installed` },
       };
     }),
   );
