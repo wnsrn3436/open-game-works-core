@@ -9,7 +9,7 @@ import { ghStatus } from './lib/probe.ts';
 import { harnessSecretService } from '../../lib/secrets.ts';
 import { bearerValueProblem, loginTokenAgent, storedLoginToken } from '../secret/lib/login-token.ts';
 import { AGENT_LOGIN_TOKEN_SECRET } from '../secret/lib/names.ts';
-import { agentCliLabel, loginTokenError, loginTokenState, writeEnvResult, type EnvCheckResult, type PinSecretCheck } from './lib/results.ts';
+import { agentCliLabel, agentCliUsers, loginTokenError, loginTokenState, writeEnvResult, type EnvCheckResult, type PinSecretCheck } from './lib/results.ts';
 import { postgresPresent, TOOL_NAMES } from './lib/tools.ts';
 
 type ForCommand = 'create-server-core' | 'create-client-core' | 'update-core';
@@ -134,7 +134,7 @@ export function checkText(r: EnvCheckResult): string {
       const state = t.ok ? 'ok' : t.downloadable ? 'missing (ogw env install-engines)' : `install ${t.name} ${t.version}`;
       return `build tool ${t.name} ${t.version} for ${t.platform} (${t.from}): ${state}`;
     }),
-    ...r.agentClis.map((a) => `agent CLI ${agentCliLabel(a)}: installed ${yesNo(a.installed)}, login ${yesNo(a.loggedIn)}, prompt run ${a.run?.ok ? 'ok' : `failed: ${a.run?.output ?? ''}`}`),
+    ...r.agentClis.map((a) => `agent CLI ${agentCliLabel(a)} ${agentCliUsers(a)}: installed ${yesNo(a.installed)}, login ${yesNo(a.loggedIn)}, prompt run ${a.run?.ok ? 'ok' : `failed: ${a.run?.output ?? ''}`}`),
     ...r.providerClis.map(
       (p) => `provider CLI ${p.provider} (${p.methods.join(', ')}): installed ${yesNo(p.installed)}, login ${yesNo(p.loggedIn)}, billing ${p.billing ?? 'unknown'}${p.detail ? ` (${p.detail})` : ''}`,
     ),

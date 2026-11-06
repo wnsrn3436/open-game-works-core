@@ -17,7 +17,7 @@ import { NOT_INSTALLED } from '../../generation/measure.ts';
 import { net, remoteCommit, requestJson } from './net.ts';
 import { parseRequirement, parseVersion, compareVersions, isPrerelease } from './pep440.ts';
 import { envResultPath, type HostPlatform } from './host.ts';
-import { agentCliLabel, loginTokenError, loginTokenState, readEnvResult, type EnvResults, type MeasuredRun, type ProviderCliCheck } from './results.ts';
+import { agentCliLabel, agentCliUsers, loginTokenError, loginTokenState, readEnvResult, type EnvResults, type MeasuredRun, type ProviderCliCheck } from './results.ts';
 import { FIRST_PYTHON_MINOR, hostOf, markerFits, normalizeName, pinEntries, Pypi, resolveWheels, WHEEL_PLATFORMS, type PypiFile, type PypiProject, type ResolvedWheel } from './wheels.ts';
 import { LOGOTYPE_METHOD } from '../../generation/api.ts';
 
@@ -732,7 +732,7 @@ function checkNotices(check: Inputs['check']): Notice[] {
   const udp = check.testDevices.filter((d) => d.udp === false).map((d) => d.serial);
   if (udp.length > 0) notices.push({ id: 'udp', detail: `UDP does not reach this host from: ${udp.join(', ')}. Put the devices on the same LAN as the host` });
   for (const cli of check.agentClis.filter((a) => a.run?.ok !== true)) {
-    notices.push({ id: 'agent-cli', detail: `${agentCliLabel(cli)} did not finish in an empty folder: ${cli.run?.output ?? ''}` });
+    notices.push({ id: 'agent-cli', detail: `${agentCliLabel(cli)} ${agentCliUsers(cli)} did not finish in an empty folder: ${cli.run?.output ?? ''}` });
   }
   notices.push(...check.providerClis.flatMap(providerCliNotice));
   notices.push(...loginTokenNotice(check));

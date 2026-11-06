@@ -216,8 +216,8 @@ describe('ogw env check', () => {
     expect(text.stdout).toContain('build tool jsign 7.1 for windows (game g1): missing (ogw env install-engines)\n');
     expect(text.stdout).toContain('build tool missing-tool 1 for ios (game g1): install missing-tool 1\n');
     expect(text.stdout).toContain('build tool xcodebuild 26.0 for ios (game g1): ok\n');
-    expect(text.stdout).toContain('agent CLI codex (model m, effort high): installed yes, login no, prompt run failed: boom');
-    expect(text.stdout).toContain('agent CLI claude-code (model bad, effort high): installed yes, login yes, prompt run failed: model bad not found\n');
+    expect(text.stdout).toContain('agent CLI codex (model m, effort high) for translation: installed yes, login no, prompt run failed: boom');
+    expect(text.stdout).toContain('agent CLI claude-code (model bad, effort high) for review: installed yes, login yes, prompt run failed: model bad not found\n');
     expect(text.stdout).toContain('engine.json (game g0): cannot reach GitHub\n');
     expect(text.stdout).toContain('build tool oldtool 2.0 for ios (game g1): install oldtool 2.0\n');
     expect(text.stdout).toContain('build tool signer 3.1 for windows (game g1): ok\n');
@@ -238,7 +238,7 @@ describe('ogw env check', () => {
     ]);
     expect(result.agentClis[2]?.run).toEqual({ ok: false, exitCode: 71, output: 'sandbox: operation not permitted' });
     const text = await ogw(ws, ['env', 'check'], { env: { ...env, FAKE_SANDBOX_FAIL: '1' } });
-    expect(text.stdout).toContain('agent CLI claude-code (model m, effort high, sandboxed): installed yes, login yes, prompt run failed: sandbox: operation not permitted\n');
+    expect(text.stdout).toContain('agent CLI claude-code (model m, effort high, sandboxed) for play, judge: installed yes, login yes, prompt run failed: sandbox: operation not permitted\n');
   });
 
   it('runs the play and judge prompt with the default config folder and its login, and removes the sandbox profile', async () => {
@@ -350,7 +350,7 @@ describe('ogw env check', () => {
     });
     expect(result.providerClis[0]).toEqual({ provider: 'codex', methods: ['sprite-gen-codex'], installed: false, loggedIn: false, billing: null, detail: null });
     expect((await ogw(ws, ['env', 'check'], { env })).stdout).toContain(
-      'agent CLI codex (model m, effort high): installed no, login no, prompt run failed: codex is not installed\n',
+      'agent CLI codex (model m, effort high) for translation: installed no, login no, prompt run failed: codex is not installed\n',
     );
   });
 

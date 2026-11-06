@@ -28,6 +28,11 @@ export function agentCliLabel(check: AgentCliCheck): string {
   return `${check.cli} (model ${check.model}, effort ${check.effort ?? ''}${check.sandboxed === true ? ', sandboxed' : ''})`;
 }
 
+/** The settings that use the agent CLI group of `check`: roles of `agents` and the judge settings of `loop`. */
+export function agentCliUsers(check: AgentCliCheck): string {
+  return `for ${check.roles.join(', ')}`;
+}
+
 /** How the provider calls of a method are paid: the subscription of the provider login, or per call. */
 export type ProviderBilling = 'subscription' | 'per-call';
 
