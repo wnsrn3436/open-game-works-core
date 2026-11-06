@@ -1,17 +1,19 @@
 import { availableParallelism } from 'node:os';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseProtoErrors } from '../../../src/commands/core/lib/base-proto-check.ts';
 import { godotDataVariable, renderDeps, type ModuleOutcome } from '../../../src/commands/core/lib/godot.ts';
 import { serverCoreStaticCheck } from '../../../src/commands/core/lib/core-server-static-check.ts';
-import { readTestRecords } from '../../../src/commands/core/lib/test-records.ts';
+import { addTestRecord, readTestRecords } from '../../../src/commands/core/lib/test-records.ts';
+import { readCoreSpecDir } from '../../../src/commands/core/lib/impl.ts';
+import type { Context } from '../../../src/lib/command.ts';
 import { awakeDeps, caffeinateArgs, holdDisplayAwake } from '../../../src/commands/core/lib/display-awake.ts';
 import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
 import { serverModuleTest } from '../../../src/commands/core/lib/server-tests.ts';
 import { runToolTest } from '../../../src/commands/core/lib/tool-test.ts';
 import { writeCoreSpec } from '../../../src/commands/core/spec-api.ts';
-import { parallelismOf, recordTarget, runResult, testSummary } from '../../../src/commands/core/test.ts';
+import { parallelismOf, recordTarget, runResult, takeRenderPasses, testSummary } from '../../../src/commands/core/test.ts';
 import type { ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
 import { toolProgram } from '../../../src/commands/env/api.ts';
 import { newAgentKey } from '../../../src/lib/agentctx.ts';
@@ -197,6 +199,38 @@ describe('ogw core test godot', () => {
     renderDeps.screenLocked = () => Promise.resolve(true);
     writeFiles(ws.coreImpl, { 'scratch.txt': 'x\n' });
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore unknown\n  screen locked; rerun with the screen unlocked\nno test record: uncommitted changes in the checkout\n');
+  });
+
+  it('diffs each render pass commit once for all the modules of a locked-screen run', async () => {
+    const { ws } = setup();
+    const ui = 'client/godot/core/ui_core/ui_core.gd';
+    const logCore = 'client/godot/core/log_core/log_core.gd';
+    const base = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    const original = { [ui]: readFileSync(join(ws.coreImpl, ui), 'utf8'), [logCore]: readFileSync(join(ws.coreImpl, logCore), 'utf8') };
+    const uiChanged = commitFiles(ws.coreImpl, { [ui]: `${original[ui]}# changed\n` }, 'UICore changed');
+    const bothChanged = commitFiles(ws.coreImpl, { [logCore]: `${original[logCore]}# changed\n` }, 'LogCore changed');
+    const run = commitFiles(ws.coreImpl, original, 'both back');
+    const both = { LogCore: 'pass', UICore: 'pass' } as const;
+    // records on shared commits, latest last; a commit git does not have is other code
+    for (const [recordedAt, commit] of [base, uiChanged, uiChanged, bothChanged, 'f'.repeat(40)].entries()) {
+      await addTestRecord(ws.coreImpl, { commit, target: 'godot', modules: both, recordedAt: recordedAt + 1 });
+    }
+    const bin = join(ws.root, 'git-bin');
+    mkdirSync(bin);
+    const real = sh(ws.coreImpl, 'sh', ['-c', 'command -v git']).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> "${bin}/log"\nexec "${real}" "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const ctx = { env: { ...ws.env, PATH: `${bin}:${process.env.PATH ?? ''}` }, log: () => undefined, jobId: null } as unknown as Context;
+    const locked: ModuleOutcome = { tests: 1, passed: 1, failures: [], unknown: SCREEN_LOCKED };
+    const results = new Map<string, ModuleResult>([['LogCore', 'unknown'], ['UICore', 'unknown']]);
+    const outcomes = new Map<string, ModuleOutcome>([['LogCore', locked], ['UICore', locked]]);
+    await takeRenderPasses(ctx, ws.coreImpl, { kind: 'engine', engine: 'godot', web: false }, run, await readCoreSpecDir(ws.coreImpl), results, outcomes);
+    // LogCore takes the record of the UICore change; UICore, which depends on LogCore, the first one
+    expect(Object.fromEntries(results)).toEqual({ LogCore: 'pass', UICore: 'pass' });
+    expect([outcomes.get('LogCore')?.inherited, outcomes.get('UICore')?.inherited]).toEqual([uiChanged, base]);
+    // one git diff per render pass commit, not one per module and record
+    const diffs = readFileSync(join(bin, 'log'), 'utf8').split('\n').filter((call) => call.startsWith('diff '));
+    expect(diffs.map((call) => call.split(' ')[4]).sort()).toEqual(['f'.repeat(40), base, uiChanged, bothChanged].sort());
   });
 
   it('holds the display sleep assertion with caffeinate on macOS only', () => {

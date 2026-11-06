@@ -25,7 +25,7 @@ import { runModulePool } from './lib/ready-queue.ts';
 import { specDirErrors } from './lib/spec-dir-check.ts';
 import { buildTestData, testGameSettings } from './lib/test-data.ts';
 import { addTestRecord, type ModuleResult } from './lib/test-records.ts';
-import { inheritedRenderPass } from './lib/render-pass.ts';
+import { type ChangedPaths, inheritedRenderPass } from './lib/render-pass.ts';
 import { awakeDeps } from './lib/display-awake.ts';
 import { rerunHint, runOutcome, SCREEN_LOCKED } from '../../lib/outcome.ts';
 import { keepResult, keptResult, moduleKeys, type KeptResult } from './lib/test-reuse.ts';
@@ -376,7 +376,7 @@ function inheritedCommits(outcomes: ReadonlyMap<string, ModuleOutcome>): Record<
  * takes its last recorded render pass `pass` (`inheritedRenderPass`, ogw.md `### Godot core test`): it is then `pass`,
  * and its job result is reported again.
  */
-async function takeRenderPasses(
+export async function takeRenderPasses(
   ctx: Context,
   implDir: string,
   target: Target,
@@ -386,10 +386,12 @@ async function takeRenderPasses(
   outcomes: Map<string, ModuleOutcome>,
 ): Promise<void> {
   if (target.kind !== 'engine' || target.web) return;
+  // one diff per render pass commit for every module of the run
+  const changed: ChangedPaths = new Map();
   for (const [module, result] of results) {
     const outcome = outcomes.get(module);
     if (result !== 'unknown' || outcome?.unknown !== SCREEN_LOCKED || outcome.failures.length > 0) continue;
-    const from = await inheritedRenderPass(implDir, target.engine, module, commit, all, ctx.env);
+    const from = await inheritedRenderPass(implDir, target.engine, module, commit, all, ctx.env, changed);
     if (from === null) continue;
     outcomes.set(module, { ...outcome, unknown: undefined, inherited: from });
     results.set(module, 'pass');
