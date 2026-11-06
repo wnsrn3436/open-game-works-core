@@ -1,20 +1,117 @@
+import { readdir, readFile } from 'node:fs/promises';
 import { cpus, freemem, totalmem } from 'node:os';
+import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { run } from '../../../lib/proc.ts';
 import { listInstances } from '../../instance/api.ts';
+import { readRecord } from '../../instance/lib/records.ts';
 import type { HostLoad } from '../api.ts';
 
-/** CPU time counters of the whole host. */
+/** CPU time counters of the whole host, in ms. */
 export interface CpuTimes {
   idle: number;
   total: number;
 }
 
+/** One process of the host and the CPU time it has used. */
+export interface ProcessCpu {
+  pid: number;
+  ppid: number;
+  /** Start time of the process as the platform gives it, so that a later process that reuses the pid is another process. */
+  start: string;
+  /** User and system CPU time of all threads of the process since it started, in ms. */
+  cpuMs: number;
+}
+
 export interface HostProbe {
   cpuTimes(): CpuTimes;
+  /** Every process of the host with its CPU time; null when this platform or this reading cannot be read. */
+  processes(): Promise<ProcessCpu[] | null>;
+  /** The supervisor pid of instance `id`; null when it cannot be read. */
+  supervisorPid(id: string): Promise<number | null>;
   /** Memory use of the host in %. */
   memoryPercent(): number;
   /** Instances the runner has started and not stopped. */
   instances(): Promise<number>;
+}
+
+/** CPU time in ms of a macOS `ps -o time` value, `[[dd-]hh:]mm:ss.cc` (the minutes can pass 59); null when it is not one. */
+export function psCpuMs(text: string): number | null {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?$/.exec(text);
+  if (match === null) return null;
+  const [, days = '0', hours = '0', minutes = '0', seconds = '0', fraction = ''] = match;
+  const whole = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+  return Math.round((whole + (fraction === '' ? 0 : Number(`0.${fraction}`))) * 1000);
+}
+
+/** The processes of `ps -A -o pid=,ppid=,time=,lstart=` output; a line that is not one is skipped. */
+export function parsePs(text: string): ProcessCpu[] {
+  const out: ProcessCpu[] = [];
+  for (const line of text.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/.exec(line);
+    const cpuMs = match?.[3] === undefined ? null : psCpuMs(match[3]);
+    if (match === null || cpuMs === null) continue;
+    out.push({ pid: Number(match[1]), ppid: Number(match[2]), start: (match[4] ?? '').replace(/\s+/g, ' '), cpuMs });
+  }
+  return out;
+}
+
+/**
+ * The process of a Linux `/proc/<pid>/stat` text: ppid is field 4, utime and stime fields 14 and 15 in clock ticks,
+ * starttime field 22. The command name (field 2) is in parentheses and may hold spaces and parentheses, so the fields
+ * are counted after its last `)`. Null when the text is not one.
+ */
+export function parseProcStat(text: string, ticksPerSecond: number): ProcessCpu | null {
+  const open = text.indexOf('(');
+  const close = text.lastIndexOf(')');
+  if (open < 0 || close < open) return null;
+  const after = text.slice(close + 1).trim().split(/\s+/);
+  /** Field `n` (from 1) of the stat text; the fields after the command name start at field 3. */
+  const field = (n: number): string => after[n - 3] ?? '';
+  const [pid, ppid, utime, stime, start] = [text.slice(0, open).trim(), field(4), field(14), field(15), field(22)];
+  if (![pid, ppid, utime, stime, start].every((v) => /^\d+$/.test(v))) return null;
+  return { pid: Number(pid), ppid: Number(ppid), start, cpuMs: ((Number(utime) + Number(stime)) * 1000) / ticksPerSecond };
+}
+
+/** The processes of a Linux proc folder (`/proc`); a process that ended while it was read is left out. */
+export async function procProcesses(procRoot: string, ticksPerSecond: number): Promise<ProcessCpu[] | null> {
+  const names = await readdir(procRoot).catch(() => null);
+  if (names === null) return null;
+  const read = await Promise.all(
+    names.filter((n) => /^\d+$/.test(n)).map((n) => readFile(join(procRoot, n, 'stat'), 'utf8').then((t) => parseProcStat(t, ticksPerSecond), () => null)),
+  );
+  return read.filter((p): p is ProcessCpu => p !== null);
+}
+
+let cachedTicks: Promise<number | null> | undefined;
+
+/** `getconf CLK_TCK`: the clock ticks per second of `/proc/<pid>/stat`; null when it cannot be read. */
+function clockTicks(): Promise<number | null> {
+  cachedTicks ??= run('getconf', ['CLK_TCK'], { timeoutMs: 10_000 }).then(
+    (r) => {
+      const value = Number(r.stdout.trim());
+      return r.code === 0 && Number.isInteger(value) && value > 0 ? value : null;
+    },
+    () => null,
+  );
+  return cachedTicks;
+}
+
+/**
+ * Every process of this host with its CPU time: `ps` on macOS (`time` in centiseconds), `/proc/<pid>/stat` on Linux
+ * (`ps` there gives `time` in whole seconds). Null on another platform and when the reading fails.
+ */
+async function hostProcesses(): Promise<ProcessCpu[] | null> {
+  if (process.platform === 'darwin') {
+    const env = { ...process.env, LC_ALL: 'C', TZ: 'UTC' };
+    const result = await run('ps', ['-A', '-o', 'pid=,ppid=,time=,lstart='], { timeoutMs: 10_000, env }).catch(() => null);
+    return result?.code === 0 ? parsePs(result.stdout) : null;
+  }
+  if (process.platform === 'linux') {
+    const ticks = await clockTicks();
+    return ticks === null ? null : procProcesses('/proc', ticks);
+  }
+  return null;
 }
 
 export function hostProbe(ctx: Context): HostProbe {
@@ -29,38 +126,118 @@ export function hostProbe(ctx: Context): HostProbe {
       }
       return { idle, total };
     },
+    processes: hostProcesses,
+    supervisorPid: async (id) => (await readRecord(id, ctx.env).catch(() => null))?.supervisorPid ?? null,
     memoryPercent: () => (1 - freemem() / totalmem()) * 100,
     instances: async () => (await listInstances(ctx)).length,
   };
+}
+
+/** The identity of a process across readings: its pid and start time. */
+function processKey(p: ProcessCpu): string {
+  return `${String(p.pid)} ${p.start}`;
+}
+
+/** The pids of process `root` and its descendants among `processes`. */
+export function treePids(processes: readonly ProcessCpu[], root: number): Set<number> {
+  const children = new Map<number, number[]>();
+  for (const p of processes) {
+    const siblings = children.get(p.ppid);
+    if (siblings === undefined) children.set(p.ppid, [p.pid]);
+    else siblings.push(p.pid);
+  }
+  const tree = new Set<number>();
+  const next = [root];
+  for (let pid = next.pop(); pid !== undefined; pid = next.pop()) {
+    if (tree.has(pid)) continue;
+    tree.add(pid);
+    next.push(...(children.get(pid) ?? []));
+  }
+  return tree;
+}
+
+/** The processes of one reading, by `processKey`. */
+export type ProcessReading = ReadonlyMap<string, ProcessCpu>;
+
+export function processReading(processes: readonly ProcessCpu[]): ProcessReading {
+  return new Map(processes.map((p) => [processKey(p), p]));
+}
+
+/**
+ * The CPU time in ms that process `root` and its descendants in reading `after` used since reading `before`. Only a
+ * process seen in both readings (same pid and start time) counts: the CPU time of a process in the second it started
+ * or ended is not counted. 0 without both readings or a root.
+ */
+export function treeCpuMs(before: ProcessReading | null, after: ProcessReading | null, root: number | null): number {
+  if (before === null || after === null || root === null) return 0;
+  const tree = treePids([...after.values()], root);
+  let used = 0;
+  for (const [key, p] of after) {
+    const last = before.get(key);
+    if (last !== undefined && tree.has(p.pid)) used += Math.max(0, p.cpuMs - last.cpuMs);
+  }
+  return used;
 }
 
 function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-/** ogw.md `### host load`: reads the host every `intervalMs` until `stop`. */
+/** One CPU reading: the host counters, and the processes when there is an instance. */
+interface CpuReading {
+  host: CpuTimes;
+  processes: ProcessReading | null;
+}
+
+/**
+ * ogw.md `### host load`: reads the host every `intervalMs` until `stop`. With `instance`, the CPU time that the
+ * supervisor process of that instance and its descendants used is not counted as host CPU use.
+ */
 export class HostLoadSampler {
   private readonly probe: HostProbe;
+  private readonly instance: string | null;
   private readonly timer: NodeJS.Timeout;
-  private last: CpuTimes;
+  private last: CpuReading | null = null;
+  private root: number | null = null;
   private cpuMax = 0;
   private memoryMax = 0;
   private instancesMax = 0;
-  private pending: Promise<void> = Promise.resolve();
+  private pending: Promise<void>;
 
-  constructor(probe: HostProbe, intervalMs: number) {
+  constructor(probe: HostProbe, intervalMs: number, instance: string | null = null) {
     this.probe = probe;
-    this.last = probe.cpuTimes();
+    this.instance = instance;
+    this.pending = this.readCpu();
     this.timer = setInterval(() => {
       this.pending = this.pending.then(() => this.sample());
     }, intervalMs);
   }
 
-  private async sample(): Promise<void> {
-    const now = this.probe.cpuTimes();
-    const total = now.total - this.last.total;
-    if (total > 0) this.cpuMax = Math.max(this.cpuMax, (1 - (now.idle - this.last.idle) / total) * 100);
+  /** The supervisor pid of the instance, read until it is known: it stays for the life of the instance. */
+  private async supervisor(): Promise<number | null> {
+    if (this.instance === null || this.root !== null) return this.root;
+    this.root = await this.probe.supervisorPid(this.instance).catch(() => null);
+    return this.root;
+  }
+
+  /** Takes a CPU reading and keeps the maximum of the host CPU use outside the instance since the last one. */
+  private async readCpu(): Promise<void> {
+    const root = await this.supervisor();
+    const processes = root === null ? null : await this.probe.processes().catch(() => null);
+    const now: CpuReading = { host: this.probe.cpuTimes(), processes: processes === null ? null : processReading(processes) };
+    const last = this.last;
     this.last = now;
+    if (last === null) return;
+    const total = now.host.total - last.host.total;
+    if (total <= 0) return;
+    const used = total - (now.host.idle - last.host.idle);
+    // the processes are read just before the host counters, so the instance share can pass the host use by a little
+    const outside = Math.max(used - treeCpuMs(last.processes, now.processes, root), 0);
+    this.cpuMax = Math.max(this.cpuMax, (outside / total) * 100);
+  }
+
+  private async sample(): Promise<void> {
+    await this.readCpu();
     this.memoryMax = Math.max(this.memoryMax, this.probe.memoryPercent());
     const instances = await this.probe.instances().catch(() => 0);
     this.instancesMax = Math.max(this.instancesMax, instances);

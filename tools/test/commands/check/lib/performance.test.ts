@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
 import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
-import { HostLoadSampler, hostProbe, type HostProbe } from '../../../../src/commands/check/lib/host-load.ts';
+import { HostLoadSampler, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { hostRefreshHz } from '../../../../src/lib/display.ts';
 import {
@@ -234,16 +234,37 @@ describe('frame intervals', () => {
   });
 });
 
-function fixedProbe(cpu: { idle: number; total: number }[], memory: number[], instances: number[]): HostProbe {
+/**
+ * A probe whose readings are the items of each list in order, the last one repeating. `processes` are the process
+ * readings and `supervisor` the supervisor pid of instance `p1`, the instance that the mocked `startInstance` starts.
+ */
+function fixedProbe(
+  cpu: { idle: number; total: number }[],
+  memory: number[],
+  instances: number[],
+  processes: ProcessCpu[][] = [],
+  supervisor: number | null = null,
+): HostProbe {
   let c = 0;
   let m = 0;
   let n = 0;
+  let p = 0;
   return {
     cpuTimes: () => cpu[Math.min(c++, cpu.length - 1)] ?? { idle: 0, total: 0 },
+    processes: () => Promise.resolve(processes[Math.min(p++, processes.length - 1)] ?? null),
+    supervisorPid: (id) => Promise.resolve(id === 'p1' ? supervisor : null),
     memoryPercent: () => memory[Math.min(m++, memory.length - 1)] ?? 0,
     instances: () => Promise.resolve(instances[Math.min(n++, instances.length - 1)] ?? 0),
   };
 }
+
+/** Process `pid` with parent `ppid` that has used `cpuMs` of CPU time. */
+function proc(pid: number, ppid: number, cpuMs: number): ProcessCpu {
+  return { pid, ppid, start: 'Sat Nov 7 03:00:00 2026', cpuMs };
+}
+
+/** A first process reading: instance supervisor 100 with client 101, whose worker process is 102; 200 is another process. */
+const TREE_BEFORE = [proc(100, 1, 0), proc(101, 100, 0), proc(102, 101, 0), proc(200, 1, 0)];
 
 describe('HostLoadSampler', () => {
   it('keeps the maxima of CPU, memory and instance readings', async () => {
@@ -260,6 +281,47 @@ describe('HostLoadSampler', () => {
   it('a failing instance count reads as 0', async () => {
     const probe = { ...fixedProbe([{ idle: 0, total: 0 }], [10], []), instances: () => Promise.reject(new Error('x')) };
     expect(await new HostLoadSampler(probe, 1000).stop()).toEqual({ cpuMaxPercent: 0, memoryMaxPercent: 10, instancesMax: 0 });
+  });
+
+  it('does not count the CPU time of the instance supervisor and its descendants', async () => {
+    // the host is at 100% CPU, all of it by the instance: the supervisor, its client and the worker of the client
+    const all = [proc(100, 1, 10), proc(101, 100, 690), proc(102, 101, 300), proc(200, 1, 0)];
+    const busy = fixedProbe([{ idle: 0, total: 0 }, { idle: 0, total: 1000 }], [40], [1], [TREE_BEFORE, all], 100);
+    expect(await new HostLoadSampler(busy, 60_000, 'p1').stop()).toEqual({ cpuMaxPercent: 0, memoryMaxPercent: 40, instancesMax: 1 });
+    // without the instance the same readings are the whole host
+    const host = fixedProbe([{ idle: 0, total: 0 }, { idle: 0, total: 1000 }], [40], [1], [TREE_BEFORE, all], 100);
+    expect((await new HostLoadSampler(host, 60_000).stop()).cpuMaxPercent).toBe(100);
+  });
+
+  it('counts the CPU time of a process outside the instance', async () => {
+    const other = [proc(100, 1, 10), proc(101, 100, 10), proc(102, 101, 0), proc(200, 1, 960)];
+    const probe = fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 1000 }], [40], [1], [TREE_BEFORE, other], 100);
+    expect((await new HostLoadSampler(probe, 60_000, 'p1').stop()).cpuMaxPercent).toBe(96);
+    // a platform whose processes cannot be read: the instance share is 0
+    const unread = fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 1000 }], [40], [1], [], 100);
+    expect((await new HostLoadSampler(unread, 60_000, 'p1').stop()).cpuMaxPercent).toBe(98);
+  });
+
+  it('counts a descendant that started during the measurement from its second reading', async () => {
+    const readings = [
+      [proc(100, 1, 0), proc(200, 1, 0)],
+      // client 101 started in this second: its 500 ms are not counted yet
+      [proc(100, 1, 0), proc(101, 100, 500), proc(200, 1, 0)],
+      [proc(100, 1, 0), proc(101, 100, 1500), proc(200, 1, 0)],
+    ];
+    const base = fixedProbe([{ idle: 0, total: 0 }, { idle: 500, total: 1000 }, { idle: 500, total: 2000 }], [40], [1], readings, 100);
+    let reads = 0;
+    const probe: HostProbe = {
+      ...base,
+      processes: () => {
+        reads += 1;
+        return base.processes();
+      },
+    };
+    const sampler = new HostLoadSampler(probe, 5, 'p1');
+    await until(() => reads >= 3);
+    // 50% in the second the client started, 0% in the next: 100% if the client were not counted there
+    expect((await sampler.stop()).cpuMaxPercent).toBe(50);
   });
 
   it('hostProbe reads this host and the runner', async () => {
@@ -601,6 +663,24 @@ describe('host load of a measurement', () => {
     const below = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(11, 94.9) }));
     expect(below.result).toBe('fail');
     expect(below.failures.map((f) => `${f.where} ${f.message.split(' ').slice(0, 2).join(' ')}`)).toEqual(['battle hitch ratio', 'battle frame interval']);
+  });
+
+  it('keeps a fail measured on a host busy only with the instance, and makes one on a host busy with another process unknown', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const slowGame = (): string[] => fakeGame({ lobby: 30, battle: 60 }, [{ scene_key: 'lobby', duration_ms: 9000 }]);
+    const host = [{ idle: 0, total: 0 }, { idle: 0, total: 1000 }];
+    slowGame();
+    const game = fixedProbe(host, [40], [1], [TREE_BEFORE, [proc(100, 1, 20), proc(101, 100, 680), proc(102, 101, 300), proc(200, 1, 0)]], 100);
+    const own = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: game }));
+    expect({ result: own.result, wheres: own.failures.map((f) => f.where), hostLoad: own.hostLoad }).toEqual({
+      result: 'fail',
+      wheres: ['lobby', 'lobby'],
+      hostLoad: { cpuMaxPercent: 0, memoryMaxPercent: 40, instancesMax: 1 },
+    });
+    slowGame();
+    const other = fixedProbe(host, [40], [1], [TREE_BEFORE, [proc(100, 1, 20), proc(101, 100, 30), proc(102, 101, 0), proc(200, 1, 950)]], 100);
+    const busy = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: other }));
+    expect(busy).toMatchObject({ result: 'unknown', failures: [{ where, message: 'host CPU 95%' }], hostLoad: { cpuMaxPercent: 95 } });
   });
 
   it('keeps a pass and an unknown measured on a busy host', async () => {

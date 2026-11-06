@@ -433,7 +433,7 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
   try {
     if (typeof scenario === 'string') throw new Error(scenario);
     return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, async (instance) => {
-      started.sampler = new HostLoadSampler(options.probe, options.sampleMs);
+      started.sampler = new HostLoadSampler(options.probe, options.sampleMs, instance.id);
       return measure(ctx, instance.id, platform, scenario, options, started.sampler);
     }, options.evidence);
   } catch (error) {
