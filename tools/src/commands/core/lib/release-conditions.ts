@@ -21,7 +21,8 @@ import {
   type CoreSpecModule,
   type SettingsConstraint,
 } from './impl.ts';
-import { mergedRecords, SCREEN_LOCKED_SKIP } from './test-records.ts';
+import { mergedRecords } from './test-records.ts';
+import { NOT_RECORDED, outcomeOf, passes, rerunHint } from '../../../lib/outcome.ts';
 import { benchmarkDataViolations } from './benchmark-data.ts';
 import { baseProtoBreaks } from './base-proto-compat.ts';
 import { implementedTools } from './tools.ts';
@@ -46,31 +47,30 @@ export async function requiredTargets(implDir: string, modules: readonly CoreSpe
   return targets;
 }
 
+/** The `ogw core test` command that runs `module` of the record target `target` again. */
+export function coreTestCommand(target: string, module: string): string {
+  const web = target.endsWith(' --web');
+  return `ogw core test ${web ? target.slice(0, -' --web'.length) : target} ${module}${web ? ' --web' : ''}`;
+}
+
 /**
- * Modules a release does not wait for and reports: `skipped` only for a render pass that a locked macOS screen kept
- * from running (`SCREEN_LOCKED_SKIP`), as `core test <target>: <module>: <reason>` lines.
+ * The core test condition of a release (ogw.md `## core release`): every module of each target with an implementation
+ * is `pass` at `commit`. A `fail` and an `unknown` (a module not recorded included) are violations; the line of an
+ * `unknown` gives its reason and the command to run again.
  */
-export async function untestedRenderPasses(implDir: string, commit: string, modules: readonly CoreSpecModule[]): Promise<string[]> {
-  return (await testRecordFindings(implDir, commit, modules)).untested;
-}
-
 export async function testRecordViolations(implDir: string, commit: string, modules: readonly CoreSpecModule[]): Promise<string[]> {
-  return (await testRecordFindings(implDir, commit, modules)).violations;
-}
-
-async function testRecordFindings(implDir: string, commit: string, modules: readonly CoreSpecModule[]): Promise<{ violations: string[]; untested: string[] }> {
   const merged = await mergedRecords(implDir, commit);
   const violations: string[] = [];
-  const untested: string[] = [];
   for (const [target, names] of await requiredTargets(implDir, modules)) {
     const results = merged.get(target);
     for (const name of names) {
-      const entry = results?.get(name);
-      if (entry?.result === 'skipped' && entry.skip === SCREEN_LOCKED_SKIP) untested.push(`core test ${target}: ${name}: ${entry.skip}`);
-      else if (entry?.result !== 'pass') violations.push(`core test ${target}: ${name} is ${entry?.result ?? 'not recorded'} at ${commit}`);
+      const outcome = results?.get(name) ?? outcomeOf(undefined);
+      if (passes(outcome)) continue;
+      if (outcome.result === 'fail') violations.push(`core test ${target}: ${name} is fail at ${commit}`);
+      else violations.push(`core test ${target}: ${name} is unknown at ${commit}: ${outcome.reason ?? NOT_RECORDED}; ${rerunHint(outcome.reason ?? NOT_RECORDED)}: ${coreTestCommand(target, name)}`);
     }
   }
-  return { violations, untested };
+  return violations;
 }
 
 export async function coreSpecViolations(ctx: Context, implDir: string): Promise<string[]> {
@@ -162,8 +162,8 @@ export async function reviewDebtCounts(implDir: string): Promise<string[]> {
 export async function codeCheckViolations(ctx: Context, implDir: string): Promise<string[]> {
   const items = await runCodeCheck(ctx, 'core', implDir);
   return items
-    .filter((item) => item.result !== 'pass')
-    .map((item) => `ogw code check core: ${item.name} fail${item.failures.length > 0 ? `\n  ${item.failures.join('\n  ')}` : ''}`);
+    .filter((item) => !passes(outcomeOf(item.result)))
+    .map((item) => `ogw code check core: ${item.name} ${item.result}${item.failures.length > 0 ? `\n  ${item.failures.join('\n  ')}` : ''}`);
 }
 
 /**

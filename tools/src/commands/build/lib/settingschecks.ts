@@ -1,3 +1,4 @@
+import { outcomeOf, passes } from '../../../lib/outcome.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import type { BuildCheck, CheckOutcome, HumanFailure } from './buildrun.ts';
 import { LIST_PATH, unknownLicenseKeys } from '../../resource/lib/list.ts';
@@ -49,6 +50,15 @@ export const DEV_WARN_ONLY = new Set(['banned word', 'placeholder', 'license', '
 export function outcome(name: string, env: Env, details: string[]): CheckOutcome {
   if (details.length === 0) return 'pass';
   return env === 'DEV' && DEV_WARN_ONLY.has(name) ? 'warn' : 'fail';
+}
+
+/**
+ * Whether a check keeps `ogw build run` from building (`build` `## build-time check`): a `fail`, and an `unknown`
+ * (`outcomeOf`), which is not a `pass`, except that a check that only warns in a DEV build blocks no DEV build.
+ */
+export function blocksBuild(check: BuildCheck, env: Env): boolean {
+  if (check.result === 'warn' || passes(outcomeOf(check.result))) return false;
+  return check.result === 'fail' || !(env === 'DEV' && DEV_WARN_ONLY.has(check.name));
 }
 
 function make(name: string, env: Env, details: string[], targets: string[]): CheckWithHuman {

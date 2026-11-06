@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCodeCheck } from '../../../src/commands/code/api.ts';
 import { readCoreSpecDir } from '../../../src/commands/core/lib/impl.ts';
-import { constraintViolations, implementedConstraints, requiredTargets, testRecordViolations, untestedRenderPasses } from '../../../src/commands/core/lib/release-conditions.ts';
-import { addTestRecord, mergedResults, SCREEN_LOCKED_SKIP } from '../../../src/commands/core/lib/test-records.ts';
+import { constraintViolations, coreTestCommand, implementedConstraints, requiredTargets, testRecordViolations } from '../../../src/commands/core/lib/release-conditions.ts';
+import { addTestRecord, mergedResults } from '../../../src/commands/core/lib/test-records.ts';
+import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
 import { baseProtoBreaks } from '../../../src/commands/core/lib/base-proto-compat.ts';
 import { benchmarkDataViolations } from '../../../src/commands/core/lib/benchmark-data.ts';
 import { buildCoreSpec } from '../../../src/commands/core/spec-api.ts';
@@ -182,12 +183,12 @@ describe('ogw core release', () => {
     expect(run.code).toBe(1);
     const { data } = JSON.parse(run.stdout) as { data: { violations: string[] } };
     expect(data.violations).toEqual([
-      `core test server: routing is not recorded at ${before}`,
-      `core test godot: LogCore is skipped at ${before}`,
-      `core test godot --web: LogCore is not recorded at ${before}`,
-      `core test godot --web: UICore is not recorded at ${before}`,
-      `core test tools: contract-tool is not recorded at ${before}`,
-      `core test tools: data-tool is not recorded at ${before}`,
+      `core test server: routing is unknown at ${before}: not recorded; rerun: ogw core test server routing`,
+      `core test godot: LogCore is unknown at ${before}: not checked; rerun: ogw core test godot LogCore`,
+      `core test godot --web: LogCore is unknown at ${before}: not recorded; rerun: ogw core test godot LogCore --web`,
+      `core test godot --web: UICore is unknown at ${before}: not recorded; rerun: ogw core test godot UICore --web`,
+      `core test tools: contract-tool is unknown at ${before}: not recorded; rerun: ogw core test tools contract-tool`,
+      `core test tools: data-tool is unknown at ${before}: not recorded; rerun: ogw core test tools data-tool`,
       'core spec: skills/x.md:3: bad dependency line',
       'core-spec/UICore.json differs from ogw core spec',
       'core-spec/NewCore.json is missing',
@@ -325,7 +326,7 @@ describe('ogw core release', () => {
     const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(run.code).toBe(1);
     expect(run.stderr).toContain('core-spec/Old.json is not a module');
-    expect(run.stderr).toContain('is not recorded at');
+    expect(run.stderr).toContain(': not recorded; rerun: ogw core test');
     expect(run.stderr).not.toContain('not a core-spec module object');
   });
 
@@ -450,20 +451,30 @@ describe('release condition parts', () => {
     expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual([]);
   });
 
-  it('lets a render pass a locked screen left out through and reports it, and no other skip', async () => {
+  it('refuses a module whose result is unknown, with its reason and the command to run again', async () => {
     const ws = makeWorkspace();
     writeImpl(ws.coreImpl);
     const modules = await readCoreSpecDir(ws.coreImpl);
     const pass = (names: string[]) => Object.fromEntries(names.map((n) => [n, 'pass' as const]));
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'server', modules: pass(['routing']), recordedAt: 1 });
-    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'tools', modules: pass(['contract-tool', 'data-tool']), recordedAt: 1 });
-    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { LogCore: 'pass', UICore: 'skipped' }, skips: { UICore: SCREEN_LOCKED_SKIP }, recordedAt: 1 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'tools', modules: { 'contract-tool': 'pass', 'data-tool': 'unknown' }, reasons: { 'data-tool': 'godot round trip left out: x' }, recordedAt: 1 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 1 });
+    // a record an earlier tool wrote: `skipped` with the reason of a locked screen, or another one
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot --web', modules: { LogCore: 'skipped', UICore: 'pass' }, skips: { LogCore: 'other' }, recordedAt: 1 });
-    expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual(['core test godot --web: LogCore is skipped at c1']);
-    expect(await untestedRenderPasses(ws.coreImpl, 'c1', modules)).toEqual([`core test godot: UICore: ${SCREEN_LOCKED_SKIP}`]);
+    expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual([
+      'core test godot: UICore is unknown at c1: screen locked; rerun with the screen unlocked: ogw core test godot UICore',
+      'core test godot --web: LogCore is unknown at c1: other; rerun: ogw core test godot LogCore --web',
+      'core test tools: data-tool is unknown at c1: godot round trip left out: x; rerun: ogw core test tools data-tool',
+    ]);
+    await addTestRecord(ws.coreImpl, { commit: 'c2', target: 'server', modules: pass(['routing']), recordedAt: 2 });
+    await addTestRecord(ws.coreImpl, { commit: 'c2', target: 'tools', modules: pass(['contract-tool', 'data-tool']), recordedAt: 2 });
+    await addTestRecord(ws.coreImpl, { commit: 'c2', target: 'godot --web', modules: pass(['LogCore', 'UICore']), recordedAt: 2 });
+    await addTestRecord(ws.coreImpl, { commit: 'c2', target: 'godot', modules: { LogCore: 'pass', UICore: 'skipped' }, skips: { UICore: 'render pass not run: the macOS screen is locked or the display sleeps' }, recordedAt: 2 });
+    expect(await testRecordViolations(ws.coreImpl, 'c2', modules)).toEqual(['core test godot: UICore is unknown at c2: screen locked; rerun with the screen unlocked: ogw core test godot UICore']);
+    expect(coreTestCommand('godot --web', 'UICore')).toBe('ogw core test godot UICore --web');
   });
 
-  it('keeps an earlier fail of a module over a render pass a locked screen left out, and lets a later pass replace both', async () => {
+  it('keeps an earlier fail or pass of a module over a later unknown, and lets a later pass replace a fail', async () => {
     const ws = makeWorkspace();
     writeImpl(ws.coreImpl);
     const modules = await readCoreSpecDir(ws.coreImpl);
@@ -472,10 +483,11 @@ describe('release condition parts', () => {
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'tools', modules: pass(['contract-tool', 'data-tool']), recordedAt: 1 });
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot --web', modules: pass(['LogCore', 'UICore']), recordedAt: 1 });
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { LogCore: 'pass', UICore: 'fail' }, recordedAt: 2 });
-    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { UICore: 'skipped' }, skips: { UICore: SCREEN_LOCKED_SKIP }, recordedAt: 3 });
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 3 });
     expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual(['core test godot: UICore is fail at c1']);
-    expect(await untestedRenderPasses(ws.coreImpl, 'c1', modules)).toEqual([]);
     await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { UICore: 'pass' }, recordedAt: 4 });
+    expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual([]);
+    await addTestRecord(ws.coreImpl, { commit: 'c1', target: 'godot', modules: { UICore: 'unknown' }, reasons: { UICore: SCREEN_LOCKED }, recordedAt: 5 });
     expect(await testRecordViolations(ws.coreImpl, 'c1', modules)).toEqual([]);
   });
 

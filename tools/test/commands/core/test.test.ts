@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseProtoErrors } from '../../../src/commands/core/lib/base-proto-check.ts';
 import { godotDataVariable, renderDeps, type ModuleOutcome } from '../../../src/commands/core/lib/godot.ts';
 import { serverCoreStaticCheck } from '../../../src/commands/core/lib/core-server-static-check.ts';
-import { readTestRecords, SCREEN_LOCKED_SKIP } from '../../../src/commands/core/lib/test-records.ts';
+import { readTestRecords } from '../../../src/commands/core/lib/test-records.ts';
+import { awakeDeps, caffeinateArgs, holdDisplayAwake } from '../../../src/commands/core/lib/display-awake.ts';
+import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
 import { serverModuleTest } from '../../../src/commands/core/lib/server-tests.ts';
 import { runToolTest } from '../../../src/commands/core/lib/tool-test.ts';
 import { writeCoreSpec } from '../../../src/commands/core/spec-api.ts';
@@ -56,9 +58,26 @@ beforeEach(() => {
   vi.mocked(serverModuleTest).mockReset();
   vi.mocked(runToolTest).mockReset();
   vi.mocked(serverCoreStaticCheck).mockReset().mockResolvedValue([]);
-  // the host's own screen does not decide the render passes of these tests
+  // the host's own screen does not decide the render passes of these tests, and they hold no display sleep assertion
   renderDeps.screenLocked = () => Promise.resolve(false);
+  awake.held = 0;
+  awake.released = 0;
+  awakeDeps.hold = () => {
+    awake.held += 1;
+    return () => {
+      awake.released += 1;
+    };
+  };
 });
+
+const awake = { held: 0, released: 0 };
+
+/** Commits `files` to the core checkout and returns the new HEAD. */
+function commitFiles(dir: string, files: Record<string, string>, message: string): string {
+  writeFiles(dir, files);
+  commitAll(dir, message);
+  return sh(dir, 'git', ['rev-parse', 'HEAD']).trim();
+}
 
 describe('ogw core test godot', () => {
   it('runs each module headless and with its render tests, then records the clean checkout', async () => {
@@ -71,7 +90,8 @@ describe('ogw core test godot', () => {
     expect(JSON.parse(run.stdout)).toEqual({ target: 'godot', modules: { LogCore: 'pass', UICore: 'pass' }, failures: { LogCore: [], UICore: [] },
       counts: { LogCore: { tests: 1, passed: 1, ran: true }, UICore: { tests: 2, passed: 2, ran: true } },
       durationsMs: { LogCore: expect.any(Number) as number, UICore: expect.any(Number) as number },
-      skipped: {},
+      unknown: {},
+      inherited: {},
       reused: [],
       tests: 3,
       passed: 3,
@@ -106,41 +126,83 @@ describe('ogw core test godot', () => {
     expect(existsSync(join(ws.coreImpl, '.git', 'ogw-core-test-results'))).toBe(false);
   });
 
-  it('leaves out the render pass on a locked screen as skipped, records why, and passes the headless pass', async () => {
+  it('gives a module whose render pass a locked screen kept from running unknown (screen locked), records why, and holds the display awake', async () => {
     const { ws, env } = setup();
     renderDeps.screenLocked = () => Promise.resolve(true);
     const run = await ogw(ws, ['core', 'test', 'godot'], { env });
     expect(run.code).toBe(1);
-    expect(run.stdout).toBe(`LogCore pass\nUICore skipped\n  ${SCREEN_LOCKED_SKIP}\n`);
+    expect(run.stdout).toBe('LogCore pass\nUICore unknown\n  screen locked; rerun with the screen unlocked\n');
     expect(await readTestRecords(ws.coreImpl)).toEqual([{
-      commit: sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim(), target: 'godot', modules: { LogCore: 'pass', UICore: 'skipped' },
-      skips: { UICore: SCREEN_LOCKED_SKIP }, recordedAt: expect.any(Number) as number,
+      commit: sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim(), target: 'godot', modules: { LogCore: 'pass', UICore: 'unknown' },
+      reasons: { UICore: SCREEN_LOCKED }, recordedAt: expect.any(Number) as number,
     }]);
+    // the run held the display sleep assertion and released it
+    expect(awake).toEqual({ held: 1, released: 1 });
   });
 
-  it('has screenLocked in the summary and the run log only when every module passed or left its render pass out for the lock', async () => {
+  it('ends a run with an unknown module with exit code 1, and its run log summary counts the tests that ran', async () => {
     const { ws, env } = setup();
     renderDeps.screenLocked = () => Promise.resolve(true);
     // a failed module on a locked screen
     const failed = JSON.parse((await ogw(ws, ['core', 'test', 'godot', '--json'], { env: { ...env, FAKE_FAIL: 'log_core' } })).stdout) as object;
-    expect(failed).toMatchObject({ modules: { LogCore: 'fail', UICore: 'skipped' } });
-    expect(failed).not.toHaveProperty('screenLocked');
-    const locked = JSON.parse((await ogw(ws, ['core', 'test', 'godot', '--json'], { env })).stdout) as { tests: number; passed: number; screenLocked?: boolean };
-    expect(locked.screenLocked).toBe(true);
-    expect(locked.passed).toBe(locked.tests);
-    // the run log summary is what `ogw agent merge` reads
+    expect(failed).toMatchObject({ modules: { LogCore: 'fail', UICore: 'unknown' }, unknown: { UICore: SCREEN_LOCKED } });
+    const locked = await ogw(ws, ['core', 'test', 'godot', '--json'], { env });
+    expect(locked.code).toBe(1);
+    const data = JSON.parse(locked.stdout) as { tests: number; passed: number };
+    expect(data.passed).toBe(data.tests);
+    // the run log summary is what `ogw agent merge` reads, with the exit code
     const key = newAgentKey('agcore1');
     const remove = await fakeAgentJob(ws.env, 'agcore1', { role: 'core', cliPid: 999_999, keyHash: key.hash });
     expect((await ogw(ws, ['core', 'test', 'godot'], { env: { ...env, OGW_AGENT_KEY: key.value } })).code).toBe(1);
     remove();
     const log = JSON.parse(readFileSync(join(await jobsDir(ws.env), 'agcore1-runs.json'), 'utf8')) as { runs: unknown[] };
-    expect(log.runs).toEqual([{ command: 'ogw core test godot', startedAt: expect.any(Number) as number, exitCode: 1, summary: { tests: locked.tests, passed: locked.tests, screenLocked: true } }]);
-    // every module passed, and a `skipped` of another reason
+    expect(log.runs).toEqual([{ command: 'ogw core test godot', startedAt: expect.any(Number) as number, exitCode: 1, summary: { tests: data.tests, passed: data.tests } }]);
     const target = { kind: 'server' } as const;
     const pass = { tests: 1, passed: 1, failures: [] };
-    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass']]), new Map<string, ModuleOutcome>([['a', pass]])).summary).toEqual({ tests: 1, passed: 1 });
-    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass'], ['b', 'skipped']]), new Map<string, ModuleOutcome>([['a', pass], ['b', { ...pass, skipped: 'another reason' }]])).summary).toEqual({ tests: 2, passed: 2 });
-    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass'], ['b', 'skipped']]), new Map<string, ModuleOutcome>([['a', pass]])).summary).toEqual({ tests: 2, passed: 1 });
+    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass']]), new Map<string, ModuleOutcome>([['a', pass]]))).toMatchObject({ exitCode: 0, summary: { tests: 1, passed: 1 } });
+    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass'], ['b', 'unknown']]), new Map<string, ModuleOutcome>([['a', pass], ['b', { ...pass, unknown: 'another reason' }]]))).toMatchObject({ exitCode: 1, summary: { tests: 2, passed: 2 }, data: { unknown: { b: 'another reason' } } });
+    expect(runResult(target, new Map<string, ModuleResult>([['a', 'pass'], ['b', 'unknown']]), new Map<string, ModuleOutcome>([['a', pass]])).summary).toEqual({ tests: 2, passed: 1 });
+  });
+
+  it('takes the last recorded render pass pass of a module on a locked screen while no file of it or of its dependencies changed', async () => {
+    const { ws, env } = setup();
+    const head = (): string => sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).code).toBe(0);
+    const passed = head();
+    // a harness tools/ with changes not committed uses no kept result: the modules run again
+    writeFileSync(join(ws.harness, 'tools', 'ogw.md'), 'changed\n');
+    renderDeps.screenLocked = () => Promise.resolve(true);
+    const took = await ogw(ws, ['core', 'test', 'godot', '--json'], { env });
+    expect(took.code).toBe(0);
+    expect(JSON.parse(took.stdout)).toMatchObject({ modules: { LogCore: 'pass', UICore: 'pass' }, unknown: {}, inherited: { UICore: passed } });
+    expect((await readTestRecords(ws.coreImpl)).at(-1)).toMatchObject({ modules: { LogCore: 'pass', UICore: 'pass' }, inherited: { UICore: passed } });
+    // a file of no module it reaches changed: it still takes the pass of that commit, through the record that took it
+    commitFiles(ws.coreImpl, { 'server/core/routing/more.ts': 'export {};\n', 'records/note.md': 'x\n' }, 'other files');
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe(`LogCore pass\nUICore pass (render pass of ${passed})\n`);
+    // a file of a module it depends on changed: unknown
+    commitFiles(ws.coreImpl, { 'client/godot/core/log_core/log_core.gd': 'class_name LogCore\n# changed\n' }, 'LogCore changed');
+    const dependency = await ogw(ws, ['core', 'test', 'godot'], { env });
+    expect(dependency).toMatchObject({ code: 1, stdout: 'LogCore pass\nUICore unknown\n  screen locked; rerun with the screen unlocked\n' });
+    // a render pass that ran passes it again; then a file of the module itself changed: unknown
+    renderDeps.screenLocked = () => Promise.resolve(false);
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).code).toBe(0);
+    renderDeps.screenLocked = () => Promise.resolve(true);
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe(`LogCore pass\nUICore pass (render pass of ${head()})\n`);
+    commitFiles(ws.coreImpl, { 'client/godot/core/ui_core/ui_core.gd': 'class_name UICore\nLogCore.x()\n# changed\n' }, 'UICore changed');
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).code).toBe(1);
+    // a checkout with changes not committed leaves no record and takes no pass
+    commitFiles(ws.coreImpl, { 'client/godot/core/ui_core/ui_core.gd': 'class_name UICore\nLogCore.x()\n' }, 'UICore back');
+    renderDeps.screenLocked = () => Promise.resolve(false);
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).code).toBe(0);
+    renderDeps.screenLocked = () => Promise.resolve(true);
+    writeFiles(ws.coreImpl, { 'scratch.txt': 'x\n' });
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stdout).toBe('LogCore pass\nUICore unknown\n  screen locked; rerun with the screen unlocked\nno test record: uncommitted changes in the checkout\n');
+  });
+
+  it('holds the display sleep assertion with caffeinate on macOS only', () => {
+    expect(caffeinateArgs(42)).toEqual(['-d', '-i', '-w', '42']);
+    const release = holdDisplayAwake(process.env, 'linux');
+    expect(release).not.toThrow();
   });
 
   it('runs the dependents of a failed module with their own result, fails, and records each result of the clean checkout', async () => {
@@ -499,9 +561,9 @@ describe('core test helpers', () => {
     ]);
     const results = new Map<string, ModuleResult>([['a', 'pass'], ['b', 'fail'], ['c', 'fail']]);
     expect(testSummary(results, outcomes)).toEqual({ tests: 6, passed: 4 });
-    // A skipped module never ran; it counts as one test that did not pass.
-    expect(testSummary(new Map([...results, ['d', 'skipped']]), outcomes)).toEqual({ tests: 7, passed: 4 });
-    expect(testSummary(new Map([['d', 'skipped'], ['e', 'skipped']]), new Map())).toEqual({ tests: 2, passed: 0 });
+    // A module with no outcome never ran; it counts as one test that did not pass.
+    expect(testSummary(new Map([...results, ['d', 'unknown']]), outcomes)).toEqual({ tests: 7, passed: 4 });
+    expect(testSummary(new Map([['d', 'unknown'], ['e', 'unknown']]), new Map())).toEqual({ tests: 2, passed: 0 });
     expect(testSummary(new Map(), new Map())).toEqual({ tests: 1, passed: 0 });
   });
 

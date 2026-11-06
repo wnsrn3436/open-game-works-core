@@ -12,7 +12,7 @@ import { LIMITS } from '../../../lib/limits.ts';
 import { withReader, withWriter, type RwLock } from '../../../lib/rwlock.ts';
 import { killTree, run, runOk, spawnTracked, type RunResult } from '../../../lib/proc.ts';
 import { requireEngine } from '../../env/api.ts';
-import { SCREEN_LOCKED_SKIP } from './test-records.ts';
+import { SCREEN_LOCKED } from '../../../lib/outcome.ts';
 import { hostPlatform, moduleFolder, type EngineJson } from './impl.ts';
 import { startTestHost, type TestHost } from '../../check/api.ts';
 import { Slots } from '../../check/lib/instances.ts';
@@ -33,8 +33,10 @@ export interface ModuleOutcome {
    * `npm ci` that failed or a tool without vitest (ogw.md `## review run` `fix test proof`). Absent: true.
    */
   ran?: boolean;
-  /** Why part of the module's tests were left out, which makes a module with no failure `skipped`. */
-  skipped?: string;
+  /** Why part of the module's tests did not run, which makes a module with no failure `unknown` (`runOutcome`). */
+  unknown?: string;
+  /** The commit of the render pass `pass` that `ogw core test` took for a render pass not run (`inheritedRenderPass`). */
+  inherited?: string;
   /** Wall time of the module's run, set by `ogw core test`. */
   durationMs?: number;
   /** A passing result of the same key that `ogw core test` used instead of running the module (`test-reuse.ts`). */
@@ -94,8 +96,8 @@ export function judgeRun(result: unknown, output: string, exitCode: number | nul
 }
 
 export function addOutcomes(a: ModuleOutcome, b: ModuleOutcome): ModuleOutcome {
-  const skipped = a.skipped ?? b.skipped;
-  return { tests: a.tests + b.tests, passed: a.passed + b.passed, failures: [...a.failures, ...b.failures], ran: a.ran !== false || b.ran !== false, ...(skipped === undefined ? {} : { skipped }) };
+  const unknown = a.unknown ?? b.unknown;
+  return { tests: a.tests + b.tests, passed: a.passed + b.passed, failures: [...a.failures, ...b.failures], ran: a.ran !== false || b.ran !== false, ...(unknown === undefined ? {} : { unknown }) };
 }
 
 export interface GodotSetup {
@@ -353,9 +355,9 @@ export async function macScreenLocked(env: NodeJS.ProcessEnv): Promise<boolean> 
   return display.stdout.trim() === '1';
 }
 
-/** A render pass left out on a locked macOS screen or a sleeping display: no test ran, the module is `skipped` with `SCREEN_LOCKED_SKIP`. */
+/** A render pass not run on a locked macOS screen or an off display: no test ran, the module is `unknown` with `SCREEN_LOCKED`. */
 async function renderPass(ctx: Context, options: PassOptions): Promise<ModuleOutcome> {
-  if (await renderDeps.screenLocked(ctx.env)) return { tests: 0, passed: 0, failures: [], skipped: SCREEN_LOCKED_SKIP };
+  if (await renderDeps.screenLocked(ctx.env)) return { tests: 0, passed: 0, failures: [], unknown: SCREEN_LOCKED };
   return nativePass(ctx, options, true);
 }
 

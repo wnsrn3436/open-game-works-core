@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { failedLines, sortFixRuns, testRuns } from '../../../src/commands/review/lib/run.ts';
+import { failedLines, sortFixRuns, testRuns, unknownLines } from '../../../src/commands/review/lib/run.ts';
 import { readJob, type JobRecord, type WaitResult } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace } from '../../helpers/workspace.ts';
 import { agents, coreSpec, finding, GOOD_FIX, reviewFile, spec, UNTESTED_FIX } from './helpers.ts';
@@ -109,24 +109,34 @@ describe('failedLines', () => {
   const waited = (stdout: string, exitCode: number, stderr = ''): WaitResult => ({ job: { exitCode } as JobRecord, finished: true, stdout, stderr });
 
   it('names each failed module with its failures, and a run that stopped before its tests', () => {
-    // a module skipped for its failed dependency is not a failed test: the dependency's lines say why
-    const json = JSON.stringify({ modules: { routing: 'pass', storage: 'fail', chat: 'skipped' }, failures: { storage: ['sqlite run: a.test.ts x'], chat: [] } });
+    // an unknown module is not a failed test: `unknownLines` names it
+    const json = JSON.stringify({ modules: { routing: 'pass', storage: 'fail', chat: 'unknown' }, failures: { storage: ['sqlite run: a.test.ts x'], chat: [] }, unknown: { chat: 'x' } });
     expect(failedLines(['server', 'routing', 'storage', 'chat'], waited(json, 1))).toEqual([
       'ogw core test server routing storage chat: storage fail',
       '  sqlite run: a.test.ts x',
     ]);
     expect(failedLines(['server'], waited(JSON.stringify({ modules: { routing: 'pass' } }), 0))).toEqual([]);
     // a tool whose engine round trip was left out has no failing test, though the run ends with exit code 1
-    const leftOut = JSON.stringify({ modules: { 'data-tool': 'skipped' }, failures: { 'data-tool': [] }, skipped: { 'data-tool': 'godot round trip left out: x' } });
+    const leftOut = JSON.stringify({ modules: { 'data-tool': 'unknown' }, failures: { 'data-tool': [] }, unknown: { 'data-tool': 'godot round trip left out: x' } });
     expect(failedLines(['tools'], waited(leftOut, 1))).toEqual([]);
     expect(failedLines(['tools'], waited(JSON.stringify({ error: 'core-spec/ check failed' }), 1))).toEqual(['ogw core test tools: core-spec/ check failed']);
     expect(failedLines(['godot', '--web'], waited('', 1, 'boom\nmore'))).toEqual(['ogw core test godot --web: exit code 1: boom']);
+  });
+
+  it('names each unknown module with its reason: an unknown does not pass the fix', () => {
+    const locked = JSON.stringify({ modules: { LogCore: 'pass', UICore: 'unknown' }, failures: { LogCore: [], UICore: [] }, unknown: { UICore: 'screen locked' } });
+    expect(unknownLines(['godot', 'UICore'], waited(locked, 1))).toEqual(['ogw core test godot UICore: UICore unknown: screen locked; rerun with the screen unlocked']);
+    // a job output of an earlier tool: `skipped` with no reason in `unknown`
+    expect(unknownLines(['tools'], waited(JSON.stringify({ modules: { 'data-tool': 'skipped' } }), 1))).toEqual(['ogw core test tools: data-tool unknown: not checked; rerun']);
+    expect(unknownLines(['server'], waited(JSON.stringify({ modules: { routing: 'pass' } }), 0))).toEqual([]);
+    expect(unknownLines(['server'], waited(JSON.stringify({ error: 'x' }), 1))).toEqual([]);
+    expect(unknownLines(['server'], waited('', 1))).toEqual([]);
   });
 });
 
 describe('core test failures after a fix', () => {
   it('stops for the target, a run that failed otherwise, or another module that passed before the fix, and keeps one that failed before', async () => {
-    const run = (failed: string[] | null, line: string) => ({ args: ['server', 'routing', 'auth', 'mailbox'], lines: [line], failed });
+    const run = (failed: string[] | null, line: string) => ({ args: ['server', 'routing', 'auth', 'mailbox'], lines: [line], failed, unknown: [] });
     const before = new Set(['mailbox']);
     const failedBefore = (_args: readonly string[], module: string): Promise<boolean> => Promise.resolve(before.has(module));
     expect(await sortFixRuns([run(['mailbox'], 'm')], 'routing', failedBefore)).toEqual({ stopping: [], preexisting: ['m'] });

@@ -24,7 +24,10 @@ import { startPostgres } from './lib/postgres.ts';
 import { runModulePool } from './lib/ready-queue.ts';
 import { specDirErrors } from './lib/spec-dir-check.ts';
 import { buildTestData, testGameSettings } from './lib/test-data.ts';
-import { addTestRecord, SCREEN_LOCKED_SKIP, type ModuleResult } from './lib/test-records.ts';
+import { addTestRecord, type ModuleResult } from './lib/test-records.ts';
+import { inheritedRenderPass } from './lib/render-pass.ts';
+import { awakeDeps } from './lib/display-awake.ts';
+import { rerunHint, runOutcome, SCREEN_LOCKED } from '../../lib/outcome.ts';
 import { keepResult, keptResult, moduleKeys, type KeptResult } from './lib/test-reuse.ts';
 import { godotCoreStaticCheck } from './lib/core-static-check.ts';
 import { serverInternalImports } from './lib/core-server-imports.ts';
@@ -214,9 +217,9 @@ async function reportResult(ctx: Context, module: string, result: ModuleResult, 
 
 /**
  * The run log summary `{"tests", "passed"}`. A module with an outcome counts its tests and passes: when it failed with no
- * counted test failing (for example no result), one more test than it passed. A module with no outcome (`skipped` because
- * a dependency did not pass) counts one test that did not pass, and so does a run with no module, so such a run never
- * reads as all passed. A tool `skipped` for its left-out round trip has an outcome: it counts its passed vitest tests.
+ * counted test failing (for example no result), one more test than it passed. A module with no outcome counts one test
+ * that did not pass, and so does a run with no module, so such a run never reads as all passed. A module `unknown` for a
+ * part not run (a render pass, a tool's left-out round trip) counts the tests that ran.
  */
 export function testSummary(results: ReadonlyMap<string, ModuleResult>, outcomes: ReadonlyMap<string, ModuleOutcome>): { tests: number; passed: number } {
   if (results.size === 0) return { tests: 1, passed: 0 };
@@ -237,10 +240,11 @@ export function testSummary(results: ReadonlyMap<string, ModuleResult>, outcomes
 function summaryText(results: Map<string, ModuleResult>, outcomes: Map<string, ModuleOutcome>): string {
   const lines: string[] = [];
   for (const [module, result] of results) {
-    lines.push(`${module} ${result}${outcomes.get(module)?.reused === true ? ' (reused)' : ''}`);
-    for (const failure of outcomes.get(module)?.failures ?? []) lines.push(`  ${failure}`);
-    const skipped = outcomes.get(module)?.skipped;
-    if (skipped !== undefined) lines.push(`  ${skipped}`);
+    const outcome = outcomes.get(module);
+    const inherited = outcome?.inherited === undefined ? '' : ` (render pass of ${outcome.inherited})`;
+    lines.push(`${module} ${result}${outcome?.reused === true ? ' (reused)' : ''}${inherited}`);
+    for (const failure of outcome?.failures ?? []) lines.push(`  ${failure}`);
+    if (result === 'unknown' && outcome?.unknown !== undefined) lines.push(`  ${outcome.unknown}${outcome.unknown === SCREEN_LOCKED ? `; ${rerunHint(SCREEN_LOCKED)}` : ''}`);
   }
   return lines.join('\n');
 }
@@ -300,8 +304,7 @@ async function runModules(
       const startedAt = Date.now();
       const outcome = await runner.run(module).catch((error: unknown): ModuleOutcome => ({ tests: 0, passed: 0, failures: [(error as Error).message], ran: false }));
       outcomes.set(module, { ...outcome, durationMs: Date.now() - startedAt });
-      if (outcome.failures.length > 0) return 'fail';
-      return outcome.skipped === undefined ? 'pass' : 'skipped';
+      return runOutcome(outcome.failures.length > 0, outcome.unknown).result;
     }, (module, result) => reportResult(ctx, module, result, outcomes.get(module)?.durationMs));
     const times = Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.durationMs === undefined ? [] : [[m, o.durationMs]])));
     await writeJsonAtomic(file, { ...last, ...times });
@@ -332,7 +335,7 @@ async function keptResults(ctx: Context, keys: ReadonlyMap<string, string> | nul
   return reused;
 }
 
-/** Keeps the result of each module with a key that ran and passed every test of it. */
+/** Keeps the result of each module with a key that ran and passed every test of it, not one that took a render pass. */
 async function keepPassed(
   ctx: Context,
   keys: ReadonlyMap<string, string> | null,
@@ -343,7 +346,7 @@ async function keepPassed(
 ): Promise<void> {
   for (const [module, key] of keys ?? []) {
     const outcome = outcomes.get(module);
-    if (results.get(module) !== 'pass' || outcome === undefined || outcome.reused === true || outcome.tests === 0 || outcome.passed !== outcome.tests) continue;
+    if (results.get(module) !== 'pass' || outcome === undefined || outcome.reused === true || outcome.inherited !== undefined || outcome.tests === 0 || outcome.passed !== outcome.tests) continue;
     await keepResult(ctx.env, key, { tests: outcome.tests, passed: outcome.passed, target, module, commit });
   }
 }
@@ -358,11 +361,46 @@ function noRecordReason(fileRun: boolean, clean: boolean, sameHead: boolean): st
   return sameHead ? null : 'HEAD moved during the run';
 }
 
-/** The result of a run: `screenLocked` when every module that did not pass only left its render pass out for the screen lock. */
+/** The reason of each `unknown` module. */
+function unknownReasons(results: ReadonlyMap<string, ModuleResult>, outcomes: ReadonlyMap<string, ModuleOutcome>): Record<string, string> {
+  return Object.fromEntries([...results].flatMap(([m, r]) => (r === 'unknown' ? [[m, outcomes.get(m)?.unknown ?? 'not checked']] : [])));
+}
+
+/** The commit of the render pass `pass` each module took (`takeRenderPasses`). */
+function inheritedCommits(outcomes: ReadonlyMap<string, ModuleOutcome>): Record<string, string> {
+  return Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.inherited === undefined ? [] : [[m, o.inherited]])));
+}
+
+/**
+ * Each module of a native engine run that is `unknown` only because a locked screen kept its render pass from running
+ * takes its last recorded render pass `pass` (`inheritedRenderPass`, ogw.md `### Godot core test`): it is then `pass`,
+ * and its job result is reported again.
+ */
+async function takeRenderPasses(
+  ctx: Context,
+  implDir: string,
+  target: Target,
+  commit: string,
+  all: readonly CoreSpecModule[],
+  results: Map<string, ModuleResult>,
+  outcomes: Map<string, ModuleOutcome>,
+): Promise<void> {
+  if (target.kind !== 'engine' || target.web) return;
+  for (const [module, result] of results) {
+    const outcome = outcomes.get(module);
+    if (result !== 'unknown' || outcome?.unknown !== SCREEN_LOCKED || outcome.failures.length > 0) continue;
+    const from = await inheritedRenderPass(implDir, target.engine, module, commit, all, ctx.env);
+    if (from === null) continue;
+    outcomes.set(module, { ...outcome, unknown: undefined, inherited: from });
+    results.set(module, 'pass');
+    await reportResult(ctx, module, 'pass', outcome.durationMs);
+  }
+}
+
+/** The result of a run: exit code 0 only when every module is `pass`; an `unknown` module ends it with 1. */
 export function runResult(target: Target, results: Map<string, ModuleResult>, outcomes: Map<string, ModuleOutcome>, noRecord: string | null = null): CommandResult {
   const ok = [...results.values()].every((r) => r === 'pass');
-  const screenLocked = !ok && [...results].every(([m, r]) => r === 'pass' || (r === 'skipped' && outcomes.get(m)?.skipped === SCREEN_LOCKED_SKIP));
-  const summary = { ...testSummary(results, outcomes), ...(screenLocked ? { screenLocked } : {}) };
+  const summary = testSummary(results, outcomes);
   return {
     exitCode: ok ? 0 : 1,
     text: noRecord === null ? summaryText(results, outcomes) : `${summaryText(results, outcomes)}\nno test record: ${noRecord}`,
@@ -372,7 +410,8 @@ export function runResult(target: Target, results: Map<string, ModuleResult>, ou
       failures: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.failures])),
       counts: Object.fromEntries([...outcomes].map(([m, o]) => [m, { tests: o.tests, passed: o.passed, ran: o.ran !== false }])),
       durationsMs: Object.fromEntries([...outcomes].map(([m, o]) => [m, o.durationMs ?? null])),
-      skipped: Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.skipped === undefined ? [] : [[m, o.skipped]]))),
+      unknown: unknownReasons(results, outcomes),
+      inherited: inheritedCommits(outcomes),
       reused: [...outcomes].filter(([, o]) => o.reused === true).map(([m]) => m),
       ...(noRecord === null ? {} : { noRecord }),
       ...summary,
@@ -394,6 +433,8 @@ export const testCommand: CommandDef = {
     if (!exists(implDir)) throw new OgwError(`not found: ${implDir}`);
     const target = await parseTarget(implDir, name, flag(args, 'web'));
     const work = await newPrivateTempFolder('ogw-core-test-', ctx.env);
+    // an idle display that turns off keeps a render pass from running (ogw.md `### Godot core test`)
+    const releaseAwake = awakeDeps.hold(ctx.env);
     try {
       // The record is of the commit the preflight checked and the tests start on, read while no merge can move HEAD.
       let start: TestStart;
@@ -431,8 +472,17 @@ export const testCommand: CommandDef = {
         // a run of one test file is not a run of its module: it leaves no record
         noRecord = noRecordReason(file !== undefined, start.clean && endClean, (await head(implDir, { env: ctx.env })) === startHead);
         if (file === undefined && noRecord === null) {
-          const skips = Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.skipped === undefined || results.get(m) !== 'skipped' ? [] : [[m, o.skipped]])));
-          await addTestRecord(implDir, { commit: startHead, target: recordTarget(target), modules: Object.fromEntries(results), ...(Object.keys(skips).length > 0 ? { skips } : {}), recordedAt: Date.now() });
+          await takeRenderPasses(ctx, implDir, target, startHead, all, results, outcomes);
+          const reasons = unknownReasons(results, outcomes);
+          const inherited = inheritedCommits(outcomes);
+          await addTestRecord(implDir, {
+            commit: startHead,
+            target: recordTarget(target),
+            modules: Object.fromEntries(results),
+            ...(Object.keys(reasons).length > 0 ? { reasons } : {}),
+            ...(Object.keys(inherited).length > 0 ? { inherited } : {}),
+            recordedAt: Date.now(),
+          });
           await keepPassed(ctx, keys, results, outcomes, recordTarget(target), startHead);
         }
       } finally {
@@ -440,6 +490,7 @@ export const testCommand: CommandDef = {
       }
       return runResult(target, results, outcomes, noRecord);
     } finally {
+      releaseAwake();
       await rm(work, { recursive: true, force: true });
     }
   },

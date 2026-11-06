@@ -89,8 +89,8 @@ export async function runToolTest(ctx: Context, implDir: string, tool: string): 
         outcome = addOutcomes(outcome, roundTrip);
       }
       // the tool's own tests are its vitest tests: the round trip does not make them run
-      const skipped = leftOut.length === 0 ? {} : { skipped: `${leftOut.join(', ')} round trip left out: no core test of the engine has passed every client module yet` };
-      return { ...outcome, ran: vitest.ran !== false, ...skipped };
+      const unknown = leftOut.length === 0 ? {} : { unknown: `${leftOut.join(', ')} round trip left out: no core test of the engine has passed every client module yet` };
+      return { ...outcome, ran: vitest.ran !== false, ...unknown };
     });
   } finally {
     await rm(work, { recursive: true, force: true });

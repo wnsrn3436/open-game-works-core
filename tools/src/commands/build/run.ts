@@ -24,7 +24,7 @@ import { writePrivacy } from './lib/privacy.ts';
 import { compatibilityCheck, placeholderCheck, plain, staticChecks } from './lib/runchecks.ts';
 import { DEV_ACCESS, needles, scanArtifacts, scanRepo } from './lib/secretscan.ts';
 import { buildServerImage, serverImageDevCode, stgServerImage, type ServerImage } from './lib/serverimage.ts';
-import { humanChecks, outcome, usedSpecModules, type CheckWithHuman, type SettingsCheckInput } from './lib/settingschecks.ts';
+import { blocksBuild, humanChecks, outcome, usedSpecModules, type CheckWithHuman, type SettingsCheckInput } from './lib/settingschecks.ts';
 import { compatibleApps, writeUpdate } from './lib/update.ts';
 import { matchWaitMs } from './lib/waittime.ts';
 
@@ -75,7 +75,8 @@ async function clientChecks(b: Build): Promise<{ checks: CheckWithHuman[]; loadi
     ctx: b.ctx, game: b.game, env: b.open.env, version: b.open.version, exportVersion: b.open.run.bundleFor ?? b.open.version, settings: b.settings, platforms: b.platforms,
   };
   const [device, web] = await Promise.all([devicePerformance(input), webSmoke(input)]);
-  const checks: CheckWithHuman[] = [{ check: device, human: null }];
+  const checks: CheckWithHuman[] = [];
+  if (device) checks.push({ check: device, human: null });
   if (web) checks.push({ check: web.check, human: null });
   return { checks, loadingMs: web?.loadingMs ?? null };
 }
@@ -226,7 +227,7 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   result.human = pre.checks.flatMap((c) => (c.human ? [c.human] : []));
   result.licenseWarnings = pre.licenseWarnings;
   result.webSmokeLoadingMs = pre.webSmokeLoadingMs;
-  if (result.checks.some((c) => c.result === 'fail') || versions === null) return finishResult(b, result, true);
+  if (result.checks.some((c) => blocksBuild(c, open.env)) || versions === null) return finishResult(b, result, true);
   const privacy = await writePrivacy({ dir: join(b.outDir, 'privacy'), env: open.env, platforms: b.platforms, settings: b.settings, modules: usedSpecModules(pre.input) });
   const withData = await bundleHasData(b, versions);
   const manifest = privacy.files.includes('PrivacyInfo.xcprivacy') ? join(b.outDir, 'privacy', 'PrivacyInfo.xcprivacy') : null;
@@ -238,7 +239,7 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   const allowed = open.env === 'DEV' ? [DEV_ACCESS] : [];
   const leaks = await scanArtifacts(game.root, [...b.platforms.map((p) => join(b.outDir, p)), join(b.outDir, 'patch')], list, allowed);
   if (secret && leaks.length > 0) Object.assign(secret, { result: 'fail', details: [...secret.details, ...leaks] });
-  if (result.checks.some((c) => c.result === 'fail')) return finishResult(b, result, true);
+  if (result.checks.some((c) => blocksBuild(c, open.env))) return finishResult(b, result, true);
   if (withData) await serverSide(b, result, versions);
   await prodFacts(b, result);
   return finishResult(b, result, false);

@@ -10,6 +10,7 @@ import { LIMITS } from '../../../lib/limits.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { git, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
+import { NOT_RECORDED, outcomeOf, rerunHint, type Outcome } from '../../../lib/outcome.ts';
 import { cliEntry } from '../../../lib/paths.ts';
 import { run } from '../../../lib/proc.ts';
 import { withSlot } from '../../../lib/slots.ts';
@@ -27,7 +28,7 @@ import { readState, targetDir, type ReviewState, type RoundState } from './state
 import { judgedOutput, reviewWait } from './wait.ts';
 
 /** Why `ogw review run` stopped. */
-export type RunStop = 'done' | 'blocked' | 'limit' | 'invalid' | 'not merged' | 'test fail';
+export type RunStop = 'done' | 'blocked' | 'limit' | 'invalid' | 'not merged' | 'test fail' | 'test unknown';
 
 interface Stop {
   result: RunStop;
@@ -218,20 +219,24 @@ export async function testRuns(coreImpl: string, target: string): Promise<string
 interface CoreTestOutput {
   modules?: Record<string, string>;
   failures?: Record<string, string[]>;
-  skipped?: Record<string, string>;
+  unknown?: Record<string, string>;
   error?: string;
 }
 
+/** The outcome of each module of a core test output (`outcomeOf`). */
+function moduleOutcomes(data: CoreTestOutput): [string, Outcome][] {
+  return Object.entries(data.modules ?? {}).map(([module, result]) => [module, outcomeOf(result, data.unknown?.[module] ?? null)]);
+}
+
 /**
- * Lines of the `fail` modules of a core test output (ogw.md `## review run`: only a `fail` stops
- * the fix). A `skipped` module has none: one skipped for a dependency that did not pass comes with that dependency's
- * lines, and a tool whose engine round trip was left out failed nothing.
+ * Lines of the `fail` modules of a core test output (`core` command.md `## review and code check`: a `fail` stops
+ * the run with `test fail`). An `unknown` module has none: `unknownLines` gives its line.
  */
 function moduleLines(command: string, data: CoreTestOutput): string[] {
   const lines: string[] = [];
-  for (const [module, result] of Object.entries(data.modules ?? {})) {
-    if (result !== 'fail') continue;
-    lines.push(`${command}: ${module} ${result}`, ...(data.failures?.[module] ?? []).map((failure) => `  ${failure}`));
+  for (const [module, outcome] of moduleOutcomes(data)) {
+    if (outcome.result !== 'fail') continue;
+    lines.push(`${command}: ${module} fail`, ...(data.failures?.[module] ?? []).map((failure) => `  ${failure}`));
   }
   return lines;
 }
@@ -242,12 +247,24 @@ export function failedLines(args: readonly string[], waited: WaitResult): string
     const data = JSON.parse(waited.stdout) as CoreTestOutput;
     if (typeof data.error === 'string') return [`${command}: ${data.error}`];
     const lines = moduleLines(command, data);
-    // a run with a left-out round trip ends with exit code 1 and no failing test
-    if (lines.length > 0 || waited.job.exitCode === 0 || Object.keys(data.skipped ?? {}).length > 0) return lines;
+    // a run with an `unknown` module and no `fail` ends with exit code 1 and no failing test
+    if (lines.length > 0 || waited.job.exitCode === 0 || moduleOutcomes(data).some(([, o]) => o.result === 'unknown')) return lines;
   } catch {
     // not JSON: the command failed before it tested
   }
   return [`${command}: exit code ${String(waited.job.exitCode)}: ${(waited.stderr || waited.stdout).trim().split('\n')[0] ?? ''}`];
+}
+
+/** Lines of the `unknown` modules of a core test output, each with its reason; none for an output that is not one. */
+export function unknownLines(args: readonly string[], waited: WaitResult): string[] {
+  const command = `ogw core test ${args.join(' ')}`;
+  try {
+    const data = JSON.parse(waited.stdout) as CoreTestOutput;
+    if (typeof data.error === 'string') return [];
+    return moduleOutcomes(data).flatMap(([module, o]) => (o.result === 'unknown' ? [`${command}: ${module} unknown: ${o.reason ?? NOT_RECORDED}; ${rerunHint(o.reason ?? NOT_RECORDED)}`] : []));
+  } catch {
+    return [];
+  }
 }
 
 /** The failed lines of one core test run after a fix, with the modules whose tests failed in it. */
@@ -256,6 +273,8 @@ export interface FixRun {
   lines: string[];
   /** The failed modules; null when the run failed otherwise (it stopped before the tests, or did not report). */
   failed: string[] | null;
+  /** The lines of its `unknown` modules (`unknownLines`). */
+  unknown: string[];
 }
 
 /** `pass` or `fail` as a core test output reports `module`, or null for any other output or result. */
@@ -296,15 +315,15 @@ async function testFix(drive: Drive): Promise<FixRun[]> {
       env: drive.ctx.env,
     });
     const waited = await waitEnd(drive, id);
-    return { args, lines: failedLines(args, waited), failed: failedModules(waited) };
+    return { args, lines: failedLines(args, waited), failed: failedModules(waited), unknown: unknownLines(args, waited) };
   })));
-  return results.filter((r) => r.lines.length > 0);
+  return results.filter((r) => r.lines.length > 0 || r.unknown.length > 0);
 }
 
 /**
  * The result `module` of the run's target (`args[0]`, and `--web` when the run has it) has at `commit`: `pass` or `fail`
  * as the run reports it, or null for a run that did not report it so (it stopped before the tests, did not report, or
- * skipped the module). Runs `ogw core test` of that module alone in a worktree of that commit under
+ * reported it `unknown`). Runs `ogw core test` of that module alone in a worktree of that commit under
  * `worktrees/_core/`, which `ogw core test` takes as the core checkout.
  */
 async function resultAt(drive: Drive, args: readonly string[], module: string, commit: string): Promise<'pass' | 'fail' | null> {
@@ -339,7 +358,10 @@ async function fixTestStop(drive: Drive, last: RoundState, runs: readonly FixRun
   };
   const sorted = await sortFixRuns(runs, drive.target, notTheFixs);
   drive.preexisting.push(...sorted.preexisting);
-  return sorted.stopping.length > 0 ? { result: 'test fail', detail: sorted.stopping } : null;
+  if (sorted.stopping.length > 0) return { result: 'test fail', detail: sorted.stopping };
+  // a module that could not be checked does not pass the fix
+  const unknown = runs.flatMap((run) => run.unknown);
+  return unknown.length > 0 ? { result: 'test unknown', detail: unknown } : null;
 }
 
 /** The failed lines that stop the run and those that failed before the fix (`fixTestStop`). */

@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleOutcome } from '../../../src/commands/core/lib/godot.ts';
-import { addTestRecord, SCREEN_LOCKED_SKIP, type ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
+import { addTestRecord, type ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
+import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
 import { runResult } from '../../../src/commands/core/test.ts';
 import { ogw, commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { fakeAgentCli, runAgent } from './helpers.ts';
@@ -61,18 +62,21 @@ describe('ogw agent merge: core worktrees', () => {
     for (const id of [none, failed, vitest, exit1, running]) expect(run.stdout).toContain(`not merged ${id}: no core test:`);
   });
 
-  it('merges a core job whose last core test only left render passes out because the screen is locked', async () => {
+  it('does not merge a core job whose last core test is unknown because the screen is locked, and merges one that took the render pass', async () => {
     const ws = makeWorkspace();
     coreSpec(ws, { routing: [], storage: [] });
-    // what `ogw core test` gives for such a run
+    // what `ogw core test` gives for such runs: every test that ran passed
     const pass = { tests: 1, passed: 1, failures: [] };
-    const result = runResult({ kind: 'engine', engine: 'godot', web: false }, new Map<string, ModuleResult>([['LogCore', 'pass'], ['UICore', 'skipped']]), new Map<string, ModuleOutcome>([['LogCore', pass], ['UICore', { ...pass, skipped: SCREEN_LOCKED_SKIP }]]));
-    expect(result.exitCode).toBe(1);
-    const locked = await coreJob(ws, 'routing', [{ ...PASSED, exitCode: result.exitCode, summary: result.summary }]);
-    const notAllPassed = await coreJob(ws, 'storage', [{ ...PASSED, exitCode: 1, summary: { tests: 2, passed: 1, screenLocked: true } }]);
-    const run = await ogw(ws, ['agent', 'merge', locked, notAllPassed]);
-    expect(run.stdout.split('\n')).toContain(`merged ${locked}`);
-    expect(run.stdout).toContain(`not merged ${notAllPassed}: no core test:`);
+    const target = { kind: 'engine', engine: 'godot', web: false } as const;
+    const locked = runResult(target, new Map<string, ModuleResult>([['LogCore', 'pass'], ['UICore', 'unknown']]), new Map<string, ModuleOutcome>([['LogCore', pass], ['UICore', { ...pass, unknown: SCREEN_LOCKED }]]));
+    const took = runResult(target, new Map<string, ModuleResult>([['LogCore', 'pass'], ['UICore', 'pass']]), new Map<string, ModuleOutcome>([['LogCore', pass], ['UICore', { ...pass, inherited: 'c0' }]]));
+    expect([locked.exitCode, took.exitCode]).toEqual([1, 0]);
+    expect(locked.summary).toEqual({ tests: 2, passed: 2 });
+    const lockedJob = await coreJob(ws, 'routing', [{ ...PASSED, exitCode: locked.exitCode, summary: locked.summary }]);
+    const tookJob = await coreJob(ws, 'storage', [{ ...PASSED, exitCode: took.exitCode, summary: took.summary }]);
+    const run = await ogw(ws, ['agent', 'merge', lockedJob, tookJob]);
+    expect(run.stdout).toContain(`not merged ${lockedJob}: no core test:`);
+    expect(run.stdout.split('\n')).toContain(`merged ${tookJob}`);
   });
 
   it('does not take an ogw core test run of one test file (--file) as the last ogw core test', async () => {
@@ -129,19 +133,19 @@ describe('ogw agent merge: core worktrees', () => {
     mkdirSync(join(ws.coreImpl, 'client', 'godot'), { recursive: true });
     writeFileSync(join(ws.coreImpl, 'client', 'godot', 'engine.json'), '{}');
     commitAll(ws.coreImpl, 'spec');
-    const skippedRun = { command: 'ogw core test tools', startedAt: 1, exitCode: 1, summary: { tests: 4, passed: 4 } };
-    const failedRun = { ...skippedRun, summary: { tests: 4, passed: 3 } };
+    const leftOutRun = { command: 'ogw core test tools', startedAt: 1, exitCode: 1, summary: { tests: 4, passed: 4 } };
+    const failedRun = { ...leftOutRun, summary: { tests: 4, passed: 3 } };
     const serverFailed = { command: 'ogw core test server', startedAt: 2, exitCode: 1, summary: { tests: 2, passed: 1 } };
     const serverPassed = { ...serverFailed, exitCode: 0, summary: { tests: 2, passed: 2 } };
     // the last `ogw core test tools` entry decides, whatever core test comes after it
-    const tool = await coreJob(ws, 'contract-tool', [skippedRun, serverFailed], 'tools/contract-tool/src/a.ts');
+    const tool = await coreJob(ws, 'contract-tool', [leftOutRun, serverFailed], 'tools/contract-tool/src/a.ts');
     const failing = await coreJob(ws, 'data-tool', [failedRun, serverPassed], 'tools/data-tool/src/a.ts');
     const run = await ogw(ws, ['agent', 'merge', tool, failing]);
     expect(run.stdout.split('\n')).toContain(`merged ${tool}`);
     expect(run.stdout).toContain(`not merged ${failing}: no core test:`);
     // once a godot core test passed every client module, a tool job needs a passing core test again
     await addTestRecord(ws.coreImpl, { commit: sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim(), target: 'godot', modules: { LogCore: 'pass' }, recordedAt: 1 });
-    const later = await coreJob(ws, 'contract-tool', [skippedRun], 'tools/contract-tool/src/b.ts');
+    const later = await coreJob(ws, 'contract-tool', [leftOutRun], 'tools/contract-tool/src/b.ts');
     expect((await ogw(ws, ['agent', 'merge', later])).stdout).toContain(`not merged ${later}: no core test:`);
   });
 
@@ -161,9 +165,9 @@ describe('ogw agent merge: core worktrees', () => {
       expect(waited.code).toBe(0);
       return id;
     };
-    const skippedRun = { command: 'ogw core test tools', startedAt: 1, exitCode: 1, summary: { tests: 4, passed: 4 } };
+    const leftOutRun = { command: 'ogw core test tools', startedAt: 1, exitCode: 1, summary: { tests: 4, passed: 4 } };
     const clientAndServer = await multiJob(['LogCore', 'routing'], [], 'client/godot/core/log_core/a.gd');
-    const toolAndModule = await multiJob(['contract-tool', 'LogCore'], [skippedRun], 'tools/contract-tool/src/a.ts');
+    const toolAndModule = await multiJob(['contract-tool', 'LogCore'], [leftOutRun], 'tools/contract-tool/src/a.ts');
     const run = await ogw(ws, ['agent', 'merge', clientAndServer, toolAndModule]);
     expect(run.stdout).toContain(`not merged ${clientAndServer}: no core test:`);
     expect(run.stdout).toContain(`not merged ${toolAndModule}: no core test:`);

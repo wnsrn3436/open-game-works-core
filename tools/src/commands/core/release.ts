@@ -11,8 +11,7 @@ import { leftLines } from '../review/lib/left.ts';
 import { remoteReleaseVersions } from './api.ts';
 import { buildAssets } from './lib/assets.ts';
 import { assetUrl, createRelease, releaseExists } from './lib/github.ts';
-import { releaseViolations, reviewDebtCounts, untestedRenderPasses } from './lib/release-conditions.ts';
-import { readCoreSpecDir } from './lib/impl.ts';
+import { releaseViolations, reviewDebtCounts } from './lib/release-conditions.ts';
 import { withCoreMain } from './lib/main-checkout.ts';
 import { releaseTag, requireVersion } from './lib/version.ts';
 import { byteCompare } from '../../lib/order.ts';
@@ -149,7 +148,6 @@ export const releaseCommand: CommandDef = {
     if (violations.length > 0) {
       throw new OgwError(`release condition not met; ${version} is not released:\n${violations.join('\n')}`, 1, { violations });
     }
-    const untested = await untestedRenderPasses(implDir, previousHead, await readCoreSpecDir(implDir, { skipInvalid: true }));
     const debt = await reviewDebtCounts(implDir);
     const out = await newPrivateTempFolder('ogw-core-release-', ctx.env);
     try {
@@ -170,8 +168,8 @@ export const releaseCommand: CommandDef = {
       const left = await clearReviews(ctx, 'core');
       const harnessLine = `harness tag ${harnessCoreTag(version)} at ${harness.head}`;
       return {
-        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...untested, ...debt, ...leftLines(left)].join('\n'),
-        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), untested, debt, ...left },
+        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...debt, ...leftLines(left)].join('\n'),
+        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), debt, ...left },
       };
     } finally {
       await rm(out, { recursive: true, force: true });

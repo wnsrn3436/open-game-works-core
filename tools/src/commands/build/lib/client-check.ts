@@ -39,14 +39,13 @@ export interface ClientCheckInput {
 }
 
 /**
- * A check that did not run (an export, instance, device or browser error): it blocks a STG or PROD build and warns in
- * DEV (`build` `## build-time check`). Errors that name an undefined step still stop the build run.
+ * A check that did not run (an export, instance, device or browser error, a program missing on this host): `unknown`
+ * with that reason (`build` `## build-time check`). Errors that name an undefined step still stop the build run.
  */
-export function didNotRun(name: string, env: Env, error: unknown): BuildCheck {
+export function didNotRun(name: string, error: unknown): BuildCheck {
   const message = error instanceof Error ? error.message : String(error);
   if (message.startsWith('not defined:')) throw error;
-  const details = [`${name} did not run: ${message}`];
-  return { name, result: outcome(name, env, details), details };
+  return { name, result: 'unknown', details: [`${name} did not run: ${message}`] };
 }
 
 /** `builds/<env>-<version>/<name>/` as check evidence (game repo relative paths). */
@@ -71,13 +70,11 @@ export function buildCheckOf(name: string, env: Env, results: readonly CheckResu
 
 /**
  * A build check of a run that stopped before its end (the scenario stopped without a blocker, a step or a quality level
- * failed): `unknown` here is a check that did not run to the end, which the table does not mark `unknown`, so it is
- * `didNotRun` (`build` `## build-time check`).
+ * failed): its `unknown` is a check that did not run to the end, whose lines say so (`build` `## build-time check`).
  */
-export function ranToEnd(name: string, env: Env, check: BuildCheck): BuildCheck {
+export function ranToEnd(name: string, check: BuildCheck): BuildCheck {
   if (check.result !== 'unknown') return check;
-  const details = check.details.map((line) => `${name} did not run to the end: ${line}`);
-  return { name, result: outcome(name, env, details), details };
+  return { name, result: 'unknown', details: check.details.map((line) => `${name} did not run to the end: ${line}`) };
 }
 
 /** Runs `work` on an instance without a client that is not a bot client, whose automation channel `main` waits for an outside client. */

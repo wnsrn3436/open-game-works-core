@@ -80,11 +80,11 @@ async function onDevice(d: DeviceRun, apk: string): Promise<BuildCheck> {
     const quality = (await gameModules(ctx, d.input.game)).client.includes('QualityCore');
     const targetFps = numberSetting(d.input, 'targetFps');
     const measured = await measureScenario(ctx, d.instance.id, d.scenario, { quality, pollMs: clientCheckTiming.pollMs, targetFps, onHost: false, blocker });
-    if (measured.kind === 'quality') return ranToEnd(NAME, d.input.env, buildCheckOf(NAME, d.input.env, [checkResult('performance', 'android', [failure('', measured.message)], true)]));
+    if (measured.kind === 'quality') return ranToEnd(NAME, buildCheckOf(NAME, d.input.env, [checkResult('performance', 'android', [failure('', measured.message)], true)]));
     const record = { device: d.serial, samples: Object.fromEntries(measured.samples), scene_loads: measured.sceneLoads };
     const evidence = [await writeEvidence(evidenceOf(d.input, 'device-performance'), 'samples.json', `${JSON.stringify(record, null, 2)}\n`)];
     const limits = { loadingTimeLimitMs: numberSetting(d.input, 'loadingTimeLimitMs') };
-    return ranToEnd(NAME, d.input.env, buildCheckOf(NAME, d.input.env, [performanceVerdict(measured, 'android', limits, evidence)]));
+    return ranToEnd(NAME, buildCheckOf(NAME, d.input.env, [performanceVerdict(measured, 'android', limits, evidence)]));
   } finally {
     await run('adb', ['-s', d.serial, 'uninstall', d.appId], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
     for (const port of ports) await run('adb', ['-s', d.serial, 'reverse', '--remove', `tcp:${port}`], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
@@ -103,11 +103,11 @@ async function udpReachesHost(ctx: Context, serial: string): Promise<boolean | n
 /**
  * Check `device performance` (`build` `## build-time check`, ogw.md `### device performance`):
  * the bot playtest scenario on the first android device of harness settings `testDevices` with the DEV
- * export of the build branch HEAD, judged by ogw.md `## performance`.
+ * export of the build branch HEAD, judged by ogw.md `## performance`. Null when the build has no android platform.
  */
-export async function devicePerformance(input: ClientCheckInput): Promise<BuildCheck> {
+export async function devicePerformance(input: ClientCheckInput): Promise<BuildCheck | null> {
   const { ctx } = input;
-  if (!input.platforms.includes('android')) return unknown('the build has no android platform');
+  if (!input.platforms.includes('android')) return null;
   // harness settings `testDevices` holds android devices only (`platform` is `android`)
   const device = ((await ctx.settings()).testDevices ?? [])[0];
   if (device === undefined) return unknown('harness settings testDevices has no android device');
@@ -119,13 +119,13 @@ export async function devicePerformance(input: ClientCheckInput): Promise<BuildC
     const realtime = (await gameModules(ctx, input.game)).client.includes('RealtimeCore');
     return await withCheckInstance(ctx, input.game, 'android', async (instance, external) => {
       const udp = realtime ? await udpReachesHost(ctx, device.serial) : true;
-      // only UDP that does not reach is the table's `unknown`; a device that cannot be asked is a check that did not run
-      if (udp === null) return didNotRun(NAME, input.env, `the UDP check from test device ${device.serial} could not run`);
+      // UDP that does not reach and a device that cannot be asked are both `unknown`, each with its reason
+      if (udp === null) return didNotRun(NAME, `the UDP check from test device ${device.serial} could not run`);
       if (!udp) return unknown(`UDP from test device ${device.serial} does not reach this host`);
       const d: DeviceRun = { input, serial: device.serial, appId, scenario, instance, external };
       return withCheckExport(input, 'android', launchValuesOf(instance, external, 'android'), (apk) => onDevice(d, apk));
     });
   } catch (error) {
-    return didNotRun(NAME, input.env, error);
+    return didNotRun(NAME, error);
   }
 }

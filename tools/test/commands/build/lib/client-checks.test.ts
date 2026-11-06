@@ -165,11 +165,10 @@ describe('build check helpers', () => {
     expect(buildCheckOf('web smoke', 'STG', [r('no blocker', 'unknown'), r('full flow', 'pass')])).toEqual({ name: 'web smoke', result: 'unknown', details: ['no blocker: step 1: m'] });
     expect(buildCheckOf('device performance', 'STG', [r('performance', 'fail', '')])).toEqual({ name: 'device performance', result: 'fail', details: ['m'] });
     expect(buildCheckOf('x', 'STG', [r('a', 'pass')])).toEqual({ name: 'x', result: 'pass', details: [] });
-    // a check that did not run blocks STG and PROD, and warns in DEV
-    expect(didNotRun('web smoke', 'STG', new Error('boom'))).toEqual({ name: 'web smoke', result: 'fail', details: ['web smoke did not run: boom'] });
-    expect(didNotRun('web smoke', 'DEV', new Error('boom')).result).toBe('warn');
-    expect(didNotRun('web smoke', 'STG', 'text').details).toEqual(['web smoke did not run: text']);
-    expect(() => didNotRun('web smoke', 'STG', new Error('not defined: x'))).toThrow('not defined: x');
+    // a check that did not run could not be checked: `unknown`, with the reason
+    expect(didNotRun('web smoke', new Error('boom'))).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: boom'] });
+    expect(didNotRun('web smoke', 'text').details).toEqual(['web smoke did not run: text']);
+    expect(() => didNotRun('web smoke', new Error('not defined: x'))).toThrow('not defined: x');
   });
 
   it('serves a folder on loopback with content types and nothing outside it', async () => {
@@ -298,18 +297,18 @@ describe('web smoke', () => {
     expect(crashed?.check.details[0]).toBe('no blocker: boot: client process main ended: browser page crashed');
   });
 
-  it('fails as not run to the end (DEV warns) when the scenario stops without a blocker', async () => {
+  it('is unknown as not run to the end when the scenario stops without a blocker', async () => {
     const s = await setup();
     // an auto step whose bot function answers no input command stops the run with no blocker
     writeFileSync(join(s.dir, 'client/dev/bot/scenario.json'), JSON.stringify({ steps: [{ kind: 'auto', command: 'f.bot_next_input', timeoutMs: 3000, until: GOAL }], goal: GOAL }));
     s.config({ clients: { main: { results: { 'f.bot_next_input': { ok: true, result: 5 } } } }, telemetry: { goal_intervals: [] } });
     const stg = await webSmoke({ ...s.input, env: 'STG' });
-    expect(stg?.check.result).toBe('fail');
+    expect(stg?.check.result).toBe('unknown');
     expect(stg?.check.details).toEqual([
       'web smoke did not run to the end: no blocker: step 1: f.bot_next_input returned no input command: 5',
       'web smoke did not run to the end: full flow: step 1: f.bot_next_input returned no input command: 5',
     ]);
-    expect((await webSmoke(s.input))?.check.result).toBe('warn');
+    expect((await webSmoke(s.input))?.check.result).toBe('unknown');
   });
 
   it('fails when the client does not boot within webSmokeBootTimeoutMs; is unknown when Chromium is missing or the instance does not start', async () => {
@@ -323,21 +322,21 @@ describe('web smoke', () => {
     expect(timeout?.loadingMs).toBeNull();
     expect((await webSmoke({ ...s.input, env: 'DEV' }))?.check.result).toBe('warn');
     vi.mocked(toolProgram).mockResolvedValue(null);
-    expect(await webSmoke({ ...s.input, env: 'STG' })).toEqual({ check: { name: 'web smoke', result: 'fail', details: ['web smoke did not run: harness settings tools.chromium is not on this host'] }, loadingMs: null });
+    expect(await webSmoke({ ...s.input, env: 'STG' })).toEqual({ check: { name: 'web smoke', result: 'unknown', details: ['web smoke did not run: harness settings tools.chromium is not on this host'] }, loadingMs: null });
     vi.mocked(toolProgram).mockResolvedValue('chromium');
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('no instance slot'));
-    expect((await webSmoke(s.input))?.check).toEqual({ name: 'web smoke', result: 'warn', details: ['web smoke did not run: no instance slot'] });
+    expect((await webSmoke(s.input))?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: no instance slot'] });
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('not defined: how the runner starts the server process'));
     await expect(webSmoke(s.input)).rejects.toThrow('not defined: how the runner starts the server process');
     await expect(webSmoke({ ...s.input, settings: { ...s.input.settings, engine: 'unity' } })).rejects.toThrow('not defined: the check export of engine unity');
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(3);
   });
 
-  it('is skipped without web, and fails without a scenario or when the export makes no output', async () => {
+  it('is not run without web, fails without a scenario, and is unknown when the export makes no output', async () => {
     const s = await setup({}, { FAKE_NO_OUTPUT: '1' });
     expect(await webSmoke({ ...s.input, platforms: ['android'] })).toBeNull();
     const out = await webSmoke({ ...s.input, env: 'STG' });
-    expect(out?.check).toEqual({ name: 'web smoke', result: 'fail', details: ['web smoke did not run: export of web made no index.html'] });
+    expect(out?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: export of web made no index.html'] });
     const { rmSync } = await import('node:fs');
     rmSync(join(s.dir, 'client/dev/bot/scenario.json'));
     const missing = await webSmoke({ ...s.input, env: 'STG' });
@@ -349,9 +348,9 @@ describe('web smoke', () => {
 });
 
 describe('device performance', () => {
-  it('is unknown without android or without a test device, and fails without a scenario', async () => {
+  it('is not run without android, is unknown without a test device, and fails without a scenario', async () => {
     const s = await setup();
-    expect(await devicePerformance({ ...s.input, platforms: ['web'] })).toEqual({ name: 'device performance', result: 'unknown', details: ['the build has no android platform'] });
+    expect(await devicePerformance({ ...s.input, platforms: ['web'] })).toBeNull();
     const none = createContext({ cwd: s.ws.root, env: { ...s.input.ctx.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
     vi.spyOn(none, 'settings').mockResolvedValue({ ...(await s.input.ctx.settings()), testDevices: [] });
     expect(await devicePerformance({ ...s.input, ctx: none })).toEqual({ name: 'device performance', result: 'unknown', details: ['harness settings testDevices has no android device'] });
@@ -395,20 +394,20 @@ describe('device performance', () => {
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(1);
   });
 
-  it('fails below targetFps (DEV warns), and fails as not run to the end (DEV warns) when the scenario stops or set_quality_level fails', async () => {
+  it('fails below targetFps (DEV warns), and is unknown as not run to the end when the scenario stops or set_quality_level fails', async () => {
     const s = await setup();
     s.config({ clients: { main: { state: { scene_key: 'lobby' }, delayMs: { tap: 300 }, results: { get_stats: { ok: true, result: { fps: 20 } } } } }, telemetry: { goal_intervals: [{}], scene_loads: [] } });
     expect(await devicePerformance(s.input)).toEqual({
       name: 'device performance', result: 'warn',
       details: [expect.stringMatching(/^lobby: fps 5 percentile 20 is below the fps bound 29 \(\d+ samples\)$/)],
     });
-    expect((await devicePerformance({ ...s.input, env: 'STG' })).result).toBe('fail');
+    expect((await devicePerformance({ ...s.input, env: 'STG' }))?.result).toBe('fail');
     s.config({ clients: { main: { fail: { tap: 'no tap' } } } });
-    expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'fail', details: ['device performance did not run to the end: step 1: scenario stopped: tap returned ok false: "no tap"'] });
-    expect((await devicePerformance(s.input)).result).toBe('warn');
+    expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'unknown', details: ['device performance did not run to the end: step 1: scenario stopped: tap returned ok false: "no tap"'] });
+    expect((await devicePerformance(s.input))?.result).toBe('unknown');
     vi.mocked(gameModules).mockResolvedValue({ client: ['QualityCore'], server: [] });
     s.config({ clients: { main: { fail: { set_quality_level: 'no' } } } });
-    expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'fail', details: ['device performance did not run to the end: set_quality_level High failed: "no"'] });
+    expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'unknown', details: ['device performance did not run to the end: set_quality_level High failed: "no"'] });
   });
 
   it('is unknown when UDP does not reach the host, the app ends, or the client logs an error', async () => {
@@ -417,11 +416,11 @@ describe('device performance', () => {
     vi.mocked(udpReaches).mockResolvedValue(false);
     expect(await devicePerformance(s.input)).toEqual({ name: 'device performance', result: 'unknown', details: ['UDP from test device emulator-5554 does not reach this host'] });
     vi.mocked(lanAddress).mockReturnValue(null);
-    expect((await devicePerformance(s.input)).details).toEqual(['UDP from test device emulator-5554 does not reach this host']);
+    expect((await devicePerformance(s.input))?.details).toEqual(['UDP from test device emulator-5554 does not reach this host']);
     vi.mocked(lanAddress).mockReturnValue('192.168.0.2');
     vi.mocked(udpReaches).mockResolvedValue(null);
-    expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'fail', details: ['device performance did not run: the UDP check from test device emulator-5554 could not run'] });
-    expect((await devicePerformance(s.input)).result).toBe('warn');
+    expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'unknown', details: ['device performance did not run: the UDP check from test device emulator-5554 could not run'] });
+    expect((await devicePerformance(s.input))?.result).toBe('unknown');
     vi.mocked(lanAddress).mockReturnValue(null);
     expect(existsSync(join(s.bin.bin, 'preset.cfg'))).toBe(false);
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(4);
@@ -429,17 +428,17 @@ describe('device performance', () => {
     s.input.ctx.env.FAKE_APP_EXITS = '1';
     // an app that does not boot on the device is a blocker: it fails STG and PROD, and warns in DEV
     expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'fail', details: ['boot: client process main ended'] });
-    expect((await devicePerformance(s.input)).result).toBe('warn');
+    expect((await devicePerformance(s.input))?.result).toBe('warn');
     delete s.input.ctx.env.FAKE_APP_EXITS;
     s.config({ logs: [{ path: 'log/log_1.txt', content: '1\terror\tsave\tdisk full\t\n' }] });
-    expect((await devicePerformance(s.input)).details).toEqual(['boot: client main error log: 1\terror\tsave\tdisk full\t']);
+    expect((await devicePerformance(s.input))?.details).toEqual(['boot: client main error log: 1\terror\tsave\tdisk full\t']);
     // a client log that cannot be read is not a log without error lines
     s.config({ clients: { main: { fail: { extract_logs: 'no logs' } } } });
     const unreadable = await devicePerformance({ ...s.input, env: 'STG' });
-    expect(unreadable.result).toBe('fail');
-    expect(unreadable.details[0]).toMatch(/^device performance did not run: client main log could not be read/);
+    expect(unreadable?.result).toBe('unknown');
+    expect(unreadable?.details[0]).toMatch(/^device performance did not run: client main log could not be read/);
     s.config({});
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('no slot'));
-    expect((await devicePerformance(s.input)).details).toEqual(['device performance did not run: no slot']);
+    expect((await devicePerformance(s.input))?.details).toEqual(['device performance did not run: no slot']);
   });
 });

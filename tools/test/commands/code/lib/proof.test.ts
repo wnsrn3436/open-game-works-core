@@ -246,11 +246,14 @@ describe('fix test proof: core', () => {
       failures: ['ogw core test server routing: routing is fail and its test runner was not started: server: npm ci failed (1)'],
     });
 
-    // a tool whose engine round trip was left out, every test that ran passed: not a proof
-    coreTest.module = 'skipped';
+    // an unknown target (a render pass or a round trip not run), every test that ran passed: a test that did not run
+    // may fail on the base, so the proof cannot tell; a `skipped` of an earlier tool's output reads the same
+    coreTest.module = 'unknown';
     coreTest.counts = { tests: 2, passed: 2, ran: true };
     coreTest.failures = [];
-    expect((await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'routing')).result).toBe('fail');
+    expect(await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'routing')).toEqual({ result: 'unknown', failures: ['ogw core test server routing: routing is unknown: not checked'] });
+    coreTest.module = 'skipped';
+    expect((await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'routing')).result).toBe('unknown');
 
     const both = commitAll(ws.coreImpl, 'nothing');
     expect(await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, fixed, both, 'routing')).toEqual({ result: 'unknown', failures: ['no test file of routing changed in the fix'] });

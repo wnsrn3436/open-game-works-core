@@ -43,14 +43,15 @@ describe('ogw job status', () => {
 
   it('prints the result of each finished module of a core test job', async () => {
     const ws = jobWorkspace();
-    writeJob(ws.jobs, { id: 'ct1', command: 'core test', meta: { modules: { routing: 'pass', shop: 'fail', mailbox: 'skipped' } } });
+    // `skipped`, which a job of an earlier tool kept, is `unknown`
+    writeJob(ws.jobs, { id: 'ct1', command: 'core test', meta: { modules: { routing: 'pass', shop: 'fail', mailbox: 'unknown', chat: 'skipped' } } });
     const run = await ogw(ws, ['job', 'status', 'ct1']);
-    expect(run.stdout).toBe('running\nrouting pass\nshop fail\nmailbox skipped\n');
+    expect(run.stdout).toBe('running\nrouting pass\nshop fail\nmailbox unknown\nchat unknown\n');
     const json = JSON.parse((await ogw(ws, ['job', 'status', 'ct1', '--json'])).stdout) as { modules: unknown };
-    expect(json.modules).toEqual({ routing: 'pass', shop: 'fail', mailbox: 'skipped' });
+    expect(json.modules).toEqual({ routing: 'pass', shop: 'fail', mailbox: 'unknown', chat: 'unknown' });
   });
 
-  it('prints module results only for a core test job and only pass, fail and skipped', async () => {
+  it('prints module results only for a core test job and only pass, fail and unknown', async () => {
     const ws = jobWorkspace();
     writeJob(ws.jobs, { id: 'ag1', command: 'agent', meta: { role: 'core', modules: ['shop', 'mailbox'] } });
     writeJob(ws.jobs, { id: 'ag2', command: 'agent', meta: { role: 'content', modules: [] } });

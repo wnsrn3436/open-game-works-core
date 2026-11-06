@@ -405,7 +405,7 @@ describe('Godot run judgement', () => {
 
   it('adds outcomes, builds GUT arguments, sets GODOT_CONFIG.args and reads console lines', () => {
     expect(addOutcomes({ tests: 1, passed: 1, failures: [] }, { tests: 2, passed: 1, failures: ['x'] })).toEqual({ tests: 3, passed: 2, failures: ['x'], ran: true });
-    expect(addOutcomes({ tests: 1, passed: 1, failures: [] }, { tests: 0, passed: 0, failures: [], skipped: 'locked' })).toEqual({ tests: 1, passed: 1, failures: [], ran: true, skipped: 'locked' });
+    expect(addOutcomes({ tests: 1, passed: 1, failures: [] }, { tests: 0, passed: 0, failures: [], unknown: 'screen locked' })).toEqual({ tests: 1, passed: 1, failures: [], ran: true, unknown: 'screen locked' });
     // a module ran when one of its passes ran
     const stopped = { tests: 0, passed: 0, failures: ['a'], ran: false };
     const started = { tests: 1, passed: 0, failures: ['b'], ran: true };

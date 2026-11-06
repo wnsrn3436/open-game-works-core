@@ -200,10 +200,9 @@ describe('build run', () => {
     expect(result(dir, 'dev-0.1.0').checks.filter((c) => c.result === 'fail')).toEqual([]);
     expect([out.code, out.stderr]).toEqual([0, '']);
     const r = result(dir, 'dev-0.1.0');
-    expect(r.checks.slice(-2)).toEqual([
-      { name: 'device performance', result: 'unknown', details: ['the build has no android platform'] },
-      { name: 'web smoke', result: 'warn', details: ['no blocker: step 2: softlock'] },
-    ]);
+    // a build without android has no device performance check
+    expect(r.checks.at(-1)).toEqual({ name: 'web smoke', result: 'warn', details: ['no blocker: step 2: softlock'] });
+    expect(r.checks.some((c) => c.name === 'device performance')).toBe(false);
     expect(r.webSmokeLoadingMs).toBe(1234);
     expect(out.stdout).toContain('check web smoke: warn\n  no blocker: step 2: softlock');
     expect(out.stdout).toContain('web smoke first loading ms 1234');

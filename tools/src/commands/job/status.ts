@@ -1,16 +1,18 @@
 import { expectPositionals, positional, type CommandDef } from '../../lib/command.ts';
 import { readJob, type JobRecord } from '../../lib/jobs.ts';
+import { outcomeOf, type Result } from '../../lib/outcome.ts';
 
-const MODULE_RESULTS: readonly string[] = ['pass', 'fail', 'skipped'];
+/** The values of `meta.modules` that are a module result: `outcomeOf` reads `skipped` as `unknown`. */
+const MODULE_RESULTS: readonly string[] = ['pass', 'fail', 'unknown', 'skipped'];
 
 /** Per-module results a `ogw core test` job keeps in `meta.modules`; null for any other job. */
-function moduleResults(job: JobRecord): Record<string, string> | null {
+function moduleResults(job: JobRecord): Record<string, Result> | null {
   if (job.command !== 'core test') return null;
   const modules = job.meta.modules;
   if (typeof modules !== 'object' || modules === null || Array.isArray(modules)) return null;
-  const results: Record<string, string> = {};
+  const results: Record<string, Result> = {};
   for (const [name, result] of Object.entries(modules)) {
-    if (typeof result === 'string' && MODULE_RESULTS.includes(result)) results[name] = result;
+    if (typeof result === 'string' && MODULE_RESULTS.includes(result)) results[name] = outcomeOf(result).result;
   }
   return results;
 }

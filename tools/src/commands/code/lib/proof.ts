@@ -12,6 +12,7 @@ import { git, gitRaw, revParse, worktreeAdd, worktreeRemove } from '../../../lib
 import { newId } from '../../../lib/ids.ts';
 import { AGENT_KEY_ENV } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
+import { outcomeOf, passes } from '../../../lib/outcome.ts';
 import { cliEntry } from '../../../lib/paths.ts';
 import { run } from '../../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
@@ -128,21 +129,25 @@ interface CoreTestJson {
   modules?: Record<string, string>;
   counts?: Record<string, { tests: number; passed: number; ran: boolean }>;
   failures?: Record<string, string[]>;
+  unknown?: Record<string, string>;
   error?: string;
 }
 
-/** The target's result in a core test output: true when its tests failed, false when they passed, else why neither. */
+/**
+ * The target's result in a core test output: true when its tests failed, false when they passed, else why neither. An
+ * `unknown` target (a render pass or round trip not run) is neither: a test that did not run may fail on the base.
+ */
 function targetProof(data: CoreTestJson, command: string, target: string): boolean | string {
   if (typeof data.error === 'string') return `${command} stopped before the tests: ${data.error}`;
-  const result = data.modules?.[target];
+  const outcome = outcomeOf(data.modules?.[target], data.unknown?.[target] ?? null);
   const ran = data.counts?.[target]?.ran === true;
   const failures = data.failures?.[target] ?? [];
-  // every test that ran passed: a tool whose engine round trip was left out is `skipped` with no failure
-  if (result === 'pass' || (result === 'skipped' && ran && failures.length === 0)) return false;
+  if (passes(outcome)) return false;
   // a `fail` once the test runner was started proves the fix's tests, a crash and a time limit included; a run that
   // stopped before it (an `npm ci` that failed, no vitest) proves nothing
-  if (result === 'fail' && ran) return true;
-  return `${command}: ${target} is ${String(result)} and its test runner was not started: ${failures.join('; ')}`;
+  if (outcome.result === 'fail' && ran) return true;
+  if (outcome.result === 'unknown') return `${command}: ${target} is unknown: ${outcome.reason ?? 'not checked'}`;
+  return `${command}: ${target} is fail and its test runner was not started: ${failures.join('; ')}`;
 }
 
 /** Result of one `ogw core test <target> <module> --json` on the proof worktree (`targetProof`). */

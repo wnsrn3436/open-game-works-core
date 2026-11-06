@@ -246,18 +246,18 @@ describe('ogw core test server and tools', () => {
     expect(requireEngine).toHaveBeenCalledWith(expect.anything(), 'godot', '4.5.1.stable');
   });
 
-  it('gives a tool whose round trip was left out as skipped, with the reason, and a summary of its vitest tests', async () => {
+  it('gives a tool whose round trip was left out as unknown, with the reason, and a summary of its vitest tests', async () => {
     const { ws, env } = setup();
-    vi.mocked(runToolTest).mockResolvedValue({ tests: 2, passed: 2, failures: [], skipped: 'godot round trip left out: x' });
+    vi.mocked(runToolTest).mockResolvedValue({ tests: 2, passed: 2, failures: [], unknown: 'godot round trip left out: x' });
     const run = await ogw(ws, ['core', 'test', 'tools', '--json'], { env });
     expect(run.code).toBe(1);
     expect(JSON.parse(run.stdout)).toMatchObject({
-      modules: { 'contract-tool': 'skipped', 'data-tool': 'skipped' },
-      skipped: { 'contract-tool': 'godot round trip left out: x', 'data-tool': 'godot round trip left out: x' },
+      modules: { 'contract-tool': 'unknown', 'data-tool': 'unknown' },
+      unknown: { 'contract-tool': 'godot round trip left out: x', 'data-tool': 'godot round trip left out: x' },
       tests: 4,
       passed: 4,
     });
-    expect((await ogw(ws, ['core', 'test', 'tools'], { env })).stdout).toBe('contract-tool skipped\n  godot round trip left out: x\ndata-tool skipped\n  godot round trip left out: x\n');
+    expect((await ogw(ws, ['core', 'test', 'tools'], { env })).stdout).toBe('contract-tool unknown\n  godot round trip left out: x\ndata-tool unknown\n  godot round trip left out: x\n');
   });
 
   it('runs the tool tests before the server core exists: no base proto, core-spec/, licenses.json, core test data or fixture ID name check', async () => {

@@ -233,13 +233,13 @@ describe('runToolTest', () => {
       'tools/tests/godot/test_data_roundtrip.gd': 'extends UnitTestCase\n',
     });
     // until a godot core test passed every client module, the client core does not compile as a whole: no round trip,
-    // and the tool is `skipped` with the reason
+    // and the tool is `unknown` with the reason
     expect(await runToolTest(ctx, ws.coreImpl, 'contract-tool')).toEqual({
       tests: 2,
       passed: 2,
       failures: [],
       ran: true,
-      skipped: 'godot round trip left out: no core test of the engine has passed every client module yet',
+      unknown: 'godot round trip left out: no core test of the engine has passed every client module yet',
     });
     expect(log().some((l) => l.includes('gut_cmdln'))).toBe(false);
     await clientCoreRecord(ws);

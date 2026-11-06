@@ -78,7 +78,7 @@ export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult 
   if (typeof scenario === 'string') return { check: buildCheckOf(NAME, input.env, both('client/dev/bot/scenario.json:1', scenario, false)), loadingMs: null };
   try {
     const chromium = await toolProgram(ctx, 'chromium');
-    if (chromium === null) return { check: didNotRun(NAME, input.env, 'harness settings tools.chromium is not on this host'), loadingMs: null };
+    if (chromium === null) return { check: didNotRun(NAME, 'harness settings tools.chromium is not on this host'), loadingMs: null };
     const { webSmokeCpuThrottleRate: rate, webSmokeBootTimeoutMs: bootLimitMs } = await ctx.settings();
     return await withCheckInstance(ctx, input.game, 'web', (instance, external) =>
       withCheckExport(input, 'web', launchValuesOf(instance, external, 'web'), async (file) => {
@@ -87,7 +87,7 @@ export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult 
           const page = await openHeadless(ctx, chromium, `${host.url}/index.html`, rate);
           try {
             const { results, loadingMs } = await smoke(input, instance, page, scenario, bootLimitMs);
-            return { check: ranToEnd(NAME, input.env, buildCheckOf(NAME, input.env, results)), loadingMs };
+            return { check: ranToEnd(NAME, buildCheckOf(NAME, input.env, results)), loadingMs };
           } finally {
             await page.close();
           }
@@ -97,6 +97,6 @@ export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult 
       }),
     );
   } catch (error) {
-    return { check: didNotRun(NAME, input.env, error), loadingMs: null };
+    return { check: didNotRun(NAME, error), loadingMs: null };
   }
 }
