@@ -64,8 +64,9 @@ export function pinSecretChecks(ctx: Context, settings: HarnessSettings): PinSec
 }
 
 /**
- * Whether the play or judge agent CLI is Claude Code, whether the agent login token secret is stored, and the token
- * check run with it when both hold.
+ * Whether the agent CLI of play, of judge, of an item of `loop.judgePanel`, of `loop.confirmJudge` or of
+ * `loop.confirmFallback` is Claude Code, whether the agent login token secret is stored, and the token check run with it
+ * when both hold.
  */
 export async function agentLoginTokenCheck(ctx: Context, settings: HarnessSettings): Promise<NonNullable<EnvCheckResult['agentLoginToken']>> {
   const needed = loginTokenAgent(settings) !== null;

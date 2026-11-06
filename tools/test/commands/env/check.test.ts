@@ -505,6 +505,40 @@ describe('ogw env check', () => {
     expect(codex.stdout).not.toContain('agent login token');
   });
 
+  it('runs the token check with the judge panel items, loop.confirmJudge, then loop.confirmFallback when play and judge do not use Claude Code', async () => {
+    const { ws, env } = setup();
+    const settingsFile = join(ws.harness, 'settings.json');
+    const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { agents: Record<string, object>; loop: Record<string, unknown> };
+    const codex = { cli: 'codex', model: 'm', effort: 'high' };
+    settings.agents.play = codex;
+    settings.agents.judge = codex;
+    const baseLoop = settings.loop;
+    writeFileSync(join(ws.root, 'secrets.json'), JSON.stringify({ 'ogw/harness/claude-code-oauth-token': 'token' }));
+    const confirmJudge = { cli: 'claude-code', model: 'confirm-model', effort: 'low' };
+    const confirmFallback = { cli: 'claude-code', model: 'fallback-model', effort: 'medium' };
+    const tokenCheck = async (loopJudges: Record<string, unknown>): Promise<EnvCheckResult['agentLoginToken']> => {
+      settings.loop = { ...baseLoop, ...loopJudges };
+      writeFileSync(settingsFile, JSON.stringify(settings));
+      return (JSON.parse((await ogw(ws, ['env', 'check', '--json'], { env })).stdout) as EnvCheckResult).agentLoginToken;
+    };
+    // the prompt run of the judge agent sandbox with that agent's model and effort
+    const runWith = (model: string, effort: string): EnvCheckResult['agentLoginToken'] => {
+      const args = agentCliCommand({ model, effort }).args.join(' ').replace(' --output-format json', '');
+      return {
+        needed: true,
+        stored: true,
+        valueProblem: null,
+        run: { role: 'judge', ok: true, authFailed: false, exitCode: 0, output: `sandboxed ok tmp own-tmp [${args} --no-session-persistence --output-format stream-json --verbose] Reply with the single word ok.` },
+      };
+    };
+    // only loop.confirmJudge uses Claude Code
+    expect(await tokenCheck({ judgePanel: [codex], confirmJudge, confirmFallback: codex })).toEqual(runWith('confirm-model', 'low'));
+    // loop.confirmJudge comes before loop.confirmFallback
+    expect(await tokenCheck({ confirmJudge, confirmFallback })).toEqual(runWith('confirm-model', 'low'));
+    // a judge panel item comes before loop.confirmJudge
+    expect(await tokenCheck({ judgePanel: [codex, { cli: 'claude-code', model: 'panel-model', effort: 'high' }], confirmJudge })).toEqual(runWith('panel-model', 'high'));
+  });
+
   it('with --for, only checks the tools items of that core command', async () => {
     const { ws, env } = setup();
     expect(await ogw(ws, ['env', 'check', '--for', 'create-server-core'], { env })).toMatchObject({ code: 1, stdout: 'missing: tools.postgresql\nRun update env first.\n' });

@@ -171,6 +171,33 @@ describe('ogw secret set --harness claude-code-oauth-token', () => {
     });
     expect(store()).toEqual({});
   });
+
+  it('looks for the check agent in the order of the judge panel items, loop.confirmJudge, then loop.confirmFallback', async () => {
+    const agents = testSettings().agents as Record<string, object>;
+    const loop = testSettings().loop as Record<string, unknown>;
+    const codex = { cli: 'codex', model: 'm', effort: 'high' };
+    const confirmJudge = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'low' };
+    const confirmFallback = { cli: 'claude-code', model: 'claude-haiku-5-5', effort: 'medium' };
+    /** The folder, sandbox and arguments of the token check run with these loop judges, after it stored the token. */
+    const checkRun = async (loopJudges: Record<string, unknown>): Promise<string[]> => {
+      ws = makeWorkspace({ agents: { ...agents, play: codex, judge: codex }, loop: { ...loop, ...loopJudges } });
+      env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
+      expect(await setToken('good')).toEqual({ code: 0, stdout: 'stored claude-code-oauth-token\n', stderr: '' });
+      const [folder, sandboxed, , args] = readFileSync(log, 'utf8').trim().split('\n').at(-1)?.split('|') ?? [];
+      return [folder?.startsWith(join(env.TMPDIR as string, 'ogw-judge-')) === true ? 'judge folder' : `folder ${String(folder)}`, `sandboxed ${String(sandboxed)}`, String(args)];
+    };
+    const runWith = (model: string, effort: string): string[] => [
+      'judge folder',
+      'sandboxed yes',
+      `-p --model ${model} --effort ${effort} --permission-mode bypassPermissions --no-session-persistence --output-format stream-json --verbose`,
+    ];
+    // only loop.confirmJudge uses Claude Code: the check runs with it in the judge agent sandbox
+    expect(await checkRun({ judgePanel: [codex], confirmJudge, confirmFallback: codex })).toEqual(runWith('claude-opus-5-5', 'low'));
+    // loop.confirmJudge comes before loop.confirmFallback
+    expect(await checkRun({ confirmJudge, confirmFallback })).toEqual(runWith('claude-opus-5-5', 'low'));
+    // a judge panel item comes before loop.confirmJudge
+    expect(await checkRun({ judgePanel: [codex, { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'high' }], confirmJudge })).toEqual(runWith('claude-sonnet-5-5', 'high'));
+  });
 });
 
 describe('bearerValueProblem', () => {
