@@ -326,10 +326,16 @@ async function runModules(
       outcomes.set(module, { ...outcome, durationMs: Date.now() - startedAt });
       return runOutcome(outcome.failures.length > 0, outcome.unknown).result;
     }).catch((error: unknown): ModuleResult => {
-      // the ledger could not be read or written: the module fails with why
-      const outcome = outcomes.get(module) ?? { tests: 0, passed: 0, failures: [], ran: false };
-      outcomes.set(module, { ...outcome, failures: [...outcome.failures, `CPU share: ${(error as Error).message}`] });
-      return 'fail';
+      const message = `CPU share: ${(error as Error).message}`;
+      const outcome = outcomes.get(module);
+      // the ledger failed after the module ran (its share was not given back): the result of its tests stands
+      if (outcome !== undefined) {
+        ctx.log(`${module}: ${message}`);
+        return runOutcome(outcome.failures.length > 0, outcome.unknown).result;
+      }
+      // the ledger could not be read or written before the module ran: none of its tests was checked
+      outcomes.set(module, { tests: 0, passed: 0, failures: [], ran: false, unknown: message });
+      return 'unknown';
     }), (module, result) => reportResult(ctx, module, result, outcomes.get(module)?.durationMs));
     const times = Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.durationMs === undefined ? [] : [[m, o.durationMs]])));
     await writeJsonAtomic(file, { ...last, ...times });

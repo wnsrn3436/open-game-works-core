@@ -12,6 +12,7 @@ import { serverImplementedModules } from '../../../src/commands/core/lib/server-
 import { serverModuleTest } from '../../../src/commands/core/lib/server-tests.ts';
 import { runToolTest } from '../../../src/commands/core/lib/tool-test.ts';
 import { buildTool } from '../../../src/commands/core/lib/tools.ts';
+import { withShare } from '../../../src/lib/shares.ts';
 import { writeCoreSpec } from '../../../src/commands/core/spec-api.ts';
 import { cpuSharesDir, parallelismOf, SERVER_WORKERS } from '../../../src/commands/core/test.ts';
 import { requireEngine } from '../../../src/commands/env/api.ts';
@@ -33,6 +34,11 @@ vi.mock('../../../src/commands/core/lib/tools.ts', async (importOriginal) => {
   };
 });
 vi.mock('../../../src/commands/core/lib/tool-test.ts', () => ({ runToolTest: vi.fn() }));
+// passes through to the ledger; a test makes one call give its share back with an error
+vi.mock('../../../src/lib/shares.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/lib/shares.ts')>();
+  return { ...original, withShare: vi.fn(original.withShare) };
+});
 vi.mock('../../../src/commands/core/lib/engine-packages.ts', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   installPackage: vi.fn(() => Promise.resolve()),
@@ -333,7 +339,7 @@ describe('ogw core test CPU shares', () => {
     }
   });
 
-  it('fails a module whose CPU share cannot be taken, with why, and runs nothing of it', async () => {
+  it('makes a module whose CPU share cannot be taken unknown, with why, and runs nothing of it', async () => {
     const { ws, env } = setup();
     const ledger = await cpuSharesDir({ ...ws.env, ...env });
     mkdirSync(join(ledger, '..'), { recursive: true });
@@ -342,7 +348,21 @@ describe('ogw core test CPU shares', () => {
     vi.mocked(runToolTest).mockResolvedValue({ tests: 1, passed: 1, failures: [] });
     const run = await ogw(ws, ['core', 'test', 'tools', 'contract-tool', '--json'], { env });
     expect(run.code).toBe(1);
-    expect(JSON.parse(run.stdout)).toMatchObject({ modules: { 'contract-tool': 'fail' }, failures: { 'contract-tool': [expect.stringMatching(/^CPU share: .*core-test-cpu-shares/) as string] } });
+    expect(JSON.parse(run.stdout)).toMatchObject({ modules: { 'contract-tool': 'unknown' }, unknown: { 'contract-tool': expect.stringMatching(/^CPU share: .*core-test-cpu-shares/) as string } });
+    expect((JSON.parse(run.stdout) as { failures?: Record<string, unknown> }).failures?.['contract-tool'] ?? []).toEqual([]);
     expect(runToolTest).not.toHaveBeenCalled();
+  });
+
+  it('keeps the result of a module that ran when its CPU share is given back with an error', async () => {
+    const { ws, env } = setup();
+    vi.mocked(runToolTest).mockResolvedValue({ tests: 1, passed: 1, failures: [] });
+    vi.mocked(withShare).mockImplementationOnce(async (_dir, _total, _share, fn) => {
+      await fn();
+      throw new Error('give back failed');
+    });
+    const run = await ogw(ws, ['core', 'test', 'tools', 'contract-tool', '--json'], { env });
+    expect(run.code).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ modules: { 'contract-tool': 'pass' } });
+    expect(run.stderr).toContain('contract-tool: CPU share: give back failed');
   });
 });
