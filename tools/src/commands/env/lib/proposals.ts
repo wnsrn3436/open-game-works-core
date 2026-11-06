@@ -437,12 +437,6 @@ function withPipSource(pins: readonly GenerationPin[], source: string): Generati
 }
 
 /**
- * `pin:<method>`: each git pin without revision gets the HEAD commit of the default branch. The pip pins and the
- * `pyproject.toml` dependencies at the commit of each git pin `readsDependencies` names, whose projects the pip pins
- * do not name (`dependencyRequirements`), are resolved with `uv pip compile` for each host platform, and the merged
- * result (`mergePlatformPins`) becomes the one pip pin.
- */
-/**
  * The pip pin source that `uv pip compile` resolves the pyproject.toml dependencies and the other pip pin items to,
  * and the reasons; the dependencies win over pip pin items of the same project, which are a previous resolution.
  */
@@ -476,9 +470,23 @@ async function resolvedPip(ctx: Context, pypi: Pypi, pins: readonly GenerationPi
   return { source, reasons };
 }
 
+/**
+ * True for a method `pin:<method>` resolves: one with a git pin `readsDependencies` names, and a `local-model` method
+ * with a pip pin, whose packages and their dependencies `ogw generation install` installs into its isolated environment.
+ */
+function resolvesPip(method: GenerationMethod, pins: readonly GenerationPin[]): boolean {
+  return pins.some((p) => readsDependencies(method, p)) || (method.kind === 'local-model' && pins.some((p) => p.kind === 'pip'));
+}
+
+/**
+ * `pin:<method>`: each git pin without revision gets the HEAD commit of the default branch. The pip pins and the
+ * `pyproject.toml` dependencies at the commit of each git pin `readsDependencies` names, whose projects the pip pins
+ * do not name (`dependencyRequirements`), are resolved with `uv pip compile` for each host platform, and the merged
+ * result (`mergePlatformPins`) becomes the one pip pin.
+ */
 async function pinProposal(ctx: Context, pypi: Pypi, method: GenerationMethod, index: number): Promise<Proposal | null> {
   const pins = method.pins ?? [];
-  if (!pins.some((p) => readsDependencies(method, p))) return null;
+  if (!resolvesPip(method, pins)) return null;
   const open = pins.filter(revisionless).map((p) => p.source);
   let value: GenerationPin[] = [];
   const dependencies: string[] = [];

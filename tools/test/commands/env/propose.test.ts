@@ -945,6 +945,38 @@ dependencies = [
     expect(Object.values(TARGETS).map((target) => pre(uv, target))).toEqual([null, null, null]);
   });
 
+  it('resolves the pip pin of a local-model method without a git pin, transitive packages included', async () => {
+    const hf = { kind: 'hf', source: 'org/m', revision: 'd'.repeat(40) };
+    const merged = 'markdown-it-py==3.0.0,numpy==1.26.4,rich==13.9.4';
+    type Out = { id: string; value: unknown; reason: string };
+    const proposalFor = async (pins: unknown[], kind = 'local-model'): Promise<{ proposal: Out | undefined; inputs: string[][] }> => {
+      const { ws, env, uv } = setup();
+      const resolved = 'markdown-it-py==3.0.0\nnumpy==1.26.4\nrich==13.9.4\n';
+      resolveTo(uv, { 'macos-arm64': resolved, 'linux-x64': resolved, 'windows-x64': resolved });
+      const settingsPath = join(ws.harness, 'settings.json');
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { resourceGeneration: Record<string, unknown>[] };
+      settings.resourceGeneration = [{ name: 'music', kind, ...(kind === 'external-service' ? { provider: 'codex' } : {}), resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins }];
+      writeFileSync(settingsPath, JSON.stringify(settings));
+      setNet(fakeNet(routes()));
+      const run = await ogw(ws, ['env', 'propose', '--json'], { env });
+      expect(run).toMatchObject({ code: 0, stderr: '' });
+      const out = JSON.parse(run.stdout) as { proposals: Out[] };
+      return { proposal: out.proposals.find((p) => p.id.startsWith('pin:')), inputs: compileCalls(uv).map((c) => c.lines) };
+    };
+    const { proposal, inputs } = await proposalFor([{ kind: 'pip', source: 'rich[jupyter]==13.9.4,numpy==1.26.4' }, hf]);
+    expect(proposal).toMatchObject({
+      id: 'pin:music',
+      value: [{ kind: 'pip', source: merged }, hf],
+      reason: 'pip pins resolved with uv pip compile for macos-arm64, linux-x64, windows-x64 CPython 3.12',
+    });
+    expect(inputs).toEqual(Array(3).fill(['rich[jupyter]==13.9.4', 'numpy==1.26.4']));
+    // a pip pin that is the resolution already: no proposal
+    expect((await proposalFor([{ kind: 'pip', source: merged }, hf])).proposal).toBeUndefined();
+    // a method with `provider` installs its pip pin without dependencies: not resolved
+    const provider = await proposalFor([{ kind: 'git', source: 'https://x/p.git', revision: 'e'.repeat(40) }, { kind: 'pip', source: 'numpy==1.26.4' }], 'external-service');
+    expect([provider.proposal, provider.inputs]).toEqual([undefined, []]);
+  });
+
   it('resolves pip pin items without their local version labels', async () => {
     const MUSIC = 'https://x/music.git';
     const M = 'd'.repeat(40);
