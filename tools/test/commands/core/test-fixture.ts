@@ -40,6 +40,8 @@ const failing = folder === process.env.FAKE_FAIL;
 // a GUT run that ends at its start, with no result
 if (folder === process.env.FAKE_NO_RESULT) process.exit(2);
 const render = get('-gprefix=') === 'test_render_';
+// the holders of the CPU share ledger of ogw core test while this pass runs
+if (process.env.FAKE_SHARES) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ shares: fs.readdirSync(process.env.FAKE_SHARES).filter((n) => /^[0-9]+-[0-9a-f]+$/.test(n)) }) + '\\n');
 const dataDir = process.env[process.env.FAKE_DATA_VAR] || null;
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ dataDir, dataDirExists: dataDir !== null && fs.existsSync(dataDir) }) + '\\n');
 if (process.env.FAKE_PROJECT_LOCK) { const readers = process.env.FAKE_PROJECT_LOCK + '-readers'; fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ projectLocked: fs.existsSync(readers) && fs.readdirSync(readers).length > 0 }) + '\\n'); }
@@ -54,6 +56,8 @@ setTimeout(() => fetch(cfg.ogw_test_host + '/result', { method: 'PUT', body: JSO
 /** Fake Chromium: reads GODOT_CONFIG.args from index.html and sends a result; logs a console line. */
 export const CHROMIUM = `
 const url = process.argv[process.argv.length - 1];
+const fs = require('node:fs');
+if (process.env.FAKE_SHARES) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ shares: fs.readdirSync(process.env.FAKE_SHARES).filter((n) => /^[0-9]+-[0-9a-f]+$/.test(n)) }) + '\\n');
 (async () => {
   const html = await (await fetch(url)).text();
   const args = JSON.parse(/"args":(\\[[^\\]]*\\])/.exec(html)[1]);

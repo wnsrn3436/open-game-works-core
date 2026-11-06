@@ -13,7 +13,7 @@ import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
 import { serverModuleTest } from '../../../src/commands/core/lib/server-tests.ts';
 import { runToolTest } from '../../../src/commands/core/lib/tool-test.ts';
 import { writeCoreSpec } from '../../../src/commands/core/spec-api.ts';
-import { parallelismOf, recordTarget, runResult, takeRenderPasses, testSummary } from '../../../src/commands/core/test.ts';
+import { cpuSharesDir, parallelismOf, recordTarget, runResult, takeRenderPasses, testSummary } from '../../../src/commands/core/test.ts';
 import type { ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
 import { toolProgram } from '../../../src/commands/env/api.ts';
 import { newAgentKey } from '../../../src/lib/agentctx.ts';
@@ -445,6 +445,23 @@ describe('ogw core test godot', () => {
     const spans = log().filter((c): c is { span: [number, number]; folder: string } => (c as { span?: unknown }).span !== undefined);
     const overlap = spans.some((a) => spans.some((b) => a.folder !== b.folder && a.span[0] < b.span[1] && b.span[0] < a.span[1]));
     if (availableParallelism() >= 4) expect(overlap).toBe(true);
+  });
+
+  it('holds 2 of the host CPU count in each native module run and 1 in each browser module run while its passes run', async () => {
+    const { ws, env, log } = setup();
+    const holders = join(await cpuSharesDir({ ...ws.env, ...env }), 'holders');
+    const shares = (): string[][] => log().flatMap((c) => ((c as { shares?: string[] }).shares === undefined ? [] : [(c as { shares: string[] }).shares]));
+    expect((await ogw(ws, ['core', 'test', 'godot'], { env: { ...env, FAKE_SHARES: holders } })).code).toBe(0);
+    // the headless passes of both modules and the render pass of UICore
+    expect(shares()).toHaveLength(3);
+    for (const held of shares()) expect(held).toEqual(expect.arrayContaining([expect.stringMatching(/^2-/) as string]));
+    expect(shares().flat().every((name) => name.startsWith('2-'))).toBe(true);
+    const native = shares().length;
+    expect((await ogw(ws, ['core', 'test', 'godot', '--web'], { env: { ...env, FAKE_SHARES: holders } })).code).toBe(0);
+    const web = shares().slice(native);
+    expect(web).toHaveLength(2);
+    for (const held of web) expect(held).toEqual(expect.arrayContaining([expect.stringMatching(/^1-/) as string]));
+    expect(web.flat().every((name) => name.startsWith('1-'))).toBe(true);
   });
 
   it('runs one render pass at a time on the host while headless passes run at once', async () => {

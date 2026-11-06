@@ -8,7 +8,7 @@ import { coreSettingsFile, coreSettingTypesFile } from '../generate/api.ts';
 import { resolveCoreImpl } from '../../lib/game.ts';
 import { commonDir, head, statusLines } from '../../lib/git.ts';
 import { harnessRoot } from '../../lib/paths.ts';
-import { updateJob } from '../../lib/jobs.ts';
+import { jobsDir, updateJob } from '../../lib/jobs.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { requireEngine, toolProgram } from '../env/api.ts';
 import { clientModuleTableOrder, moduleListOrder, type SpecModule } from '../generate/lib/core-spec.ts';
@@ -37,6 +37,7 @@ import { runToolTest } from './lib/tool-test.ts';
 import { TOOLS } from './lib/tools.ts';
 import { engineAssetRules } from './lib/undefined.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
+import { withShare } from '../../lib/shares.ts';
 
 export type Target = { kind: 'engine'; engine: string; web: boolean } | { kind: 'server' } | { kind: 'tools' };
 
@@ -250,8 +251,9 @@ function summaryText(results: Map<string, ModuleResult>, outcomes: Map<string, M
 }
 
 /**
- * How many modules run at once. The native runs of an engine share the project, which a GUT run only reads, and each
- * has a `user://` of its own; an engine process keeps about two CPUs busy, so they take half of the CPUs.
+ * How many modules one run runs at once. The native runs of an engine share the project, which a GUT run only reads, and
+ * each has a `user://` of its own; an engine process keeps about two CPUs busy, so they take half of the CPUs. The module
+ * runs of all runs of this host share its CPUs besides (`moduleShare`).
  */
 export function parallelismOf(target: Target): number {
   if (target.kind === 'engine' && !target.web) return Math.max(1, Math.floor(availableParallelism() / 2));
@@ -263,6 +265,21 @@ export function parallelismOf(target: Target): number {
 
 /** Test files one server module run runs at once; with `parallelismOf`, about one test file per CPU. */
 export const SERVER_WORKERS = 3;
+
+/**
+ * The CPUs one module run of `target` holds of this host's CPU count, which the module runs of all `ogw core test` runs
+ * on this host share (ogw.md `## core spec and core test`): an engine process keeps about two CPUs busy, and a server
+ * module test is two vitest runs with workers of their own.
+ */
+export function moduleShare(target: Target): number {
+  if (target.kind === 'engine') return target.web ? 1 : 2;
+  return target.kind === 'server' ? 3 : 1;
+}
+
+/** The ledger of the CPU shares that the module runs of every `ogw core test` run of this host hold (`withShare`). */
+export async function cpuSharesDir(env: NodeJS.ProcessEnv): Promise<string> {
+  return join(await jobsDir(env), 'core-test-cpu-shares');
+}
 
 /** The file that keeps the last wall time of each module of a target (`recordTarget`), in the harness git common dir. */
 async function durationsFile(ctx: Context, target: Target): Promise<string> {
@@ -294,18 +311,26 @@ async function runModules(
   const outcomes = new Map<string, ModuleOutcome>();
   const file = await durationsFile(ctx, target);
   const last = (await readJsonIfExists<Record<string, number>>(file)) ?? {};
+  const shares = await cpuSharesDir(ctx.env);
   try {
     for (const [module, kept] of reused) {
       outcomes.set(module, { tests: kept.tests, passed: kept.passed, failures: [], reused: true });
       await reportResult(ctx, module, 'pass', undefined);
     }
     const toRun = modules.filter((module) => !reused.has(module));
-    const ran = runner === null ? new Map<string, ModuleResult>() : await runModulePool(longestFirst(toRun, last), parallelismOf(target), async (module) => {
+    // each module run holds its CPU share from before its first process starts until its last one ends; the wait for the
+    // share comes before its time is taken and before any of its time limits starts
+    const ran = runner === null ? new Map<string, ModuleResult>() : await runModulePool(longestFirst(toRun, last), parallelismOf(target), (module) => withShare(shares, availableParallelism(), moduleShare(target), async () => {
       const startedAt = Date.now();
       const outcome = await runner.run(module).catch((error: unknown): ModuleOutcome => ({ tests: 0, passed: 0, failures: [(error as Error).message], ran: false }));
       outcomes.set(module, { ...outcome, durationMs: Date.now() - startedAt });
       return runOutcome(outcome.failures.length > 0, outcome.unknown).result;
-    }, (module, result) => reportResult(ctx, module, result, outcomes.get(module)?.durationMs));
+    }).catch((error: unknown): ModuleResult => {
+      // the ledger could not be read or written: the module fails with why
+      const outcome = outcomes.get(module) ?? { tests: 0, passed: 0, failures: [], ran: false };
+      outcomes.set(module, { ...outcome, failures: [...outcome.failures, `CPU share: ${(error as Error).message}`] });
+      return 'fail';
+    }), (module, result) => reportResult(ctx, module, result, outcomes.get(module)?.durationMs));
     const times = Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.durationMs === undefined ? [] : [[m, o.durationMs]])));
     await writeJsonAtomic(file, { ...last, ...times });
     return { results: new Map(modules.map((m) => [m, reused.has(m) ? 'pass' : ran.get(m) ?? 'fail'])), outcomes };

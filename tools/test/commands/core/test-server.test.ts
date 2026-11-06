@@ -1,6 +1,7 @@
 import { availableParallelism } from 'node:os';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseProtoErrors } from '../../../src/commands/core/lib/base-proto-check.ts';
 import { renderDeps } from '../../../src/commands/core/lib/godot.ts';
@@ -12,8 +13,9 @@ import { serverModuleTest } from '../../../src/commands/core/lib/server-tests.ts
 import { runToolTest } from '../../../src/commands/core/lib/tool-test.ts';
 import { buildTool } from '../../../src/commands/core/lib/tools.ts';
 import { writeCoreSpec } from '../../../src/commands/core/spec-api.ts';
-import { parallelismOf, SERVER_WORKERS } from '../../../src/commands/core/test.ts';
+import { cpuSharesDir, parallelismOf, SERVER_WORKERS } from '../../../src/commands/core/test.ts';
 import { requireEngine } from '../../../src/commands/env/api.ts';
+import { holdInChild, markersDir } from '../../helpers/share-holder.ts';
 import { ogw, commitAll, sh } from '../../helpers/workspace.ts';
 import { writeFiles } from './helpers.ts';
 import { setup } from './test-fixture.ts';
@@ -272,5 +274,75 @@ describe('ogw core test server and tools', () => {
     expect(await ogw(ws, ['core', 'test', 'tools'], { env })).toMatchObject({ code: 0, stdout: 'contract-tool pass\ndata-tool pass\nno test record: uncommitted changes in the checkout\n' });
     expect(baseProtoErrors).not.toHaveBeenCalled();
     expect(vi.mocked(buildTool).mock.calls.map((c) => c[2])).not.toContain('data-tool');
+  });
+});
+
+/** The holder folders of the CPU share ledger of `ogw core test` (`withShare`) of the workspace of `env`. */
+async function cpuHolders(env: NodeJS.ProcessEnv): Promise<string[]> {
+  const dir = join(await cpuSharesDir(env), 'holders');
+  return readdirSync(dir).filter((name) => /^[0-9]+-[0-9a-f]+$/.test(name));
+}
+
+describe('ogw core test CPU shares', () => {
+  it('holds 3 of the host CPU count in each server module run and 1 in each tool test while it runs, and lets go when it ends', async () => {
+    const { ws, env } = setup();
+    sh(ws.coreImpl, 'rm', ['licenses.json']);
+    const seen: string[][] = [];
+    vi.mocked(serverModuleTest).mockImplementation(async (input) => {
+      seen.push(await cpuHolders(input.env));
+      return { tests: 1, passed: 1, failures: [] };
+    });
+    vi.mocked(runToolTest).mockImplementation(async (ctx) => {
+      seen.push(await cpuHolders(ctx.env));
+      return { tests: 1, passed: 1, failures: [] };
+    });
+    expect((await ogw(ws, ['core', 'test', 'server'], { env })).code).toBe(0);
+    expect(seen).toEqual([[expect.stringMatching(/^3-/) as string]]);
+    expect(await cpuHolders({ ...ws.env, ...env })).toEqual([]);
+    seen.length = 0;
+    expect((await ogw(ws, ['core', 'test', 'tools', 'contract-tool'], { env })).code).toBe(0);
+    expect(seen).toEqual([[expect.stringMatching(/^1-/) as string]]);
+    expect(await cpuHolders({ ...ws.env, ...env })).toEqual([]);
+  });
+
+  it('starts a module run while another run holds the whole host only once it lets go, and leaves the wait out of the module time', async () => {
+    const { ws, env } = setup();
+    const all = { ...ws.env, ...env };
+    // another run's module runs that hold every CPU of the host
+    const other = holdInChild(await cpuSharesDir(all), availableParallelism(), availableParallelism(), markersDir());
+    try {
+      await other.held;
+      let startedAt = 0;
+      vi.mocked(runToolTest).mockImplementation(() => {
+        startedAt = Date.now();
+        return Promise.resolve({ tests: 1, passed: 1, failures: [] });
+      });
+      const run = ogw(ws, ['core', 'test', 'tools', 'contract-tool', '--json'], { env });
+      await sleep(2000);
+      expect(startedAt).toBe(0);
+      const freedAt = Date.now();
+      other.release();
+      await other.exited;
+      const done = await run;
+      expect(done.code).toBe(0);
+      expect(startedAt).toBeGreaterThanOrEqual(freedAt);
+      // the module's time is its run alone: the 2 s it waited for the share are not in it
+      expect((JSON.parse(done.stdout) as { durationsMs: Record<string, number> }).durationsMs['contract-tool']).toBeLessThan(1000);
+    } finally {
+      other.kill();
+    }
+  });
+
+  it('fails a module whose CPU share cannot be taken, with why, and runs nothing of it', async () => {
+    const { ws, env } = setup();
+    const ledger = await cpuSharesDir({ ...ws.env, ...env });
+    mkdirSync(join(ledger, '..'), { recursive: true });
+    // a file where the ledger folder goes
+    writeFileSync(ledger, '');
+    vi.mocked(runToolTest).mockResolvedValue({ tests: 1, passed: 1, failures: [] });
+    const run = await ogw(ws, ['core', 'test', 'tools', 'contract-tool', '--json'], { env });
+    expect(run.code).toBe(1);
+    expect(JSON.parse(run.stdout)).toMatchObject({ modules: { 'contract-tool': 'fail' }, failures: { 'contract-tool': [expect.stringMatching(/^CPU share: .*core-test-cpu-shares/) as string] } });
+    expect(runToolTest).not.toHaveBeenCalled();
   });
 });
