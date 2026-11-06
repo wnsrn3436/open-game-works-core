@@ -1,8 +1,10 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChannelResponse } from '../../../src/commands/instance/lib/channel.ts';
 import { InputLatency } from '../../../src/commands/instance/lib/latency.ts';
 import { restartClient } from '../../../src/commands/instance/automation.ts';
-import { readPlayAccess, readRecord } from '../../../src/commands/instance/lib/records.ts';
+import { instanceFolder, readPlayAccess, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { setupRunner, startFor, stopAll, type Runner } from './runner.ts';
@@ -196,6 +198,24 @@ describe('ogw instance start --network-delay', () => {
     // an instance without the option gets none
     await startFor(runner);
     expect(delays()).toEqual(['3000', '3000']);
+    await stopAll(runner);
+  });
+
+  it('writes a later set_network_delay that is not ok to runner.log of the instance folder, and the instance keeps running', async () => {
+    const before = delays().length;
+    const id = await startFor(runner, ['--network-delay', '3000']);
+    runner.config({ clients: { main: { fail: { set_network_delay: 'NetworkCore is not initialized' } } } });
+    const ctx = createContext({ cwd: runner.ws.root, env: runner.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    await restartClient(ctx, id);
+    const log = join(await instanceFolder(id, runner.ws.env), 'runner.log');
+    const line = 'main: set_network_delay failed: "NetworkCore is not initialized"';
+    const logged = (): boolean => existsSync(log) && readFileSync(log, 'utf8').includes(line);
+    const started = Date.now();
+    while (!logged() && Date.now() - started < 5000) await new Promise((r) => setTimeout(r, 20));
+    expect(readFileSync(log, 'utf8')).toContain(line);
+    expect(delays().slice(before)).toEqual(['3000', '3000']);
+    expect((await readRecord(id, runner.ws.env)).status).toBe('running');
+    runner.config({});
     await stopAll(runner);
   });
 
