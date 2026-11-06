@@ -1,0 +1,12 @@
+{
+  "target": "env check",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "skills/host-env/SKILL.md:46",
+      "problem": "Step 9 allows `loop.confirmJudge` or `loop.confirmFallback` with `cli` `codex` \"only when step 1 found the `codex` CLI logged in\". But `ogw env check` checks installation, login and a prompt run only for the agent CLIs of harness settings `agents` (ogw.md:637, `tools/src/commands/env/lib/hostcheck.ts:205`). The items of `loop.judgePanel`, `loop.confirmJudge` and `loop.confirmFallback` are never prompt-run, so a model or effort there that the CLI rejects is not caught before `ogw loop evaluate` calls those judges. Step 1 also does not report a codex login when only those settings use codex. The `loop.judgePanel` part existed before this range",
+      "foundBy": "env check round 1"
+    }
+  ]
+}
