@@ -340,7 +340,7 @@ If `records/setup/reference/reference.md` is missing or a video file that its `#
 - The play agent and the judge agent are not given `brief.md`, `design.md` or the content agent's report
 - The input of play and judge holds only the fields of its format. The agent cannot read paths other than `playGuide`, `video` and `telemetry`
 
-limit message: a line of the agent CLI output that starts with one of the texts below and says that the usage limit or the rate limit of that agent CLI was hit. Claude Code (`claude -p`) prints the message as its result line, and `codex exec` prints `ERROR: ` and the message on stderr. The `’` of the Codex texts is U+2019.
+limit message: a line of the limit text of a job that starts with one of the texts below and says that the usage limit or the rate limit of that agent CLI was hit. The limit text is read from the agent CLI output, which the agent CLIs print as JSON (`## agent`): for Claude Code, each line of the output, with a result object replaced by the text of its `result`; for Codex, each line of the output, the `message` of each event whose `type` is `error`, and the `message` of the `error` of each event whose `type` is `turn.failed`. A Codex line also counts when it starts with `ERROR: ` and then one of the texts, the form `codex exec` prints on stderr. The `’` of the Codex texts is U+2019.
 
 | agent CLI | line start | limit |
 |---|---|---|
@@ -350,12 +350,12 @@ limit message: a line of the agent CLI output that starts with one of the texts 
 | Claude Code | `Your org is out of usage` | usage limit |
 | Claude Code | `API Error: Request rejected (429)` | rate limit |
 | Claude Code | `API Error: Server is temporarily limiting requests` | rate limit |
-| Codex | `ERROR: You’ve hit your usage limit` | usage limit |
-| Codex | `ERROR: Your workspace is out of credits.` | usage limit |
-| Codex | `ERROR: You hit your spend cap` | usage limit |
-| Codex | `ERROR: Quota exceeded.` | usage limit |
-| Codex | `ERROR: exceeded retry limit, last status: 429 Too Many Requests` | rate limit |
-| Codex | `ERROR: rate limit exceeded: ` | rate limit |
+| Codex | `You’ve hit your usage limit` | usage limit |
+| Codex | `Your workspace is out of credits.` | usage limit |
+| Codex | `You hit your spend cap` | usage limit |
+| Codex | `Quota exceeded.` | usage limit |
+| Codex | `exceeded retry limit, last status: 429 Too Many Requests` | rate limit |
+| Codex | `rate limit exceeded: ` | rate limit |
 
 ## loop baseline
 

@@ -62,3 +62,31 @@ describe('agentHitLimit', () => {
     expect(await agentHitLimit('j3', 'codex', env)).toBe(false);
   });
 });
+
+describe('hasLimitMessage on JSON output', () => {
+  it('reads the result text of a Claude Code result object', () => {
+    const object = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your session limit · resets 3pm" });
+    expect(hasLimitMessage('claude-code', `${object}\n`)).toBe(true);
+    const done = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'I played A and B.' });
+    expect(hasLimitMessage('claude-code', `${done}\n`)).toBe(false);
+  });
+
+  it('reads the message of Codex error and turn.failed events, and stderr lines with ERROR: before them', () => {
+    const error = JSON.stringify({ type: 'error', message: 'You’ve hit your usage limit. Try again in 3 hours.' });
+    expect(hasLimitMessage('codex', `{"type":"turn.started"}\n${error}\n`)).toBe(true);
+    const failed = JSON.stringify({ type: 'turn.failed', error: { message: 'exceeded retry limit, last status: 429 Too Many Requests' } });
+    expect(hasLimitMessage('codex', `${failed}\n`)).toBe(true);
+    expect(hasLimitMessage('codex', 'ERROR: Quota exceeded. Check your plan.\n')).toBe(true);
+    const other = JSON.stringify({ type: 'turn.failed', error: { message: 'The model is not supported when using Codex with a ChatGPT account.' } });
+    expect(hasLimitMessage('codex', `${other}\n`)).toBe(false);
+    // a Claude Code result object is not read as a Codex event, nor the reverse
+    expect(hasLimitMessage('codex', `${JSON.stringify({ type: 'result', result: 'You’ve hit your usage limit' })}\n`)).toBe(false);
+    expect(hasLimitMessage('claude-code', `${error}\n`)).toBe(false);
+  });
+
+  it('reads the captured Codex failure without a limit as no limit', async () => {
+    const { readFileSync } = await import('node:fs');
+    const fixture = readFileSync(new URL('../../../fixtures/agent-usage/codex-failed.jsonl', import.meta.url), 'utf8');
+    expect(hasLimitMessage('codex', fixture)).toBe(false);
+  });
+});
