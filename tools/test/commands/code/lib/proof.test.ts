@@ -3,14 +3,18 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { fixTestProof, sameDependencies } from '../../../../src/commands/code/lib/proof.ts';
 import { createContext } from '../../../../src/lib/command.ts';
+import { SCREEN_LOCKED } from '../../../../src/lib/outcome.ts';
 import { ogw, commitAll, makeWorkspace, type TestWorkspace } from '../../../helpers/workspace.ts';
 
-/** The result `ogw core test` gives per run on the proof worktree: set by each test. */
-/** The `ogw core test` result the mock gives for the target: its module result and `counts`, each set on its own. */
+/**
+ * The `ogw core test` result the mock gives for the target: its module result, `counts`, `failures` and the reason of
+ * an `unknown` module (`unknown`), each set on its own.
+ */
 const coreTest = vi.hoisted(() => ({
   module: 'pass',
   counts: { tests: 2, passed: 2, ran: true },
   failures: [] as string[],
+  unknown: null as string | null,
   error: null as string | null,
   calls: [] as { args: string[]; cwd: string }[],
 }));
@@ -26,7 +30,12 @@ vi.mock('../../../../src/lib/proc.ts', async (importOriginal) => {
       coreTest.calls.push({ args: rest, cwd: options.cwd ?? '' });
       const module = rest[1] as string;
       const data = coreTest.error === null
-        ? { modules: { [module]: coreTest.module }, counts: { [module]: coreTest.counts }, failures: { [module]: coreTest.failures } }
+        ? {
+            modules: { [module]: coreTest.module },
+            counts: { [module]: coreTest.counts },
+            failures: { [module]: coreTest.failures },
+            unknown: coreTest.unknown === null ? {} : { [module]: coreTest.unknown },
+          }
         : { error: coreTest.error };
       return { code: 0, signal: null, stdout: JSON.stringify(data), stderr: '', stdoutBytes: Buffer.alloc(0), timedOut: false };
     },
@@ -223,6 +232,7 @@ describe('fix test proof: core', () => {
     const fixed = commitAll(ws.coreImpl, 'fix');
     coreTest.calls = [];
     coreTest.error = null;
+    coreTest.unknown = null;
     // a test of the target failed
     coreTest.module = 'fail';
     coreTest.counts = { tests: 2, passed: 1, ran: true };
@@ -271,11 +281,44 @@ describe('fix test proof: core', () => {
     const passing = await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'LogCore');
     expect(passing.result).toBe('fail');
     expect(coreTest.calls.map((c) => c.args)).toEqual([['godot', 'LogCore']]);
+    // a render pass not run on a locked screen: unknown with the reason of the core test
+    coreTest.module = 'unknown';
+    coreTest.unknown = SCREEN_LOCKED;
+    expect(await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'LogCore')).toEqual({
+      result: 'unknown',
+      failures: ['ogw core test godot LogCore: LogCore is unknown: screen locked'],
+    });
+    coreTest.module = 'pass';
+    coreTest.unknown = null;
     coreTest.error = 'core-spec/ check: x';
     expect(await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'LogCore')).toEqual({
       result: 'unknown',
       failures: ['ogw core test godot LogCore stopped before the tests: core-spec/ check: x'],
     });
     expect(readdirSync(join(ws.worktrees, '_core'))).toEqual([]);
+  });
+
+  it('is unknown with the reason of the core test when the round trip of a tool target was left out', async () => {
+    const ws = makeWorkspace();
+    write(ws.coreImpl, 'tools/contract/index.ts', 'export const x = 1;\n');
+    write(ws.coreImpl, 'client/godot/engine.json', '{}\n');
+    const base = commitAll(ws.coreImpl, 'base');
+    write(ws.coreImpl, 'tools/contract/index.ts', 'export const x = 2;\n');
+    write(ws.coreImpl, 'tools/contract/tests/contract.test.ts', 'new test\n');
+    const fixed = commitAll(ws.coreImpl, 'fix');
+    const leftOut = 'godot round trip left out: no core test of the engine has passed every client module yet';
+    coreTest.calls = [];
+    coreTest.error = null;
+    coreTest.module = 'unknown';
+    coreTest.counts = { tests: 2, passed: 2, ran: true };
+    coreTest.failures = [];
+    coreTest.unknown = leftOut;
+    expect(await fixTestProof(ctxOf(ws), 'core', ws.coreImpl, base, fixed, 'contract')).toEqual({
+      result: 'unknown',
+      failures: [`ogw core test tools contract: contract is unknown: ${leftOut}`],
+    });
+    expect(coreTest.calls.map((c) => c.args)).toEqual([['tools', 'contract']]);
+    coreTest.module = 'pass';
+    coreTest.unknown = null;
   });
 });
