@@ -116,7 +116,8 @@ function serveClient(): string[] {
       case 'get_telemetry':
         return ok({ goal_intervals: [{}], scene_loads: [{ scene_key: 'lobby', duration_ms: 10 }] });
       case 'get_stats':
-        return ok({ fps: 60 });
+        // 5 s of frames on time at 60 fps
+        return ok({ fps: 60, frame_intervals_ms: Array<number>(300).fill(16.67) });
       case 'list_commands':
         return ok([{ name: 'shop.open_main' }]);
       case 'capture_screen':

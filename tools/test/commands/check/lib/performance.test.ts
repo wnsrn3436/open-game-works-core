@@ -10,7 +10,24 @@ import { instanceProcesses, instanceServerLog } from '../../../../src/commands/c
 import { HostLoadSampler, hostProbe, type HostProbe } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { hostRefreshHz } from '../../../../src/lib/display.ts';
-import { fpsBound, fpsHolds, fpsSampling, frameLimitFps, keptSamples, percentile5Sample, performanceCheck, performanceChecks, platformProfiles, type FpsTick, type PerformanceOptions } from '../../../../src/commands/check/lib/performance.ts';
+import {
+  fpsBound,
+  fpsHolds,
+  fpsSampling,
+  frameBudgetMs,
+  frameLimitFps,
+  hitchTimeMs,
+  judgeFrames,
+  keptFrames,
+  keptSamples,
+  percentile5Sample,
+  performanceCheck,
+  performanceChecks,
+  platformProfiles,
+  type FpsTick,
+  type FrameTick,
+  type PerformanceOptions,
+} from '../../../../src/commands/check/lib/performance.ts';
 import { performanceLeaseBase, withGenerationLease } from '../../../../src/commands/generation/lib/lease.ts';
 import type { Context } from '../../../../src/lib/command.ts';
 import { hostBootId, pidNamespace } from '../../../../src/lib/proc.ts';
@@ -40,7 +57,7 @@ describe('platformProfiles', () => {
 
 /** A settled tick of `scene` with `fps` and bound 59, whose load key is `key`. */
 function tick(scene: string, fps: number | null, key = scene, settled = true): FpsTick {
-  return { scene, settled, loadKey: key, fps, boundFps: 59 };
+  return { scene, settled, loadKey: key, fps, boundFps: 59, intervalsMs: [], budgetMs: 20 };
 }
 
 describe('fps samples and bound', () => {
@@ -102,6 +119,118 @@ describe('fps samples and bound', () => {
   });
 });
 
+/** `count` frame intervals of `ms`. */
+function fill(count: number, ms: number): number[] {
+  return Array<number>(count).fill(ms);
+}
+
+/** A settled tick of `scene` with fps 60, frame budget 20 ms and the frame intervals `intervalsMs`, whose load key is `key`. */
+function frameTick(scene: string, intervalsMs: number[] | null, key = scene, settled = true): FpsTick {
+  return { scene, settled, loadKey: key, fps: 60, boundFps: 59, intervalsMs, budgetMs: 20 };
+}
+
+/** The frame judgement of one kept tick of budget 20 ms per scene, with the scenes `missed` of ticks without intervals. */
+function judge(scenes: Record<string, number[]>, missed: string[] = []): ReturnType<typeof judgeFrames> {
+  const frames = new Map(Object.entries(scenes).map(([scene, intervalsMs]): [string, FrameTick[]] => [scene, [{ budgetMs: 20, intervalsMs }]]));
+  return judgeFrames(frames, new Set(missed));
+}
+
+const KEEP = { failures: [], unknown: [] };
+
+describe('frame intervals', () => {
+  it('the frame budget is 1000 ms divided by the smallest of targetFps, refresh rate and frame limit', () => {
+    expect(frameBudgetMs(50, null, null)).toBe(20);
+    expect(frameBudgetMs(50, 100, null)).toBe(20);
+    expect(frameBudgetMs(100, 50, null)).toBe(20);
+    expect(frameBudgetMs(100, 120, 25)).toBe(40);
+    expect(frameBudgetMs(60, null, null)).toBeCloseTo(16.667, 3);
+  });
+
+  it('an interval up to 1.5 frame budgets is on time, and a longer one has its interval minus one budget as hitch time', () => {
+    expect(hitchTimeMs(30, 20)).toBe(0);
+    expect(hitchTimeMs(30.01, 20)).toBeCloseTo(10.01, 6);
+    expect(hitchTimeMs(40, 20)).toBe(20);
+    // 12 s of frames at 1.5 budgets: jitter, no hitch
+    expect(judge({ lobby: fill(400, 30) })).toEqual(KEEP);
+  });
+
+  it('fails at a hitch ratio of 10 ms/s and keeps just below it', () => {
+    // 5 intervals of 2 budgets give 5 × 20 ms of hitch time over exactly 10 s
+    expect(judge({ lobby: [...fill(5, 40), ...fill(490, 20)] })).toEqual({
+      failures: [{ where: 'lobby', message: 'hitch ratio 10.0 ms/s is at least 10 ms/s over 10.0 s of kept frames (100.0 ms of hitch time in this scene)' }],
+      unknown: [],
+    });
+    // the same hitch time over 10.02 s: 9.98 ms/s
+    expect(judge({ lobby: [...fill(5, 40), ...fill(491, 20)] })).toEqual(KEEP);
+  });
+
+  it('fails on a kept interval longer than 100 ms, once per scene with its longest one', () => {
+    expect(judge({ lobby: [100, ...fill(495, 20)] })).toEqual(KEEP);
+    expect(judge({ lobby: [100.01, ...fill(495, 20)] })).toEqual({
+      failures: [{ where: 'lobby', message: 'frame interval 100.01 ms is longer than 100 ms (1 of 496 kept intervals of this scene)' }],
+      unknown: [],
+    });
+    expect(judge({ lobby: fill(1500, 20), battle: [120, ...fill(200, 20), 100.5] }).failures).toEqual([
+      { where: 'battle', message: 'frame interval 120 ms is longer than 100 ms (2 of 202 kept intervals of this scene)' },
+    ]);
+  });
+
+  it('puts a hitch ratio failure at the scene with the largest sum of hitch times', () => {
+    // lobby has the most hitches (10 × 11 ms), battle the largest sum (2 × 60 ms), shop the longest frame (81 ms of hitch time)
+    const result = judge({ lobby: [...fill(10, 31), ...fill(240, 20)], battle: [...fill(2, 80), ...fill(200, 20)], shop: [101, ...fill(50, 20)] });
+    expect(result).toEqual({
+      failures: [
+        { where: 'battle', message: 'hitch ratio 30.0 ms/s is at least 10 ms/s over 10.4 s of kept frames (120.0 ms of hitch time in this scene)' },
+        { where: 'shop', message: 'frame interval 101 ms is longer than 100 ms (1 of 51 kept intervals of this scene)' },
+      ],
+      unknown: [],
+    });
+  });
+
+  it('is unknown below 10 s of kept intervals, even with a long frame, and judged from 10 s summed over ticks and scenes', () => {
+    const short = { failures: [], unknown: [{ where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 9.99 s, less than 10 s' }] };
+    expect(judge({ lobby: [...fill(499, 20), 10] })).toEqual(short);
+    expect(judge({ lobby: [130, ...fill(493, 20)] })).toEqual(short);
+    expect(judge({})).toEqual({ failures: [], unknown: [{ where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 0 s, less than 10 s' }] });
+    expect(judge({ lobby: fill(500, 20) })).toEqual(KEEP);
+    // 8 s in two ticks of lobby and 2.001 s in battle
+    const twoTicks = judgeFrames(new Map([['lobby', [{ budgetMs: 20, intervalsMs: fill(250, 20) }, { budgetMs: 20, intervalsMs: fill(150, 20) }]], ['battle', [{ budgetMs: 20, intervalsMs: [101, ...fill(95, 20)] }]]]), new Set());
+    expect(twoTicks.unknown).toEqual([]);
+    expect(twoTicks.failures.map((f) => f.where)).toEqual(['battle']);
+  });
+
+  it('is unknown when a kept tick has no frame_intervals_ms array, whatever the other ticks show', () => {
+    const missing = { where: 'battle', message: 'get_stats of a kept tick has no frame_intervals_ms array of numbers' };
+    expect(judge({ lobby: fill(600, 20) }, ['battle'])).toEqual({ failures: [], unknown: [missing] });
+    expect(judge({ lobby: [500, ...fill(600, 40)] }, ['battle'])).toEqual({ failures: [], unknown: [missing] });
+    const { frames, missed } = keptFrames([frameTick('lobby', null), frameTick('lobby', null), frameTick('lobby', fill(600, 20)), frameTick('lobby', null)]);
+    expect([...missed]).toEqual(['lobby']);
+    expect(judgeFrames(frames, missed).unknown).toEqual([{ ...missing, where: 'lobby' }]);
+  });
+
+  it('keeps only the intervals of the ticks whose fps samples are kept', () => {
+    const ticks: FpsTick[] = [
+      frameTick('lobby', [500]), // no tick before
+      frameTick('lobby', [400]), // the tick before has a scene load
+      frameTick('lobby', fill(250, 20)),
+      frameTick('battle', [900]), // scene_key changed
+      frameTick('battle', [300]),
+      frameTick('battle', fill(250, 20)),
+      frameTick('battle', [700], 'battle', false), // in a transition
+      frameTick('battle', [600]),
+      frameTick('battle', [800], 'battle reloaded'), // last_scene_load_ms or boot_ms changed
+      frameTick('battle', null, 'battle reloaded'),
+      null, // a request failed
+      frameTick('battle', [200], 'battle reloaded'),
+      frameTick('battle', null, 'battle reloaded'),
+    ];
+    const { frames, missed } = keptFrames(ticks);
+    expect(Object.fromEntries([...frames].map(([scene, kept]) => [scene, kept.map((t) => t.intervalsMs.length)]))).toEqual({ lobby: [250], battle: [250] });
+    expect([...missed]).toEqual([]);
+    expect(judgeFrames(frames, missed)).toEqual(KEEP);
+  });
+});
+
 function fixedProbe(cpu: { idle: number; total: number }[], memory: number[], instances: number[]): HostProbe {
   let c = 0;
   let m = 0;
@@ -154,9 +283,19 @@ const scenario: Scenario = {
 /** get_stats calls per scene after which an input step of the scenario ends, so the sampler reads enough ticks. */
 const TICKS_PER_SCENE = 6;
 
-function fakeGame(fps: Record<string, number>, loads: unknown, overrides: Record<string, unknown> = {}): string[] {
+/** 5 s of frames on time at 60 fps. */
+const STEADY = fill(300, 16.67);
+
+/**
+ * `frame_intervals_ms` of a `get_stats` in `scene` that is the `call`-th `get_stats` of the run (from 1); undefined
+ * leaves the field out.
+ */
+type FakeIntervals = (scene: string, call: number) => unknown;
+
+function fakeGame(fps: Record<string, number>, loads: unknown, overrides: Record<string, unknown> = {}, intervals: FakeIntervals = () => STEADY): string[] {
   const calls: string[] = [];
   let scene = 'lobby';
+  let statsCalls = 0;
   const read: Record<string, number> = {};
   const waiters: (() => void)[] = [];
   const reply = (command: string, args: string[]): Awaited<ReturnType<typeof automationRequest>> => {
@@ -166,7 +305,9 @@ function fakeGame(fps: Record<string, number>, loads: unknown, overrides: Record
     if (command === 'get_stats') {
       read[scene] = (read[scene] ?? 0) + 1;
       for (const wake of waiters.splice(0)) wake();
-      return ok(scene in fps ? { fps: fps[scene], quality_level: '', last_scene_load_ms: 5, boot_ms: 7 } : { quality_level: '' });
+      const stats = scene in fps ? { fps: fps[scene], quality_level: '', last_scene_load_ms: 5, boot_ms: 7 } : { quality_level: '' };
+      const frames = intervals(scene, ++statsCalls);
+      return ok(frames === undefined ? stats : { ...stats, frame_intervals_ms: frames });
     }
     if (command === 'get_telemetry') return ok({ goal_intervals: [{}], scene_loads: loads });
     if (command === 'extract_logs') return ok([]);
@@ -335,6 +476,82 @@ describe('performanceCheck', () => {
   });
 });
 
+/** 5 s at 60 fps with 10 frames of 90 ms: 10 × 73.3 ms of hitch time, no frame over 100 ms. */
+const HITCHY = [...fill(10, 90), ...fill(246, 16.67)];
+/** 5 s at 60 fps with 2 frames of 46.67 ms: 2 × 30 ms of hitch time, 12 ms/s. */
+const LIGHT_HITCHES = [...fill(2, 46.67), ...fill(294, 16.67)];
+
+describe('performanceCheck: frame intervals', () => {
+  const ev = ['ev/performance-web/samples.json'];
+  const read = (root: string): { frameIntervals: Record<string, FrameTick[]> } => JSON.parse(readFileSync(join(root, 'ev/performance-web/samples.json'), 'utf8')) as { frameIntervals: Record<string, FrameTick[]> };
+
+  it('fails on the hitch ratio at the scene with the largest hitch time, and samples.json holds the kept intervals by scene', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? HITCHY : LIGHT_HITCHES));
+    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect(result).toMatchObject({ result: 'fail', hostLoad: { cpuMaxPercent: 80, memoryMaxPercent: 33, instancesMax: 1 } });
+    expect(result.failures).toEqual([
+      { where: 'battle', message: expect.stringMatching(/^hitch ratio \d+\.\d ms\/s is at least 10 ms\/s over \d+\.\d s of kept frames \(\d+\.\d ms of hitch time in this scene\)$/) as unknown, evidence: ev },
+    ]);
+    const { frameIntervals } = read(root);
+    expect(Object.keys(frameIntervals)).toEqual(['lobby', 'battle']);
+    const kept = (scene: string): Set<string> => new Set(frameIntervals[scene]?.map((t) => JSON.stringify(t)));
+    expect(kept('lobby')).toEqual(new Set([JSON.stringify({ budgetMs: 1000 / 60, intervalsMs: LIGHT_HITCHES })]));
+    expect(kept('battle')).toEqual(new Set([JSON.stringify({ budgetMs: 1000 / 60, intervalsMs: HITCHY })]));
+    expect(frameIntervals.battle?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
+  });
+
+  it('fails on a frame longer than 100 ms at its scene, with the budget from the refresh rate of the host display', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    vi.mocked(hostRefreshHz).mockResolvedValue(50);
+    fakeGame({ lobby: 49, battle: 49 }, [], {}, (scene) => (scene === 'battle' ? [130.25, ...fill(244, 20)] : fill(250, 20)));
+    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect(result.result).toBe('fail');
+    expect(result.failures.filter((f) => f.message.startsWith('frame interval'))).toEqual([
+      { where: 'battle', message: expect.stringMatching(/^frame interval 130\.25 ms is longer than 100 ms \(\d+ of \d+ kept intervals of this scene\)$/) as unknown, evidence: ev },
+    ]);
+    const budgets = Object.values(read(root).frameIntervals).flat().map((t) => t.budgetMs);
+    expect(new Set(budgets)).toEqual(new Set([20]));
+  });
+
+  it('does not count the intervals of the ticks dropped for a scene load', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    // the first tick has no tick before and the second follows it: both are dropped
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, (_scene, call) => (call <= 2 ? [500, ...STEADY] : STEADY));
+    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).result).toBe('pass');
+    expect(Object.values(read(root).frameIntervals).flat().flatMap((t) => t.intervalsMs).filter((ms) => ms > 100)).toEqual([]);
+  });
+
+  it('is unknown when a kept tick has no frame_intervals_ms array of numbers', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const missing = (where: string): object => ({ where, message: 'get_stats of a kept tick has no frame_intervals_ms array of numbers', evidence: ev });
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'lobby' ? ['16.67'] : STEADY));
+    const some = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect({ result: some.result, failures: some.failures }).toEqual({ result: 'unknown', failures: [missing('lobby')] });
+    // a client whose get_stats has no frame_intervals_ms
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, () => undefined);
+    const none = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect({ result: none.result, failures: none.failures }).toEqual({
+      result: 'unknown',
+      failures: [missing('lobby'), missing('battle'), { where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 0 s, less than 10 s', evidence: ev }],
+    });
+    // an fps failure is a failure while the frames are unknown
+    fakeGame({ lobby: 30, battle: 60 }, [], {}, () => undefined);
+    const slow = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect(slow.result).toBe('fail');
+    expect(slow.failures.map((f) => f.where)).toEqual(['lobby']);
+  });
+
+  it('is unknown when the kept intervals add up to less than 10 s', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    // 10 ms per tick: far less than 10 s over the run, with a long frame that is not judged
+    fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? [130] : [10]));
+    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    expect(result.result).toBe('unknown');
+    expect(result.failures).toEqual([{ where: 'client/dev/bot/scenario.json:1', message: expect.stringMatching(/^kept frame intervals add up to \d+(\.\d+)? s, less than 10 s$/) as unknown, evidence: ev }]);
+  });
+});
+
 describe('host load of a measurement', () => {
   /** A probe whose CPU reading is `100 − idle` % and whose memory reading is `memory` %. */
   const busyProbe = (idle: number, memory: number): HostProbe => fixedProbe([{ idle: 0, total: 0 }, { idle, total: 100 }], [memory], [1]);
@@ -365,6 +582,18 @@ describe('host load of a measurement', () => {
     const below = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(11, 94.9) }));
     expect(below.result).toBe('fail');
     expect(below.failures.map((f) => f.where)).toEqual(['lobby', 'lobby']);
+  });
+
+  it('makes a frame failure measured on a busy host unknown', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const hitchyGame = (): string[] => fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? [120, ...HITCHY] : STEADY));
+    hitchyGame();
+    const busy = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(5, 40) }));
+    expect({ result: busy.result, failures: busy.failures }).toEqual({ result: 'unknown', failures: [{ where, message: 'host CPU 95%', evidence: ['ev/performance-web/samples.json'] }] });
+    hitchyGame();
+    const below = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(11, 94.9) }));
+    expect(below.result).toBe('fail');
+    expect(below.failures.map((f) => `${f.where} ${f.message.split(' ').slice(0, 2).join(' ')}`)).toEqual(['battle hitch ratio', 'battle frame interval']);
   });
 
   it('keeps a pass and an unknown measured on a busy host', async () => {

@@ -364,8 +364,9 @@ describe('device performance', () => {
   it('passes: apk with launch values, adb install and reverse, launch, fps per scene, uninstall', async () => {
     const s = await setup();
     vi.mocked(gameModules).mockResolvedValue({ client: ['RealtimeCore', 'QualityCore'], server: [] });
-    // the tap lasts long enough for the fps sampler to read several ticks
-    s.config({ clients: { main: { state: { scene_key: 'battle' }, delayMs: { tap: 300 }, results: { get_stats: { ok: true, result: { fps: 60 } } } } }, telemetry: { goal_intervals: [{}], scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] } });
+    // the tap lasts long enough for the fps sampler to read several ticks, each with 10 s of frames on time at 30 fps
+    const stats = { fps: 60, frame_intervals_ms: Array<number>(300).fill(33.33) };
+    s.config({ clients: { main: { state: { scene_key: 'battle' }, delayMs: { tap: 300 }, results: { get_stats: { ok: true, result: stats } } } }, telemetry: { goal_intervals: [{}], scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] } });
     const check = await devicePerformance(s.input);
     expect(check).toEqual({ name: 'device performance', result: 'pass', details: [] });
     expect(vi.mocked(udpReaches).mock.calls[0]?.slice(1)).toEqual(['emulator-5554', '192.168.0.9']);
@@ -386,11 +387,13 @@ describe('device performance', () => {
     expect(s.requests().slice(0, 2)).toEqual(['get_state', 'extract_logs']);
     expect(s.requests()).toContain('get_stats');
     expect(s.requests()).toContain('set_quality_level High');
-    const record = JSON.parse(readFileSync(join(s.dir, 'builds/dev-0.1.0/device-performance/samples.json'), 'utf8')) as { device: string; samples: { battle: unknown[] }; scene_loads: unknown };
+    type DeviceRecord = { device: string; samples: { battle: unknown[] }; frameIntervals: { battle: unknown[] }; scene_loads: unknown };
+    const record = JSON.parse(readFileSync(join(s.dir, 'builds/dev-0.1.0/device-performance/samples.json'), 'utf8')) as DeviceRecord;
     expect(record).toMatchObject({ device: 'emulator-5554', scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] });
     expect(record.samples.battle.length).toBeGreaterThanOrEqual(2);
-    // a client on a device has no refresh rate bound: the bound is targetFps 30 − 1
+    // a client on a device has no refresh rate bound: the bound is targetFps 30 − 1, and the frame budget 1000 ms / 30
     expect(new Set(record.samples.battle.map((v) => JSON.stringify(v)))).toEqual(new Set(['{"fps":60,"boundFps":29}']));
+    expect(new Set(record.frameIntervals.battle.map((v) => JSON.stringify(v)))).toEqual(new Set([JSON.stringify({ budgetMs: 1000 / 30, intervalsMs: stats.frame_intervals_ms })]));
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(1);
   });
 
