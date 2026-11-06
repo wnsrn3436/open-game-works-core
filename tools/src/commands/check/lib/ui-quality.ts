@@ -190,6 +190,8 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
     const ry0 = Math.max(y0, Math.round(r.y));
     const rx1 = Math.min(x1, Math.round(r.x + r.w));
     const ry1 = Math.min(y1, Math.round(r.y + r.h));
+    // a rect outside the area covers none of it; a fill end before the row start would count from the mask's end
+    if (rx1 <= rx0 || ry1 <= ry0) continue;
     for (let y = ry0; y < ry1; y++) mask.fill(1, (y - y0) * w + (rx0 - x0), (y - y0) * w + (rx1 - x0));
   }
   return mask;

@@ -107,6 +107,11 @@ describe('UI quality presentation conditions', () => {
       el('p/label', { owner: 'pop', text: 'Hi', font_size: 20, rect: [20, 20, 20, 10] }),
     ]);
     expect(presentationProblems(list, flat, 'scene', big).map((p) => p.message)).toEqual(['empty panel p: 97% empty']);
+    // a descendant wholly left of, right of, above or below the panel covers none of it (the first one spans the panel's top row)
+    for (const rect of [[0, 5, 5, 50], [0, 20, 5, 10], [95, 20, 5, 10], [20, 0, 10, 5], [20, 95, 10, 5]] as const) {
+      const outside = elements([el('p', { owner: 'pop', rect: [10, 10, 80, 80] }), el('p/side', { owner: 'pop', rect: [...rect] })]);
+      expect(presentationProblems(outside, flat, 'scene', big).map((p) => p.message)).toEqual(['empty panel p: 100% empty']);
+    }
     // stripes every other row in two colors 40 apart, and children covering most of it
     const stripes: [number, number, number, number, [number, number, number]][] = [];
     for (let y = 10; y < 90; y += 2) stripes.push([10, y, 80, 1, [70, 70, 100]]);
