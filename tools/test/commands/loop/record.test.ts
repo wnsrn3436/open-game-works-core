@@ -621,8 +621,12 @@ describe('ogw loop baseline and verdict', () => {
     expect(((await currentRun(g)).data.loop as { verdict?: unknown } | undefined)?.verdict ?? null).toBeNull();
     write(g.root, `${R}/defects.json`, defectsOf('iteration-3'));
     const out = await ogw(g.ws, ['loop', 'verdict', 'g']);
-    expect(out).toMatchObject({ code: 0, stdout: 'limit reached\niteration 3\nlimit 3\n' });
-    expect(((await currentRun(g)).data.loop as { verdict: unknown }).verdict).toEqual({ iteration: 3, reason: 'limit reached', evidence: ['iteration 3', 'limit 3'] });
+    expect(out).toMatchObject({ code: 0, stdout: 'limit reached\niteration 3 reached game settings loopIterationLimit 3\n' });
+    expect(((await currentRun(g)).data.loop as { verdict: unknown }).verdict).toEqual({
+      iteration: 3,
+      reason: 'limit reached',
+      evidence: ['iteration 3 reached game settings loopIterationLimit 3'],
+    });
     await setRun(g, (run) => {
       run.iteration = 1;
     });

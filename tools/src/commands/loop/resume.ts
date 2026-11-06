@@ -1,19 +1,21 @@
-import { expectPositionals, positional, type CommandDef, type Context } from '../../lib/command.ts';
+import { expectPositionals, flag, positional, type CommandArgs, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { git, revParse, showFile, statusLines, tagExists } from '../../lib/git.ts';
 import { waitJob } from '../../lib/jobs.ts';
-import { requireOpenRun, type RunState } from '../../lib/runstate.ts';
+import { changeOpenRun, requireOpenRun, type RunState } from '../../lib/runstate.ts';
 import { isBuildRunMerge } from '../build/lib/buildrun.ts';
 import { buildTagName, parseEnv } from '../build/lib/names.ts';
 import { listInstances, stopInstance } from '../instance/api.ts';
 import { removeVariantLeftovers } from './lib/agent-worktrees.ts';
+import { harnessHead, pinHarness, pinnedHarness, requirePinned } from './lib/harness-pin.ts';
+import { givenLimits, LIMIT_OPTIONS, runLimits, setRunLimits } from './lib/run-limits.ts';
 import { roleOf, runJobs } from './lib/jobs.ts';
 import { mergeBranchMerged } from './lib/merge-branch.ts';
 import { openTarget, runFileExists, runRel } from './lib/run.ts';
 import { sync, syncText, WORKER_ROLES } from './lib/sync.ts';
 
-const USAGE = 'ogw loop resume <game>';
+const USAGE = 'ogw loop resume <game> [--limit <iterations>] [--until <unix ms>] [--repin]';
 
 /**
  * `build` `## procedure` resume rule: report committed → end, tag → 7, main HEAD is this run's `build finish` merge → 6,
@@ -48,6 +50,36 @@ async function checkoutRunBranch(game: GameRepo, run: RunState): Promise<string[
   return notes;
 }
 
+/**
+ * Steps 2 and 3 of ogw.md `## loop resume`: fails, changing nothing, on a limit it refuses or a harness repo HEAD that is
+ * not the pinned harness commit without `--repin`; then repins and replaces the limits given.
+ */
+async function pinAndLimit(ctx: Context, game: GameRepo, run: RunState, args: CommandArgs): Promise<string[]> {
+  if (run.kind === 'build' && (args.values.limit !== undefined || args.values.until !== undefined)) {
+    throw new OgwError('--limit and --until are taken only in a loop run');
+  }
+  const given = givenLimits(args, Date.now());
+  const harness = run.kind === 'loop' ? await harnessHead(ctx.env) : null;
+  const repin = flag(args, 'repin');
+  if (harness !== null && !repin) requirePinned(run, harness);
+  // a repin counts for the iteration whose loop iteration record is written next
+  const n = run.iteration;
+  const recorded = n >= 1 && (await showFile(game.root, run.branch, runRel(run, `iteration-${String(n)}.md`))) !== null;
+  const counts = n >= 1 && !recorded ? n : n + 1;
+  return changeOpenRun(game, (open) => {
+    const notes: string[] = [];
+    const pinned = pinnedHarness(open);
+    if (harness !== null && repin) pinHarness(open, harness, counts);
+    if (pinned !== null && pinnedHarness(open) !== pinned) notes.push(`harness: ${String(harness)} (repinned from ${pinned}), counts for iteration ${String(counts)}`);
+    if (given.iterations !== undefined || given.until !== undefined) {
+      setRunLimits(open, given);
+      const limits = runLimits(open);
+      notes.push(`limits: --limit ${limits.iterations === null ? 'none' : String(limits.iterations)}, --until ${limits.until === null ? 'none' : String(limits.until)}`);
+    }
+    return notes;
+  });
+}
+
 async function waitOtherJobs(ctx: Context, game: GameRepo, run: RunState): Promise<string[]> {
   const timeout = (await ctx.settings()).jobWaitTimeoutMs;
   const waited: string[] = [];
@@ -63,14 +95,16 @@ async function waitOtherJobs(ctx: Context, game: GameRepo, run: RunState): Promi
 export const loopResume: CommandDef = {
   name: ['loop', 'resume'],
   usage: USAGE,
+  options: { ...LIMIT_OPTIONS, repin: { type: 'boolean' } },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, USAGE);
     const { game, run } = await openTarget(ctx, positional(args, 0, 'game'));
     if (run.kind === 'loop' && (await mergeBranchMerged(game, run, ctx.env))) {
       return { text: 'resume at: end 5', data: { at: 'end 5' } };
     }
+    const lines = await pinAndLimit(ctx, game, run, args);
     // Jobs first: a running content agent or check job works in this checkout, so it is not stashed under them.
-    const lines = await waitOtherJobs(ctx, game, run);
+    lines.push(...(await waitOtherJobs(ctx, game, run)));
     lines.push(...(await checkoutRunBranch(game, run)));
     for (const instance of await listInstances(ctx, { game: game.name })) {
       await stopInstance(ctx, instance.id);

@@ -22,6 +22,7 @@ import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
 import { abs, confirmOf, iterationKind, iterationResults, readGameText, readRunJson, runRel, type IterationResults } from './run.ts';
 import type { VariantsFile } from './variants.ts';
+import { harnessHead, harnessLine } from './harness-pin.ts';
 
 /** `ogw loop record`: defect list merge, status change, and the loop iteration record. */
 
@@ -153,7 +154,7 @@ async function variantsOf(game: GameRepo, run: RunState): Promise<RecordVariant[
   return (await readRunJson<VariantsFile>(game, run, `variants-${String(run.iteration)}.json`))?.variants ?? null;
 }
 
-async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[]): Promise<string> {
+async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[], env: NodeJS.ProcessEnv): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
   const performanceFailed = check !== null && checkResult(check, 'performance') === 'fail';
@@ -164,6 +165,7 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
     baseline: evaluate?.baseline ?? null,
     confirms: confirmOf(run, run.iteration),
     kind: kindOf(run, evaluate),
+    harness: harnessLine(run, run.iteration, await harnessHead(env)),
     variants,
     checks: check ? checkNames(check).map((name) => ({ name, result: checkResult(check, name), path: checkRel })) : [],
     judges: evaluate ? await judgesOf(game, evaluate) : null,
@@ -192,7 +194,7 @@ async function baseDefects(game: GameRepo, defectsRel: string, label: string): P
 }
 
 /** Records the finding file of this iteration (or with `hardening`, the latest hardening round) into the defect list. */
-export async function recordFindings(game: GameRepo, run: RunState, hardening: boolean): Promise<RecordResult> {
+export async function recordFindings(game: GameRepo, run: RunState, hardening: boolean, env: NodeJS.ProcessEnv = process.env): Promise<RecordResult> {
   const label = await labelOf(game, run, hardening);
   const file = await readJsonIfExists<FindingsFile>(abs(game, label.findingsRel));
   if (!file) throw new OgwError(`finding file missing: ${label.findingsRel}`);
@@ -217,7 +219,7 @@ export async function recordFindings(game: GameRepo, run: RunState, hardening: b
   const defects = recordDefects({ base: base?.defects ?? [], findings: findings.findings, confirmed, report });
   const previous = base ? { ...base, previous: null } : null;
   await writeJsonAtomic(abs(game, defectsRel), { defects, previous, recordedBy: label.label } satisfies DefectsFile);
-  const record = hardening ? null : await writeIterationRecord(game, run, results, defects);
+  const record = hardening ? null : await writeIterationRecord(game, run, results, defects, env);
   await commitPaths(game.root, [defectsRel, label.findingsRel, ...(record ? [record] : [])], `loop ${run.name}: record ${label.label}`);
   return { defects: defectsRel, record, label: label.label };
 }

@@ -34,6 +34,14 @@ export interface VerdictRecord {
   iteration: number;
   reason: 'success' | 'repeated defect' | 'oscillation' | 'plateau' | 'limit reached' | 'confirm' | 'continue';
   evidence: string[];
+  /** The blocking defects of a candidate or passed confirmation iteration (ogw.md `## loop verdict`); absent without one. */
+  blockedBy?: string[];
+}
+
+/** The `success blocked by` line of a verdict (ogw.md `## loop verdict`); none without blocking defects. */
+export function blockedLines(record: Pick<VerdictRecord, 'blockedBy'>): string[] {
+  const ids = record.blockedBy ?? [];
+  return ids.length > 0 ? [`success blocked by: ${ids.join(', ')}`] : [];
 }
 
 export interface PrepareMergeRecord {

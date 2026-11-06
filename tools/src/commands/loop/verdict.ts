@@ -7,7 +7,8 @@ import type { DefectsFile } from './lib/defects.ts';
 import { iterationRecords } from './lib/iteration-record.ts';
 import { agentJobsOf, runJobs } from './lib/jobs.ts';
 import { WORKER_ROLES } from './lib/sync.ts';
-import { gameSettings, loopData, openTarget, readRunJson, runRel, type VerdictRecord } from './lib/run.ts';
+import { blockedLines, gameSettings, loopData, openTarget, readRunJson, runRel, type VerdictRecord } from './lib/run.ts';
+import { runLimits } from './lib/run-limits.ts';
 import { verdict } from './lib/verdict.ts';
 
 const USAGE = 'ogw loop verdict <game>';
@@ -48,9 +49,13 @@ export const loopVerdict: CommandDef = {
     }
     const commit = records.find((r) => r.iteration === run.iteration)?.commit ?? null;
     const unhandled = await unhandledJobs(game, run, agentJobsOf(await runJobs(ctx, game, run), WORKER_ROLES).map((job) => job.id), commit);
+    const limits = runLimits(run);
     const result = verdict({
       iteration: run.iteration,
       limit: Number((await gameSettings(ctx, game)).loopIterationLimit),
+      runLimit: limits.iterations,
+      until: limits.until,
+      now: Date.now(),
       loopStop: (await ctx.settings()).loopStop,
       records,
       checkPath: runRel(run, `check-${n}.json`),
@@ -61,7 +66,7 @@ export const loopVerdict: CommandDef = {
     await changeOpenRun(game, (open) => {
       loopData(open).verdict = record;
     });
-    const text = [result.reason, ...result.evidence].join('\n');
+    const text = [result.reason, ...result.evidence, ...blockedLines(record)].join('\n');
     return { text, data: record };
   },
 };

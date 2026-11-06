@@ -1,12 +1,20 @@
 import type { HarnessSettings } from '../../../lib/settings.ts';
-import type { DefectsFile } from './defects.ts';
+import type { DefectStatus, DefectsFile, Severity } from './defects.ts';
 import { successPrecondition } from './files.ts';
 import { mainJudges, type ParsedRecord } from './iteration-record.ts';
 import type { VerdictRecord } from './run.ts';
+import { iterationLimitLine, smallerLimit, timeLimitLine } from './run-limits.ts';
 
 export interface VerdictInput {
   iteration: number;
+  /** Game settings `loopIterationLimit`. */
   limit: number;
+  /** The run's `--limit`; none when absent or null. */
+  runLimit?: number | null;
+  /** The run's `--until` (UTC Unix ms); none when absent or null. */
+  until?: number | null;
+  /** The current time (UTC Unix ms) the time limit is judged at; `Date.now()` when absent. */
+  now?: number;
   loopStop: HarnessSettings['loopStop'];
   /** Loop iteration records of the run; the one of `iteration` gives `success` and `confirm`. */
   records: readonly ParsedRecord[];
@@ -48,14 +56,35 @@ function qualified(input: VerdictInput): string[] | null {
   return record.confirms === null ? candidateEvidence(record, input.loopStop) : confirmEvidence(record, input.loopStop);
 }
 
+const BLOCKING_SEVERITIES: readonly Severity[] = ['blocker', 'major'];
+const OPEN_STATUSES: readonly DefectStatus[] = ['open', 'reopened', 'awaiting confirmation'];
+
+/** Ids of the blocking defects (ogw.md `## loop verdict`): `blocker` or `major`, not `fixed` and not `refused`. */
+export function blockingDefects(defects: DefectsFile | null): string[] {
+  return (defects?.defects ?? []).filter((d) => BLOCKING_SEVERITIES.includes(d.severity) && OPEN_STATUSES.includes(d.status)).map((d) => d.id);
+}
+
 function success(input: VerdictInput): string[] | null {
   const evidence = qualified(input);
-  return evidence && input.unhandled.length === 0 ? [...evidence, input.checkPath] : null;
+  return evidence && blockingDefects(input.defects).length === 0 && input.unhandled.length === 0 ? [...evidence, input.checkPath] : null;
 }
 
 function confirm(input: VerdictInput): string[] | null {
   const evidence = qualified(input);
-  return evidence && input.unhandled.length > 0 ? [...evidence, ...input.unhandled.map((id) => `unhandled worker job ${id}`)] : null;
+  if (!evidence || blockingDefects(input.defects).length > 0 || input.unhandled.length === 0) return null;
+  return [...evidence, ...input.unhandled.map((id) => `unhandled worker job ${id}`)];
+}
+
+/** The iteration limit and the time limit of the run that are reached, one evidence line each. */
+function limitReached(input: VerdictInput): string[] | null {
+  const limit = smallerLimit(input.runLimit ?? null, input.limit);
+  const now = input.now ?? Date.now();
+  const until = input.until ?? null;
+  const lines = [
+    ...(input.iteration >= limit.limit ? [iterationLimitLine(input.iteration, limit)] : []),
+    ...(until !== null && now >= until ? [timeLimitLine(now, until)] : []),
+  ];
+  return lines.length > 0 ? lines : null;
 }
 
 /** Defects at or over the limit; `repeated defect` does not count a defect whose `owner` is `resource`. */
@@ -84,12 +113,15 @@ export function verdict(input: VerdictInput): Omit<VerdictRecord, 'iteration'> {
     ['repeated defect', () => countReason(input, 'repeatedDefect', input.loopStop.repeatedDefect)],
     ['oscillation', () => countReason(input, 'oscillation', input.loopStop.oscillation)],
     ['plateau', () => plateau(input)],
-    ['limit reached', () => (input.iteration >= input.limit ? [`iteration ${String(input.iteration)}`, `limit ${String(input.limit)}`] : null)],
+    ['limit reached', () => limitReached(input)],
     ['confirm', () => confirm(input)],
   ];
+  // the blocking defects of an iteration that meets the other success conditions go with whatever reason it gives
+  const blocked = qualified(input) === null ? [] : blockingDefects(input.defects);
+  const blockedBy = blocked.length > 0 ? { blockedBy: blocked } : {};
   for (const [reason, test] of checks) {
     const evidence = test();
-    if (evidence) return { reason, evidence };
+    if (evidence) return { reason, evidence, ...blockedBy };
   }
-  return { reason: 'continue', evidence: [] };
+  return { reason: 'continue', evidence: [], ...blockedBy };
 }

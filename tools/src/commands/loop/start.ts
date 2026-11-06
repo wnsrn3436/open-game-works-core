@@ -13,10 +13,12 @@ import { column, parseTable, section, sectionText, unquote } from './lib/markdow
 import { gameSettings } from './lib/run.ts';
 import { ART_DIRECTION_FILE, NAME_FILE, REFERENCE_FILE, SETUP_REQUEST, artDirectionGaps, readGameNames, requireReference } from './lib/setup.ts';
 import { requireSupportedCore } from '../core/lib/harness-core.ts';
+import { HARNESS_PINS_KEY, harnessHead, type HarnessPin } from './lib/harness-pin.ts';
+import { givenLimits, LIMIT_OPTIONS, RUN_LIMITS_KEY, type RunLimits } from './lib/run-limits.ts';
 import { gameSettingsAt } from '../build/lib/buildrun.ts';
 import { refuseWhileCalibrating } from '../judge/api.ts';
 
-const USAGE = 'ogw loop start <game> --command <create|update>';
+const USAGE = 'ogw loop start <game> --command <create|update> [--limit <iterations>] [--until <unix ms>]';
 
 /** Headings of the `game-design` `## brief` table, in order. */
 export async function briefHeadings(env: NodeJS.ProcessEnv): Promise<string[]> {
@@ -91,11 +93,13 @@ async function rollBack(game: GameRepo, branch: string, origin: string): Promise
 export const loopStart: CommandDef = {
   name: ['loop', 'start'],
   usage: USAGE,
-  options: { command: { type: 'string' } },
+  options: { command: { type: 'string' }, ...LIMIT_OPTIONS },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, USAGE);
     const command = str(args, 'command');
     if (command !== 'create' && command !== 'update') throw new OgwError(`usage: ${USAGE}`);
+    const given = givenLimits(args, Date.now());
+    const limits: RunLimits = { iterations: given.iterations ?? null, until: given.until ?? null };
     const game = await ctx.game(positional(args, 0, 'game'));
     // The open run is checked first: an interrupted iteration leaves changes in the checkout, and the lead agent needs the run name.
     const open = await openRun(game);
@@ -110,6 +114,8 @@ export const loopStart: CommandDef = {
     if (tokenMissing !== null) throw new OgwError(tokenMissing);
     const origin = (await currentBranch(game.root, { env: ctx.env })) ?? (await head(game.root, { env: ctx.env }));
     const stdin = await ctx.stdin();
+    // the run works on this harness commit until a repin (ogw.md `## loop next`)
+    const pins: HarnessPin[] = [{ commit: await harnessHead(ctx.env), iteration: 0 }];
     const name = `${command}-${String(Date.now())}`;
     const branch = `loop/${name}`;
     // The run is registered under the run file lock before any git change, so a concurrent start fails before it touches git.
@@ -119,7 +125,7 @@ export const loopStart: CommandDef = {
       if (other) throw new OgwError(`game ${game.name} has an open run: ${other.name}`, 1, { run: other.name });
       const main = await revParse(game.root, 'main', { env: ctx.env });
       if (main === null) throw new OgwError('game repo has no main branch');
-      runs.push(newRunState({ name, kind: 'loop', command, branch, baseCommit: main }));
+      runs.push(newRunState({ name, kind: 'loop', command, branch, baseCommit: main, data: { [RUN_LIMITS_KEY]: limits, [HARNESS_PINS_KEY]: pins } }));
       return main;
     });
     try {

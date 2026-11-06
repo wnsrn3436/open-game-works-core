@@ -29,6 +29,8 @@ export interface IterationRecordData {
   /** The candidate iteration this confirmation iteration confirms; null for any other iteration. */
   confirms: number | null;
   kind: IterationKind;
+  /** The `- harness:` value: the harness commit of the iteration (ogw.md `## loop record`); `none` when absent. */
+  harness?: string;
   /** The variants of `ogw loop variants` of the iteration; null when it did not run. */
   variants: RecordVariant[] | null;
   checks: { name: string; result: string; path: string }[];
@@ -121,7 +123,7 @@ export function renderIterationRecord(data: IterationRecordData): string {
   return document([
     [
       'commit',
-      `- instance: ${data.commit ?? 'none'}\n- baseline: ${data.baseline ?? 'none'}\n- confirms: ${data.confirms === null ? 'none' : String(data.confirms)}\n- kind: ${data.kind}`,
+      `- instance: ${data.commit ?? 'none'}\n- baseline: ${data.baseline ?? 'none'}\n- confirms: ${data.confirms === null ? 'none' : String(data.confirms)}\n- kind: ${data.kind}\n- harness: ${data.harness ?? 'none'}`,
     ],
     ['variants', variantsBlock(data.variants)],
     ['checks', checks],

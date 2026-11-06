@@ -190,6 +190,8 @@ The tool sets the run name `<command>-<unix ms>`, creates the work branch `loop/
 - If the game has a run that is not closed (a loop run or a build run), the tool prints that run name and does not start.
 - If `git status` of the game repo checkout shows changes, the tool creates nothing and exits with a nonzero code.
 - If the agent CLI of play or judge in harness settings `agents` or of an item of `loop.judgePanel` is Claude Code and the harness secret `claude-code-oauth-token` is not in the secret store of this host, the tool creates nothing and exits with a nonzero code.
+- `--limit <iterations>` sets the iteration limit of the run: the number of the last iteration of the run, an integer of 1 or more. `--until <unix ms>` sets the time limit of the run: a UTC Unix ms later than the current time. For any other value the tool creates nothing and exits with a nonzero code. The run state keeps both, and a limit not given is none. `## loop next` and `## loop verdict` use them, and `ogw loop resume` replaces them
+- The tool pins the harness repo HEAD commit in the run state as the pinned harness commit of the run (`## loop next`)
 
 ## loop next
 
@@ -198,7 +200,15 @@ An iteration is a fun iteration or a completeness iteration, and `ogw loop next`
 - Iteration 1 and a confirmation iteration are completeness iterations
 - After a completeness iteration whose `gate` was `fail`, the next iteration is a completeness iteration
 - After harness settings `loop.funIterations` fun iterations in a row, the next iteration is a completeness iteration
+- After an iteration whose verdict has `success blocked by` (`## loop verdict`), the next iteration is a completeness iteration
 - Otherwise the next iteration is a fun iteration
+
+In a loop run, the tool does not raise the number, and exits with a nonzero code, in these cases:
+
+- The current iteration number is at least the iteration limit of the run: the smaller of its `--limit` and game settings `loopIterationLimit`, or `loopIterationLimit` when the run has no `--limit`
+- The harness repo HEAD is not the pinned harness commit of the run. The output names both commits. With `--repin`, the tool pins the harness repo HEAD instead, starts the iteration and prints `harness: <harness repo HEAD> (repinned from <previous pinned harness commit>)`
+
+Each pin counts for one iteration: the pin of `ogw loop start` for iteration 0, a repin of `ogw loop next` for the iteration it starts, and a repin of `ogw loop resume` as `## loop resume` says. The harness commit of iteration n is the commit of the last pin that counts for iteration n or an earlier one, and iteration n is repinned when a repin that changed the commit counts for it. A build run has no pinned harness commit: its `ogw loop next` does not check the harness repo HEAD, and `--repin` changes nothing in it.
 
 ## loop variants
 
@@ -343,7 +353,7 @@ A play of `evaluate-<iteration>.json` with an empty `result` (its save fixture d
 
 | heading | contents |
 |---|---|
-| `## commit` | Four lines: `- instance: <commit of the instance>`, `- baseline: <baseline game commit or none>`, `- confirms: <number of the candidate iteration if this is a confirmation iteration, otherwise none>`, `- kind: <fun or completeness>` |
+| `## commit` | Five lines: `- instance: <commit of the instance>`, `- baseline: <baseline game commit or none>`, `- confirms: <number of the candidate iteration if this is a confirmation iteration, otherwise none>`, `- kind: <fun or completeness>`, `- harness: <harness commit of the iteration>` (`## loop next`), followed by ` (repinned from <harness commit of the iteration before>)` when the iteration is repinned. In a build run, the harness commit is the harness repo HEAD when `ogw loop record` runs |
 | `## variants` | `none` when `variants-<iteration>.json` does not exist. Otherwise a table with columns `k`, `element`, `commit`, `vs baseline`, `chosen`: per variant of that file, its target element, its variant commit (`none` without one), its `vs baseline` (`none` without one) and `yes` or `no` |
 | `## checks` | A table with columns `check`, `result`, `file`. One row per check name of `check-<iteration>.json`. `result` is the combined result of the items with that name (`pass`, `fail`, `unknown`), and `file` is the path of the result file `records/loops/<run>/check-<iteration>.json` |
 | `## judge` | One `### <judge result path>` heading per judge (step 4 judges and success confirmation judges). Under it, the lines `- kind: <main or success>`, `- status: <done or failed>`, `- agent: <agent CLI> <model> <effort>` (`unknown` when `evaluate-<iteration>.json` has no agent of that judge), `- A: <commit>`, `- B: <commit or none>`, `- vs reference: <value of that judge>`, `- omitted moments: <moments not put in, joined with ", ", or none>`, and under the headings `#### moments`, `#### loser better`, the content of the heading of the same name in the judge result (`none` if absent). `kind` is `main` for a step 4 judge and `success` for a success confirmation judge |
@@ -362,17 +372,19 @@ A play of `evaluate-<iteration>.json` with an empty `result` (its save fixture d
 
 | reason | condition |
 |---|---|
-| `success` | The current iteration is a candidate iteration or a passed confirmation iteration, and there is no unhandled worker job |
+| `success` | The current iteration is a candidate iteration or a passed confirmation iteration, `defects.json` has no blocking defect, and there is no unhandled worker job |
 | `repeated defect` | The same defect went from `awaiting confirmation` to `open` by confirmation `loopStop.repeatedDefect` times. The count starts with the first counted change, returns to 0 when that defect becomes `fixed`, and starts again with the first change after that. Defects whose `owner` is `resource` are not counted |
 | `oscillation` | The same defect changed from `fixed` to `reopened` `loopStop.oscillation` times |
 | `plateau` | Counting only the iterations that are not confirmation iterations and have a `vs baseline`, `loopStop.plateau` consecutive iterations ending with the last one have a `vs baseline` that is not `better` |
-| `limit reached` | The current iteration number is at least game settings `loopIterationLimit` |
+| `limit reached` | The current iteration number is at least the iteration limit of the run (`## loop next`), or the current time has reached the time limit of the run |
 
 - When the conditions of several reasons hold together, the loop stops with the reason highest in the table
 - candidate iteration: a completeness iteration that is not a confirmation iteration, whose step 4 judges together have `vs reference` `pass` and a `vs baseline` that is not `worse`, whose four completeness check elements other than no placeholder (no blocker, performance, full flow, UI quality) are all `pass`, and whose `loopStop.successJudges` success confirmation judges all have `vs reference` `pass`. The no placeholder element is not looked at, because resource work and translation work do not make the loop wait
 - confirmation iteration: the iteration after the verdict of a candidate iteration did not stop the loop and gave `confirm`. The content agent does not edit, and steps 2 to 8 of `## iteration` of [game-loop](../skills/game-loop/SKILL.md) run on the state with the finished resource work and translation work merged. It passes when it meets the conditions of a candidate iteration and the sum of `blocker` in loop iteration record `## play` is 0. The no placeholder element does not block passing here either, and what remains is reported as a failure in `## loop end-record`
 - unhandled worker job: a resource or translation `ogw agent` job of this run that the `- instance:` commit of the current iteration record has not seen. These are running jobs, jobs that ended but are not merged, and jobs merged after that commit. A job that was reassigned or is no longer reassigned, and a job that `ogw loop sync` finally could not merge for a reason other than a conflict or an `ogw data` failure, are not unhandled worker jobs. When there is an unhandled worker job, that iteration was judged without the resources and translations that job made
-- For a candidate iteration or a passed confirmation iteration that is not `success` and has no other reason, `ogw loop verdict` gives `confirm`. The next iteration is the confirmation iteration of that candidate iteration. A confirmation iteration that did not pass gives `continue` when there is no other reason, and the next iteration is a normal iteration
+- blocking defect: a defect of `defects.json` whose `severity` is `blocker` or `major` and whose `status` is `open`, `reopened` or `awaiting confirmation`. A `refused` defect is not one. When the current iteration is a candidate iteration or a passed confirmation iteration and `defects.json` has blocking defects, the output has the line `success blocked by: <their ids joined with ", ">` after the evidence lines, whatever the reason, and the run state keeps those ids with the verdict
+- For a candidate iteration or a passed confirmation iteration that has no blocking defect, is not `success` and has no other reason, `ogw loop verdict` gives `confirm`. The next iteration is the confirmation iteration of that candidate iteration. A confirmation iteration that did not pass, and a candidate iteration or a passed confirmation iteration that has a blocking defect, give `continue` when there is no other reason, and the next iteration is a normal iteration
+- The evidence of `limit reached` has one line per limit reached: `iteration <n> reached --limit <limit>` or `iteration <n> reached game settings loopIterationLimit <limit>`, whichever gives the iteration limit of the run, and `now <unix ms> reached --until <unix ms>`. The time limit is judged only by `ogw loop verdict`, so the iteration in progress when that time comes ends with its loop iteration record before the loop stops
 
 ## loop prepare-merge
 
@@ -389,7 +401,7 @@ A play of `evaluate-<iteration>.json` with an empty `result` (its save fixture d
 
 | heading | contents |
 |---|---|
-| `## reason` | The stop reason that `ogw loop verdict` gave for the last iteration and the evidence for the judgement. With `--stopped-by-human`, `stopped by human` and the last verdict (`- last verdict: <reason> (iteration <n>)`, or `none` when there is no verdict) |
+| `## reason` | The stop reason that `ogw loop verdict` gave for the last iteration and the evidence for the judgement. With `--stopped-by-human`, `stopped by human` and the last verdict (`- last verdict: <reason> (iteration <n>)`, or `none` when there is no verdict). In both, the line `- success blocked by: <defect ids>` follows when the last verdict has `success blocked by` |
 | `## result` | The commit to merge (`none` if there is none) and the `vs baseline` of that iteration (`none` if there is none); when nothing is merged into main, the reason (when it is because of the HEAD of main, the main commit the work branch was created from and the current HEAD of main); the last judge result path; the completeness check results of the last `check-<iteration>.json` under a line that names that iteration and the commit of that file; when the commit to merge is not that commit, the iteration of the commit to merge, the path of its loop iteration record and the completeness check results of its `check-<iteration>.json`; when `ogw loop prepare-merge` made `merge/<run>` with the resource work and translation work merged after the commit to merge, the completeness check results of the commit to merge without the no placeholder result, and the line `merged tree not checked as a whole` |
 | `## failures` | The placeholder resources, missing translations and stale translations that `ogw check <game> --placeholder` reported; when the commit to merge is not the commit of the last loop iteration record, a line that the defect table of the loop iteration record of the commit to merge holds the defects at the commit to merge; the defects whose `status` is `open`, each marked `found on <commit of the last loop iteration record>`; the last failure content of the resource work and translation work that is no longer reassigned because it reached `backgroundRetryLimit`; the jobs that `ogw loop sync` finally could not merge for a reason other than a conflict or an `ogw data` failure, and those reasons |
 | `## human` | `needs human: <question> (decision: <decision>)` for each item of `assumptions.md` whose heading line has `needs human`; the core proposal files added in this run; the rows of `resources.csv` whose `license` is `unknown`; the rows of `resources.csv` whose `status` is `temporary` at the commit to merge, with the sentence that the next `update game` makes them again; the core versions that `ogw core upgrade` of this run skipped; the languages of the `static check` `warnings` of the last `check-<iteration>.json` whose `message` starts with `data check banned_word_missing`; the judge calibration lines; the lines of the `--human` file. Without a judge calibration report on main, the judge calibration line is `judge calibration: never run (ogw judge calibrate <game>; labels: <number of entries of records/calibration/labels.json on main>, added with ogw judge label <game>)`. Otherwise, of the report on main with the highest `<unix ms>`, they are `judge calibration: <report path>: ` followed by its `## rates` lines joined with `; ` (each without its `- `), then one line `judge calibration recommendation: <line>` per line of its `## recommendations` |
@@ -399,12 +411,14 @@ A play of `evaluate-<iteration>.json` with an empty `result` (its save fixture d
 The tool does the following in this order.
 
 1. If it is a loop run and `merge/<run>` has been merged into main, prints `resume at: end 5` and ends
-2. Waits for the `running` jobs, except the `ogw agent` jobs whose role is resource or translation. If a job does not end within harness settings `jobWaitTimeoutMs`, counted per job, prints `job <id> is still running; run ogw loop resume again` and exits with code 1. The lead agent then runs `ogw loop resume` again
-3. Checks out the branch of that run (`loop/<run>` for a loop run, `build/<env>-<version>` for a build run). If there are uncommitted changes, puts them away with `git stash push --include-untracked`
-4. Stops all running instances
-5. Removes the worktrees and branches `agent/<id>` of the variant agents of the run that were not merged
-6. Runs `ogw loop sync <game>`
-7. Prints where to continue. For a build run, it is the step that `## procedure` of [`build`](../skills/build/SKILL.md) sets. For a loop run, it is the first of the following that matches. `n` is the current iteration number
+2. Changes nothing and exits with a nonzero code when `--limit` or `--until` is given in a build run or holds a value that `## loop start` refuses, or when, in a loop run, the harness repo HEAD is not the pinned harness commit (`## loop next`) and `--repin` is not given. For the harness repo HEAD, the output names both commits
+3. With `--repin`, pins the harness repo HEAD when it is not the pinned harness commit. The repin counts for the current iteration when that iteration has started and its loop iteration record does not exist, and for the next iteration otherwise. With `--limit` or `--until`, replaces that limit of the run
+4. Waits for the `running` jobs, except the `ogw agent` jobs whose role is resource or translation. If a job does not end within harness settings `jobWaitTimeoutMs`, counted per job, prints `job <id> is still running; run ogw loop resume again` and exits with code 1. The lead agent then runs `ogw loop resume` again
+5. Checks out the branch of that run (`loop/<run>` for a loop run, `build/<env>-<version>` for a build run). If there are uncommitted changes, puts them away with `git stash push --include-untracked`
+6. Stops all running instances
+7. Removes the worktrees and branches `agent/<id>` of the variant agents of the run that were not merged
+8. Runs `ogw loop sync <game>`
+9. Prints where to continue. For a build run, it is the step that `## procedure` of [`build`](../skills/build/SKILL.md) sets. For a loop run, it is the first of the following that matches. `n` is the current iteration number
    - If `n` is 0, step 2 of `## start` of [game-loop](../skills/game-loop/SKILL.md)
    - If `records/loops/<run>/iteration-<n>.md` exists, step 8 of iteration `n`
    - If `records/loops/<run>/content-<n>.md` exists, step 2 of iteration `n`

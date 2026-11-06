@@ -74,6 +74,7 @@ const DATA: IterationRecordData = {
   baseline: 'b0',
   confirms: null,
   kind: 'completeness',
+  harness: 'h1',
   variants: null,
   checks: [{ name: 'regression test', result: 'pass', path: 'p' }, { name: 'static check', result: 'pass', path: 'p' }, { name: 'no blocker', result: 'pass', path: 'p' }, { name: 'full flow', result: 'pass', path: 'p' }],
   judges: [
@@ -99,7 +100,7 @@ describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
     expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## load', '## temporary resources']);
-    expect(text).toContain('- confirms: none\n- kind: completeness\n\n## variants\n\nnone\n');
+    expect(text).toContain('- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n');
     expect(text).toContain('- status: done\n- agent: claude-code m1 high\n- A: c1\n- B: b0\n- vs reference: pass\n- omitted moments: boss\n');
     expect(text).toContain('- agent: codex m2 medium\n');
     expect(text).toContain(
@@ -157,7 +158,7 @@ describe('iteration record', () => {
   it('writes none for steps that did not run', () => {
     const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [] });
     expect(text).toBe(
-      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n',
+      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n',
     );
     const parsed = parseIterationRecord(text, 2, 'p');
     expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0, vsBaseline: null, vsReference: null });
@@ -307,7 +308,7 @@ describe('verdict', () => {
   });
 
   it('gives limit reached', () => {
-    expect(verdict({ ...base, iteration: 5 })).toEqual({ reason: 'limit reached', evidence: ['iteration 5', 'limit 5'] });
+    expect(verdict({ ...base, iteration: 5 })).toEqual({ reason: 'limit reached', evidence: ['iteration 5 reached game settings loopIterationLimit 5'] });
     expect(verdict({ ...base, iteration: 4 }).reason).toBe('continue');
   });
 

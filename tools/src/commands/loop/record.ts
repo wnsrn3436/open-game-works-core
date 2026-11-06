@@ -11,7 +11,7 @@ export const loopRecord: CommandDef = {
   async run(ctx, args) {
     expectPositionals(args, 1, 1, USAGE);
     const { game, run } = await openTarget(ctx, positional(args, 0, 'game'));
-    const result = await recordFindings(game, run, flag(args, 'hardening'));
+    const result = await recordFindings(game, run, flag(args, 'hardening'), ctx.env);
     return { text: [result.defects, ...(result.record ? [result.record] : [])].join('\n'), data: result };
   },
 };

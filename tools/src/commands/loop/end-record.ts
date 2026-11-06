@@ -14,7 +14,7 @@ import type { DefectsFile } from './lib/defects.ts';
 import { checkResult, COMPLETENESS_CHECKS, mainJudge, type CheckFile, type EvaluateFile } from './lib/files.ts';
 import { iterationRecords, type ParsedRecord } from './lib/iteration-record.ts';
 import { document } from './lib/markdown.ts';
-import { abs, coreUpgrade, loopData, openTarget, readRunJson, runRel } from './lib/run.ts';
+import { abs, blockedLines, coreUpgrade, loopData, openTarget, readRunJson, runRel } from './lib/run.ts';
 import { calibrationHumanLines } from '../judge/api.ts';
 
 const USAGE = 'ogw loop end-record <game> [--stopped-by-human] [--human <file>]';
@@ -173,9 +173,10 @@ export const loopEndRecord: CommandDef = {
     if (byHuman && stop !== null) throw new OgwError(`the loop already stopped with ${stop.reason}: run without --stopped-by-human`);
     let reason: string;
     if (byHuman) {
-      reason = ['stopped by human', bullets([last != null ? `last verdict: ${last.reason} (iteration ${String(last.iteration)})` : 'last verdict: none'])].join('\n\n');
+      const lastLines = last != null ? [`last verdict: ${last.reason} (iteration ${String(last.iteration)})`, ...blockedLines(last)] : ['last verdict: none'];
+      reason = ['stopped by human', bullets(lastLines)].join('\n\n');
     } else if (stop !== null) {
-      reason = [stop.reason, bullets(stop.evidence)].filter((p) => p !== '').join('\n\n');
+      reason = [stop.reason, bullets([...stop.evidence, ...blockedLines(stop)])].filter((p) => p !== '').join('\n\n');
     } else {
       throw new OgwError('no stop reason: run ogw loop verdict until it gives a stop reason, or give --stopped-by-human when a person stopped the loop');
     }
