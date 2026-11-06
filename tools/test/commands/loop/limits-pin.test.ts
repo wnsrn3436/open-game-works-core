@@ -94,6 +94,24 @@ describe('ogw loop next limits and harness pin', () => {
     expect(await recordEmpty(g, run, 3)).toContain(`- harness: ${changed}\n\n## variants`);
   });
 
+  it('fails with the pin output before the core version check when the harness HEAD moved to a newer core', async () => {
+    const g = setupGame();
+    const run = await start(g);
+    const old = git(g.ws.harness, 'rev-parse', 'HEAD');
+    const changed = changeHarness(g);
+    // the moved HEAD holds the specs of a core newer than the game's
+    git(g.ws.harness, 'tag', 'core-v99.0.0');
+    const refused = await ogw(g.ws, ['loop', 'next', 'g']);
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain(`harness repo HEAD ${changed} is not the pinned harness commit ${old} of run ${run}`);
+    expect(refused.stderr).not.toContain('the specs of this harness are of core');
+    expect((await currentRun(g)).iteration).toBe(0);
+    // with --repin the core version check runs on the new HEAD
+    const repinned = await ogw(g.ws, ['loop', 'next', 'g', '--repin']);
+    expect(repinned.code).toBe(1);
+    expect(repinned.stderr).toContain('the specs of this harness are of core 99.0.0');
+  });
+
   it('does not check the harness in a build run, whose record writes the harness repo HEAD', async () => {
     const g = setupGame();
     await openBuildRun(g, { iteration: 0 });

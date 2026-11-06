@@ -217,6 +217,8 @@ In a loop run, the tool does not raise the number, and exits with a nonzero code
 - The current iteration number is at least the iteration limit of the run: the smaller of its `--limit` and game settings `loopIterationLimit`, or `loopIterationLimit` when the run has no `--limit`
 - The harness repo HEAD is not the pinned harness commit of the run. The output names both commits. With `--repin`, the tool pins the harness repo HEAD instead, starts the iteration and prints `harness: <harness repo HEAD> (repinned from <previous pinned harness commit>)`
 
+In a loop run without `--repin`, the tool compares the harness repo HEAD with the pinned harness commit before it checks the core version of the game against the harness (AGENTS.md `## repo`), so a harness repo HEAD that moved away from the pinned commit fails with the pin output and the run stays open.
+
 Each pin counts for one iteration: the pin of `ogw loop start` for iteration 0, a repin of `ogw loop next` for the iteration it starts, and a repin of `ogw loop resume` as `## loop resume` says. The harness commit of iteration n is the commit of the last pin that counts for iteration n or an earlier one, and iteration n is repinned when a repin that changed the commit counts for it. A build run has no pinned harness commit: its `ogw loop next` does not check the harness repo HEAD, and `--repin` changes nothing in it.
 
 ## loop variants

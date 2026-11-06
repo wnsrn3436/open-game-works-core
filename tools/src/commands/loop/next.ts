@@ -75,6 +75,8 @@ export const loopNext: CommandDef = {
     if ((await ctx.settings()).useLocalCore) {
       throw new OgwError('harness settings useLocalCore is true: loop iterations do not start while the local core is in use');
     }
+    // a harness HEAD that moved away from the pinned commit fails with the pin output first, so the run stays open (ogw.md `## loop next`)
+    if (run.kind === 'loop' && !flag(args, 'repin')) requirePinned(run, await harnessHead(ctx.env));
     // the content agent of the iteration reads the specs of this harness
     await requireHarnessCore(ctx, game.name, await gameCoreVersion(game));
     const limit = Number((await gameSettings(ctx, game)).loopIterationLimit);
