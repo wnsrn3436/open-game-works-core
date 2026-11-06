@@ -64,6 +64,8 @@ export interface InstancePlan {
   movie?: { file: string; resolution: [number, number] };
   /** `--input-latency`: the ms by which the supervisor delays each input command to the client `main`; absent: none. */
   inputLatencyMs?: number;
+  /** `--network-delay`: the ms of `set_network_delay` the supervisor sends the client `main` on each connection; absent: none. */
+  networkDelayMs?: number;
 }
 
 /** Dev account of the client `main` when no play or judge agent plays it. */

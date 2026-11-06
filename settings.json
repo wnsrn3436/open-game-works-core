@@ -69,9 +69,14 @@
     "judgeTimeLimitMs": 3600000
   },
   "calibration": {
-    "nullPairs": 3,
-    "orderRuns": 2,
-    "degradeLatencyMs": 150
+    "nullPairs": 10,
+    "orderPairs": 10,
+    "orderRuns": 1,
+    "retestPairs": 10,
+    "degradedPairs": 15,
+    "degradeLatencyMs": 150,
+    "degradeNetworkDelayMs": 3000,
+    "minDecisions": 30
   },
   "reviewRounds": 4,
   "codeCheck": {

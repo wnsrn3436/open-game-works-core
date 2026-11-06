@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChannelResponse } from '../../../src/commands/instance/lib/channel.ts';
 import { InputLatency } from '../../../src/commands/instance/lib/latency.ts';
+import { restartClient } from '../../../src/commands/instance/automation.ts';
 import { readPlayAccess, readRecord } from '../../../src/commands/instance/lib/records.ts';
+import { createContext } from '../../../src/lib/command.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { setupRunner, startFor, stopAll, type Runner } from './runner.ts';
 
@@ -161,5 +163,50 @@ describe('ogw instance start --input-latency', () => {
     const run = await ogw(runner.ws, ['instance', 'start', 'g', '--input-latency', 'x']);
     expect(run.code).not.toBe(0);
     expect(run.stderr).toContain('invalid --input-latency: x');
+  });
+});
+
+describe('ogw instance start --network-delay', () => {
+  let runner: Runner;
+
+  beforeAll(() => {
+    runner = setupRunner();
+  });
+
+  afterAll(async () => {
+    await stopAll(runner);
+  });
+
+  const delays = (): string[] =>
+    runner
+      .requests('main')
+      .filter((r) => r.command === 'set_network_delay')
+      .map((r) => r.args.join(' '));
+
+  it('sends set_network_delay to the client main first on each connection of its automation channel', async () => {
+    const id = await startFor(runner, ['--network-delay', '3000']);
+    expect((await readRecord(id, runner.ws.env)).plan?.networkDelayMs).toBe(3000);
+    expect(runner.requests('main')[0]).toMatchObject({ command: 'set_network_delay', args: ['3000'] });
+    expect(delays()).toEqual(['3000']);
+    // a restart connects the channel again: the new boot gets it again
+    const ctx = createContext({ cwd: runner.ws.root, env: runner.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    await restartClient(ctx, id);
+    expect(delays()).toEqual(['3000', '3000']);
+    await stopAll(runner);
+    // an instance without the option gets none
+    await startFor(runner);
+    expect(delays()).toEqual(['3000', '3000']);
+    await stopAll(runner);
+  });
+
+  it('fails the start when the first set_network_delay is not ok, and refuses a value that is not a whole number of ms', async () => {
+    runner.config({ clients: { main: { fail: { set_network_delay: 'NetworkCore is not initialized' } } } });
+    const run = await ogw(runner.ws, ['instance', 'start', 'g', '--network-delay', '3000']);
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain('main: set_network_delay failed: "NetworkCore is not initialized"');
+    runner.config({});
+    const bad = await ogw(runner.ws, ['instance', 'start', 'g', '--network-delay', 'x']);
+    expect(bad.code).not.toBe(0);
+    expect(bad.stderr).toContain('invalid --network-delay: x');
   });
 });

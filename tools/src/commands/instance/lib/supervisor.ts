@@ -78,6 +78,8 @@ export class Supervisor {
   private stopping = false;
   /** `--input-latency` of the client `main`; null without it. */
   private latency: InputLatency | null = null;
+  /** `--network-delay`: why the first `set_network_delay` to the client `main` failed, or null; null before it was sent. */
+  private firstNetworkDelay: Promise<string | null> | null = null;
   private stopped!: Promise<void>;
   private markStopped!: () => void;
 
@@ -395,6 +397,7 @@ export class Supervisor {
     const clients = plannedClients(this.plan);
     for (const client of clients) {
       const channel = new ClientChannel(client.name);
+      if (client.name === 'main') this.watchNetworkDelay(channel);
       await channel.listen();
       this.channels.set(client.name, channel);
       const values: LaunchValues = {
@@ -418,6 +421,31 @@ export class Supervisor {
         throw new OgwError(`${client.name}: ${(error as Error).message}`);
       }
     }));
+    const delayFailure = await this.firstNetworkDelay;
+    if (delayFailure !== null) throw new OgwError(`main: set_network_delay failed: ${delayFailure}`);
+  }
+
+  /**
+   * `--network-delay` (ogw.md `## runner`): sends `set_network_delay` to the client `main` each time its automation
+   * channel connects. The start checks the answer to the first; a later answer that is not `ok` goes to the log.
+   */
+  private watchNetworkDelay(channel: ClientChannel): void {
+    const ms = this.plan.networkDelayMs ?? 0;
+    if (ms <= 0) return;
+    const timeoutMs = this.plan.commandTimeoutMs + LIMITS.shortMs;
+    channel.onConnect = () => {
+      const failure = channel.request('set_network_delay', [String(ms)], timeoutMs).then(
+        (response) => (response.ok ? null : JSON.stringify(response.result)),
+        (error: unknown) => (error as Error).message,
+      );
+      if (this.firstNetworkDelay === null) {
+        this.firstNetworkDelay = failure;
+        return;
+      }
+      void failure.then((why) => {
+        if (why !== null) this.log(`main: set_network_delay failed: ${why}`);
+      });
+    };
   }
 
   /** Waits until the client reached `boot_stage` `Done`, or with `done` false until its automation channel connected. */

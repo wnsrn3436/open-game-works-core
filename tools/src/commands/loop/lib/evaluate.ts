@@ -100,8 +100,10 @@ export interface JudgePair {
   /** This commit. */
   commit: string;
   baseline: string | null;
-  /** `--input-latency` of the instances of the baseline commit (the degraded pair of `ogw judge calibrate`); 0 for none. */
+  /** `--input-latency` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); 0 for none. */
   baselineLatencyMs: number;
+  /** `--network-delay` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent or 0 for none. */
+  baselineNetworkDelayMs?: number;
 }
 
 /** Where the judging puts its files: the run of `ogw loop evaluate`, or the calibration folders of `ogw judge calibrate`. */
@@ -147,6 +149,8 @@ interface Spec {
   headless?: boolean;
   /** `--input-latency` of the instance; absent or 0 for none. */
   inputLatencyMs?: number;
+  /** `--network-delay` of the instance; absent or 0 for none. */
+  networkDelayMs?: number;
   /** The id the instance gets: one a judge input named before the start. */
   id?: string;
 }
@@ -406,6 +410,7 @@ async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
   else if (spec.headless !== true) options.played = true;
   if (state.plan.db) options.db = state.plan.db;
   if (spec.inputLatencyMs !== undefined && spec.inputLatencyMs > 0) options.inputLatencyMs = spec.inputLatencyMs;
+  if (spec.networkDelayMs !== undefined && spec.networkDelayMs > 0) options.networkDelayMs = spec.networkDelayMs;
   if (spec.id !== undefined) options.id = spec.id;
   const reserved: string[] = [];
   try {
@@ -469,10 +474,15 @@ function sides(slot: JudgeSlot): { A: string; B: string | null } {
   return slot.side === 'A' ? { A: commit, B: baseline } : { A: baseline, B: commit };
 }
 
-/** The `--input-latency` of the instances of side `side` of the judge: that of the baseline commit on its side. */
-function sideLatency(slot: JudgeSlot, side: 'A' | 'B'): { inputLatencyMs?: number } {
-  const latency = slot.pair.baselineLatencyMs;
-  return latency > 0 && side !== slot.side ? { inputLatencyMs: latency } : {};
+/** The `--input-latency` and `--network-delay` of the instances of the baseline commit of a pair. */
+function baselineDegrade(pair: JudgePair): Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'> {
+  const delay = pair.baselineNetworkDelayMs ?? 0;
+  return { ...(pair.baselineLatencyMs > 0 ? { inputLatencyMs: pair.baselineLatencyMs } : {}), ...(delay > 0 ? { networkDelayMs: delay } : {}) };
+}
+
+/** The `--input-latency` and `--network-delay` of the instances of side `side` of the judge: those of the baseline commit on its side. */
+function sideDegrade(slot: JudgeSlot, side: 'A' | 'B'): Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'> {
+  return side !== slot.side ? baselineDegrade(slot.pair) : {};
 }
 
 interface JudgeSpec {
@@ -486,9 +496,9 @@ interface JudgeSpec {
 function judgeSpecs(plan: JudgingPlan, slot: JudgeSlot): JudgeSpec[] {
   const { A, B } = sides(slot);
   const commits: ['A' | 'B', string][] = B === null ? [['A', A]] : [['A', A], ['B', B]];
-  const specs: JudgeSpec[] = commits.map(([side, commit]) => ({ side, moment: null, spec: { commit, ...sideLatency(slot, side) } }));
+  const specs: JudgeSpec[] = commits.map(([side, commit]) => ({ side, moment: null, spec: { commit, ...sideDegrade(slot, side) } }));
   for (const moment of slot.moments) {
-    for (const [side, commit] of commits) specs.push({ side, moment, spec: { commit, fixture: fixturePath(plan, moment), ...sideLatency(slot, side) } });
+    for (const [side, commit] of commits) specs.push({ side, moment, spec: { commit, fixture: fixturePath(plan, moment), ...sideDegrade(slot, side) } });
   }
   return specs;
 }
@@ -858,10 +868,10 @@ const SHARED_TELEMETRY_RUNS = 3;
 const SHARED_TELEMETRY_RETRIES = 3;
 
 /** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
-async function botRunOf(state: State, commit: string, scenario: Scenario, inputLatencyMs = 0): Promise<BotRun | null> {
+async function botRunOf(state: State, commit: string, scenario: Scenario, degrade: Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'> = {}): Promise<BotRun | null> {
   let instance: InstanceInfo | null = null;
   try {
-    instance = await start(state, { commit, headless: true, inputLatencyMs });
+    instance = await start(state, { commit, headless: true, ...degrade });
     const run = instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.botPollMs);
     if (run === null) state.ctx.log(`shared telemetry: a bot run of ${commit} did not reach every step`);
     return run;
@@ -878,10 +888,16 @@ async function botRunOf(state: State, commit: string, scenario: Scenario, inputL
  * The runs of `commit` that reached every step, with new runs, one at a time, in place of those that did not, up to
  * `SHARED_TELEMETRY_RETRIES` new runs; null when fewer than `SHARED_TELEMETRY_RUNS` runs reached every step.
  */
-async function completeRuns(state: State, commit: string, scenario: Scenario, inputLatencyMs: number, first: readonly (BotRun | null)[]): Promise<BotRun[] | null> {
+async function completeRuns(
+  state: State,
+  commit: string,
+  scenario: Scenario,
+  degrade: Pick<Spec, 'inputLatencyMs' | 'networkDelayMs'>,
+  first: readonly (BotRun | null)[],
+): Promise<BotRun[] | null> {
   const runs = first.filter((r): r is BotRun => r !== null);
   for (let retry = 0; runs.length < SHARED_TELEMETRY_RUNS && retry < SHARED_TELEMETRY_RETRIES; retry++) {
-    const run = await botRunOf(state, commit, scenario, inputLatencyMs);
+    const run = await botRunOf(state, commit, scenario, degrade);
     checkStopped(state);
     if (run !== null) runs.push(run);
   }
@@ -898,12 +914,12 @@ async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scena
   if (pair.baseline === null) return;
   const baseline = pair.baseline;
   const runs = await Promise.all(
-    Array.from({ length: SHARED_TELEMETRY_RUNS }, () => [botRunOf(state, pair.commit, scenario), botRunOf(state, baseline, scenario, pair.baselineLatencyMs)]).flat(),
+    Array.from({ length: SHARED_TELEMETRY_RUNS }, () => [botRunOf(state, pair.commit, scenario), botRunOf(state, baseline, scenario, baselineDegrade(pair))]).flat(),
   );
   checkStopped(state);
   const [mine, theirRuns] = await Promise.all([
-    completeRuns(state, pair.commit, scenario, 0, runs.filter((_, i) => i % 2 === 0)),
-    completeRuns(state, baseline, scenario, pair.baselineLatencyMs, runs.filter((_, i) => i % 2 === 1)),
+    completeRuns(state, pair.commit, scenario, {}, runs.filter((_, i) => i % 2 === 0)),
+    completeRuns(state, baseline, scenario, baselineDegrade(pair), runs.filter((_, i) => i % 2 === 1)),
   ]);
   checkStopped(state);
   if (mine === null || theirRuns === null) return;

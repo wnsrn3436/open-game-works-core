@@ -147,7 +147,16 @@ export interface HarnessSettings {
     judgeInstanceBudgetMs: number;
     judgeTimeLimitMs: number;
   };
-  calibration: { nullPairs: number; orderRuns: number; degradeLatencyMs: number };
+  calibration: {
+    nullPairs: number;
+    orderPairs: number;
+    orderRuns: number;
+    retestPairs: number;
+    degradedPairs: number;
+    degradeLatencyMs: number;
+    degradeNetworkDelayMs: number;
+    minDecisions: number;
+  };
   reviewRounds: number;
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };

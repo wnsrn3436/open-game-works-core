@@ -57,6 +57,8 @@ export class ClientChannel {
   port = 0;
   /** Number of accepted connections; a restart makes it grow. */
   generation = 0;
+  /** Called with the new generation each time a connection is accepted, after the waiters for a connection woke. */
+  onConnect: ((generation: number) => void) | null = null;
   private server: WebSocketServer | null = null;
   private socket: WebSocket | null = null;
   private nextId = 1;
@@ -118,6 +120,7 @@ export class ClientChannel {
     const waiters = this.connectWaiters;
     this.connectWaiters = [];
     for (const wake of waiters) wake();
+    this.onConnect?.(this.generation);
   }
 
   private detach(socket: WebSocket): void {

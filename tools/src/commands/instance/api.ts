@@ -77,6 +77,8 @@ export interface InstanceOptions {
   ignoreConcurrencyLimit?: boolean;
   /** `--input-latency`: the supervisor delays each input command to the client `main` by this many ms. */
   inputLatencyMs?: number;
+  /** `--network-delay`: the client `main` takes each server response as received this many ms after it arrived. */
+  networkDelayMs?: number;
   /** The id of the instance, made with `newId` by a caller that names the instance before it starts (a judge input); a new id otherwise. */
   id?: string;
 }
@@ -354,6 +356,7 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
         ...(options.played === true ? { played: true } : {}),
         ...(options.movie === undefined ? {} : { movie: { ...options.movie, resolution: baseResolution(gameSettings) } }),
         ...(options.inputLatencyMs === undefined || options.inputLatencyMs <= 0 ? {} : { inputLatencyMs: options.inputLatencyMs }),
+        ...(options.networkDelayMs === undefined || options.networkDelayMs <= 0 ? {} : { networkDelayMs: options.networkDelayMs }),
       };
     }, ctx.env);
     checkAborted(signal);

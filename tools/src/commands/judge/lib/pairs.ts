@@ -49,6 +49,17 @@ export async function judgedPairs(root: string, env: NodeJS.ProcessEnv): Promise
   return pairs;
 }
 
+/** The judged pairs with different commits: of those with the same `this` and `baseline` commits, the first. */
+export function distinctPairs(pairs: readonly JudgedPair[]): JudgedPair[] {
+  const seen = new Set<string>();
+  return pairs.filter((p) => {
+    const key = `${p.commit} ${p.baseline}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Whether the game repo has the commit. */
 export async function hasCommit(root: string, commit: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   return (await gitRaw(root, ['cat-file', '-e', `${commit}^{commit}`], { env })).code === 0;

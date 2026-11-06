@@ -6,13 +6,14 @@ import { START_LIMIT_MS } from './lib/supervisor.ts';
 
 export const start: CommandDef = {
   name: ['instance', 'start'],
-  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>]',
+  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--network-delay <ms>]',
   options: {
     commit: { type: 'string' },
     platform: { type: 'string' },
     fixture: { type: 'string' },
     db: { type: 'string' },
     'input-latency': { type: 'string' },
+    'network-delay': { type: 'string' },
   },
   background: {
     game: (args) => args.positionals[0] ?? null,
@@ -23,6 +24,7 @@ export const start: CommandDef = {
     const db = str(args, 'db');
     if (db !== undefined && db !== 'postgresql') throw new OgwError(`invalid --db: ${db}`);
     const inputLatencyMs = nonNegativeInt(args, 'input-latency');
+    const networkDelayMs = nonNegativeInt(args, 'network-delay');
     const info = await startInstance(ctx, {
       game: positional(args, 0, 'game'),
       commit: str(args, 'commit'),
@@ -30,6 +32,7 @@ export const start: CommandDef = {
       fixture: str(args, 'fixture'),
       db,
       ...(inputLatencyMs === undefined ? {} : { inputLatencyMs }),
+      ...(networkDelayMs === undefined ? {} : { networkDelayMs }),
     });
     return {
       text: [`id: ${info.id}`, `address: ${info.serverUrl}`].join('\n'),
