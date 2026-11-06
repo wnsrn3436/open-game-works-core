@@ -16,8 +16,12 @@ import { startPostgres } from '../../../../src/commands/core/lib/postgres.ts';
 import { LIMITS } from '../../../../src/lib/limits.ts';
 import { fakeContext } from '../helpers.ts';
 import { gitOnlyHarness } from '../../../helpers/workspace.ts';
+import { fakeProgram } from '../../../helpers/fake-child.ts';
 
 vi.mock('../../../../src/commands/core/lib/postgres.ts', () => ({ startPostgres: vi.fn() }));
+// a run that must send PUT /started within a start limit runs its engine in this process (`fakeProgram`), so how long
+// a process takes to boot on a loaded host does not decide the run
+vi.mock('node:child_process', async (importOriginal) => (await import('../../../helpers/fake-child.ts')).fakeSpawn(await importOriginal()));
 
 const ctx = { ...fakeContext(), env: { ...process.env, OGW_HARNESS_ROOT: gitOnlyHarness() } };
 
@@ -35,7 +39,7 @@ function gameRoot(files: Record<string, string> = {}): string {
  * a test run writes its argv to `args.json` and its `user://` variable to `data.json`,
  * sends `result` to the test host (unless null) and then writes `sent`, prints `output`, and ends with `code` (or hangs).
  */
-function fakeGodot(behavior: { importCode?: number; result?: unknown; output?: string; code?: number; hang?: boolean; start?: boolean }): { path: string; argsFile: string; sentFile: string; importsFile: string; dataFile: string } {
+function fakeGodot(behavior: { importCode?: number; result?: unknown; output?: string; code?: number; hang?: boolean }): { path: string; argsFile: string; sentFile: string; importsFile: string; dataFile: string } {
   const dir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
   const argsFile = join(dir, 'args.json');
   const sentFile = join(dir, 'sent');
@@ -58,7 +62,6 @@ const config = fs.readFileSync(args.find((a) => a.startsWith('-gconfig=')).slice
 fs.writeFileSync(${JSON.stringify(argsFile)} + '.config', config);
 const host = JSON.parse(config).ogw_test_host;
 (async () => {
-  if (${String(behavior.start === true)}) await fetch(host + '/started', { method: 'PUT', body: JSON.stringify({ run_id: JSON.parse(config).ogw_run_id }) });
   const result = ${JSON.stringify(behavior.result ?? null)};
   if (result !== null) await fetch(host + '/result', { method: 'PUT', body: JSON.stringify(result) });
   fs.writeFileSync(${JSON.stringify(sentFile)}, '');
@@ -235,7 +238,22 @@ describe('regressionTest', () => {
     const stalled = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: fakeGodot({ hang: true }).path, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300 });
     expect(Date.now() - started).toBeLessThan(20_000);
     expect(stalled.failures.map((f) => f.message)).toContain('test run did not start within 300 ms (no PUT /started)');
-    const ran = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: fakeGodot({ start: true, result: passing }).path, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300 });
+    // a GUT run that sends PUT /started at once and its result 1000 ms later, past the start limit, and exits; the
+    // stalled run imported the checkout
+    const starts = join(mkdtempSync(join(tmpdir(), 'ogw-godot-')), 'godot');
+    fakeProgram(starts, (child) => {
+      const arg = child.args.find((a) => a.startsWith('-gconfig=')) ?? '';
+      const config = JSON.parse(readFileSync(arg.slice('-gconfig='.length), 'utf8')) as { ogw_test_host: string; ogw_run_id: string };
+      const put = (path: string, body: unknown): Promise<Response> => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
+      void put('/started', { run_id: config.ogw_run_id }).then(() => {
+        child.after(1000, () => {
+          void put('/result', passing).then(() => {
+            child.exit(0);
+          });
+        });
+      });
+    });
+    const ran = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: starts, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300, imported: true });
     expect(ran.failures).toEqual([]);
   }, 60_000);
 

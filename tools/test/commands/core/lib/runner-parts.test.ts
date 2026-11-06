@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { startTestHost } from '../../../../src/commands/check/api.ts';
 import { addOutcomes, appFolder, consoleMessages, gutArgs, gutPass, judgeRun, WEB_LOADING_PAGES, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
 import { createContext } from '../../../../src/lib/command.ts';
@@ -9,6 +9,17 @@ import { chmodSync } from 'node:fs';
 import { runModulePool } from '../../../../src/commands/core/lib/ready-queue.ts';
 import { longestFirst } from '../../../../src/commands/core/test.ts';
 import { makeWorkspace } from '../../../helpers/workspace.ts';
+import { fakeProgram, spawnCount, type FakeChild } from '../../../helpers/fake-child.ts';
+
+// a run that must send PUT /started within a start limit runs its browser or engine in this process (`fakeProgram`),
+// so how long a process takes to boot on a loaded host does not decide the run
+vi.mock('node:child_process', async (importOriginal) => (await import('../../../helpers/fake-child.ts')).fakeSpawn(await importOriginal()));
+
+function put(host: string, path: string, body: unknown): Promise<Response> {
+  return fetch(host + path, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+const PASSING = { results: [{ name: 'a::t', status: 'pass' }], run_failures: [] };
 
 describe('browser run helpers', () => {
   it('waits for the result the test host received', async () => {
@@ -129,54 +140,64 @@ setTimeout(() => undefined, 60000);
 });
 
 describe('a run that does not start', () => {
+  /** The test host and run ID of the page a fake browser was given as its last argument. */
+  function pageRun(child: FakeChild): { host: string; runId: string } {
+    const page = new URL(child.args[child.args.length - 1] ?? '');
+    return { host: page.searchParams.get('ogw_test_host') ?? '', runId: page.searchParams.get('ogw_run_id') ?? '' };
+  }
+
+  /** A browser process that never sends PUT /started. */
+  function stallingBrowser(dir: string): string {
+    const path = join(dir, 'stalls');
+    writeFileSync(path, `#!${process.execPath}\nsetTimeout(() => undefined, 60000);\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
   it('ends a browser run that sends no PUT /started within the start limit, opens the page once more, and keeps one that started', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-web-')));
     const exportDir = join(dir, 'export');
     mkdirSync(exportDir);
     writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
-    const browser = (start: boolean): string => {
-      const path = join(dir, start ? 'starts' : 'stalls');
-      writeFileSync(path, `#!${process.execPath}
-const fs = require('node:fs');
-fs.appendFileSync(${JSON.stringify(join(dir, start ? 'launches-start' : 'launches-stall'))}, 'x');
-const page = new URL(process.argv[process.argv.length - 1]);
-const host = page.searchParams.get('ogw_test_host');
-const runId = page.searchParams.get('ogw_run_id');
-if (${String(start)}) {
-  fetch(host + '/started', { method: 'PUT', body: JSON.stringify({ run_id: runId }) }).then(() => new Promise((r) => setTimeout(r, 1500)))
-    .then(() => fetch(host + '/result', { method: 'PUT', body: JSON.stringify({ results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }) }));
-}
-setTimeout(() => undefined, 60000);
-`);
-      chmodSync(path, 0o755);
-      return path;
-    };
+    const stalls = stallingBrowser(dir);
+    // sends PUT /started at once and its result 1500 ms later, past the start limit
+    const starts = join(dir, 'starts');
+    fakeProgram(starts, (child) => {
+      const { host, runId } = pageRun(child);
+      void put(host, '/started', { run_id: runId }).then(() => {
+        child.after(1500, () => {
+          void put(host, '/result', PASSING);
+        });
+      });
+    });
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const started = Date.now();
-    const stalled = await webModuleTest(ctx, { chromium: browser(false), exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 500 });
+    const stalled = await webModuleTest(ctx, { chromium: stalls, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 500 });
     expect(Date.now() - started).toBeLessThan(20_000);
     expect(stalled.failures).toContain('browser run: the page did not start within 500 ms (no PUT /started)');
-    expect(readFileSync(join(dir, 'launches-stall'), 'utf8')).toBe('xx');
-    const ran = await webModuleTest(ctx, { chromium: browser(true), exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 500 });
+    expect(spawnCount(stalls)).toBe(2);
+    const ran = await webModuleTest(ctx, { chromium: starts, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 500 });
     expect(ran.failures.filter((f) => f.includes('did not start'))).toEqual([]);
     expect(ran.tests).toBe(1);
-    expect(readFileSync(join(dir, 'launches-start'), 'utf8')).toBe('x');
+    expect(spawnCount(starts)).toBe(1);
   }, 60_000);
 
   it('keeps a native run that sent PUT /started past the start limit', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-native-')));
     const godot = join(dir, 'godot');
-    // reads the test host and run ID from the test run config file of its last argument, starts, and sends its result after 1500 ms
-    writeFileSync(godot, `#!${process.execPath}
-const fs = require('node:fs');
-const arg = process.argv[process.argv.length - 1];
-const config = JSON.parse(fs.readFileSync(arg.slice(arg.indexOf('=') + 1), 'utf8'));
-const put = (path, body) => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
-put('/started', { run_id: config.ogw_run_id })
-  .then(() => new Promise((r) => setTimeout(r, 1500)))
-  .then(() => put('/result', { results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }));
-`);
-    chmodSync(godot, 0o755);
+    // reads the test host and run ID from the test run config file of its last argument, starts at once, sends its
+    // result 1500 ms later, past the start limit, and exits
+    fakeProgram(godot, (child) => {
+      const arg = child.args[child.args.length - 1] ?? '';
+      const config = JSON.parse(readFileSync(arg.slice(arg.indexOf('=') + 1), 'utf8')) as { ogw_test_host: string; ogw_run_id: string };
+      void put(config.ogw_test_host, '/started', { run_id: config.ogw_run_id }).then(() => {
+        child.after(1500, () => {
+          void put(config.ogw_test_host, '/result', PASSING).then(() => {
+            child.exit(0);
+          });
+        });
+      });
+    });
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const outcome = await gutPass(ctx, { godot, project: dir, headless: true, gut: [], config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host }), timeoutMs: 60_000, startLimitMs: 500, label: 'headless pass', resultsDir: join(dir, 'results') });
     expect(outcome.failures).toEqual([]);
@@ -188,26 +209,18 @@ put('/started', { run_id: config.ogw_run_id })
     const exportDir = join(dir, 'export');
     mkdirSync(exportDir);
     writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
-    const browser = (start: boolean): string => {
-      const path = join(dir, start ? 'starts' : 'stalls');
-      writeFileSync(path, `#!${process.execPath}
-const page = new URL(process.argv[process.argv.length - 1]);
-const host = page.searchParams.get('ogw_test_host');
-const runId = page.searchParams.get('ogw_run_id');
-if (${String(start)}) {
-  fetch(host + '/started', { method: 'PUT', body: JSON.stringify({ run_id: runId }) })
-    .then(() => fetch(host + '/result', { method: 'PUT', body: JSON.stringify({ results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }) }));
-}
-setTimeout(() => undefined, 60000);
-`);
-      chmodSync(path, 0o755);
-      return path;
-    };
+    const stalls = stallingBrowser(dir);
+    // sends PUT /started and its result at once
+    const starts = join(dir, 'starts');
+    fakeProgram(starts, (child) => {
+      const { host, runId } = pageRun(child);
+      void put(host, '/started', { run_id: runId }).then(() => put(host, '/result', PASSING));
+    });
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const options = { exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 300 };
-    await Promise.all(Array.from({ length: WEB_LOADING_PAGES }, () => webModuleTest(ctx, { ...options, chromium: browser(false) })));
+    await Promise.all(Array.from({ length: WEB_LOADING_PAGES }, () => webModuleTest(ctx, { ...options, chromium: stalls })));
     const started = Date.now();
-    const outcome = await webModuleTest(ctx, { ...options, chromium: browser(true) });
+    const outcome = await webModuleTest(ctx, { ...options, chromium: starts });
     expect(Date.now() - started).toBeLessThan(15_000);
     expect(outcome.tests).toBe(1);
   }, 60_000);
@@ -217,37 +230,29 @@ setTimeout(() => undefined, 60000);
     const exportDir = join(dir, 'export');
     mkdirSync(exportDir);
     writeFileSync(join(exportDir, 'index.html'), '<script>const GODOT_CONFIG = {"args":[],"executable":"index"};</script>');
-    const log = join(dir, 'log');
-    // loads for 300 ms, sends PUT /started, then runs its tests for 1000 ms
+    // loads for 300 ms from when the run opens it, sends PUT /started, then runs its tests for 1000 ms
     const chromium = join(dir, 'chromium');
-    writeFileSync(chromium, `#!${process.execPath}
-const fs = require('node:fs');
-const page = new URL(process.argv[process.argv.length - 1]);
-const host = page.searchParams.get('ogw_test_host');
-const runId = page.searchParams.get('ogw_run_id');
-const put = (path, body) => fetch(host + path, { method: 'PUT', body: JSON.stringify(body) });
-fs.appendFileSync(${JSON.stringify(log)}, 'open ' + Date.now() + '\\n');
-setTimeout(async () => {
-  fs.appendFileSync(${JSON.stringify(log)}, 'started ' + Date.now() + '\\n');
-  await put('/started', { run_id: runId });
-  setTimeout(() => put('/result', { results: [{ name: 'a::t', status: 'pass' }], run_failures: [] }), 1000);
-}, 300);
-setTimeout(() => undefined, 60000);
-`);
-    chmodSync(chromium, 0o755);
+    let loadingNow = 0;
+    let most = 0;
+    fakeProgram(chromium, (child) => {
+      const { host, runId } = pageRun(child);
+      loadingNow++;
+      most = Math.max(most, loadingNow);
+      child.after(300, () => {
+        loadingNow--;
+        void put(host, '/started', { run_id: runId }).then(() => {
+          child.after(1000, () => {
+            void put(host, '/result', PASSING);
+          });
+        });
+      });
+    });
     const ctx = createContext({ cwd: dir, env: makeWorkspace().env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const runs = Array.from({ length: WEB_LOADING_PAGES + 3 }, () =>
       webModuleTest(ctx, { chromium, exportDir, module: 'LogCore', resultsDir: join(dir, 'results'), timeoutMs: 60_000, startLimitMs: 30_000 }),
     );
     const outcomes = await Promise.all(runs);
     expect(outcomes.every((o) => o.tests === 1)).toBe(true);
-    const events = readFileSync(log, 'utf8').trim().split('\n').map((l) => { const [kind, at] = l.split(' '); return { kind, at: Number(at) }; }).sort((a, b) => a.at - b.at);
-    let loadingNow = 0;
-    let most = 0;
-    for (const e of events) {
-      loadingNow += e.kind === 'open' ? 1 : -1;
-      most = Math.max(most, loadingNow);
-    }
     expect(most).toBeLessThanOrEqual(WEB_LOADING_PAGES);
     expect(most).toBeGreaterThan(1);
   }, 60_000);
