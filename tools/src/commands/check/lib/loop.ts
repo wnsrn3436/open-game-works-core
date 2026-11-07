@@ -39,6 +39,8 @@ export interface LoopOptions {
   /** Host load sampling interval (ogw.md `### host load`: 1000 ms). */
   sampleMs: number;
   probe?: HostProbe;
+  /** The instance slots of the check, when the caller made them for work it starts before the checks (the fix test proof). */
+  slots?: Slots;
 }
 
 export interface LoopOutcome {
@@ -67,23 +69,34 @@ function numberSetting(settings: GameSettings, key: string): number {
   return value;
 }
 
-async function maxTextScale(ctx: Context, game: GameRepo, client: readonly string[]): Promise<number | null> {
+/** The largest `AccessibilityCore.textScales` of the merged core settings, or null without `AccessibilityCore`. */
+function maxTextScale(merged: Record<string, unknown>, client: readonly string[]): number | null {
   if (!client.includes('AccessibilityCore')) return null;
-  const scales = coreSetting(await mergedCoreSettings(ctx, game), 'AccessibilityCore.textScales');
+  const scales = coreSetting(merged, 'AccessibilityCore.textScales');
   const numbers = Array.isArray(scales) ? scales.filter((s): s is number => typeof s === 'number') : [];
   return numbers.length > 0 ? Math.max(...numbers) : 1000;
 }
 
+/** A number of the merged core settings, or null when they do not have it. */
+function coreNumber(merged: Record<string, unknown>, key: string): number | null {
+  const value = coreSetting(merged, key);
+  return typeof value === 'number' ? value : null;
+}
+
 /** Core settings `UnitTestCore.startTimeLimitMs` of the game, or null when the merged core settings do not have it. */
 export async function startTimeLimitMs(ctx: Context, game: GameRepo): Promise<number | null> {
-  const value = coreSetting(await mergedCoreSettings(ctx, game), 'UnitTestCore.startTimeLimitMs');
-  return typeof value === 'number' ? value : null;
+  return coreNumber(await mergedCoreSettings(ctx, game), 'UnitTestCore.startTimeLimitMs');
 }
 
 /** Core settings `UnitTestCore.runTimeLimitMs` of the game, or null when the merged core settings do not have it. */
 export async function runTimeLimitMs(ctx: Context, game: GameRepo): Promise<number | null> {
-  const value = coreSetting(await mergedCoreSettings(ctx, game), 'UnitTestCore.runTimeLimitMs');
-  return typeof value === 'number' ? value : null;
+  return coreNumber(await mergedCoreSettings(ctx, game), 'UnitTestCore.runTimeLimitMs');
+}
+
+/** The run and start limits of `UnitTestCore` of the game from one read of the merged core settings. */
+export async function testLimits(ctx: Context, game: GameRepo): Promise<{ runTimeLimitMs: number | null; startTimeLimitMs: number | null }> {
+  const merged = await mergedCoreSettings(ctx, game);
+  return { runTimeLimitMs: coreNumber(merged, 'UnitTestCore.runTimeLimitMs'), startTimeLimitMs: coreNumber(merged, 'UnitTestCore.startTimeLimitMs') };
 }
 
 export async function slotsOf(ctx: Context): Promise<Slots> {
@@ -151,8 +164,9 @@ export function selectionOf(set: CheckSet): Selection {
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
  * the bot playtest (ogw.md `## check`). `alongside` is more instance work of the check, which is not a check (the shared
- * telemetry runs of `--loop`). The performance measurements start once every other instance of the check has stopped
- * (ogw.md `## performance`).
+ * telemetry runs of `--loop`). The work that does not read the checkout's `client/` (the server regression test and no
+ * placeholder) runs beside its import. The performance measurements start once every other instance of the check has
+ * stopped (ogw.md `## performance`).
  */
 export async function gameChecks(
   ctx: Context,
@@ -163,9 +177,15 @@ export async function gameChecks(
   set: CheckSet,
   alongside?: (instance: InstanceCheckOptions) => Promise<void>,
 ): Promise<CheckResult[]> {
-  const instance: InstanceCheckOptions = { evidence, slots: await slotsOf(ctx), db: options.db, pollMs: options.pollMs };
-  const modules = await gameModules(ctx, game);
-  const scenario = await readScenario(game.root);
+  const [slots, modules, scenario, merged, leaseBase, harness] = await Promise.all([
+    options.slots ?? slotsOf(ctx),
+    gameModules(ctx, game),
+    readScenario(game.root),
+    mergedCoreSettings(ctx, game),
+    performanceLeaseBase(ctx),
+    ctx.settings(),
+  ]);
+  const instance: InstanceCheckOptions = { evidence, slots, db: options.db, pollMs: options.pollMs };
   const profiles = platformProfiles(settings.buildPlatforms ?? []);
   const probe = options.probe ?? hostProbe(ctx);
   const performanceOptions = {
@@ -175,42 +195,51 @@ export async function gameChecks(
     quality: modules.client.includes('QualityCore'),
     probe,
     sampleMs: options.sampleMs,
-    lease: { base: await performanceLeaseBase(ctx), waitMs: (await ctx.settings()).performanceLeaseWaitTimeoutMs },
+    lease: { base: leaseBase, waitMs: harness.performanceLeaseWaitTimeoutMs },
   };
-  const ui = { ...instance, ...uiSettings(settings), maxTextScale: await maxTextScale(ctx, game, modules.client), scenario };
-  // One import before the checks run together, with the engine packages put in first: an instance skips its import once
+  const ui = { ...instance, ...uiSettings(settings), maxTextScale: maxTextScale(merged, modules.client), scenario };
+  // One import before the instances start, with the engine packages put in first: an instance skips its import once
   // `client/.godot/` exists, so no import may still be writing it when the instances start, and the import that the
   // instance clients run on holds the plugins that their runner's `ogw generate` puts in later. A failed import removed
   // `client/.godot/` (each instance start then fails on its own import); the regression test and the type check report
-  // it and do not import again.
-  const importFailure = await importClient(ctx, options.godot, game);
-  const imported = importFailure === null ? { imported: true } : { importFailure };
+  // it and do not import again. The static check waits for it too, as the import may write files beside the scripts and
+  // assets of `client/`, which the static check lists. An import that throws fails the check once the work started ends.
+  const importing = importClient(ctx, options.godot, game);
+  const settled = importing.then(
+    (importFailure): { imported: true } | { importFailure: string } => (importFailure === null ? { imported: true } : { importFailure }),
+    (error: unknown) => ({ error }),
+  );
+  const afterImport = <T>(work: (imported: { imported: true } | { importFailure: string }) => Promise<T>): Promise<T | null> =>
+    settled.then((done) => ('error' in done ? null : work(done)));
   const db = options.db ? { db: options.db } : {};
-  const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...imported, ...db };
+  const limits = { runTimeLimitMs: coreNumber(merged, 'UnitTestCore.runTimeLimitMs'), startTimeLimitMs: coreNumber(merged, 'UnitTestCore.startTimeLimitMs') };
+  const client = { godot: options.godot, evidence, ...limits, importing, ...db };
   const { wants, ...run } = selectionOf(set);
-  // every instance of the check other than those of the performance measurements
-  const instances: Promise<CheckResult | CheckResult[]>[] = [
-    ...(run.bot ? [botPlaytest(ctx, game.name, scenario, instance)] : []),
-    ...(run.ui ? profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui)) : []),
-    ...(run.rows ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),
+  // every instance of the check other than those of the performance measurements, in this order once the import ended
+  const instances: Promise<CheckResult | CheckResult[] | null>[] = [
+    ...(run.bot ? [afterImport(() => botPlaytest(ctx, game.name, scenario, instance))] : []),
+    ...(run.ui ? profiles.map((p) => afterImport(() => uiQualityCheck(ctx, game.name, p, ui))) : []),
+    ...(run.rows ? [afterImport(() => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance))] : []),
   ];
   const besides =
     alongside === undefined
       ? []
       : [
-          alongside(instance).catch((error: unknown) => {
+          afterImport(() => alongside(instance)).catch((error: unknown) => {
             ctx.log(`shared telemetry runs: ${(error as Error).message}`);
           }),
         ];
-  const tasks: Promise<CheckResult | CheckResult[]>[] = [
+  const tasks: Promise<CheckResult | CheckResult[] | null>[] = [
     ...(wants('regression test') ? [guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))] : []),
-    ...(wants('static check') ? [guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported }))] : []),
+    ...(wants('static check') ? [afterImport((imported) => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })))] : []),
     ...instances,
-    ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))] : []),
+    ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => afterImport(() => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions)))] : []),
     ...(run.placeholder ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
   ];
   const [results] = await Promise.all([Promise.all(tasks), ...besides]);
-  const checks = results.flat().sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
+  const done = await settled;
+  if ('error' in done) throw done.error;
+  const checks = results.flatMap((r) => (r === null ? [] : [r].flat())).sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
   if (set === 'core try') return checks.filter((c) => CORE_TRY_CHECKS.includes(c.name));
   // the bot playtest judges no blocker and full flow together: a pick of one keeps only that one
   return checks.filter((c) => wants(c.name));
@@ -226,17 +255,19 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const commit = await head(game.root, { env: ctx.env });
   const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
   const set = iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all';
-  const proofOptions = { godot: options.godot, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...(options.db ? { db: options.db } : {}) };
+  const slots = await slotsOf(ctx);
+  const proofOptions = { godot: options.godot, ...(await testLimits(ctx, game)), ...(options.db ? { db: options.db } : {}), slots };
   let fixTestProof: FixTestProof[] = [];
-  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the fix
-  // test proof runs beside them, and the performance measurements wait for both
-  const checks = await gameChecks(ctx, game, settings, options, evidence, set, async (instance) => {
-    const proof = fixTestProofs(ctx, game, run, commit, { ...proofOptions, slots: instance.slots }).then((proofs) => {
-      fixTestProof = proofs;
-    });
+  // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout
+  const proof = fixTestProofs(ctx, game, run, commit, proofOptions).then((proofs) => {
+    fixTestProof = proofs;
+  });
+  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the
+  // performance measurements wait for them and for the fix test proof
+  const checks = await gameChecks(ctx, game, settings, { ...options, slots }, evidence, set, async (instance) => {
     const [telemetry] = await Promise.allSettled([makeTelemetryRuns(ctx, game, run, commit, instance), proof]);
     if (telemetry.status === 'rejected') throw telemetry.reason;
-  });
+  }).finally(() => Promise.allSettled([proof]));
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
   await writeJsonAtomic(join(game.root, file), { commit, checks, gate, fixTestProof });

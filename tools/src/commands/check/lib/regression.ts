@@ -129,6 +129,11 @@ export interface ClientRunOptions {
   imported?: boolean;
   /** The caller's import of the checkout's `client/` failed with this message: the client run reports it and does not import again. */
   importFailure?: string;
+  /**
+   * The caller's import of the checkout's `client/` under the import lock, which ends with null or its failure message:
+   * the client run waits for it and does not import again, and the server run does not wait for it.
+   */
+  importing?: Promise<string | null>;
 }
 
 /** GUT target arguments for a test file or folder under `client/tests/` (ogw.md `### Godot core test`). */
@@ -198,7 +203,10 @@ export async function clientRegression(ctx: Context, game: GameRepo, path: strin
   const root = game.root;
   const where = targetWhere(path);
   if (options.importFailure !== undefined) return [failure(where, options.importFailure)];
-  if (options.imported !== true) {
+  if (options.importing !== undefined) {
+    const importFailure = await options.importing;
+    if (importFailure !== null) return [failure(where, importFailure)];
+  } else if (options.imported !== true) {
     const importFailure = await importClient(ctx, options.godot, game);
     if (importFailure !== null) return [failure(where, importFailure)];
   }

@@ -301,6 +301,25 @@ describe('regressionTest', () => {
     expect(existsSync(godot.argsFile)).toBe(false);
   });
 
+  it('waits for the import the caller started, and runs on it or reports its failure without importing again', async () => {
+    const root = gameRoot({ 'client/tests/shop/test_buy.gd': 'func test_buy_ok():\n' });
+    const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
+    const godot = fakeGodot({ result: passing });
+    let finish: (failure: string | null) => void = () => undefined;
+    const importing = new Promise<string | null>((resolve) => {
+      finish = resolve;
+    });
+    const run = regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null, importing });
+    await realSleep(50);
+    expect(existsSync(godot.argsFile)).toBe(false);
+    finish(null);
+    expect((await run).result).toBe('pass');
+    expect(existsSync(godot.importsFile)).toBe(false);
+    const failed = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null, importing: Promise.resolve('godot --import failed (1)') });
+    expect(failed.failures).toEqual([{ where: 'client/tests:1', message: 'godot --import failed (1)', evidence: [] }]);
+    expect(existsSync(godot.importsFile)).toBe(false);
+  });
+
   it('a run past UnitTestCore.runTimeLimitMs fails', { timeout: 60_000 }, async () => {
     const root = gameRoot();
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };

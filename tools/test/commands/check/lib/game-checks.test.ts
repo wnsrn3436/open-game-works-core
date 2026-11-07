@@ -12,6 +12,7 @@ import type { Context } from '../../../../src/lib/command.ts';
 import type { GameRepo } from '../../../../src/lib/game.ts';
 import type { GameSettings } from '../../../../src/lib/settings.ts';
 import { mergedCoreSettings } from '../../../../src/commands/generate/api.ts';
+import { importClient } from '../../../../src/commands/check/lib/engine.ts';
 
 vi.mock('../../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/api.ts')>()),
@@ -132,6 +133,41 @@ describe('gameChecks', () => {
     expect(performanceChecks).toHaveBeenCalledTimes(1);
     // the work alongside takes its instances within the slots of the check
     expect(alongside.mock.calls[0]?.[0]).toBe(vi.mocked(botPlaytest).mock.calls[0]?.[3]);
+  });
+
+  it('runs the regression test and no placeholder beside the import of the checkout, and the static check and the instances after it', async () => {
+    const turn = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+    let finish: (failure: string | null) => void = () => undefined;
+    vi.mocked(importClient).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = resolve;
+    }));
+    const checks = gameChecks(ctx, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all');
+    for (let i = 0; i < 10; i++) await turn();
+    expect(regressionTest).toHaveBeenCalledTimes(1);
+    expect(placeholderFailures).toHaveBeenCalledTimes(1);
+    for (const waiting of [staticCheck, botPlaytest, uiQualityCheck, rowSimulationCheck, performanceChecks]) expect(waiting).not.toHaveBeenCalled();
+    // the client part of the regression test waits for the import itself
+    const importing = vi.mocked(regressionTest).mock.calls[0]?.[3].importing;
+    expect(importing).toBeInstanceOf(Promise);
+    finish(null);
+    expect(await importing).toBeNull();
+    expect((await checks).map((c) => c.name)).toContain('row simulation');
+    expect(vi.mocked(staticCheck).mock.calls[0]?.[2]).toEqual({ imported: true });
+    expect(botPlaytest).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the merged core settings once', async () => {
+    vi.mocked(mergedCoreSettings).mockClear();
+    await names('all');
+    expect(mergedCoreSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails with the error of an import that throws, once the work it started has ended', async () => {
+    vi.mocked(importClient).mockImplementationOnce(() => Promise.reject(new Error('no engine packages')));
+    await expect(names('all')).rejects.toThrow('no engine packages');
+    expect(staticCheck).not.toHaveBeenCalled();
+    expect(botPlaytest).not.toHaveBeenCalled();
+    expect(performanceChecks).not.toHaveBeenCalled();
   });
 
   it('all also runs no placeholder and row simulation', async () => {

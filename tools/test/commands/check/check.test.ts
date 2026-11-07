@@ -566,6 +566,53 @@ put('/started', { run_id: config.ogw_run_id })
     expect(readdirSync(join(ws.worktrees, 'g')).filter((name) => name.startsWith('proof-'))).toEqual([]);
   });
 
+  it('starts the fix test proof in its worktree without waiting for the import of the checkout', async () => {
+    const R = 'records/loops/create-1';
+    const defect = { id: 'crash', severity: 'major', owner: 'client content', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 };
+    const root = setupGame(ws, { [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n', [`${R}/defects.json`]: { defects: [defect], previous: null, recordedBy: 'iteration-0' } });
+    await openRun(1);
+    writeFileSync(join(root, 'client/tests/a/test_a.gd'), 'func test_a():\n\tpass\n');
+    writeFileSync(join(root, `${R}/content-1.md`), '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `client/tests/a/test_a.gd::test_a` |\n');
+    commitAll(root, 'content agent');
+    // the import of the checkout takes a second; the run of the proof on the fix base logs when it starts
+    const godotDir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
+    const godot = join(godotDir, 'godot');
+    const log = join(godotDir, 'log');
+    writeFileSync(
+      godot,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const project = args[args.indexOf('--path') + 1];
+const onBase = project.includes('/proof-');
+if (args.includes('--import')) {
+  setTimeout(() => {
+    fs.mkdirSync(require('node:path').join(project, '.godot'), { recursive: true });
+    if (!onBase) fs.appendFileSync(${JSON.stringify(log)}, 'import end ' + Date.now() + '\\n');
+    process.exit(0);
+  }, onBase ? 0 : 1000);
+} else {
+  if (onBase) fs.appendFileSync(${JSON.stringify(log)}, 'base run ' + Date.now() + '\\n');
+  const config = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('-gconfig=')).slice(9), 'utf8'));
+  const put = (path, body) => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
+  const status = onBase ? 'fail' : 'pass';
+  put('/started', { run_id: config.ogw_run_id })
+    .then(() => put('/result', { run_id: config.ogw_run_id, kind: 'regression', results: [{ name: 'res://tests/a/test_a.gd::test_a', status, message: '' }], run_failures: [] }))
+    .then(() => process.exit(0));
+}
+`,
+    );
+    chmodSync(godot, 0o755);
+    vi.mocked(requireEngine).mockResolvedValue(godot);
+    serveClient();
+    const run = await ogw(ws, ['check', 'g', '--loop']);
+    expect(run.stderr).toBe('');
+    const file = JSON.parse(readFileSync(join(root, `${R}/check-1.json`), 'utf8')) as { fixTestProof: { id: string; result: string }[] };
+    expect(file.fixTestProof.map((p) => [p.id, p.result])).toEqual([['crash', 'pass']]);
+    const at = (prefix: string): number => Number(readFileSync(log, 'utf8').split('\n').find((line) => line.startsWith(prefix))?.slice(prefix.length));
+    expect(at('base run ')).toBeLessThan(at('import end '));
+  });
+
   it('runs only the regression test, the static check and the bot playtest in a fun iteration', async () => {
     const root = setupGame(ws, { 'server/tests/a.test.ts': "it('a', () => { expect(1).toBe(1); });\n" });
     await openRun(2, { loop: { kinds: [{ iteration: 2, kind: 'fun' }] } });
