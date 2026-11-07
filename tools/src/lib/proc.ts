@@ -39,9 +39,17 @@ export class SpawnError extends OgwError {
   }
 }
 
-/** Whether a signal failed because no such process or process group is there (`ESRCH`). */
+/** Whether a signal failed because no such process is there (`ESRCH`). */
 function noSuchProcess(error: unknown): boolean {
   return (error as { code?: unknown }).code === 'ESRCH';
+}
+
+/**
+ * Whether a signal to a process group found no member it could end: no such group (`ESRCH`), or, on macOS, a group whose
+ * members all ended and are not reaped yet, which macOS answers with `EPERM` (a signal to such a member alone succeeds).
+ */
+function noGroupMember(error: unknown): boolean {
+  return noSuchProcess(error) || (process.platform === 'darwin' && (error as { code?: unknown }).code === 'EPERM');
 }
 const live = new Set<ChildProcess>();
 let exitHookInstalled = false;
@@ -83,7 +91,7 @@ export function killRecordedGroup(pid: number, startedAt: unknown, signal: NodeJ
     process.kill(-pid, signal);
   } catch (error) {
     // no member of the group is left
-    if (!noSuchProcess(error)) throw error;
+    if (!noGroupMember(error)) throw error;
   }
 }
 
@@ -98,8 +106,8 @@ export function killTree(child: ChildProcess | number, signal: NodeJS.Signals = 
       process.kill(-pid, signal);
     }
   } catch (error) {
-    // no process group of that id: the process alone
-    if (!noSuchProcess(error)) throw error;
+    // no process group of that id, or none of its members to end: the process alone
+    if (!noGroupMember(error)) throw error;
     try {
       process.kill(pid, signal);
     } catch (alone) {

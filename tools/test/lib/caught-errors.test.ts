@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -68,6 +69,14 @@ describe('proc', () => {
     }).toThrow('EPERM');
     // a process of another user is there
     expect(isAlive(999_999)).toBe(true);
+    // macOS: a group whose members all ended unreaped gives EPERM, and its leader alone takes the signal
+    kill.mockImplementation((pid: number) => {
+      if (pid < 0) throw errno(process.platform === 'darwin' ? 'EPERM' : 'ESRCH');
+      return true;
+    });
+    expect(() => {
+      killTree(999_999);
+    }).not.toThrow();
     // no process group of that id, and the process alone may not be signalled
     kill.mockImplementation((pid: number) => {
       throw errno(pid < 0 ? 'ESRCH' : 'EPERM');
@@ -79,13 +88,32 @@ describe('proc', () => {
       throw errno('EINVAL');
     });
     expect(() => isAlive(999_999)).toThrow('EINVAL');
-    // the leader is gone (signal 0 finds no process) and the signal to its group is not permitted
+    // the leader is gone (signal 0 finds no process) and the signal to its group fails otherwise than with no member left
     kill.mockImplementation((pid: number, signal?: string | number) => {
-      throw errno(signal === 0 || pid > 0 ? 'ESRCH' : 'EPERM');
+      throw errno(signal === 0 || pid > 0 ? 'ESRCH' : 'EINVAL');
     });
     expect(() => {
       killRecordedGroup(999_999, 'never', 'SIGTERM');
-    }).toThrow('EPERM');
+    }).toThrow('EINVAL');
+    // the leader is reaped and the members left all ended unreaped: macOS answers EPERM, and no member is left to end
+    kill.mockImplementation((pid: number, signal?: string | number) => {
+      throw errno(signal === 0 || pid > 0 ? 'ESRCH' : process.platform === 'darwin' ? 'EPERM' : 'ESRCH');
+    });
+    expect(() => {
+      killRecordedGroup(999_999, 'never', 'SIGTERM');
+    }).not.toThrow();
+  });
+
+  it('ends the group of a child that ended and is not reaped yet without an error', () => {
+    const child = spawn('sh', ['-c', 'exit 0'], { detached: true, stdio: 'ignore' });
+    // the event loop cannot reap the child meanwhile: it stays an ended process of its group
+    const until = Date.now() + 300;
+    while (Date.now() < until) {
+      // wait
+    }
+    expect(() => {
+      killTree(child);
+    }).not.toThrow();
   });
 });
 
@@ -97,9 +125,9 @@ describe('jobs', () => {
     writeJob(ws.jobs, { id: 'ok1', agentJob: 'agk', pid: null, supervisorPid: null });
     const kill = vi.spyOn(process, 'kill');
     kill.mockImplementation((pid: number, signal?: string | number) => {
-      throw errno(signal === 0 || pid > 0 ? 'ESRCH' : 'EPERM');
+      throw errno(signal === 0 || pid > 0 ? 'ESRCH' : 'EINVAL');
     });
-    await expect(endJobsOfAgent('agk', ws.env)).rejects.toThrow(/^cannot end the jobs of agent agk: job bad1: EPERM/);
+    await expect(endJobsOfAgent('agk', ws.env)).rejects.toThrow(/^cannot end the jobs of agent agk: job bad1: EINVAL/);
     kill.mockRestore();
     expect((await readJob('ok1', ws.env)).status).toBe('failed');
     expect(existsSync(join(ws.jobs, 'agent-jobs', 'agk', 'bad1'))).toBe(true);
