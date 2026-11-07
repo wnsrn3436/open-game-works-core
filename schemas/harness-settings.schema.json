@@ -105,7 +105,7 @@
       "minimum": 1
     },
     "jobWaitTimeoutMs": {
-      "description": "The maximum duration that ogw job wait and ogw agent wait keep waiting without --timeout. It is shorter than the longest time limit that the agent CLI of the lead agent and of agents can give one shell call",
+      "description": "The maximum duration that ogw job wait and ogw agent wait keep waiting without --timeout. It is shorter than the longest time limit that Claude Code gives one shell call (600000 ms). Codex sets no shorter limit, since its shell call returns while the command still runs and does not stop it",
       "type": "integer",
       "minimum": 1,
       "maximum": 540000
