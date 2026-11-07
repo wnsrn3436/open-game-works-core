@@ -1,11 +1,11 @@
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { staticCheckDetail, type StaticCheckDetail } from '../../../src/commands/check/static-api.ts';
 import { agentContext, type AgentContext } from '../../../src/lib/agentctx.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { changeRuns, listRuns, newRunState, type RunState } from '../../../src/lib/runstate.ts';
-import { ogw, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
+import { gitInit, ogw, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 
 vi.mock('../../../src/commands/check/static-api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/static-api.ts')>()),
@@ -125,6 +125,27 @@ describe('ogw settings commit', () => {
     expect(unchecked).toMatchObject({ code: 0, stdout: `commit: ${head()}\n` });
     expect(unchecked.stderr).toContain('static check after the commit could not run: godot 4.5.1.stable is not installed\n');
     expect(sh(root, 'git', ['status', '--porcelain'])).toBe('');
+  });
+
+  it('makes the first commit of a game repo that setup game filled, in which every value of settings.json is changed', async () => {
+    const dir = join(ws.games, 'fresh');
+    gitInit(dir);
+    writeFileSync(join(dir, '.gitignore'), '/builds/\n');
+    writeFileSync(join(dir, 'settings.json'), `${JSON.stringify({ engine: 'godot', coreVersion: '1.0.0', supportedLanguages: ['en', 'ko'] }, null, 2)}\n`);
+    mkdirSync(join(dir, 'records/setup'), { recursive: true });
+    writeFileSync(join(dir, 'records/setup/request.md'), 'make a runner\n');
+    writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(dir, '.git', 'hooks', 'pre-commit'), 0o755);
+    vi.mocked(staticCheckDetail).mockResolvedValueOnce(staticResult([
+      { where: 'settings.json:4', message: 'option entry: no `UICore.open_language_select` call in client content code' },
+      { where: 'brief.md:1', message: 'document format: brief.md is missing', absent: true },
+    ]));
+    const run = await ogw(ws, ['settings', 'commit', 'game', 'fresh']);
+    expect(run).toMatchObject({ code: 0, stdout: `commit: ${sh(dir, 'git', ['rev-parse', 'HEAD']).trim()}\n` });
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual(['game settings', '', 'settings.json']);
+    expect(sh(dir, 'git', ['rev-list', '--count', 'HEAD']).trim()).toBe('1');
+    expect(run.stderr.split('\n').filter((l) => /^(settings\.json|brief\.md)/.test(l))).toEqual(['settings.json:4: option entry: no `UICore.open_language_select` call in client content code']);
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['?? .gitignore', '?? records/']);
   });
 
   it('refuses a role that ogw agent started, and a scope other than game', async () => {
