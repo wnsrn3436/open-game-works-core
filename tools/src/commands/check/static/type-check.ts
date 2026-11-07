@@ -5,6 +5,7 @@ import { withClientPackages } from '../lib/engine.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { godotExecutable } from './lib/engine.ts';
 import { isClientContentGd, isServerContentTs, isServerTest, repoPath } from './lib/files.ts';
+import { offThread } from './lib/off-thread.ts';
 import { compilerOptions } from './lib/ts-options.ts';
 import { ts } from './lib/ts-source.ts';
 
@@ -12,7 +13,7 @@ import { ts } from './lib/ts-source.ts';
  * type check: content code fails the type check of `ogw code check`. GDScript: `godot --headless --path client --import`,
  * then `godot --headless --path client --check-only --script <file>` per content `.gd` ends without an error
  * (ogw.md `## code check`), under the import lock of the checkout with the engine packages put in first
- * (`withClientPackages`). TypeScript: `tsc` `strict` on server content code.
+ * (`withClientPackages`). TypeScript: `tsc` `strict` on server content code, in a worker thread.
  */
 export const NAME = 'type check';
 
@@ -70,7 +71,13 @@ export function typescriptErrors(root: string, files: readonly string[]): Findin
   return out;
 }
 
+/** The Godot type check starts first; `tsc` runs beside it in a worker thread (`offThread`). */
 export async function run(sc: StaticContext): Promise<Finding[]> {
-  const server = typescriptErrors(sc.root, sc.filter(isServerContentTs));
-  return [...(await gdscript(sc)), ...server];
+  const godot = gdscript(sc);
+  const files = sc.filter(isServerContentTs);
+  const server = files.length === 0 ? Promise.resolve([]) : offThread({ kind: 'tsc', root: sc.root, files: [...files] });
+  const [gd, ts] = await Promise.allSettled([godot, server]);
+  if (gd.status === 'rejected') throw gd.reason;
+  if (ts.status === 'rejected') throw ts.reason;
+  return [...gd.value, ...ts.value];
 }

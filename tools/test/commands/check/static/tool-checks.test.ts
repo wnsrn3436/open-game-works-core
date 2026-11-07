@@ -467,6 +467,47 @@ describe('type check', () => {
     expect(lines(typeCheck.typescriptErrors(cjs, ['server/a.ts']))[0]).toMatch(/^server\/a\.ts:1 \| type check: TS1287 /);
   });
 
+  it('starts the Godot type check first and runs tsc in a worker thread, so that the JS thread goes on meanwhile', async () => {
+    // server code that takes tsc a while: many typed functions calling each other
+    const server: Record<string, string> = {};
+    for (let f = 0; f < 30; f++) {
+      const body = Array.from({ length: 150 }, (_, i) => `export function f${String(f)}_${String(i)}<T extends { n: number }>(a: T, b: readonly T[]): T[] {\n  return [...b, a].filter((x) => x.n > ${String(i)}).map((x) => ({ ...x, n: x.n + 1 }));\n}\n`).join('');
+      server[`server/handlers/H${String(f)}.ts`] = `${body}export const bad${String(f)}: string = 1;\n`;
+    }
+    const bin = tempDir();
+    const log = join(bin, 'log');
+    mocks.engine = script(bin, 'godot', `node -e 'require("node:fs").appendFileSync(${JSON.stringify(log)}, String(Date.now()) + "\\n")'\n${bothModes('exit 0')}`);
+    const sc = memContext({ 'client/features/a/good.gd': 'x', ...server });
+    const files = Object.keys(server).sort();
+    // the same tsc on the JS thread, once to load it and then as a measure of how long it holds the thread
+    typeCheck.typescriptErrors(sc.root, files);
+    const start = Date.now();
+    const expected = typeCheck.typescriptErrors(sc.root, files);
+    const held = Date.now() - start;
+    expect(held).toBeGreaterThan(200);
+    expect(expected).toHaveLength(30);
+    const gaps: number[] = [];
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      gaps.push(now - last);
+      last = now;
+    }, 5);
+    const began = Date.now();
+    let found: Awaited<ReturnType<typeof typeCheck.run>>;
+    try {
+      found = await typeCheck.run(sc);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(lines(found)).toEqual(lines(expected));
+    // the JS thread was never held for anything near the time tsc takes
+    expect(Math.max(...gaps)).toBeLessThan(held / 2);
+    // godot started before tsc could have ended on the JS thread
+    const godotStart = Number(readFileSync(log, 'utf8').split('\n')[0]);
+    expect(godotStart - began).toBeLessThan(held);
+  });
+
   it('type checks server regression tests with the vitest globals', () => {
     const root = tempDir();
     writeFiles(root, { 'server/tests/shop.test.ts': "describe('a', () => {\n  it('b', () => {\n    expect(1).toBe(1);\n  });\n});\n" });
@@ -508,6 +549,37 @@ describe('lint', () => {
     const found = lines(await lint.run(sc));
     expect(found.some((l) => l.startsWith('server/handlers/A.ts:1 | lint: @typescript-eslint/no-explicit-any'))).toBe(true);
     expect(found.every((l) => l.startsWith('server/handlers/A.ts:'))).toBe(true);
+  }, 60_000);
+
+  it('runs the type-aware ESLint of server code in a worker thread, so that the JS thread goes on meanwhile', async () => {
+    mocks.gdlint = null;
+    const files: Record<string, string> = {};
+    for (let f = 0; f < 40; f++) {
+      files[`server/handlers/H${String(f)}.ts`] = Array.from({ length: 100 }, (_, i) => `export function g${String(i)}(a: readonly number[]): number {\n  return a.reduce((s, x) => s + x, ${String(i)});\n}\n`).join('');
+    }
+    const sc = memContext(files);
+    const dir = tempDir();
+    // the same ESLint on the JS thread, once to load it and then as a measure of how long it holds the thread
+    await lint.typescriptLintFindings(sc.root, Object.keys(files).sort(), 10, dir);
+    const start = Date.now();
+    const expected = await lint.typescriptLintFindings(sc.root, Object.keys(files).sort(), 10, dir);
+    const held = Date.now() - start;
+    expect(held).toBeGreaterThan(200);
+    const gaps: number[] = [];
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      gaps.push(now - last);
+      last = now;
+    }, 5);
+    let found: Awaited<ReturnType<typeof lint.run>>;
+    try {
+      found = await lint.run(sc);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(lines(found)).toEqual(lines(expected));
+    expect(Math.max(...gaps)).toBeLessThan(held / 2);
   }, 60_000);
 
   it('lints server regression tests with the vitest globals', async () => {
