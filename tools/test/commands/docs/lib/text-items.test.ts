@@ -11,7 +11,9 @@ import {
   checkTerms,
   checkWriting,
   definedTerm,
+  freeFormPointer,
   hasTableOfContents,
+  pointerPhrases,
   vagueWord,
   vagueWords,
 } from '../../../../src/commands/docs/lib/text-items.ts';
@@ -132,7 +134,8 @@ describe('references', () => {
 
 describe('writing', () => {
   const agents = (list: string) => doc('AGENTS.md', `# a\n\n## harness writing rules\n\n${list}\n\n## other\n\n- Do not use words that cannot be judged: properly\n`);
-  const rules = agents('- Do not use words that cannot be judged: properly, if possible, as much as possible');
+  const pointerLine = '- Do not point to a position within the same document with a free-form pointer: see above, as below';
+  const rules = agents(`- Do not use words that cannot be judged: properly, if possible, as much as possible\n${pointerLine}`);
 
   it('fails "etc." and "and so on" as words outside code', () => {
     const docs = [rules, doc('x.md', 'A, B, etc.\nfetch and so on\nset `etc` and Etcetera\n```\netc.\n```\n(etc) ETC\n')];
@@ -155,7 +158,8 @@ describe('writing', () => {
     expect(vagueWords(agents('```\n- Do not use words that cannot be judged: x\n```'))).toEqual(none);
     const two = agents('- Do not use words that cannot be judged: x\n- Do not use words that cannot be judged: y');
     expect(vagueWords(two)).toMatchObject({ reason: '## harness writing rules has 2 lines starting with "- Do not use words that cannot be judged: "; it must have one' });
-    expect(checkWriting([doc('x.md', 'properly\n')])).toEqual([none]);
+    const noPointers = { item: 'writing', where: 'AGENTS.md', reason: '## harness writing rules has 0 lines starting with "- Do not point to a position within the same document with a free-form pointer: "; it must have one' };
+    expect(checkWriting([doc('x.md', 'properly\n')])).toEqual([none, noPointers]);
   });
 
   it('finds a listed word or phrase as whole words in any case', () => {
@@ -172,12 +176,47 @@ describe('writing', () => {
   it('fails lines that use a listed word outside code, but not the list line itself', () => {
     const docs = [rules, doc('x.md', 'Write it properly\n`properly`\nIf possible, retry\n```\nproperly\n```\netc. properly\n')];
     expect(checkWriting(docs)).toEqual([
-      { item: 'writing', where: 'AGENTS.md:9', reason: 'uses "properly", which cannot be judged' },
+      { item: 'writing', where: 'AGENTS.md:10', reason: 'uses "properly", which cannot be judged' },
       { item: 'writing', where: 'x.md:1', reason: 'uses "properly", which cannot be judged' },
       { item: 'writing', where: 'x.md:3', reason: 'uses "if possible", which cannot be judged' },
       { item: 'writing', where: 'x.md:7', reason: 'uses "etc." or "and so on"' },
       { item: 'writing', where: 'x.md:7', reason: 'uses "properly", which cannot be judged' },
     ]);
+  });
+});
+
+describe('free-form pointer', () => {
+  const agents = doc(
+    'AGENTS.md',
+    '# a\n\n## harness writing rules\n\n- Do not use words that cannot be judged: properly\n- Do not point to a position within the same document with a free-form pointer: see above, as above, see below, as below, the next section\n',
+  );
+
+  it('reads the pointer list of ## harness writing rules', () => {
+    expect(pointerPhrases(agents)).toEqual({ words: ['see above', 'as above', 'see below', 'as below', 'the next section'], n: 6 });
+  });
+
+  it('fails a listed pointer outside code, but not the list line itself', () => {
+    const text = ['Done as above.', 'Details: see below', 'In the next section', '`see above` in code', '```', 'see above', '```', 'As Above'].join('\n');
+    expect(checkWriting([agents, doc('x.md', text)]).map((f) => `${f.where} ${f.reason}`)).toEqual([
+      'x.md:1 uses "as above", a free-form pointer; name the step or the heading',
+      'x.md:2 uses "see below", a free-form pointer; name the step or the heading',
+      'x.md:3 uses "the next section", a free-form pointer; name the step or the heading',
+      'x.md:8 uses "as above", a free-form pointer; name the step or the heading',
+    ]);
+  });
+
+  it('allows "as below" only on a line whose next non-empty line starts a list, table or code block', () => {
+    const allowed = ['A is as below.', '', '- x', 'B is as below', '| a |', 'C as below, and more.', '```', 'code', '```', 'D as below:', '  1. y'];
+    expect(checkWriting([agents, doc('x.md', allowed.join('\n'))])).toEqual([]);
+    const refused = ['A is as below.', 'Plain text.', 'B is as below.', '', '# heading', 'C as below'];
+    expect(checkWriting([agents, doc('x.md', refused.join('\n'))]).map((f) => f.where)).toEqual(['x.md:1', 'x.md:3', 'x.md:6']);
+  });
+
+  it('finds the pointer of a line', () => {
+    const lines = mdLines('see above and as below\n- item\n');
+    expect(freeFormPointer(lines, 0, ['as below', 'see above'])).toBe('see above');
+    expect(freeFormPointer(lines, 0, ['as below'])).toBeNull();
+    expect(freeFormPointer(lines, 1, ['as below'])).toBeNull();
   });
 });
 

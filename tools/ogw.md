@@ -1151,7 +1151,7 @@ The values of the generated secrets that `ogw secret generate <game> <env>` make
 | `secrets.db` (environment with `deploy`) | the connection string that the `secrets.dbPassword` description of the game settings schema defines. The password is the value of `secrets.dbPassword` |
 
 - When the standard base64 of the 32-byte public key of the `environments.<env>.secrets.updateSigningKey` value is not in `environments.<env>.updatePublicKeys`, it is added
-- In an environment with `deploy`, when the `secrets.db` value in the secret store is not the connection string of the `secrets.dbPassword` value (in the secret store or made this time), `secrets.db` and `secrets.dbPassword` are not put, and the other generated secrets and `updatePublicKeys` are handled as above. Then it outputs the two secret names with a message to put matching values with `ogw secret set` and then run `ogw secret generate` again, and ends with a nonzero code
+- In an environment with `deploy`, when the `secrets.db` value in the secret store is not the connection string of the `secrets.dbPassword` value (in the secret store or made this time), `secrets.db` and `secrets.dbPassword` are not put; the other generated secrets are still made and put, and the public key is still added to `updatePublicKeys`. Then it outputs the two secret names with a message to put matching values with `ogw secret set` and then run `ogw secret generate` again, and ends with a nonzero code
 
 ## secret store
 

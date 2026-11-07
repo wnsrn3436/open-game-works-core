@@ -170,6 +170,7 @@ function hasEtc(text: string): boolean {
 }
 
 export const VAGUE_LIST_START = '- Do not use words that cannot be judged: ';
+export const POINTER_LIST_START = '- Do not point to a position within the same document with a free-form pointer: ';
 
 interface VagueList {
   words: string[];
@@ -177,16 +178,43 @@ interface VagueList {
   n: number;
 }
 
-/** The word list of `AGENTS.md` `## harness writing rules`, or the failure when there is not exactly one list line. */
-export function vagueWords(agents: DocFile | undefined): VagueList | Failure {
+/** The comma-separated list of the one line of `AGENTS.md` `## harness writing rules` that starts with `start`, or the failure when there is not exactly one. */
+function ruleList(agents: DocFile | undefined, start: string): VagueList | Failure {
   const where = agents?.rel ?? 'AGENTS.md';
   const sec = agents ? section(agents.lines, 2, 'harness writing rules') : null;
-  const lines = agents && sec ? agents.lines.slice(sec.start + 1, sec.end).filter((l) => !l.fenced && l.text.startsWith(VAGUE_LIST_START)) : [];
+  const lines = agents && sec ? agents.lines.slice(sec.start + 1, sec.end).filter((l) => !l.fenced && l.text.startsWith(start)) : [];
   const line = lines[0];
   if (lines.length !== 1 || line === undefined) {
-    return { item: 'writing', where, reason: `## harness writing rules has ${String(lines.length)} lines starting with "${VAGUE_LIST_START}"; it must have one` };
+    return { item: 'writing', where, reason: `## harness writing rules has ${String(lines.length)} lines starting with "${start}"; it must have one` };
   }
-  return { words: line.text.slice(VAGUE_LIST_START.length).split(', ').map((w) => w.trim()).filter((w) => w !== ''), n: line.n };
+  return { words: line.text.slice(start.length).split(', ').map((w) => w.trim()).filter((w) => w !== ''), n: line.n };
+}
+
+/** The word list of `AGENTS.md` `## harness writing rules`, or the failure when there is not exactly one list line. */
+export function vagueWords(agents: DocFile | undefined): VagueList | Failure {
+  return ruleList(agents, VAGUE_LIST_START);
+}
+
+/** The free-form pointer list of `AGENTS.md` `## harness writing rules`, or the failure when there is not exactly one list line. */
+export function pointerPhrases(agents: DocFile | undefined): VagueList | Failure {
+  return ruleList(agents, POINTER_LIST_START);
+}
+
+/** The phrase that `## harness writing rules` allows on a line whose next non-empty line starts the block that the line introduces. */
+const INTRODUCING_POINTER = 'as below';
+
+/** A line that starts a list item, a table row or a code fence. */
+function startsBlock(text: string): boolean {
+  return /^\s*(?:[-*+] |[0-9]+\. |\||```)/.test(text);
+}
+
+/** The first phrase of the list that the line at `index` of `lines` uses as a free-form pointer, or null. */
+export function freeFormPointer(lines: readonly MdLine[], index: number, phrases: readonly string[]): string | null {
+  const text = withoutCodeSpans((lines[index] as MdLine).text);
+  const used = phrases.filter((phrase) => vagueWord(text, [phrase]) !== null);
+  const next = lines.slice(index + 1).find((l) => l.text.trim() !== '');
+  const introduces = next !== undefined && startsBlock(next.text);
+  return used.find((phrase) => !(phrase === INTRODUCING_POINTER && introduces)) ?? null;
 }
 
 function escapeRegExp(text: string): string {
@@ -201,16 +229,21 @@ export function vagueWord(text: string, words: readonly string[]): string | null
 export function checkWriting(docs: readonly DocFile[]): Failure[] {
   const agents = docs.find((d) => d.rel === 'AGENTS.md');
   const list = vagueWords(agents);
-  const failures: Failure[] = 'item' in list ? [list] : [];
+  const pointers = pointerPhrases(agents);
+  const failures: Failure[] = [...('item' in list ? [list] : []), ...('item' in pointers ? [pointers] : [])];
   const words = 'item' in list ? [] : list.words;
+  const phrases = 'item' in pointers ? [] : pointers.words;
+  const listLines = new Set([list, pointers].flatMap((l) => ('n' in l ? [l.n] : [])));
   for (const doc of docs) {
-    for (const line of doc.lines) {
+    for (const [index, line] of doc.lines.entries()) {
       if (line.fenced) continue;
       const text = withoutCodeSpans(line.text);
       if (hasEtc(text)) failures.push({ item: 'writing', where: at(doc.rel, line.n), reason: 'uses "etc." or "and so on"' });
-      if (doc === agents && 'n' in list && line.n === list.n) continue;
+      if (doc === agents && listLines.has(line.n)) continue;
       const word = vagueWord(text, words);
       if (word !== null) failures.push({ item: 'writing', where: at(doc.rel, line.n), reason: `uses "${word}", which cannot be judged` });
+      const pointer = freeFormPointer(doc.lines, index, phrases);
+      if (pointer !== null) failures.push({ item: 'writing', where: at(doc.rel, line.n), reason: `uses "${pointer}", a free-form pointer; name the step or the heading` });
     }
   }
   return failures;

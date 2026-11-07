@@ -293,7 +293,9 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - Do not use words that cannot be judged: properly, appropriately, as much as possible, as far as possible, sufficiently, if possible
 - Write only the current design. Do not mention previous designs or what was removed
 - Do not write where a rule came from: surveys, sample counts, the games studied, experiments, ratings. Write the rule and what an agent needs to apply it
-- Do not write the same content in two places. Do not point to a position within the same document with a free-form pointer (e.g. see above, the next section); step numbers and heading names are allowed
+- Do not write the same content in two places
+- Do not point to a position within the same document with a free-form pointer: see above, as above, see below, as below, the next section, the previous section
+- `as below` is not a free-form pointer on a line whose next non-empty line starts the list, table or code block that the line introduces. Step numbers and heading names are allowed
 - Put each piece of content only in the documents read by the agents that need it
 - When the same mistake happens twice, do not add a sentence; make it an automated check
 - Do not write settings values in prose. Point to the settings file
