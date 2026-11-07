@@ -149,7 +149,8 @@ export interface HarnessSettings {
   reviewRounds: number;
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };
-  paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string };
+  regress: { repeats: number; modelRepeats: number; parallel: number; permutations: number; level: number };
+  paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string; regress: string };
   coreReleaseRepository: string;
   useLocalCore: boolean;
   minCoreVersion: string | null;
@@ -184,6 +185,8 @@ export interface Workspace {
   coreReleases: string;
   games: string;
   worktrees: string;
+  /** The regress repo of the regression suite (ogw.md `### regress repo`). */
+  regress: string;
 }
 
 export function harnessSettingsPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -399,6 +402,7 @@ export function workspaceFrom(settings: HarnessSettings, env: NodeJS.ProcessEnv 
     coreReleases: resolve(root, settings.paths.coreReleases),
     games: resolve(root, settings.paths.games),
     worktrees: resolve(root, settings.paths.worktrees),
+    regress: resolve(root, settings.paths.regress),
   };
 }
 

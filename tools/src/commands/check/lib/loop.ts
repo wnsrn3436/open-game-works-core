@@ -96,10 +96,56 @@ export async function slotsOf(ctx: Context): Promise<Slots> {
  * Checks of `gameChecks`: every check of iteration step 2 (`all`), those of a fun iteration (`fun`), or those of
  * `ogw core try`. `no blocker` and `full flow` come from one bot playtest.
  */
-export type CheckSet = 'all' | 'fun' | 'core try';
+export type CheckSet = 'all' | 'fun' | 'core try' | RegressPick;
+
+/**
+ * The checks of `ogw regress check` (ogw.md `### side` of `## regress`): those of a completeness iteration, only the
+ * named ones when `only` is not null, and `performance` only with `performance`.
+ */
+export interface RegressPick {
+  only: ReadonlySet<string> | null;
+  performance: boolean;
+}
 
 /** Checks `ogw core try` runs (`core` command.md `update core`). */
 const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality'];
+
+/** The values of game settings that the UI quality check reads. */
+function uiSettings(settings: GameSettings): { languages: string[]; screens: UiCheckScreen[]; baseResolution: [number, number]; gamepadSupported: boolean; quality: UiQualityLimits; targetFps: number } {
+  return {
+    languages: settings.supportedLanguages ?? [],
+    screens: (settings.uiCheckScreens ?? []) as UiCheckScreen[],
+    baseResolution: (settings.baseResolution ?? [0, 0]) as [number, number],
+    gamepadSupported: settings.gamepadSupported === true,
+    quality: settings.uiQuality as UiQualityLimits,
+    targetFps: numberSetting(settings, 'targetFps'),
+  };
+}
+
+/** Which checks of `gameChecks` a check set runs. */
+export interface Selection {
+  wants: (name: string) => boolean;
+  bot: boolean;
+  ui: boolean;
+  rows: boolean;
+  performance: boolean;
+  placeholder: boolean;
+}
+
+export function selectionOf(set: CheckSet): Selection {
+  const pick = typeof set === 'object' ? set : null;
+  const wants = (name: string): boolean => pick === null || pick.only === null || pick.only.has(name);
+  const all = set === 'all' || pick !== null;
+  const fun = set === 'fun';
+  return {
+    wants,
+    bot: wants('no blocker') || wants('full flow'),
+    ui: !fun && wants('UI quality'),
+    rows: all && wants('row simulation'),
+    performance: pick === null ? !fun : pick.performance && wants('performance'),
+    placeholder: all && wants('no placeholder'),
+  };
+}
 
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
@@ -122,7 +168,7 @@ export async function gameChecks(
   const scenario = await readScenario(game.root);
   const profiles = platformProfiles(settings.buildPlatforms ?? []);
   const probe = options.probe ?? hostProbe(ctx);
-  const performance = {
+  const performanceOptions = {
     ...instance,
     targetFps: numberSetting(settings, 'targetFps'),
     loadingTimeLimitMs: numberSetting(settings, 'loadingTimeLimitMs'),
@@ -131,17 +177,7 @@ export async function gameChecks(
     sampleMs: options.sampleMs,
     lease: { base: await performanceLeaseBase(ctx), waitMs: (await ctx.settings()).performanceLeaseWaitTimeoutMs },
   };
-  const ui = {
-    ...instance,
-    languages: settings.supportedLanguages ?? [],
-    screens: (settings.uiCheckScreens ?? []) as UiCheckScreen[],
-    baseResolution: (settings.baseResolution ?? [0, 0]) as [number, number],
-    gamepadSupported: settings.gamepadSupported === true,
-    maxTextScale: await maxTextScale(ctx, game, modules.client),
-    quality: settings.uiQuality as UiQualityLimits,
-    targetFps: numberSetting(settings, 'targetFps'),
-    scenario,
-  };
+  const ui = { ...instance, ...uiSettings(settings), maxTextScale: await maxTextScale(ctx, game, modules.client), scenario };
   // One import before the checks run together: an instance skips its import once `client/.godot/` exists, so no import
   // may still be writing it when the instances start. A failed import removed `client/.godot/` (each instance start then
   // fails on its own import); the regression test and the type check report it and do not import again.
@@ -149,13 +185,12 @@ export async function gameChecks(
   const imported = importFailure === null ? { imported: true } : { importFailure };
   const db = options.db ? { db: options.db } : {};
   const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...imported, ...db };
-  const all = set === 'all';
-  const fun = set === 'fun';
+  const { wants, ...run } = selectionOf(set);
   // every instance of the check other than those of the performance measurements
   const instances: Promise<CheckResult | CheckResult[]>[] = [
-    botPlaytest(ctx, game.name, scenario, instance),
-    ...(fun ? [] : profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui))),
-    ...(all ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),
+    ...(run.bot ? [botPlaytest(ctx, game.name, scenario, instance)] : []),
+    ...(run.ui ? profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui)) : []),
+    ...(run.rows ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),
   ];
   const besides =
     alongside === undefined
@@ -166,15 +201,17 @@ export async function gameChecks(
           }),
         ];
   const tasks: Promise<CheckResult | CheckResult[]>[] = [
-    guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client)),
-    guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })),
+    ...(wants('regression test') ? [guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client))] : []),
+    ...(wants('static check') ? [guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported }))] : []),
     ...instances,
-    ...(fun ? [] : [Promise.allSettled([...instances, ...besides]).then(() => performanceChecks(ctx, game.name, profiles, scenario, performance))]),
-    ...(all ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
+    ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))] : []),
+    ...(run.placeholder ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
   ];
   const [results] = await Promise.all([Promise.all(tasks), ...besides]);
   const checks = results.flat().sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
-  return set === 'core try' ? checks.filter((c) => CORE_TRY_CHECKS.includes(c.name)) : checks;
+  if (set === 'core try') return checks.filter((c) => CORE_TRY_CHECKS.includes(c.name));
+  // the bot playtest judges no blocker and full flow together: a pick of one keeps only that one
+  return checks.filter((c) => wants(c.name));
 }
 
 /** `ogw check <game> --loop`: the checks of iteration step 2 for the kind of the iteration, the result file, and `gate`. */

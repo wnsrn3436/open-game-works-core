@@ -168,7 +168,7 @@ export async function brokerSocket(id: string, env: NodeJS.ProcessEnv): Promise<
 }
 
 /** The folders the sandboxes read from settings: the harness repo, core, games and worktrees. */
-export type SandboxWorkspace = Pick<Workspace, 'harness' | 'coreImpl' | 'coreReleases' | 'games' | 'worktrees'>;
+export type SandboxWorkspace = Pick<Workspace, 'harness' | 'coreImpl' | 'coreReleases' | 'games' | 'worktrees' | 'regress'>;
 
 /** The harness repos: the one `OGW_HARNESS_ROOT` or this code's location names, and the one this code runs from. */
 function harnessRepos(ws: SandboxWorkspace): string[] {
@@ -193,14 +193,25 @@ const OTHER_GAMES_BLOCKED_ROLES: readonly string[] = ['content', 'translation', 
 /** The OSes `sandboxed` runs on. */
 const SANDBOX_PLATFORMS: readonly NodeJS.Platform[] = ['darwin', 'linux'];
 
-/** The folders of the other games: repos under `paths.games`, and worktree folders under `paths.worktrees` but core's. */
+/** The folders directly under `parent` whose names are not in `keep`; none when `parent` does not exist. */
+async function foldersUnder(parent: string, keep: readonly string[]): Promise<string[]> {
+  if (!exists(parent)) return [];
+  const entries = await readdir(parent, { withFileTypes: true });
+  return entries.filter((e) => e.isDirectory() && !keep.includes(e.name)).map((e) => join(parent, e.name));
+}
+
+/** The worktree folder of the side worktrees of the regression suite (ogw.md `### side` of `## regress`). */
+export const SIDE_WORKTREES = '_harness';
+
+/**
+ * The folders of the other games and the seeds of the regression suite: repos under `paths.games`, worktree folders
+ * under `paths.worktrees` but those of core and of the sides, the regress repo, and `regress/` of the harness repos and
+ * of the side worktrees, each when it exists.
+ */
 export async function otherGameFolders(ws: SandboxWorkspace, game: string): Promise<string[]> {
-  const under = async (parent: string, keep: readonly string[]): Promise<string[]> => {
-    if (!exists(parent)) return [];
-    const entries = await readdir(parent, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory() && !keep.includes(e.name)).map((e) => join(parent, e.name));
-  };
-  return [...(await under(ws.games, [game])), ...(await under(ws.worktrees, [game, '_core']))];
+  const harnesses = [...harnessRepos(ws), ...(await foldersUnder(join(ws.worktrees, SIDE_WORKTREES), []))];
+  const seeds = [ws.regress, ...harnesses.map((harness) => join(harness, 'regress'))].filter((path) => exists(path));
+  return [...(await foldersUnder(ws.games, [game])), ...(await foldersUnder(ws.worktrees, [game, '_core', SIDE_WORKTREES])), ...seeds];
 }
 
 /**

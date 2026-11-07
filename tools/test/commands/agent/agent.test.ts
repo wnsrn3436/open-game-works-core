@@ -484,9 +484,24 @@ describe('otherGameFolders', () => {
     const dirs = [join(ws.games, 'g'), join(ws.games, 'other'), join(ws.worktrees, 'g'), join(ws.worktrees, 'other'), join(ws.worktrees, '_core')];
     for (const dir of dirs) mkdirSync(dir, { recursive: true });
     writeFileSync(join(ws.games, '.DS_Store'), '');
-    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees };
+    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees, regress: join(ws.root, 'regress-repo') };
     expect(await otherGameFolders(folders, 'g')).toEqual([join(ws.games, 'other'), join(ws.worktrees, 'other')]);
     expect(await otherGameFolders({ ...folders, games: join(ws.root, 'none'), worktrees: join(ws.root, 'none') }, 'g')).toEqual([]);
+  });
+
+  it('keeps the side worktrees open and blocks the seeds: the regress repo and regress/ of the harness and of each side worktree', async () => {
+    const ws = makeWorkspace();
+    const regress = join(ws.root, 'regress-repo');
+    const side = join(ws.worktrees, '_harness', 's1');
+    for (const dir of [join(ws.games, 'g'), regress, join(ws.harness, 'regress'), join(side, 'regress'), join(ws.worktrees, '_harness', 's2')]) mkdirSync(dir, { recursive: true });
+    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees, regress };
+    const blocked = await otherGameFolders(folders, 'g');
+    expect(blocked).toContain(regress);
+    expect(blocked).toContain(join(ws.harness, 'regress'));
+    expect(blocked).toContain(join(side, 'regress'));
+    // the side worktrees hold the prompts the agent reads; only their seed folders are blocked
+    expect(blocked).not.toContain(join(ws.worktrees, '_harness'));
+    expect(blocked).not.toContain(join(ws.worktrees, '_harness', 's2', 'regress'));
   });
 });
 

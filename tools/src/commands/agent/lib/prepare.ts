@@ -11,7 +11,7 @@ import { newId } from '../../../lib/ids.ts';
 import { listJobs, startJob } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { isInside, withoutExtension } from '../../../lib/paths.ts';
-import { changeOpenRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
+import { changeOpenRun, openRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
 import { ROLES, type AgentSettings, type HarnessSettings, type Role } from '../../../lib/settings.ts';
 import { hardeningRecordName, parseHardeningRecordName } from '../../build/lib/names.ts';
 import { moduleSpecs } from '../../review/lib/definitions.ts';
@@ -24,6 +24,7 @@ import { AGENT_LOG_FOLDER, FIX_ROUND_ROLES, GAME_ROLES, jobHarnessSettings, type
 import { preparePlayInput } from './play-input.ts';
 import { agentCli, agentSettings, defaultConfigFolder, type AgentCli, type AgentSession } from './cli-command.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
+import { readMark } from '../../regress/lib/mark.ts';
 
 export interface AgentRequest {
   role: string;
@@ -48,6 +49,21 @@ export interface AgentRequest {
   runPlace?: CalibrationPlace;
   /** content: the k of a variant agent of `ogw loop variants`, which works in its own worktree. */
   variant?: number;
+  /** content, translation: outside a run, in a game with the regression mark (ogw.md `## agent`, `### seed-run`). */
+  seedRun?: SeedRun;
+}
+
+/** The seed-run records `records/loops/<records>/` and the iteration of `ogw agent --seed-run <records>:<n>`. */
+export interface SeedRun {
+  records: string;
+  iteration: number;
+}
+
+/** `<records>:<n>` of `--seed-run`: a run-name-like folder name and an iteration of 1 or more. */
+export function parseSeedRun(value: string): SeedRun {
+  const match = /^([A-Za-z0-9][A-Za-z0-9._-]*):([1-9][0-9]*)$/.exec(value);
+  if (match === null) throw new OgwError(`--seed-run takes <records>:<iteration>, e.g. regress-1:1: ${value}`);
+  return { records: match[1] as string, iteration: Number(match[2]) };
 }
 
 /**
@@ -75,6 +91,7 @@ function checkPlaces(role: Role, request: AgentRequest): void {
   if (request.calibration !== undefined && role !== 'judge') throw new OgwError('a calibration place is given only to role judge');
   if (request.runPlace !== undefined && (role !== 'judge' || request.calibration !== undefined)) throw new OgwError('a run place is given only to role judge, without a calibration place');
   if (request.variant !== undefined && (role !== 'content' || !Number.isInteger(request.variant) || request.variant < 1)) throw new OgwError('a variant is a positive integer given only to role content');
+  if (request.seedRun !== undefined && ((role !== 'content' && role !== 'translation') || request.variant !== undefined)) throw new OgwError('--seed-run is given only to role content or translation, without a variant');
 }
 
 /**
@@ -118,6 +135,7 @@ function baseMeta(role: Role, input: string, taskInput: string, request: AgentRe
     retryNumber: request.retryNumber ?? 0,
     agent: request.agent ?? null,
     variant: request.variant ?? null,
+    seedRun: request.seedRun ?? null,
   };
 }
 
@@ -167,7 +185,7 @@ function relativeInRepo(root: string, path: string, what: string): string {
  * Language of a translation input: the file holds the language; its name may hold the unix ms. A retry passes the
  * input of the first job of its chain; a `## previous attempt` section after the language is also accepted.
  */
-async function translationOutput(input: string, run: RunState): Promise<{ language: string; rel: string }> {
+async function translationOutput(input: string, run: Pick<RunState, 'name'>): Promise<{ language: string; rel: string }> {
   const text = await readText(input);
   const previous = /^## previous attempt$/m.exec(text);
   const language = (previous === null ? text : text.slice(0, previous.index)).trim();
@@ -341,8 +359,36 @@ async function contentSession(ctx: Context, game: GameRepo, run: RunState, meta:
   return cli === 'claude-code' ? { id: randomUUID(), resume: false } : null;
 }
 
+/**
+ * A content agent or translation sub-agent of a seed-run (ogw.md `## agent`): outside a run, in a game with the
+ * regression mark, with the seed-run records in place of the run folder and a new session.
+ */
+async function startSeedRunAgent(ctx: Context, game: GameRepo, role: Role, meta: AgentMeta, seedRun: SeedRun): Promise<string> {
+  if ((await readMark(game.commonDir)) === null) throw new OgwError(`--seed-run starts only in a regression state or fix repo of ogw regress, not in ${game.name}`);
+  const open = await openRun(game);
+  if (open !== null) throw new OgwError(`game ${game.name} has an open run ${open.name}; --seed-run starts outside a run`);
+  meta.run = seedRun.records;
+  meta.iteration = seedRun.iteration;
+  const records = join('records', 'loops', seedRun.records);
+  if (role === 'content') {
+    meta.place = { kind: 'checkout', dir: game.root };
+    meta.folder = game.root;
+    meta.output = join(game.root, records, `content-${String(seedRun.iteration)}.md`);
+    const cli = agentCli(meta.agent ?? agentSettings(await jobHarnessSettings(ctx, meta), 'content'));
+    meta.session = cli === 'claude-code' ? { id: randomUUID(), resume: false } : null;
+    return launchJob(ctx, meta);
+  }
+  const { branch, baseCommit } = await branchOf(game);
+  meta.place = { kind: 'game-worktree', checkout: game.root, worktrees: (await ctx.workspace()).worktrees, branch, baseCommit };
+  const { language, rel } = await translationOutput(meta.taskInput, { name: seedRun.records });
+  meta.language = language;
+  meta.outputRel = rel;
+  return launchJob(ctx, meta);
+}
+
 async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request: AgentRequest): Promise<string> {
   const game = await ctx.game(meta.game as string);
+  if (request.seedRun !== undefined) return startSeedRunAgent(ctx, game, role, meta, request.seedRun);
   // a judge of `ogw judge calibrate` has no run; every other game agent works in the open run
   if (request.calibration !== undefined) return startPlayJudge(ctx, game, 'judge', null, meta, { calibration: request.calibration });
   const run = await requireOpenRun(game);

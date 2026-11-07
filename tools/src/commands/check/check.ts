@@ -9,7 +9,10 @@ import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
 import { BOT_PLAYTEST_POLL_MS, botPlaytest, readScenario } from './lib/bot-playtest.ts';
 import { gameEngine, importClient } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
-import { gameChecks, loopCheck, runTimeLimitMs, slotsOf, startTimeLimitMs } from './lib/loop.ts';
+import { gameChecks, loopCheck, runTimeLimitMs, slotsOf, startTimeLimitMs, type RegressPick } from './lib/loop.ts';
+import { fixTestProofs } from './lib/fix-proof.ts';
+import type { FixTestProof } from '../loop/lib/files.ts';
+import type { RunState } from '../../lib/runstate.ts';
 import type { Evidence } from './lib/evidence.ts';
 import { regressionTargets, regressionTest } from './lib/regression.ts';
 import { staticCheck } from './static-api.ts';
@@ -145,6 +148,32 @@ export async function coreTryChecks(ctx: Context, game: GameRepo, evidence: Evid
   await binaryData(ctx, game);
   const checks = await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, 'core try');
   return { checks, lines: checks.flatMap((check) => checkText(check, 'core try')) };
+}
+
+/**
+ * The checks of `ogw regress check` on a checkout (ogw.md `### side` of `## regress`): those of a completeness iteration
+ * picked by `pick`, and with `proof` the fix test proof of iteration `proof.iteration` of the seed-run records
+ * `records/loops/<proof.records>/` on `commit`.
+ */
+export async function regressChecks(
+  ctx: Context,
+  game: GameRepo,
+  evidence: Evidence,
+  pick: RegressPick,
+  proof: { records: string; iteration: number; commit: string } | null,
+): Promise<{ checks: CheckResult[]; fixTestProof: FixTestProof[] }> {
+  const settings = await gameSettings(ctx, game);
+  const godot = await gameEngine(ctx, game, settings);
+  await binaryData(ctx, game);
+  const checks = await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, pick);
+  if (proof === null) return { checks, fixTestProof: [] };
+  const options = { godot, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game) };
+  return { checks, fixTestProof: await fixTestProofs(ctx, game, seedRunState(proof.records, proof.iteration), proof.commit, options) };
+}
+
+/** The run state a fix test proof reads of seed-run records: their name as the run name and the iteration. */
+function seedRunState(records: string, iteration: number): RunState {
+  return { name: records, kind: 'loop', command: null, env: null, version: null, platforms: [], bundleFor: null, branch: 'main', baseCommit: '', referenceCommit: null, startedAt: 0, closedAt: null, iteration, data: {} };
 }
 
 async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult> {

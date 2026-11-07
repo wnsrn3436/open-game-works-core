@@ -104,24 +104,31 @@ function shellQuote(text: string): string {
 /** Path of the script the hook runs. */
 export const PRE_COMMIT_MAIN = fileURLToPath(new URL('./pre-commit-main.ts', import.meta.url));
 
-export function hookScript(game: string): string {
-  return [
-    '#!/bin/sh',
-    `# ogw pre-commit hook of game ${game}`,
-    `exec node --disable-warning=ExperimentalWarning ${shellQuote(PRE_COMMIT_MAIN)} ${shellQuote(game)}`,
-    '',
-  ].join('\n');
+/** `PRE_COMMIT_MAIN` relative to the harness repo. */
+const PRE_COMMIT_REL = 'tools/src/commands/game/lib/pre-commit-main.ts';
+
+/**
+ * The hook script. With `harnessFromEnv` (a regression state or fix repo, ogw.md `### regression state`), the hook runs
+ * the harness tool of `OGW_HARNESS_ROOT` when it is set, so that the commits of a side of the regression suite run the
+ * hook of that side, and the harness tool of this code otherwise.
+ */
+export function hookScript(game: string, harnessFromEnv = false): string {
+  const own = resolve(PRE_COMMIT_MAIN, '..', '..', '..', '..', '..', '..');
+  // an unquoted word of `${...:-...}` in an assignment loses its quotes; inside double quotes it would keep them
+  const root = harnessFromEnv ? [`harness=\${OGW_HARNESS_ROOT:-${shellQuote(own)}}`] : [];
+  const main = harnessFromEnv ? `"$harness/${PRE_COMMIT_REL}"` : shellQuote(PRE_COMMIT_MAIN);
+  return ['#!/bin/sh', `# ogw pre-commit hook of game ${game}`, ...root, `exec node --disable-warning=ExperimentalWarning ${main} ${shellQuote(game)}`, ''].join('\n');
 }
 
 /**
  * Writes the pre-commit hook into `hooks/` of the repo's git common dir and sets the repo's own `core.hooksPath`
  * to that folder, so a global `core.hooksPath` neither receives the hook nor hides it. Returns the hook path.
  */
-export async function installHook(root: string, game: string, env: NodeJS.ProcessEnv): Promise<string> {
+export async function installHook(root: string, game: string, env: NodeJS.ProcessEnv, harnessFromEnv = false): Promise<string> {
   const hooks = join(await commonDir(root, { env }), 'hooks');
   await mkdir(hooks, { recursive: true });
   const path = join(hooks, 'pre-commit');
-  await writeFileAtomic(path, hookScript(game));
+  await writeFileAtomic(path, hookScript(game, harnessFromEnv));
   await chmod(path, 0o755);
   await git(root, ['config', '--local', 'core.hooksPath', hooks], { env });
   return path;

@@ -1,0 +1,297 @@
+/**
+ * `ogw regress refresh` and admission (ogw.md `### regress refresh` and `### admission` of `## regress`): each regression
+ * state brought to the core version of the harness and checked as a base, and each seed applied on that base and
+ * admitted.
+ */
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { Context } from '../../../lib/command.ts';
+import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
+import type { GameRepo } from '../../../lib/game.ts';
+import { commitPaths, git, gitRaw, head, revParse, showFile, tagExists, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
+import { newId } from '../../../lib/ids.ts';
+import { releasedProposals } from '../../core/api.ts';
+import { compareVersions } from '../../core/lib/version.ts';
+import { dataDir } from '../../env/lib/host.ts';
+import { document, renderTable } from '../../loop/lib/markdown.ts';
+import { costRows, renderCost } from '../../loop/lib/cost.ts';
+import type { JobRecord } from '../../../lib/jobs.ts';
+import { catchOf, cleanFor, keysOf, targetChecks, type RegressCheckFile } from './keys.ts';
+import { dataTool, upgradeCore } from './ops.ts';
+import { admissionPath, latestPatch, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
+import { jobFacts, sideAgent, sideCheck, sideProbe, type Side } from './side.ts';
+import { pooled } from './pool.ts';
+
+/** The number of checks of a base and of a seeded commit at admission. */
+export const ADMISSION_CHECKS = 3;
+
+/** The tag of the base of core version `v`. */
+export function baseTag(version: string): string {
+  return `base-${version}`;
+}
+
+/** The folder in the regress repo that keeps the base checks of a refresh, which `ogw regress seed` reuses. */
+function baseChecksDir(repo: string, version: string): string {
+  return join(repo, 'records', `refresh-${version}`);
+}
+
+function stale(reason: string, fields: Partial<Admission> = {}): Admission {
+  return { result: 'stale', base: null, seeded: null, reference: null, catch: [], oracle: null, reason, at: Date.now(), ...fields };
+}
+
+/** A checkout of the regression state at a worktree path, as `ctx.game` gives it there. */
+function checkoutAt(state: GameRepo, root: string): GameRepo {
+  return { ...state, root, inWorktree: true };
+}
+
+/**
+ * Applies a patch file on `from` in a worktree on branch `branch` and commits: the new commit, or why it does not apply.
+ * With `regenerate`, `ogw data` runs before the commit.
+ */
+async function applyOn(ctx: Context, state: GameRepo, from: string, branch: string, patch: string, regenerate: boolean, message: string): Promise<{ commit: string } | { error: string }> {
+  const worktree = join((await ctx.workspace()).worktrees, state.name, `admit-${newId()}`);
+  await gitRaw(state.mainRoot, ['branch', '-D', branch], { env: ctx.env });
+  await worktreeAdd(state.mainRoot, worktree, from, branch, { env: ctx.env });
+  try {
+    const applied = await gitRaw(worktree, ['apply', '-3', '--whitespace=nowarn', patch], { env: ctx.env });
+    if (applied.code !== 0) return { error: `patch does not apply: ${(applied.stderr || applied.stdout).trim().split('\n').slice(0, 3).join(' ')}` };
+    if (regenerate) {
+      const failed = await dataTool(ctx, checkoutAt(state, worktree));
+      if (failed !== null) return { error: `patch does not apply: ${failed}` };
+    }
+    await git(worktree, ['add', '--all'], { env: ctx.env });
+    const staged = await gitRaw(worktree, ['diff', '--cached', '--quiet'], { env: ctx.env });
+    if (staged.code === 0) return { error: 'patch does not apply: it changes nothing' };
+    await git(worktree, ['commit', '--quiet', '--no-verify', '-m', message], { env: ctx.env });
+    return { commit: await head(worktree, { env: ctx.env }) };
+  } finally {
+    await worktreeRemove(state.mainRoot, worktree, { env: ctx.env });
+  }
+}
+
+export interface AdmitInput {
+  repo: string;
+  seed: Seed;
+  version: string;
+  base: string;
+  baseChecks: readonly RegressCheckFile[];
+  /** The side whose tool checks: the harness repo itself. */
+  self: Side;
+}
+
+/** Step 1 of admission: the seeded commit, and with `oracle` the reference commit; a stale admission when they do not apply. */
+async function applySeed(ctx: Context, input: AdmitInput, state: GameRepo): Promise<{ seeded: string; reference: string | null } | Admission> {
+  const { seed, version } = input;
+  const patch = await latestPatch(input.repo, seed.id, version, 'patch');
+  if (patch === null) return stale(`patch does not apply: no patch-<version>.diff at or below ${version}`, { base: input.base });
+  const seeded = await applyOn(ctx, state, input.base, `seed/${seed.id}-${version}`, patch.path, seed.manifest.regenerate, `seed ${seed.id} at ${version}`);
+  if ('error' in seeded) return stale(seeded.error, { base: input.base });
+  if (!seed.manifest.oracle) return { seeded: seeded.commit, reference: null };
+  const fix = await latestPatch(input.repo, seed.id, version, 'reference');
+  if (fix === null) return stale(`oracle: no reference-<version>.diff at or below ${version}`, { base: input.base, seeded: seeded.commit });
+  const applied = await applyOn(ctx, state, seeded.commit, `reference/${seed.id}-${version}`, fix.path, seed.manifest.regenerate, `reference fix of ${seed.id} at ${version}`);
+  if ('error' in applied) return stale(`oracle: the reference fix does not apply: ${applied.error}`, { base: input.base, seeded: seeded.commit });
+  return { seeded: seeded.commit, reference: applied.commit };
+}
+
+/** Step 2 of admission: the catch of each of the checks of the seeded commit with the base check of the same number. */
+async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<string[]> {
+  const manifest = input.seed.manifest;
+  const catches: string[] = [];
+  for (let i = 0; i < ADMISSION_CHECKS; i++) {
+    const out = join(work, `seeded-${String(i + 1)}.json`);
+    const checks = manifest.expect === 'caught' ? targetChecks(manifest) : null;
+    const checked = await sideCheck(ctx, input.self, { game: state, commit: seeded, out, checks, performance: manifest.performance, proof: null });
+    const base = input.baseChecks[i] ?? input.baseChecks[0];
+    catches.push('file' in checked && base !== undefined ? catchOf(manifest, base, checked.file).catch : 'unknown');
+  }
+  return catches;
+}
+
+/** Step 3 of admission: the probe of the seeded commit and of the reference commit. */
+async function admissionOracle(ctx: Context, input: AdmitInput, state: string, seeded: string, reference: string, work: string): Promise<{ oracle: NonNullable<Admission['oracle']>; reason: string | null }> {
+  const folder = join(seedDir(input.repo, input.seed.id), 'oracle');
+  const onSeeded = await sideProbe(ctx, input.self, { game: state, commit: seeded, oracle: folder, out: join(work, 'probe-seeded.json') });
+  const onReference = await sideProbe(ctx, input.self, { game: state, commit: reference, oracle: folder, out: join(work, 'probe-reference.json') });
+  const ok = onSeeded.result === 'fail' && onReference.result === 'pass';
+  const reason = ok ? null : `oracle: seeded ${onSeeded.result} (${onSeeded.reason ?? ''}), reference ${onReference.result} (${onReference.reason ?? ''})`;
+  return { oracle: { seeded: onSeeded.result, reference: onReference.result }, reason };
+}
+
+/** Admits a seed at `version` (ogw.md `### admission`); a seed that fails a step is `stale` with the reason. */
+export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admission> {
+  const { seed, version } = input;
+  const state = await ctx.game(stateGame(seed.manifest.state));
+  const applied = await applySeed(ctx, input, state);
+  if ('result' in applied) return applied;
+  const work = join(await dataDir(ctx), 'regress', `admit-${version}`, seed.id);
+  await mkdir(work, { recursive: true });
+  const catches = await admissionCatches(ctx, input, state.name, applied.seeded, work);
+  const fields = { base: input.base, seeded: applied.seeded, reference: applied.reference, catch: catches };
+  if (catches.some((c) => c !== seed.manifest.expect)) return stale(`not ${seed.manifest.expect}: ${catches.join(', ')}`, fields);
+  let oracle: Admission['oracle'] = null;
+  if (applied.reference !== null) {
+    const probed = await admissionOracle(ctx, input, state.name, applied.seeded, applied.reference, work);
+    oracle = probed.oracle;
+    if (probed.reason !== null) return stale(probed.reason, { ...fields, oracle });
+  }
+  const folder = seedDir(input.repo, seed.id);
+  await writeFileAtomic(join(folder, `patch-${version}.diff`), await git(state.mainRoot, ['diff', '--binary', input.base, applied.seeded], { env: ctx.env }));
+  if (applied.reference !== null) await writeFileAtomic(join(folder, `reference-${version}.diff`), await git(state.mainRoot, ['diff', '--binary', applied.seeded, applied.reference], { env: ctx.env }));
+  return { result: 'admitted', ...fields, oracle, reason: null, at: Date.now() };
+}
+
+export interface StateRefresh {
+  state: string;
+  from: string;
+  upgrade: string;
+  content: string;
+  checks: string;
+  failures: string[];
+  tag: string | null;
+  base: string | null;
+  baseChecks: RegressCheckFile[];
+  /** The content agent jobs of the refresh of this state. */
+  jobs: string[];
+}
+
+async function coreVersionAt(ctx: Context, root: string, commit: string): Promise<string> {
+  const bytes = await showFile(root, commit, 'settings.json', { env: ctx.env });
+  const version = bytes === null ? undefined : (JSON.parse(bytes.toString('utf8')) as { coreVersion?: unknown }).coreVersion;
+  return typeof version === 'string' ? version : '0.0.0';
+}
+
+/** The content agent of a state whose core was raised: the content input of `### seed-run` 1 with the raised core items. */
+async function contentPass(ctx: Context, self: Side, state: GameRepo, from: string, version: string): Promise<{ ok: boolean; text: string; job: string | null }> {
+  const records = `refresh-${version}-${String(Date.now())}`;
+  const rel = join('records', 'loops', records);
+  const items = [`- core version raised to \`${version}\``, ...(await releasedProposals(state, from, version)).map((path) => `- released core proposal \`${path}\``)];
+  await writeJsonAtomic(join(state.root, rel, 'defects.json'), { defects: [], previous: null, recordedBy: 'ogw regress refresh' });
+  const input = join(state.root, rel, 'content-input-1.md');
+  await writeFileAtomic(input, document([['kind', 'completeness'], ['request', items.join('\n')], ['previous record', 'none'], ['defects', 'none']]));
+  await commitPaths(state.root, [rel], `regress refresh ${version}: content input`, { env: ctx.env, noVerify: true });
+  const ran = await sideAgent(ctx, self, { role: 'content', game: state.name, input, seedRun: `${records}:1` });
+  return { ok: ran.status === 'done', text: ran.status === 'done' ? `done (${ran.job ?? ''})` : `${ran.status}: ${ran.reason ?? ''}`, job: ran.job };
+}
+
+/** The base checks kept in the regress repo for `commit`, or null when they are not all there. */
+async function keptBaseChecks(repo: string, version: string, state: string, commit: string): Promise<RegressCheckFile[] | null> {
+  const files: RegressCheckFile[] = [];
+  for (let i = 1; i <= ADMISSION_CHECKS; i++) {
+    const file = await readJsonIfExists<RegressCheckFile>(join(baseChecksDir(repo, version), `${state}-base-${String(i)}.json`));
+    if (file?.commit !== commit) return null;
+    files.push(file);
+  }
+  return files;
+}
+
+/** 3 checks of the base candidate `commit`, kept in the regress repo, each clean for each seed of the state. */
+async function checkBase(ctx: Context, repo: string, self: Side, state: string, commit: string, version: string, seeds: readonly Seed[]): Promise<{ files: RegressCheckFile[]; failures: string[]; clean: boolean; text: string }> {
+  const files: RegressCheckFile[] = [];
+  const unclean: string[] = [];
+  for (let i = 1; i <= ADMISSION_CHECKS; i++) {
+    const out = join(baseChecksDir(repo, version), `${state}-base-${String(i)}.json`);
+    const checked = await sideCheck(ctx, self, { game: stateGame(state), commit, out, checks: null, performance: true, proof: null });
+    if ('error' in checked) return { files, failures: [], clean: false, text: `check ${String(i)}: ${checked.error}` };
+    files.push(checked.file);
+    for (const seed of seeds) {
+      const clean = cleanFor(seed.manifest, checked.file);
+      if (!clean.clean) unclean.push(`${seed.id} check ${String(i)}: ${clean.reason ?? ''}`);
+    }
+  }
+  // the evidence folders of the base checks stay out of the regress repo
+  for (let i = 1; i <= ADMISSION_CHECKS; i++) await rm(join(baseChecksDir(repo, version), `${state}-base-${String(i)}`), { recursive: true, force: true });
+  const failures = [...new Set(files.flatMap((f) => [...keysOf(f)]))];
+  return { files, failures, clean: unclean.length === 0, text: unclean.length === 0 ? `${String(ADMISSION_CHECKS)} clean` : `not clean: ${unclean.join('; ')}` };
+}
+
+/** Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 3). */
+export async function refreshState(ctx: Context, repo: string, self: Side, state: string, version: string, seeds: readonly Seed[]): Promise<StateRefresh> {
+  const game = await ctx.game(stateGame(state));
+  const tag = baseTag(version);
+  const out: StateRefresh = { state, from: '', upgrade: 'none', content: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
+  if (await tagExists(game.root, tag, { env: ctx.env })) {
+    const base = (await revParse(game.root, `refs/tags/${tag}`, { env: ctx.env })) as string;
+    out.from = await coreVersionAt(ctx, game.root, base);
+    out.tag = tag;
+    out.base = base;
+    out.baseChecks = (await keptBaseChecks(repo, version, state, base)) ?? [];
+    if (out.baseChecks.length === 0) {
+      const checked = await checkBase(ctx, repo, self, state, base, version, seeds);
+      out.baseChecks = checked.files;
+      out.failures = checked.failures;
+      out.checks = checked.text;
+    } else out.checks = 'kept';
+    return out;
+  }
+  await git(game.root, ['checkout', '--quiet', 'main'], { env: ctx.env });
+  out.from = await coreVersionAt(ctx, game.root, 'main');
+  if (compareVersions(out.from, version) < 0) {
+    const upgraded = await upgradeCore(ctx, game.name, version);
+    out.upgrade = upgraded.ok ? `to ${version}` : `failed: ${upgraded.text.split('\n')[0] ?? ''}`;
+    if (!upgraded.ok) return out;
+    const content = await contentPass(ctx, self, game, out.from, version);
+    out.content = content.text;
+    if (content.job !== null) out.jobs.push(content.job);
+    if (!content.ok) return out;
+  }
+  const commit = await head(game.root, { env: ctx.env });
+  const checked = await checkBase(ctx, repo, self, state, commit, version, seeds);
+  out.checks = checked.text;
+  out.failures = checked.failures;
+  out.baseChecks = checked.files;
+  if (!checked.clean) return out;
+  await git(game.root, ['tag', tag, commit], { env: ctx.env });
+  out.tag = tag;
+  out.base = commit;
+  return out;
+}
+
+export interface SeedRefresh {
+  seed: string;
+  admission: Admission;
+}
+
+/** `records/refresh-<v>.md`. */
+export async function refreshRecord(ctx: Context, states: readonly StateRefresh[], seeds: readonly SeedRefresh[]): Promise<string> {
+  const jobs: JobRecord[] = [];
+  for (const id of states.flatMap((s) => s.jobs)) jobs.push({ meta: { role: 'content', usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
+  return document([
+    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'upgrade', 'content job', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.upgrade, s.content, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
+    ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`]))],
+    ['cost', renderCost(costRows(jobs, true))],
+  ]);
+}
+
+/**
+ * Refreshes the states of `seeds` at `version` and admits the seeds (`### regress refresh`): the paths it wrote in the
+ * regress repo, for the commit.
+ */
+export async function refresh(ctx: Context, repo: string, self: Side, version: string, seeds: readonly Seed[], onlyStates: readonly string[] | null): Promise<{ paths: string[]; states: StateRefresh[]; seeds: SeedRefresh[] }> {
+  const known = (await readStates(repo)).map((s) => s.state);
+  const states = onlyStates ?? known;
+  const parallel = (await ctx.settings()).regress.parallel;
+  const refreshed = await pooled(states, parallel, (state) => refreshState(ctx, repo, self, state, version, seeds.filter((s) => s.manifest.state === state)));
+  const results = await Promise.all(
+    seeds.map(async (seed): Promise<SeedRefresh> => {
+      const state = refreshed.find((s) => s.state === seed.manifest.state);
+      if (state === undefined || state.base === null || state.baseChecks.length === 0) {
+        return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : `${state.upgrade}; ${state.content}; ${state.checks}`}`) };
+      }
+      return { seed: seed.id, admission: await admitSeed(ctx, { repo, seed, version, base: state.base, baseChecks: state.baseChecks, self }) };
+    }),
+  );
+  const paths: string[] = [];
+  for (const r of results) {
+    const path = admissionPath(repo, r.seed, version);
+    await writeJsonAtomic(path, r.admission);
+    paths.push(join('seeds', r.seed));
+  }
+  const record = join('records', `refresh-${version}.md`);
+  if (onlyStates === null) {
+    await writeFileAtomic(join(repo, record), await refreshRecord(ctx, refreshed, results));
+    paths.push(record);
+  }
+  if (exists(baseChecksDir(repo, version))) paths.push(join('records', `refresh-${version}`));
+  return { paths, states: refreshed, seeds: results };
+}
