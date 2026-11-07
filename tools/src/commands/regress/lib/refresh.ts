@@ -269,6 +269,28 @@ export async function refreshRecord(ctx: Context, states: readonly StateRefresh[
 }
 
 /**
+ * The admission of each seed on the base of its refreshed state, or why its state has none: the seeds of one state one
+ * after another, and the states together, at most `parallel` at a time (`### regress refresh`). In the order of `seeds`.
+ */
+async function admitSeeds(ctx: Context, repo: string, self: Side, version: string, seeds: readonly Seed[], refreshed: readonly StateRefresh[], parallel: number): Promise<SeedRefresh[]> {
+  const admit = async (seed: Seed): Promise<SeedRefresh> => {
+    const state = refreshed.find((s) => s.state === seed.manifest.state);
+    if (state === undefined || state.base === null || state.baseChecks.length === 0) {
+      return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : `${state.settings}; ${state.upgrade}; ${state.content}; ${state.checks}`}`) };
+    }
+    return { seed: seed.id, admission: await admitSeed(ctx, { repo, seed, version, base: state.base, baseChecks: state.baseChecks, self }) };
+  };
+  const groups = [...new Set(seeds.map((s) => s.manifest.state))].map((state) => seeds.filter((s) => s.manifest.state === state));
+  const admitted = await pooled(groups, parallel, async (group) => {
+    const out: SeedRefresh[] = [];
+    for (const seed of group) out.push(await admit(seed));
+    return out;
+  });
+  const byId = new Map(admitted.flat().map((r) => [r.seed, r]));
+  return seeds.map((seed) => byId.get(seed.id) as SeedRefresh);
+}
+
+/**
  * Refreshes the states of `seeds` at `version` and admits the seeds (`### regress refresh`): the paths it wrote in the
  * regress repo, for the commit.
  */
@@ -279,15 +301,7 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
   const refreshed = await pooled(states, parallel, (state) =>
     refreshState(ctx, repo, self, state, version, seeds.filter((s) => s.manifest.state === state), entries.find((e) => e.state === state)?.settings ?? {}),
   );
-  const results = await Promise.all(
-    seeds.map(async (seed): Promise<SeedRefresh> => {
-      const state = refreshed.find((s) => s.state === seed.manifest.state);
-      if (state === undefined || state.base === null || state.baseChecks.length === 0) {
-        return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : `${state.settings}; ${state.upgrade}; ${state.content}; ${state.checks}`}`) };
-      }
-      return { seed: seed.id, admission: await admitSeed(ctx, { repo, seed, version, base: state.base, baseChecks: state.baseChecks, self }) };
-    }),
-  );
+  const results = await admitSeeds(ctx, repo, self, version, seeds, refreshed, parallel);
   const paths: string[] = [];
   for (const r of results) {
     const path = admissionPath(repo, r.seed, version);

@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { regressChecks, type CheckResult } from '../../../src/commands/check/api.ts';
 import { jobFacts, makeSide, removeSide, sideAgent, sideCheck, sideMerge, sideProbe, type Side, type SideSpec } from '../../../src/commands/regress/lib/side.ts';
 import { seedRunOrder } from '../../../src/commands/regress/lib/run.ts';
 import { ogw, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
-import { item, sourceGame, write } from './helpers.ts';
+import { item, meetOtherGroup, overlaps, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
@@ -43,14 +43,21 @@ function blockerOf(code: string): CheckResult {
   return code.includes('leak') ? item('no blocker', 'fail', [['step 2', LEAK]]) : item('no blocker', 'pass');
 }
 
-/** The regress repo with state lc and seeds S01 (content fixer) and S07b (catch only), refreshed and admitted at 1.0.0. */
-async function admitted(ws: TestWorkspace): Promise<void> {
+/**
+ * The regress repo with state lc and seeds S01 (content fixer) and S07b (catch only), and with `secondState` also
+ * state lc2 and seed S08 (content fixer), refreshed and admitted at 1.0.0.
+ */
+async function admitted(ws: TestWorkspace, secondState = false): Promise<void> {
   const commit = sourceGame(ws, 'src');
-  write(ws.harness, 'regress/states.json', JSON.stringify([{ state: 'lc', game: 'src', commit }]));
+  write(ws.harness, 'regress/states.json', JSON.stringify([{ state: 'lc', game: 'src', commit }, ...(secondState ? [{ state: 'lc2', game: 'src', commit }] : [])]));
   write(ws.harness, 'regress/seeds/S01/seed.json', JSON.stringify(MANIFEST));
   write(ws.harness, 'regress/seeds/S01/patch-1.0.0.diff', patchOf('leak'));
   write(ws.harness, 'regress/seeds/S07b/seed.json', JSON.stringify({ ...MANIFEST, expect: 'missed', match: [], fixer: 'none', row: { ...MANIFEST.row, where: 'w', what: 'gap', evidence: ['e'] } }));
   write(ws.harness, 'regress/seeds/S07b/patch-1.0.0.diff', patchOf('gap'));
+  if (secondState) {
+    write(ws.harness, 'regress/seeds/S08/seed.json', JSON.stringify({ ...MANIFEST, state: 'lc2' }));
+    write(ws.harness, 'regress/seeds/S08/patch-1.0.0.diff', patchOf('leak8'));
+  }
   sh(ws.harness, 'git', ['add', '-A']);
   sh(ws.harness, 'git', ['commit', '-qm', 'bootstrap']);
   sh(ws.harness, 'git', ['tag', 'core-v1.0.0']);
@@ -121,6 +128,33 @@ describe('ogw regress run', () => {
     expect(calls.filter((c) => c[0] === 'after')).toHaveLength(4);
     expect(calls.filter((c) => c[2] === true)).toHaveLength(2);
     expect(vi.mocked(removeSide)).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks the catch of one state one after another, its base first, and the states together, one side after the other', async () => {
+    const ws = makeWorkspace();
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    const spans: Span[] = [];
+    const started: Record<string, Set<string>> = { before: new Set(), after: new Set() };
+    vi.mocked(sideCheck).mockImplementation(async (_ctx, side, request) => {
+      const start = performance.now();
+      const group = `${side.name} ${request.game}`;
+      await meetOtherGroup(started[side.name] as Set<string>, group);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      spans.push({ key: `${side.name} ${basename(request.out)}`, group, start, end: performance.now() });
+      return { file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 };
+    });
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // per side: the base checks of lc and lc2, and one check of each seeded commit
+    expect(spans.map((s) => s.key).sort()).toEqual(['after S01.json', 'after S07b.json', 'after S08.json', 'after lc-base.json', 'after lc2-base.json', 'before S01.json', 'before S07b.json', 'before S08.json', 'before lc-base.json', 'before lc2-base.json']);
+    expect(overlaps(spans, true)).toEqual([]);
+    for (const side of ['before', 'after']) expect(overlaps(spans.filter((s) => s.key.startsWith(side)), false)).not.toEqual([]);
+    for (const group of new Set(spans.map((s) => s.group))) expect([...spans].sort((a, b) => a.start - b.start).find((s) => s.group === group)?.key).toMatch(/-base\.json$/);
+    const before = spans.filter((s) => s.key.startsWith('before'));
+    const after = spans.filter((s) => s.key.startsWith('after'));
+    expect(Math.max(...before.map((s) => s.end))).toBeLessThanOrEqual(Math.min(...after.map((s) => s.start)));
   });
 
   it('runs the seed-runs of a seed in its fix repo, made before any fixer, alternating sides, and removes the fix repos', async () => {

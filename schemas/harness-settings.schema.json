@@ -454,7 +454,7 @@
           "minimum": 1
         },
         "parallel": {
-          "description": "The largest number of seeds whose seed-runs run at once",
+          "description": "The largest number of seeds whose seed-runs run at once, and of regression states whose refresh, admission or catch runs at once",
           "type": "integer",
           "minimum": 1
         },

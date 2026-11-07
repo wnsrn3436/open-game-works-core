@@ -6,8 +6,8 @@ import { sideAgent, sideProbe } from '../../../src/commands/regress/lib/side.ts'
 import { stateSettings, upgradeCore } from '../../../src/commands/regress/lib/ops.ts';
 import { withRegressLock } from '../../../src/commands/regress/lib/repo.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
-import { ogw, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
-import { ctxOf, item, sourceGame, write } from './helpers.ts';
+import { ogw, makeWorkspace, sh, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
+import { ctxOf, item, joinedSpans, meetOtherGroup, overlaps, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
@@ -292,6 +292,69 @@ describe('ogw regress refresh and admission', () => {
     // the base checks of the refresh are kept: only the seeded commit is checked
     expect(vi.mocked(regressChecks)).toHaveBeenCalledTimes(3);
     expect(sh(ws.regress, 'git', ['log', '-1', '--format=%s']).trim()).toBe('regress seed S11');
+  });
+});
+
+describe('ogw regress refresh: the order of the admissions', () => {
+  /** States lc and lc2 of the source game, each with two caught seeds: S21 and S22 on lc, S23 and S24 on lc2. */
+  function twoStates(ws: TestWorkspace): void {
+    const commit = sourceGame(ws, 'src');
+    write(ws.harness, 'regress/states.json', JSON.stringify([{ state: 'lc', game: 'src', commit }, { state: 'lc2', game: 'src', commit }]));
+    for (const [id, state] of [['S21', 'lc'], ['S22', 'lc'], ['S23', 'lc2'], ['S24', 'lc2']] as const) {
+      write(ws.harness, `regress/seeds/${id}/seed.json`, JSON.stringify({ ...MANIFEST, state }));
+      write(ws.harness, `regress/seeds/${id}/patch-1.0.0.diff`, patchOf(`leak${id}`));
+    }
+    sh(ws.harness, 'git', ['add', '-A']);
+    sh(ws.harness, 'git', ['commit', '-qm', 'regress bootstrap']);
+    sh(ws.harness, 'git', ['tag', 'core-v1.0.0']);
+  }
+
+  /**
+   * Fake checks that catch the leak and keep the span of each check of a seeded commit, keyed by the seeded code and
+   * grouped by state. With `meet`, a check of a seeded commit waits until one of another state has started.
+   */
+  function timedChecks(spans: Span[], meet: boolean): void {
+    const started = new Set<string>();
+    vi.mocked(regressChecks).mockImplementation(async (_ctx, game) => {
+      const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8').trim();
+      const leak = code.includes('leak');
+      if (leak) {
+        const start = performance.now();
+        if (meet) await meetOtherGroup(started, game.name);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        spans.push({ key: code, group: game.name, start, end: performance.now() });
+      }
+      return { checks: [item('regression test', 'pass'), item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : []), item('full flow', 'pass')], fixTestProof: [] };
+    });
+  }
+
+  it('admits the seeds of one state one after another and the states together', async () => {
+    const ws = makeWorkspace();
+    twoStates(ws);
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const spans: Span[] = [];
+    timedChecks(spans, true);
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const admissions = joinedSpans(spans);
+    expect(admissions.map((s) => s.key).sort()).toEqual(['var x = leakS21', 'var x = leakS22', 'var x = leakS23', 'var x = leakS24']);
+    expect(overlaps(admissions, true)).toEqual([]);
+    expect(overlaps(admissions, false)).not.toEqual([]);
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toMatch(/\| S21 \| admitted [^\n]*\n\| S22 \| admitted [^\n]*\n\| S23 \| admitted [^\n]*\n\| S24 \| admitted /);
+  });
+
+  it('admits the seeds of at most regress.parallel states at a time', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 1 } });
+    twoStates(ws);
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const spans: Span[] = [];
+    timedChecks(spans, false);
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    const admissions = joinedSpans(spans);
+    expect(admissions).toHaveLength(4);
+    expect(overlaps(admissions, true)).toEqual([]);
+    expect(overlaps(admissions, false)).toEqual([]);
   });
 });
 

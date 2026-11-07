@@ -42,16 +42,13 @@ interface SideCatch {
   catches: Map<string, CatchResult>;
 }
 
-/** The catch of each admitted seed by one side (`### regress run` 2), with the second check of a catch that is not its `expect`. */
+/**
+ * The catch of each admitted seed by one side (`### regress run` 2), with the second check of a catch that is not its
+ * `expect`: the checks of one state one after another, its base first, and the states together, at most `parallel`.
+ */
 async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], folder: string, parallel: number): Promise<SideCatch> {
   const out: SideCatch = { base: new Map(), seeded: new Map(), catches: new Map() };
-  const states = [...new Map(admitted.map((a) => [a.seed.manifest.state, a.admission.base as string])).entries()];
-  await pooled(states, parallel, async ([state, base]) => {
-    const path = join(folder, `${state}-base.json`);
-    const checked = await sideCheck(ctx, side, { game: stateGame(state), commit: base, out: path, checks: null, performance: true, proof: null });
-    out.base.set(state, 'file' in checked ? { file: checked.file, path } : checked);
-  });
-  await pooled(admitted, parallel, async ({ seed, admission }) => {
+  const catchOfSeed = async ({ seed, admission }: Admitted): Promise<void> => {
     const base = out.base.get(seed.manifest.state);
     const once = async (attempt: number): Promise<CatchResult> => {
       const path = join(folder, attempt === 1 ? `${seed.id}.json` : `${seed.id}-${String(attempt)}.json`);
@@ -63,6 +60,13 @@ async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[
     };
     const first = await once(1);
     out.catches.set(seed.id, first.catch === seed.manifest.expect ? first : await once(2));
+  };
+  const states = [...new Map(admitted.map((a) => [a.seed.manifest.state, a.admission.base as string])).entries()];
+  await pooled(states, parallel, async ([state, base]) => {
+    const path = join(folder, `${state}-base.json`);
+    const checked = await sideCheck(ctx, side, { game: stateGame(state), commit: base, out: path, checks: null, performance: true, proof: null });
+    out.base.set(state, 'file' in checked ? { file: checked.file, path } : checked);
+    for (const one of admitted.filter((a) => a.seed.manifest.state === state)) await catchOfSeed(one);
   });
   return out;
 }

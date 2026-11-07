@@ -48,3 +48,45 @@ export function item(name: string, result: CheckResult['result'], failures: [str
 export function checkFile(commit: string, ...checks: CheckResult[]): RegressCheckFile {
   return { commit, checks, fixTestProof: [] };
 }
+
+/** The time a piece of work of `group` ran, from its start to its end. */
+export interface Span {
+  key: string;
+  group: string;
+  start: number;
+  end: number;
+}
+
+function overlap(a: Span, b: Span): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+/** The spans of each key joined into one, from the first start to the last end. */
+export function joinedSpans(spans: readonly Span[]): Span[] {
+  const byKey = new Map<string, Span>();
+  for (const s of spans) {
+    const seen = byKey.get(s.key);
+    byKey.set(s.key, seen === undefined ? { ...s } : { ...seen, start: Math.min(seen.start, s.start), end: Math.max(seen.end, s.end) });
+  }
+  return [...byKey.values()];
+}
+
+/** The pairs of spans that ran at the same time, as `<key> <key>`: only pairs of the same group with `sameGroup`, else only pairs of different groups. */
+export function overlaps(spans: readonly Span[], sameGroup: boolean): string[] {
+  const pairs: string[] = [];
+  spans.forEach((a, i) => {
+    for (const b of spans.slice(i + 1)) if ((a.group === b.group) === sameGroup && overlap(a, b)) pairs.push(`${a.key} ${b.key}`);
+  });
+  return pairs;
+}
+
+/**
+ * Starts a piece of work of `group` and waits until a piece of work of another group has started too, or `limitMs`
+ * has passed: work of two groups that runs together gets past it at once, and work of groups that runs one after
+ * another gets past it only at the limit, with no other group started.
+ */
+export async function meetOtherGroup(started: Set<string>, group: string, limitMs = 3000): Promise<void> {
+  started.add(group);
+  const until = Date.now() + limitMs;
+  while (![...started].some((g) => g !== group) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+}
