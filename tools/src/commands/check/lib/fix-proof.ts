@@ -199,23 +199,52 @@ interface Needed {
   tests: string[];
 }
 
+/** A `fixed` row of `## defects` of the content agent report, by defect id. */
+export type FixedRow = [string, ReportRow];
+
+/**
+ * The `fixed` rows of `## defects` of the content agent report of the iteration, in report order; none without that
+ * report. A report that cannot be read throws: which rows need the proof is not known then.
+ */
+export async function fixedRows(game: GameRepo, run: RunState): Promise<FixedRow[]> {
+  const text = await readGameText(game, runRel(run, `content-${String(run.iteration)}.md`));
+  return text === null ? [] : [...reportRows(text)].filter(([, row]) => row.result === 'fixed');
+}
+
 /**
  * The fix test proof of each `fixed` row of the content agent report of the iteration, in report order (ogw.md
- * `### fix test proof` of `## check`). It does not throw: what could not be run is `unknown` with the reason.
+ * `### fix test proof` of `## check`). Only a report that cannot be read throws (`fixedRows`).
  */
 export async function fixTestProofs(ctx: Context, game: GameRepo, run: RunState, commit: string, options: ProofOptions): Promise<FixTestProof[]> {
-  const text = await readGameText(game, runRel(run, `content-${String(run.iteration)}.md`));
-  if (text === null) return [];
-  const fixed = [...reportRows(text)].filter(([, row]) => row.result === 'fixed');
+  return rowProofs(ctx, game, run, commit, await fixedRows(game, run), options);
+}
+
+/**
+ * The fix test proof of each of `fixed`, in their order. It does not throw: what could not be run is `unknown` with the
+ * reason, and so is the proof of each row when `defects.json` cannot be read, and that of each row that needs the proof
+ * when it cannot be decided otherwise (e.g. git cannot read the history of the iteration).
+ */
+export async function rowProofs(ctx: Context, game: GameRepo, run: RunState, commit: string, fixed: readonly FixedRow[], options: ProofOptions): Promise<FixTestProof[]> {
   if (fixed.length === 0) return [];
-  const defects = new Map(((await readRunJson<DefectsFile>(game, run, 'defects.json'))?.defects ?? []).map((d) => [d.id, d]));
+  let defects: Map<string, Defect>;
+  try {
+    defects = new Map(((await readRunJson<DefectsFile>(game, run, 'defects.json'))?.defects ?? []).map((d) => [d.id, d]));
+  } catch (error) {
+    // without the defects no row is known not to need the proof
+    const why = `${runRel(run, 'defects.json')} could not be read: ${firstLine(error)}`;
+    return fixed.map(([id]) => noRun(id, 'unknown', why));
+  }
   try {
     return await proofsOf(ctx, game, run, commit, fixed, defects, options);
   } catch (error) {
     // e.g. git cannot read the history: no row that needs the proof has a result
-    const why = (error as Error).message.split('\n')[0] as string;
+    const why = firstLine(error);
     return fixed.map(([id, row]) => exempt(id, row, defects.get(id)) ?? noRun(id, 'unknown', why));
   }
+}
+
+function firstLine(error: unknown): string {
+  return (error as Error).message.split('\n')[0] as string;
 }
 
 /** The proof of a row that needs none: `unknown` with why; null for a row that needs one. */

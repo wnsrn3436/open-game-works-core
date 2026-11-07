@@ -111,7 +111,7 @@ describe('gameChecks', () => {
     vi.mocked(uiQualityCheck).mockImplementation((_c, _g, platform) => later(`UI quality ${platform}`, pass('UI quality', platform)));
     vi.mocked(rowSimulationCheck).mockImplementation(() => later('row simulation', pass('row simulation')));
     const alongside = vi.fn<(instance: unknown) => Promise<void>>(() => later('alongside', undefined));
-    const checks = gameChecks(ctx, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all', alongside);
+    const checks = gameChecks(ctx, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all', [{ name: 'beside', work: alongside }]);
     while (pending.length < 5) await turn();
     for (const name of ['bot playtest', 'UI quality ios', 'row simulation', 'UI quality web', 'alongside']) {
       for (let i = 0; i < 5; i++) await turn();
@@ -133,6 +133,18 @@ describe('gameChecks', () => {
     expect(performanceChecks).toHaveBeenCalledTimes(1);
     // the work alongside takes its instances within the slots of the check
     expect(alongside.mock.calls[0]?.[0]).toBe(vi.mocked(botPlaytest).mock.calls[0]?.[3]);
+  });
+
+  it('logs the failure of each work beside the checks under the name of that work, and the checks go on', async () => {
+    const logs: string[] = [];
+    const logged = { ...ctx, log: (line: string) => logs.push(line) } as Context;
+    const checks = await gameChecks(logged, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all', [
+      { name: 'shared telemetry runs', work: () => Promise.reject(new Error('no baseline worktree')) },
+      { name: 'fix test proof', work: () => Promise.reject(new Error('defects.json gone')) },
+      { name: 'quiet', work: () => Promise.resolve() },
+    ]);
+    expect(logs).toEqual(['shared telemetry runs: no baseline worktree', 'fix test proof: defects.json gone']);
+    expect(checks.map((c) => c.name)).toContain('performance');
   });
 
   it('runs the regression test and no placeholder beside the import of the checkout, and the static check and the instances after it', async () => {

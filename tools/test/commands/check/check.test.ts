@@ -566,6 +566,33 @@ put('/started', { run_id: config.ogw_run_id })
     expect(readdirSync(join(ws.worktrees, 'g')).filter((name) => name.startsWith('proof-'))).toEqual([]);
   });
 
+  it('writes a fix test proof that could not be decided as unknown with its reason, not as no proof', async () => {
+    const R = 'records/loops/create-1';
+    const root = setupGame(ws, {
+      [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n',
+      [`${R}/content-1.md`]: '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `client/tests/a/test_a.gd::test_a` |\n',
+      [`${R}/defects.json`]: '{"defects": [',
+    });
+    await openRun(1);
+    serveClient();
+    const run = await ogw(ws, ['check', 'g', '--loop']);
+    expect(run.stderr).toBe('');
+    const file = JSON.parse(readFileSync(join(root, `${R}/check-1.json`), 'utf8')) as { fixTestProof: { id: string; result: string; reason: string | null }[] };
+    expect(file.fixTestProof).toEqual([{ id: 'crash', result: 'unknown', reason: expect.stringMatching(/^records\/loops\/create-1\/defects\.json could not be read: invalid JSON/) as unknown, tests: [] }]);
+  });
+
+  it('fails before any check starts when the content agent report cannot be read', async () => {
+    const R = 'records/loops/create-1';
+    const root = setupGame(ws, { [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n', [`${R}/content-1.md/x`]: 'a folder, not a report' });
+    await openRun(1);
+    serveClient();
+    const run = await ogw(ws, ['check', 'g', '--loop']);
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain('EISDIR');
+    expect(startInstance).not.toHaveBeenCalled();
+    expect(existsSync(join(root, `${R}/check-1.json`))).toBe(false);
+  });
+
   it('starts the fix test proof in its worktree without waiting for the import of the checkout', async () => {
     const R = 'records/loops/create-1';
     const defect = { id: 'crash', severity: 'major', owner: 'client content', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 };

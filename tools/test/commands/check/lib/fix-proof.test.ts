@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { importClient } from '../../../../src/commands/check/lib/engine.ts';
@@ -7,6 +7,7 @@ import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { clientGutRun } from '../../../../src/commands/check/lib/regression.ts';
 import { runServerTests } from '../../../../src/commands/core/lib/server-tests.ts';
 import type { RunState } from '../../../../src/lib/runstate.ts';
+import { afterReport, type Defect, type ReportRow } from '../../../../src/commands/loop/lib/defects.ts';
 import { commitAll, makeGame, makeWorkspace } from '../../../helpers/workspace.ts';
 import { ctxOf } from '../../regress/helpers.ts';
 
@@ -104,5 +105,37 @@ describe('fixTestProofs', () => {
     expect(proofs.map((p) => [p.id, p.result, p.tests.map((t) => t.result)])).toEqual([['crash', 'pass', ['fail', 'fail', 'fail', 'fail', 'fail']]]);
     const clients = spans.filter((s) => s.what.startsWith('client '));
     for (const [i, a] of clients.entries()) for (const b of clients.slice(i + 1)) expect(overlap(a, b)).toBe(false);
+  });
+
+  it('is unknown with the reason for each fixed row when defects.json cannot be read, and that proof does not move the defect', async () => {
+    const { ctx, game, run, commit } = await proofGame();
+    writeFileSync(join(game.root, R, 'defects.json'), '{"defects": [');
+    const proofs = await fixTestProofs(ctx, game, run, commit, { godot: 'godot', runTimeLimitMs: null, startTimeLimitMs: null });
+    expect(proofs).toEqual([{ id: 'crash', result: 'unknown', reason: expect.stringMatching(/^records\/loops\/create-1\/defects\.json could not be read: /) as unknown, tests: [] }]);
+    expect(clientGutRun).not.toHaveBeenCalled();
+    // `ogw loop record` moves a fixed defect that needs the proof only on a proof `pass`: an unknown one stays open
+    const defect = { id: 'crash', severity: 'major', owner: 'client content', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 } as Defect;
+    const row = { id: 'crash', result: 'fixed', note: '`client/tests/a/test_a.gd::test`' } as ReportRow;
+    expect(afterReport(defect, row, proofs[0]?.result).status).toBe('open');
+    expect(afterReport(defect, row, 'pass').status).toBe('awaiting confirmation');
+  });
+
+  it('is unknown with the reason for each fixed row that needs the proof when the history of the iteration cannot be read', async () => {
+    const { ctx, game, run, commit } = await proofGame();
+    const exempt = { id: 'flat', severity: 'major', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 };
+    const crash = { ...exempt, id: 'crash', owner: 'client content' };
+    writeFileSync(join(game.root, R, 'defects.json'), JSON.stringify({ defects: [crash, exempt], previous: null, recordedBy: 'iteration-0' }));
+    writeFileSync(join(game.root, R, 'content-1.md'), '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `client/tests/a/test_a.gd::test` |\n| flat | fixed | |\n');
+    // a commit that is not in the repo: git cannot read the history from it
+    const proofs = await fixTestProofs(ctx, game, run, `${commit.slice(0, 30)}0000000000`, { godot: 'godot', runTimeLimitMs: null, startTimeLimitMs: null });
+    expect(proofs.map((p) => [p.id, p.result, p.reason === null ? null : p.reason.length > 0])).toEqual([['crash', 'unknown', true], ['flat', 'unknown', true]]);
+    expect(proofs[1]?.reason).toBe('owner data');
+  });
+
+  it('fails when the content agent report cannot be read, instead of reading it as no fixed row', async () => {
+    const { ctx, game, run, commit } = await proofGame();
+    rmSync(join(game.root, R, 'content-1.md'));
+    mkdirSync(join(game.root, R, 'content-1.md'));
+    await expect(fixTestProofs(ctx, game, run, commit, { godot: 'godot', runTimeLimitMs: null, startTimeLimitMs: null })).rejects.toMatchObject({ code: 'EISDIR' });
   });
 });

@@ -17,7 +17,7 @@ import { checkResult, failure, type Evidence } from './evidence.ts';
 import { hostProbe, type HostProbe } from './host-load.ts';
 import { Slots } from './instances.ts';
 import { performanceChecks, platformProfiles } from './performance.ts';
-import { fixTestProofs } from './fix-proof.ts';
+import { fixedRows, rowProofs } from './fix-proof.ts';
 import { regressionTest } from './regression.ts';
 import { rowSimulationCheck } from './row-simulation.ts';
 import { makeTelemetryRuns } from './telemetry-runs.ts';
@@ -135,6 +135,13 @@ function uiSettings(settings: GameSettings): { languages: string[]; screens: UiC
   };
 }
 
+/** Work of the check beside the checks that is not a check, named in the log line of its failure. */
+export interface WorkBeside {
+  name: string;
+  /** Starts once the import of the checkout has ended; takes its instances within `instance.slots`. */
+  work: (instance: InstanceCheckOptions) => Promise<void>;
+}
+
 /** Which checks of `gameChecks` a check set runs. */
 export interface Selection {
   wants: (name: string) => boolean;
@@ -163,10 +170,10 @@ export function selectionOf(set: CheckSet): Selection {
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
- * the bot playtest (ogw.md `## check`). `alongside` is more instance work of the check, which is not a check (the shared
- * telemetry runs of `--loop`). The work that does not read the checkout's `client/` (the server regression test and no
- * placeholder) runs beside its import. The performance measurements start once every other instance of the check has
- * stopped (ogw.md `## performance`).
+ * the bot playtest (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry
+ * runs and the fix test proof of `--loop`); the failure of each is logged under its name. The work that does not read
+ * the checkout's `client/` (the server regression test and no placeholder) runs beside its import. The performance
+ * measurements start once every other instance of the check has stopped (ogw.md `## performance`).
  */
 export async function gameChecks(
   ctx: Context,
@@ -175,7 +182,7 @@ export async function gameChecks(
   options: LoopOptions,
   evidence: Evidence,
   set: CheckSet,
-  alongside?: (instance: InstanceCheckOptions) => Promise<void>,
+  alongside: readonly WorkBeside[] = [],
 ): Promise<CheckResult[]> {
   const [slots, modules, scenario, merged, leaseBase, harness] = await Promise.all([
     options.slots ?? slotsOf(ctx),
@@ -221,14 +228,11 @@ export async function gameChecks(
     ...(run.ui ? profiles.map((p) => afterImport(() => uiQualityCheck(ctx, game.name, p, ui))) : []),
     ...(run.rows ? [afterImport(() => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance))] : []),
   ];
-  const besides =
-    alongside === undefined
-      ? []
-      : [
-          afterImport(() => alongside(instance)).catch((error: unknown) => {
-            ctx.log(`shared telemetry runs: ${(error as Error).message}`);
-          }),
-        ];
+  const besides = alongside.map((beside) =>
+    afterImport(() => beside.work(instance)).catch((error: unknown) => {
+      ctx.log(`${beside.name}: ${(error as Error).message}`);
+    }),
+  );
   const tasks: Promise<CheckResult | CheckResult[] | null>[] = [
     ...(wants('regression test') ? [guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))] : []),
     ...(wants('static check') ? [afterImport((imported) => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })))] : []),
@@ -257,17 +261,23 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const set = iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all';
   const slots = await slotsOf(ctx);
   const proofOptions = { godot: options.godot, ...(await testLimits(ctx, game)), ...(options.db ? { db: options.db } : {}), slots };
-  let fixTestProof: FixTestProof[] = [];
-  // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout
-  const proof = fixTestProofs(ctx, game, run, commit, proofOptions).then((proofs) => {
-    fixTestProof = proofs;
-  });
+  // a content agent report that cannot be read fails the check here, before any check starts
+  const fixed = await fixedRows(game, run);
+  // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout. It does not
+  // throw (what it could not decide is `unknown` with the reason), so its result is never left out
+  const proof = rowProofs(ctx, game, run, commit, fixed, proofOptions);
   // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the
   // performance measurements wait for them and for the fix test proof
-  const checks = await gameChecks(ctx, game, settings, { ...options, slots }, evidence, set, async (instance) => {
-    const [telemetry] = await Promise.allSettled([makeTelemetryRuns(ctx, game, run, commit, instance), proof]);
-    if (telemetry.status === 'rejected') throw telemetry.reason;
-  }).finally(() => Promise.allSettled([proof]));
+  const checks = await gameChecks(ctx, game, settings, { ...options, slots }, evidence, set, [
+    { name: 'shared telemetry runs', work: (instance) => makeTelemetryRuns(ctx, game, run, commit, instance) },
+    {
+      name: 'fix test proof',
+      work: async () => {
+        await proof;
+      },
+    },
+  ]).finally(() => Promise.allSettled([proof]));
+  const fixTestProof = await proof;
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
   await writeJsonAtomic(join(game.root, file), { commit, checks, gate, fixTestProof });
