@@ -269,6 +269,8 @@ describe('ogw time', () => {
     // before the run and of another game
     job(ws, 'z1', -50, -10, { game: 'g' });
     job(ws, 'z2', 100, 120, { game: 'other' });
+    // an agent job of a run of the same name in another game does not end iteration 1 of g
+    job(ws, 'z3', 300, 310, { game: 'other', command: 'agent', meta: { role: 'content', run: 'create-1', iteration: 2 } });
     const one = await timeOf(ws, ['g', '--run', 'create-1', '--iteration', '1']);
     expect(one.root.key).toBe('run create-1');
     expect(one.root.children.map((c) => c.key)).toEqual(['a1', 'k1']);
