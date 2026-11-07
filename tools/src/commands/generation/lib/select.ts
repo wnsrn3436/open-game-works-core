@@ -60,7 +60,11 @@ export interface MethodChoice {
 }
 
 export const IMAGE_METHOD = 'flux2-klein';
-const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2']);
+/**
+ * The methods whose making calls `flux2-klein`: the part images of `rig-2d`, the source illustration of `trellis2`, and
+ * the images `z-image-turbo` makes from reference images, as it draws from text alone (`production.md` `## method`).
+ */
+const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2', 'z-image-turbo']);
 /** Image types: the image method of a game makes them (`production.md` `## method`). */
 export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 'background', 'nine_slice', 'texture', 'skybox', 'app_icon', 'splash'];
 
@@ -118,10 +122,21 @@ export async function keyChoices(ctx: Context, settings: HarnessSettings, key: s
     if (!logotype || !usable(logotype) || !usable(fonts)) return [];
     const imageMethod = gameImageMethod(settings, keyed.rows);
     const image = settings.resourceGeneration.find((m) => m.name === imageMethod);
-    const drawn = image && usable(image) ? [await choiceOf(ctx, image, keyed.spec, undefined)] : [];
+    const called = image && calledImageMethod(settings, image);
+    const drawn = image && usable(image) && called !== null ? [await choiceOf(ctx, image, keyed.spec, called)] : [];
     return [...drawn, await choiceOf(ctx, logotype, keyed.spec, undefined)];
   }
   return methodChoices(ctx, settings, keyed.type, keyed.spec, gameImageMethod(settings, keyed.rows));
+}
+
+/**
+ * The `flux2-klein` a method calls (`NEEDS_IMAGE_METHOD`): undefined for a method that calls none, and null when it
+ * calls it and `flux2-klein` is not usable, so that the method is not usable either.
+ */
+function calledImageMethod(settings: HarnessSettings, method: GenerationMethod): GenerationMethod | null | undefined {
+  if (!NEEDS_IMAGE_METHOD.has(method.name)) return undefined;
+  const image = settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD);
+  return image && usable(image) ? image : null;
 }
 
 /**
@@ -134,10 +149,10 @@ export async function methodChoices(ctx: Context, settings: HarnessSettings, typ
   const imageType = IMAGE_TYPES.includes(type);
   const choices: MethodChoice[] = [];
   for (const method of settings.resourceGeneration) {
-    const needsImage = NEEDS_IMAGE_METHOD.has(method.name);
-    if (!method.resourceTypes.includes(type) || !usable(method) || (needsImage && !usable(image))) continue;
+    const called = calledImageMethod(settings, method);
+    if (!method.resourceTypes.includes(type) || !usable(method) || called === null) continue;
     if (imageType && method.name !== imageMethod) continue;
-    choices.push(await choiceOf(ctx, method, spec, needsImage ? image : undefined));
+    choices.push(await choiceOf(ctx, method, spec, called));
   }
   if (image && takesTemporary(type, imageMethod, image)) choices.push({ ...(await choiceOf(ctx, image, spec, undefined)), temporary: true });
   return choices;
@@ -157,7 +172,7 @@ export async function installedOnHost(ctx: Context, method: GenerationMethod): P
 
 /**
  * The methods that block a resource key on this host: when none of its methods other than the temporary method is
- * installed (`installedOnHost`, and for `rig-2d` and `trellis2` `flux2-klein` too, which they call, and for `logotype`
+ * installed (`installedOnHost`, and `flux2-klein` too for the methods that call it (`NEEDS_IMAGE_METHOD`), and for `logotype`
  * `font-catalog`, whose fonts it letters with), the methods of
  * those that are not installed, and the temporary method when it is not installed either, as the key is then made only
  * with the temporary method or with none (`production.md` `## method`). A logo key drawn with an image method needs
@@ -185,13 +200,16 @@ export async function uninstalledMethods(ctx: Context, settings: HarnessSettings
 }
 
 /**
- * What a method of a key needs installed: the method, with `flux2-klein` for `rig-2d` and `trellis2`, which call it, and
- * `font-catalog` for `logotype` and for an image method drawing a logo, which letter with its fonts.
+ * What a method of a key needs installed: the method, with `flux2-klein` for the methods that call it
+ * (`NEEDS_IMAGE_METHOD`), and `font-catalog` for `logotype` and for an image method drawing a logo, which letter with
+ * its fonts.
  */
 function methodNeeds(settings: HarnessSettings, method: GenerationMethod, key: string): GenerationMethod[] {
-  const calls = NEEDS_IMAGE_METHOD.has(method.name) ? IMAGE_METHOD : method.name === LOGOTYPE_METHOD || key.startsWith(LOGO_PREFIX) ? FONT_CATALOG : null;
-  const called = calls === null ? undefined : settings.resourceGeneration.find((m) => m.name === calls);
-  return called !== undefined ? [method, called] : [method];
+  const calls = [
+    ...(NEEDS_IMAGE_METHOD.has(method.name) ? [IMAGE_METHOD] : []),
+    ...(method.name === LOGOTYPE_METHOD || key.startsWith(LOGO_PREFIX) ? [FONT_CATALOG] : []),
+  ];
+  return [method, ...settings.resourceGeneration.filter((m) => calls.includes(m.name))];
 }
 
 async function choiceOf(ctx: Context, method: GenerationMethod, spec: Spec, image: GenerationMethod | undefined): Promise<MethodChoice> {

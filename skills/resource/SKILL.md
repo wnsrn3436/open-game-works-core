@@ -119,7 +119,7 @@ How the resource sub-agent makes final resources, and their post-processing, are
 - A resource whose source cannot be checked is not used. Sources are not made up
 - Collected resources use only `CC0-1.0` and `CC-BY-4.0`. Fonts also use `OFL-1.1`
 - The rights of a made resource follow the license of the generation method and the licenses of the inputs. The license of a method whose commercial use is not confirmed is `unknown`
-- When a method makes its resources from output of another method that is not put in as a resource row of its own (so it is not in `--inputs` of `ogw resource finalize`), its `license` also holds the `license` of that other method. e.g. the part images of `rig-2d` and the source illustration of `trellis2` are `flux2-klein` output
+- When a method makes its resources from output of another method that is not put in as a resource row of its own (so it is not in `--inputs` of `ogw resource finalize`), its `license` also holds the `license` of that other method. e.g. the part images of `rig-2d`, the source illustration of `trellis2` and the images that `z-image-turbo` makes from reference images are `flux2-klein` output
 - The screens, resources, names and text of the reference game are not used as generation input or reference images
 - A composited resource follows the license conditions and attribution of every original. `ogw resource finalize` calculates `license` and `attribution` from the originals
 - Agents do not install or run a program outside `ogw` that downloads resources. e.g. a video downloader, a site scraper, an asset store client

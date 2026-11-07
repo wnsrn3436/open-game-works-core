@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { chooseStage } from '../../../src/commands/generation/lib/select.ts';
 import { typeRow } from '../../../src/commands/generation/check.ts';
-import { ogw, makeGame, makeWorkspace } from '../../helpers/workspace.ts';
+import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 
 const RESOURCES = [
   'key,description,spec,status,method,source,license,attribution,sha256,text_key,speaker,text_hash',
@@ -181,6 +181,37 @@ describe('ogw generation methods', () => {
     makeGame(unusableImage, 'g', { 'resource/resources.csv': list });
     const lettered = await ogw(unusableImage, ['generation', 'methods', 'g', 'image/logo/en', '--json']);
     expect((JSON.parse(lettered.stdout) as { methods: { name: string }[] }).methods.map((m) => m.name)).toEqual(['logotype']);
+  });
+
+  it('gives z-image-turbo the flux2-klein stage of its reference edits, and only while flux2-klein is usable', async () => {
+    const zit = { name: 'z-image-turbo', kind: 'local-model', resourceTypes: ['image', 'icon'], safetyTimeoutMs: 1, license: 'X', measured: [{ resolution: 512, jobMs: 40, result: 'ok' }, { resolution: 1024, jobMs: 80, result: 'ok' }] };
+    const logotype = { name: 'logotype', kind: 'procedural', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const fonts = { name: 'font-catalog', kind: 'catalog', resourceTypes: ['font'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
+    const list = `${RESOURCES}${row('image/logo/en', 'placeholder', '')}\n`;
+    const game = (imageMeasured?: unknown): TestWorkspace => {
+      const all = [...methods(imageMeasured), zit, logotype, fonts];
+      const ws = makeWorkspace({ resourceGeneration: all, imageMethod: 'z-image-turbo' });
+      installLocal(ws.root, all);
+      makeGame(ws, 'g', { 'resource/resources.csv': list });
+      return ws;
+    };
+    const of = async (ws: TestWorkspace, key: string): Promise<unknown> => (JSON.parse((await ogw(ws, ['generation', 'methods', 'g', key, '--json'])).stdout) as { methods: unknown }).methods;
+    const ws = game();
+    const flux = { resolution: 1024, jobMs: 20, fallback: false };
+    expect(await of(ws, 'image/hero')).toEqual([
+      { name: 'z-image-turbo', kind: 'local-model', stage: { resolution: 1024, jobMs: 80, fallback: false }, flux2Klein: flux },
+      { name: 'flux2-klein', kind: 'local-model', stage: flux, temporary: true },
+    ]);
+    expect((await ogw(ws, ['generation', 'methods', 'g', 'image/hero'])).stdout).toBe('z-image-turbo local-model resolution 1024px\n  flux2-klein resolution 1024px\nflux2-klein local-model resolution 1024px temporary\n');
+    // a logo key: the lettering is its reference image, so the drawing is a flux2-klein call too
+    expect(await of(ws, 'image/logo/en')).toEqual([
+      { name: 'z-image-turbo', kind: 'local-model', stage: { resolution: 512, jobMs: 40, fallback: false }, flux2Klein: { resolution: 512, jobMs: 10, fallback: false } },
+      { name: 'logotype', kind: 'procedural', stage: null },
+    ]);
+    // without a usable flux2-klein, z-image-turbo makes no image and the lettering is the logo
+    const failed = game([{ resolution: 512, result: 'failed' }]);
+    expect(await of(failed, 'image/hero')).toEqual([]);
+    expect(await of(failed, 'image/logo/en')).toEqual([{ name: 'logotype', kind: 'procedural', stage: null }]);
   });
 
   it('gives the temporary method only when flux2-klein is usable, and for an image type only when flux2-klein lists it', async () => {
