@@ -8,7 +8,8 @@ import type { CheckFailure, CheckResult } from '../api.ts';
 import type { InstanceCheckOptions } from './bot-playtest.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from './evidence.ts';
 import { flashCheck, type FlashPart } from './flash-check.ts';
-import { withInstance } from './instances.ts';
+import { onInstance, withInstance } from './instances.ts';
+import { shareUnits, UnitQueue } from './units.ts';
 import type { Scenario } from './scenario.ts';
 
 /** Game settings `uiCheckScreens` item. */
@@ -332,11 +333,17 @@ function unanswered(error: unknown): null {
 /** An open command whose request threw (the client crashed or hangs); the run stops after reporting it. */
 class OpenThrew extends Error {}
 
+/** The number of captures of one UI quality item so far, over all its instances: it numbers their evidence files. */
+interface CaptureCount {
+  value: number;
+}
+
+/** One unit of the captures of a UI quality item on one instance: its failures and the `where` of its screen. */
 class UiRun {
   readonly failures: CheckFailure[] = [];
   /** `where` of the failures of the screen being checked: its scene key (ogw.md `## check`). */
   where = unknownSceneWhere(null);
-  private captures = 0;
+  private readonly captures: CaptureCount;
   private readonly ctx: Context;
   private readonly id: string;
   private readonly platform: string;
@@ -344,13 +351,14 @@ class UiRun {
   private readonly settleLimitMs: number;
   private readonly pollMs: number;
 
-  constructor(ctx: Context, id: string, platform: string, options: UiQualityOptions) {
+  constructor(ctx: Context, id: string, platform: string, options: UiQualityOptions, captures: CaptureCount) {
     this.ctx = ctx;
     this.id = id;
     this.platform = platform;
     this.evidence = options.evidence;
     this.settleLimitMs = options.quality.settleLimitMs;
     this.pollMs = options.pollMs;
+    this.captures = captures;
   }
 
   request(command: string, args: string[]): Promise<AutomationResponse> {
@@ -379,8 +387,8 @@ class UiRun {
   }
 
   async capture(label: string): Promise<{ elements: UiElement[]; evidence: (string | null)[]; png: Buffer }> {
-    this.captures++;
-    const name = `ui-${this.platform}/${String(this.captures).padStart(4, '0')}-${label}`;
+    this.captures.value++;
+    const name = `ui-${this.platform}/${String(this.captures.value).padStart(4, '0')}-${label}`;
     const png = await this.setup('capture_screen', []);
     const list = await this.setup('list_ui', []);
     const evidence = [
@@ -546,27 +554,115 @@ async function gamepadCheck(run: UiRun, options: UiQualityOptions, screens: UiCh
   }
 }
 
-async function inspect(ctx: Context, id: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
-  const run = new UiRun(ctx, id, platform, options);
+/** A unit of the captures of a UI quality item: the captures of one language, or the gamepad focus check. */
+type UiUnit = { language: string } | 'gamepad';
+
+/** What a unit, or the reading of the open commands before the units, judged, and the error that stopped it. */
+interface UnitOutcome {
+  failures: CheckFailure[];
+  where: string;
+  error: { value: unknown } | null;
+}
+
+/** The captures of one language: each screen of step 2, each open command of step 3 and each text scale of step 4. */
+async function languageCaptures(run: UiRun, language: string, screens: readonly MeasuredScreen[], commands: readonly string[], scales: readonly (number | null)[], quality: UiQualityLimits, touch: boolean): Promise<void> {
+  await run.language(language);
+  for (const item of screens) {
+    await run.screen(item);
+    for (const command of commands) await screenCaptures(run, language, item, command, [...scales], quality, touch);
+  }
+}
+
+/** A setup command that failed or an open command whose request threw: the run stops, and what was judged before stays. */
+function isStop(error: unknown): error is SetupFailed | OpenThrew {
+  return error instanceof SetupFailed || error instanceof OpenThrew;
+}
+
+function didNotRun(platform: string, error: unknown): CheckResult {
+  return checkResult('UI quality', platform, [failure(unknownSceneWhere(null), `UI quality did not run: ${(error as Error).message}`)], true);
+}
+
+/**
+ * The result of the outcomes in unit order, as one instance that ran the units one after another gives it: the failures
+ * up to the first unit that stopped. A stop with no failure before it is `unknown` with its reason.
+ */
+function unitsResult(platform: string, outcomes: readonly (UnitOutcome | undefined)[]): CheckResult {
+  const failures: CheckFailure[] = [];
+  for (const outcome of outcomes) {
+    if (outcome === undefined) continue;
+    failures.push(...outcome.failures);
+    if (outcome.error === null) continue;
+    // failures judged before the stop already make the result fail; with none, nothing was judged
+    if (failures.length > 0) return checkResult('UI quality', platform, failures);
+    const error = outcome.error.value;
+    return isStop(error) ? checkResult('UI quality', platform, [failure(outcome.where, error.message)], true) : didNotRun(platform, error);
+  }
+  return checkResult('UI quality', platform, failures);
+}
+
+/**
+ * The captures of one platform profile (ogw.md `## UI quality`): the units (each language, then the gamepad focus
+ * check) in order on an instance that draws the screen, and beside it on more such instances in free slots of the check
+ * (`shareUnits`). The result is that of the units in order (`unitsResult`).
+ */
+async function capturesCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
   const screens = measured(screensOfOrientation(options.screens, options.baseResolution));
   const scales = options.maxTextScale === null ? [null] : [...new Set([1000, options.maxTextScale])];
-  try {
-    const commands = await openCommands(run);
-    for (const language of options.languages) {
-      await run.language(language);
-      for (const item of screens) {
-        await run.screen(item);
-        for (const command of commands) await screenCaptures(run, language, item, command, scales, options.quality, TOUCH_PLATFORMS.includes(platform));
+  const touch = TOUCH_PLATFORMS.includes(platform);
+  const units: UiUnit[] = [...options.languages.map((language) => ({ language })), ...(options.gamepadSupported ? ['gamepad' as const] : [])];
+  const queue = new UnitQueue(units.length);
+  // index 0: the reading of the open commands, which comes before every unit
+  const outcomes: (UnitOutcome | undefined)[] = [];
+  const count: CaptureCount = { value: 0 };
+  let commands: string[] = [];
+  const instanceOptions = { game, platform, client: 'window' as const, db: options.db };
+  // an error other than a stop is thrown after its outcome is kept, so that the instance keeps its logs
+  const runUnits = async (id: string, next: () => number | null): Promise<void> => {
+    for (let i = next(); i !== null; i = next()) {
+      const run = new UiRun(ctx, id, platform, options, count);
+      const unit = units[i] as UiUnit;
+      try {
+        if (unit === 'gamepad') await gamepadCheck(run, options, screens, commands);
+        else await languageCaptures(run, unit.language, screens, commands, scales, options.quality, touch);
+        outcomes[i + 1] = { failures: run.failures, where: run.where, error: null };
+      } catch (error) {
+        outcomes[i + 1] = { failures: run.failures, where: run.where, error: { value: error } };
+        shared.stopAfter(i);
+        if (!isStop(error)) throw error;
+        return;
       }
     }
-    if (options.gamepadSupported) await gamepadCheck(run, options, screens, commands);
+  };
+  const shared = shareUnits(
+    options.slots,
+    queue,
+    (next, signal) => onInstance(ctx, instanceOptions, (instance) => runUnits(instance.id, next), options.evidence, signal),
+    (error) => {
+      ctx.log(`UI quality (${platform}): a helper instance ended: ${(error as Error).message}`);
+    },
+  );
+  const recorded = (error: unknown): boolean => outcomes.some((o) => o?.error?.value === error);
+  try {
+    await withInstance(ctx, options.slots, instanceOptions, async (instance) => {
+      const run = new UiRun(ctx, instance.id, platform, options, count);
+      try {
+        commands = await openCommands(run);
+      } catch (error) {
+        outcomes[0] = { failures: run.failures, where: run.where, error: { value: error } };
+        if (!isStop(error)) throw error;
+        return;
+      }
+      await runUnits(instance.id, () => shared.claim());
+    }, options.evidence);
   } catch (error) {
-    // Failures judged before the stop already make the result fail; with none, nothing was judged.
-    if (run.failures.length > 0) return checkResult('UI quality', platform, run.failures);
-    if (error instanceof SetupFailed || error instanceof OpenThrew) return checkResult('UI quality', platform, [failure(run.where, error.message)], true);
-    throw error;
+    // an error that an outcome holds is judged with the outcomes; another error of the instance leaves nothing judged in full
+    if (!recorded(error)) {
+      await shared.helpers();
+      return didNotRun(platform, error);
+    }
   }
-  return checkResult('UI quality', platform, run.failures);
+  await shared.helpers();
+  return unitsResult(platform, outcomes);
 }
 
 /**
@@ -578,16 +674,6 @@ export function withFlash(captures: CheckResult, flash: FlashPart): CheckResult 
   if (captures.result === 'fail' || flashFails) return { ...captures, result: 'fail', failures: [...(captures.result === 'fail' ? captures.failures : []), ...(flashFails ? flash.failures : [])] };
   if (captures.result === 'unknown' || flash.unknown) return { ...captures, result: 'unknown', failures: [...(captures.result === 'unknown' ? captures.failures : []), ...(flash.unknown ? flash.failures : [])] };
   return captures;
-}
-
-async function capturesCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
-  try {
-    return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, (instance) =>
-      inspect(ctx, instance.id, platform, options), options.evidence,
-    );
-  } catch (error) {
-    return checkResult('UI quality', platform, [failure(unknownSceneWhere(null), `UI quality did not run: ${(error as Error).message}`)], true);
-  }
 }
 
 /** UI quality of one platform profile (ogw.md `## UI quality`): the captures and the flash check, each in an instance that draws the screen. */

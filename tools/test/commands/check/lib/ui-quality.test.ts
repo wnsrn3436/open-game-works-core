@@ -259,9 +259,22 @@ describe('UI quality rules', () => {
  * one finite tween, then `tweenReads` reads give `ui_flow` false and still one finite tween; with `never` the flow does
  * not end; `legacy` leaves both fields out, as a core before them.
  */
-function fakeUi(flow: { settleReads?: number; tweenReads?: number; never?: boolean; legacy?: boolean } = {}): { calls: string[]; times: { command: string; at: number }[] } {
+function fakeUi(flow: UiFlow = {}): { calls: string[]; times: { command: string; at: number }[] } {
   const calls: string[] = [];
   const times: { command: string; at: number }[] = [];
+  vi.mocked(automationRequest).mockImplementation(fakeAutomation(uiClient(flow, calls, times)));
+  return { calls, times };
+}
+
+interface UiFlow {
+  settleReads?: number;
+  tweenReads?: number;
+  never?: boolean;
+  legacy?: boolean;
+}
+
+/** The client of {@link fakeUi}: it answers each request and records it in `calls` and `times`. */
+function uiClient(flow: UiFlow, calls: string[], times: { command: string; at: number }[]): (command: string, args: string[]) => AutomationResponse {
   let screen = '';
   let scale = 1000;
   let focus = '';
@@ -320,7 +333,7 @@ function fakeUi(flow: { settleReads?: number; tweenReads?: number; never?: boole
         break;
     }
   };
-  vi.mocked(automationRequest).mockImplementation(fakeAutomation((command, args) => {
+  return (command, args) => {
     calls.push([command, ...args].join(' '));
     times.push({ command, at: Date.now() });
     switch (command) {
@@ -336,8 +349,7 @@ function fakeUi(flow: { settleReads?: number; tweenReads?: number; never?: boole
         change(command, args);
         return ok(null);
     }
-  }));
-  return { calls, times };
+  };
 }
 
 function options(evidenceRoot: string, extra: Partial<UiQualityOptions> = {}): UiQualityOptions {
@@ -718,5 +730,147 @@ describe('uiQualityCheck', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('uiQualityCheck on more instances', () => {
+  interface Span {
+    id: string;
+    command: string;
+    start: number;
+    end: number;
+  }
+
+  /** A client of {@link uiClient} per instance; each request takes `delayMs(id, command)` ms and records its span. */
+  function perInstance(delayMs: (id: string, command: string) => number = () => 2): { spans: Span[]; languages: Map<string, string[]> } {
+    const clients = new Map<string, (command: string, args: string[]) => AutomationResponse>();
+    const spans: Span[] = [];
+    const languages = new Map<string, string[]>();
+    let n = 0;
+    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `u${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
+    vi.mocked(automationRequest).mockImplementation(async (_ctx, id, command, args) => {
+      let client = clients.get(id);
+      if (client === undefined) {
+        client = uiClient({}, [], []);
+        clients.set(id, client);
+      }
+      if (command === 'set_language') languages.set(id, [...(languages.get(id) ?? []), args[0] ?? '']);
+      const start = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, delayMs(id, command)));
+      const answer = client(command, args);
+      spans.push({ id, command, start, end: Date.now() });
+      return answer;
+    });
+    return { spans, languages };
+  }
+
+  const lines = (result: { failures: { where: string; message: string }[] }): string[] => result.failures.map((f) => `${f.where} | ${f.message}`);
+
+  /** The most instances that had a request in flight at one time. */
+  function mostAtOnce(spans: readonly Span[]): number {
+    return Math.max(0, ...spans.map((s) => new Set(spans.filter((o) => o.start <= s.start && s.start < o.end).map((o) => o.id)).size));
+  }
+
+  it('runs each language and the gamepad focus check on an instance of a free slot of the check, with the result of one instance', async () => {
+    perInstance();
+    const serial = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-'))));
+    expect(startInstance).toHaveBeenCalledTimes(1);
+    vi.mocked(startInstance).mockClear();
+    const { spans, languages } = perInstance();
+    const shared = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { slots: new Slots(3) }));
+    expect(startInstance).toHaveBeenCalledTimes(3);
+    // ko on the first instance; en and the gamepad focus check (which sets ko again) on two more, at the same time
+    expect([...languages.values()].sort()).toEqual([['en'], ['ko'], ['ko']]);
+    expect(mostAtOnce(spans)).toBe(3);
+    expect(lines(shared)).toEqual(lines(serial));
+    expect(shared.result).toBe(serial.result);
+    for (const id of ['u1', 'u2', 'u3']) expect(stopInstance).toHaveBeenCalledWith(ctx, id);
+  });
+
+  it('starts no more instance while no slot of the check is free', async () => {
+    const { languages } = perInstance();
+    const slots = new Slots(2);
+    await slots.acquire();
+    const result = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { slots }));
+    expect(startInstance).toHaveBeenCalledTimes(1);
+    expect(languages.get('u1')).toEqual(['ko', 'en', 'ko']);
+    expect(result.result).toBe('fail');
+  });
+
+  it('gives a slot back after the unit it runs once another holder of the slots waits', async () => {
+    const slots = new Slots(3);
+    await slots.acquire();
+    let waited: Promise<number> | null = null;
+    const { languages } = perInstance((id, command) => {
+      // while the second instance runs its first capture, other work of the check comes to wait for a slot
+      if (id === 'u2' && command === 'capture_screen' && waited === null) waited = slots.acquire().then(() => Date.now());
+      return 2;
+    });
+    let stopped = 0;
+    vi.mocked(stopInstance).mockImplementation((_c, id) => {
+      if (id === 'u2') stopped = Date.now();
+      return Promise.resolve();
+    });
+    const result = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { slots }));
+    expect(startInstance).toHaveBeenCalledTimes(2);
+    // the helper ran en and stopped; the first instance ran ko and then the gamepad focus check
+    expect(languages.get('u2')).toEqual(['en']);
+    expect(languages.get('u1')).toEqual(['ko', 'ko']);
+    expect(waited).not.toBeNull();
+    expect(await (waited as unknown as Promise<number>)).toBeGreaterThanOrEqual(stopped);
+    expect(result.result).toBe('fail');
+  });
+
+  it('stops a helper instance that is still starting once another holder of the slots waits, and its units go to the others', async () => {
+    const slots = new Slots(3);
+    await slots.acquire();
+    const { languages } = perInstance();
+    let signal: AbortSignal | undefined;
+    let waiting = false;
+    vi.mocked(startInstance).mockImplementation((_c, _o, hooks) => {
+      if (hooks?.signal === undefined) return Promise.resolve({ id: 'u1' } as Awaited<ReturnType<typeof startInstance>>);
+      signal = hooks.signal;
+      // the start of the helper ends only when it is stopped; meanwhile other work of the check comes to wait
+      return new Promise((_resolve, reject) => {
+        hooks.signal?.addEventListener('abort', () => {
+          reject(new OgwError('instance start was stopped'));
+        });
+        if (!waiting) {
+          waiting = true;
+          void slots.acquire().then(() => {
+            slots.release();
+          });
+        }
+      });
+    });
+    const result = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { slots }));
+    expect(signal?.aborted).toBe(true);
+    expect(languages.get('u1')).toEqual(['ko', 'en', 'ko']);
+    expect(result.result).toBe('fail');
+  });
+
+  it('leaves out what units after a unit that stops judged on other instances, as one instance would not have run them', async () => {
+    let koCaptures = 0;
+    // the ko unit of the first instance is slow and its fifth capture fails: en and the gamepad focus check end first
+    const slow = (id: string): number => (id === 'u1' ? 15 : 1);
+    const failing = (): void => {
+      const base = vi.mocked(automationRequest).getMockImplementation();
+      vi.mocked(automationRequest).mockImplementation(async (c, id, command, args, client) => {
+        if (id === 'u1' && command === 'capture_screen' && ++koCaptures === 5) return notOk('headless');
+        return (await base?.(c, id, command, args, client)) ?? ok(null);
+      });
+    };
+    perInstance(slow);
+    failing();
+    const serial = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-'))));
+    koCaptures = 0;
+    const { languages } = perInstance(slow);
+    failing();
+    const shared = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { slots: new Slots(3) }));
+    expect([...languages.values()].sort()).toEqual([['en'], ['ko'], ['ko']]);
+    expect(serial.result).toBe('fail');
+    expect(lines(serial).length).toBeGreaterThan(0);
+    expect(lines(serial).every((line) => line.includes('(ko, phone'))).toBe(true);
+    expect(lines(shared)).toEqual(lines(serial));
   });
 });

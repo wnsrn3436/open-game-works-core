@@ -20,11 +20,16 @@ import type { FixTestProof, ProofTest } from '../../loop/lib/files.ts';
 import { reportRows } from '../../loop/lib/record.ts';
 import { readGameText, readRunJson, runRel } from '../../loop/lib/run.ts';
 import { importClient } from './engine.ts';
+import type { Slots } from './instances.ts';
 import { clientGutRun, regressionDb, regressionInputs, type ClientRunOptions } from './regression.ts';
+import { shareUnits, UnitQueue } from './units.ts';
 
 const TEST_DIRS = ['client/tests', 'server/tests'] as const;
 
-export type ProofOptions = Pick<ClientRunOptions, 'godot' | 'runTimeLimitMs' | 'startTimeLimitMs' | 'db'>;
+export type ProofOptions = Pick<ClientRunOptions, 'godot' | 'runTimeLimitMs' | 'startTimeLimitMs' | 'db'> & {
+  /** The instance slots of the check: more test files run beside the first in its spare slots (ogw.md `### spare slots`). */
+  slots?: Slots;
+};
 
 /** The result of each test that a run of one test file reports, by test name; `started` when the test runner started. */
 interface FileRun {
@@ -114,9 +119,42 @@ async function serverFile(ctx: Context, root: string, file: string, options: Pro
 }
 
 /**
- * Runs each test file of `files` alone in a worktree of the fix base with the changed test files of `commit` laid over
- * it, its generated files written and its client imported. A run that cannot set up the worktree reports why for every
- * file.
+ * Runs each of `files` with `run`, into `runs`: in order one after another, and beside that in the spare slots of
+ * `slots` (`shareUnits`). Once every run has ended, throws the first error a run threw.
+ */
+async function runFiles(ctx: Context, files: readonly string[], run: (file: string) => Promise<FileRun>, runs: Map<string, FileRun>, slots: Slots | undefined): Promise<void> {
+  if (files.length === 0) return;
+  const queue = new UnitQueue(files.length);
+  const errors: unknown[] = [];
+  const each = async (next: () => number | null): Promise<void> => {
+    for (let i = next(); i !== null; i = next()) {
+      const file = files[i] as string;
+      try {
+        runs.set(file, await run(file));
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  };
+  if (slots === undefined) await each(() => queue.claim());
+  else {
+    const shared = shareUnits(slots, queue, (next) => each(next), (error) => {
+      errors.push(error);
+    });
+    try {
+      await each(() => shared.claim());
+    } finally {
+      await shared.helpers();
+    }
+  }
+  if (errors.length > 0) throw errors[0];
+}
+
+/**
+ * Runs each test file of `files` in a run of its own in a worktree of the fix base with the changed test files of `commit`
+ * laid over it and its generated files written: the server test files at once, the client test files once the client is
+ * imported, each kind one after another and more beside it in spare slots (`runFiles`). A run that cannot set up the
+ * worktree reports why for every file.
  */
 async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: string, changed: readonly Changed[], files: readonly string[], options: ProofOptions): Promise<Map<string, FileRun>> {
   const worktree = join((await ctx.workspace()).worktrees, game.name, `proof-${newId()}`);
@@ -135,11 +173,17 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
       return none((error as Error).message.split('\n')[0] as string);
     }
     const client = files.filter((f) => f.startsWith('client/'));
-    const importFailure = client.length > 0 ? await importClient(ctx, options.godot, checkout) : null;
-    for (const file of files) {
-      if (file.startsWith('client/') && importFailure !== null) runs.set(file, { started: false, why: `the client import failed: ${importFailure}`, results: new Map() });
-      else runs.set(file, file.startsWith('client/') ? await clientFile(ctx, worktree, file, options) : await serverFile(ctx, worktree, file, options));
-    }
+    const server = files.filter((f) => !f.startsWith('client/'));
+    // the server test files do not wait for the client import
+    const clients = async (): Promise<void> => {
+      if (client.length === 0) return;
+      const importFailure = await importClient(ctx, options.godot, checkout);
+      if (importFailure === null) await runFiles(ctx, client, (file) => clientFile(ctx, worktree, file, options), runs, options.slots);
+      else for (const file of client) runs.set(file, { started: false, why: `the client import failed: ${importFailure}`, results: new Map() });
+    };
+    const settled = await Promise.allSettled([runFiles(ctx, server, (file) => serverFile(ctx, worktree, file, options), runs, options.slots), clients()]);
+    const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed !== undefined) throw failed.reason;
     return runs;
   } catch (error) {
     return none(`the worktree of the fix base could not be made: ${(error as Error).message.split('\n')[0] as string}`);

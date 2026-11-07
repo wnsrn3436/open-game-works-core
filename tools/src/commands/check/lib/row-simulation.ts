@@ -7,7 +7,8 @@ import type { CheckFailure, CheckResult } from '../api.ts';
 import { parseDataTable } from '../static/lib/csv.ts';
 import type { InstanceCheckOptions } from './bot-playtest.ts';
 import { checkResult, failure } from './evidence.ts';
-import { withInstance } from './instances.ts';
+import { onInstance, withInstance } from './instances.ts';
+import { shareUnits, UnitQueue, type SharedUnits } from './units.ts';
 
 /**
  * Row simulation (`client-content` `## row simulation`): the calculation `ogw simulate` and
@@ -170,21 +171,21 @@ async function runSeeds(ctx: Context, id: string, command: string, row: string, 
   return results;
 }
 
-async function simulateTable(ctx: Context, id: string, command: string, table: Table, options: SimulateOptions): Promise<RowResult[]> {
-  const required = Object.keys(table.targets).filter((metric) => metric !== 'solve_permille');
-  const rows = options.rows ? table.rows.filter((row) => options.rows?.includes(row.id)) : table.rows;
-  const results: RowResult[] = [];
-  for (const row of rows) {
-    const base = { table: table.name, id: row.id, line: row.line, targets: row.targets };
-    const seeds = await runSeeds(ctx, id, command, row.id, options.seeds, required);
-    if (typeof seeds === 'string') {
-      results.push({ ...base, verdict: 'error', values: {}, detail: seeds });
-      continue;
-    }
-    const values = rowValues(seeds);
-    results.push({ ...base, values, ...verdictOf(values, row.targets) });
-  }
-  return results;
+/** One row to simulate: the command of its table, the row and the metrics that have a target column in that table. */
+interface RowUnit {
+  command: string;
+  table: Table;
+  row: Table['rows'][number];
+  required: string[];
+}
+
+/** The verdict of one row from all its seeds, run in order on the instance `id`. */
+async function simulateRow(ctx: Context, id: string, unit: RowUnit, seeds: number): Promise<RowResult> {
+  const base = { table: unit.table.name, id: unit.row.id, line: unit.row.line, targets: unit.row.targets };
+  const results = await runSeeds(ctx, id, unit.command, unit.row.id, seeds, unit.required);
+  if (typeof results === 'string') return { ...base, verdict: 'error', values: {}, detail: results };
+  const values = rowValues(results);
+  return { ...base, values, ...verdictOf(values, unit.row.targets) };
 }
 
 async function simulateCommands(ctx: Context, id: string): Promise<{ command: string; table: string }[]> {
@@ -196,23 +197,35 @@ async function simulateCommands(ctx: Context, id: string): Promise<{ command: st
   });
 }
 
-/** Runs every `<feature>.simulate_<table>` command (or the one of `options.table`) on every row of its table. */
-export async function simulateRows(ctx: Context, id: string, root: string, options: SimulateOptions): Promise<RowSimulation> {
-  const tables = await readTables(root);
-  const commands = (await simulateCommands(ctx, id)).filter((c) => options.table === undefined || c.table === options.table);
-  const rows: RowResult[] = [];
+/**
+ * The rows that `simulateRows` runs, in the order of the commands and then of the rows of each table, with the tables
+ * simulated and those that have `sim_` target columns but no command.
+ */
+function plannedRows(tables: ReadonlyMap<string, Table>, commands: readonly { command: string; table: string }[], options: SimulateOptions): { units: RowUnit[]; simulated: string[]; missing: string[] } {
+  const chosen = commands.filter((c) => options.table === undefined || c.table === options.table);
+  const units: RowUnit[] = [];
   const simulated: string[] = [];
-  for (const { command, table } of commands) {
+  for (const { command, table } of chosen) {
     const data = tables.get(table);
     if (!data) continue;
     simulated.push(table);
-    rows.push(...(await simulateTable(ctx, id, command, data, options)));
+    const required = Object.keys(data.targets).filter((metric) => metric !== 'solve_permille');
+    const rows = options.rows ? data.rows.filter((row) => options.rows?.includes(row.id)) : data.rows;
+    for (const row of rows) units.push({ command, table: data, row, required });
   }
-  const commanded = new Set(commands.map((c) => c.table));
+  const commanded = new Set(chosen.map((c) => c.table));
   const missing = [...tables.values()]
     .filter((t) => Object.keys(t.targets).length > 0 && !commanded.has(t.name) && (options.table === undefined || t.name === options.table))
     .map((t) => t.name);
-  return { rows, tables: simulated, missing };
+  return { units, simulated, missing };
+}
+
+/** Runs every `<feature>.simulate_<table>` command (or the one of `options.table`) on every row of its table. */
+export async function simulateRows(ctx: Context, id: string, root: string, options: SimulateOptions): Promise<RowSimulation> {
+  const plan = plannedRows(await readTables(root), await simulateCommands(ctx, id), options);
+  const rows: RowResult[] = [];
+  for (const unit of plan.units) rows.push(await simulateRow(ctx, id, unit, options.seeds));
+  return { rows, tables: plan.simulated, missing: plan.missing };
 }
 
 /** `row simulation` failures (ogw.md `## check`). */
@@ -229,14 +242,38 @@ export function rowSimulationFailures(simulation: RowSimulation): CheckFailure[]
 /** `where` (a file:line) of a row simulation that did not run: line 1 of the data table folder it reads. */
 export const ROW_SIMULATION_WHERE = 'data/tables:1';
 
-/** `row simulation` of `ogw check --loop`: a headless instance apart from the bot playtest. */
+/**
+ * `row simulation` of `ogw check --loop`: a headless instance apart from the bot playtest reads the commands and runs
+ * the rows in order, and helper instances in free slots of the check run rows beside it (ogw.md `### spare slots` of
+ * `## check`); each row runs all its seeds on one instance. The rows keep the order of `simulateRows`.
+ */
 export async function rowSimulationCheck(ctx: Context, game: string, root: string, seeds: number, options: InstanceCheckOptions): Promise<CheckResult> {
+  const instanceOptions = { game, client: 'headless' as const, db: options.db };
+  const helpers: SharedUnits[] = [];
   try {
-    return await withInstance(ctx, options.slots, { game, client: 'headless', db: options.db }, async (instance) => {
-      const simulation = await simulateRows(ctx, instance.id, root, { seeds });
-      return checkResult('row simulation', null, rowSimulationFailures(simulation));
+    const simulation = await withInstance(ctx, options.slots, instanceOptions, async (instance): Promise<RowSimulation> => {
+      const plan = plannedRows(await readTables(root), await simulateCommands(ctx, instance.id), { seeds });
+      const rows: RowResult[] = [];
+      const runRows = async (id: string, next: () => number | null): Promise<void> => {
+        for (let i = next(); i !== null; i = next()) rows[i] = await simulateRow(ctx, id, plan.units[i] as RowUnit, seeds);
+      };
+      const shared = shareUnits(
+        options.slots,
+        new UnitQueue(plan.units.length),
+        (next, signal) => onInstance(ctx, instanceOptions, (helper) => runRows(helper.id, next), options.evidence, signal),
+        (error) => {
+          ctx.log(`row simulation: a helper instance ended: ${(error as Error).message}`);
+        },
+      );
+      helpers.push(shared);
+      await runRows(instance.id, () => shared.claim());
+      // the rows of the helpers are in `rows` once they end; this instance stops at once
+      return { rows, tables: plan.simulated, missing: plan.missing };
     }, options.evidence);
+    await Promise.all(helpers.map((h) => h.helpers()));
+    return checkResult('row simulation', null, rowSimulationFailures(simulation));
   } catch (error) {
+    await Promise.all(helpers.map((h) => h.helpers()));
     return checkResult('row simulation', null, [failure(ROW_SIMULATION_WHERE, `row simulation did not run: ${(error as Error).message}`)], true);
   }
 }

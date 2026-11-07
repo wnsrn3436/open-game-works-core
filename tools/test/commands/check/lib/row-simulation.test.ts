@@ -201,6 +201,38 @@ describe('rowSimulationCheck', () => {
     expect((await rowSimulationCheck(ctx, 'g', gameRoot({}), 2, { evidence, slots: new Slots(1), pollMs: 1 })).result).toBe('pass');
   });
 
+  it('runs rows on helper instances in free slots of the check, each row with all its seeds on one instance, in row order', async () => {
+    const rowsCsv = ['desc,,', 'All,All,None', 'id(key),int,int?', 'id,moves,sim_moves_left_max', ...Array.from({ length: 6 }, (_, i) => `[lv_${String(i + 1)}],10,${String(i)}`), ''].join('\n');
+    let n = 0;
+    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `r${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
+    vi.mocked(stopInstance).mockResolvedValue();
+    const seen: { id: string; row: string; seed: string; start: number; end: number }[] = [];
+    vi.mocked(automationRequest).mockImplementation(async (_c, id, command, args) => {
+      if (command === 'list_commands') return ok(commands);
+      const start = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      seen.push({ id, row: args[0] ?? '', seed: args[1] ?? '', start, end: Date.now() });
+      // the moves left are the row number, one more than the max of the row: every row is out
+      return ok({ solved: true, metrics: { moves_left: Number(/\d+/.exec(args[0] ?? '')?.[0]) } });
+    });
+    const run = (slots: Slots): ReturnType<typeof rowSimulationCheck> => rowSimulationCheck(ctx, 'g', gameRoot({ level: rowsCsv }), 3, { evidence, slots, pollMs: 1 });
+    const one = await run(new Slots(1));
+    expect(new Set(seen.map((s) => s.id))).toEqual(new Set(['r1']));
+    seen.length = 0;
+    n = 0;
+    const three = await run(new Slots(3));
+    expect(three).toEqual(one);
+    expect(one.failures.map((f) => f.where)).toEqual(['data/tables/level.csv:5', 'data/tables/level.csv:6', 'data/tables/level.csv:7', 'data/tables/level.csv:8', 'data/tables/level.csv:9', 'data/tables/level.csv:10']);
+    // three instances ran rows at once; each row ran its three seeds in order on one instance
+    expect(new Set(seen.map((s) => s.id))).toEqual(new Set(['r1', 'r2', 'r3']));
+    expect(Math.max(...seen.map((s) => new Set(seen.filter((o) => o.start <= s.start && s.start < o.end).map((o) => o.id)).size))).toBe(3);
+    for (const row of new Set(seen.map((s) => s.row))) {
+      const runs = seen.filter((s) => s.row === row);
+      expect(new Set(runs.map((s) => s.id)).size).toBe(1);
+      expect(runs.map((s) => s.seed)).toEqual(['1', '2', '3']);
+    }
+  });
+
   it('is unknown when the instance does not start', async () => {
     vi.mocked(startInstance).mockRejectedValue(new Error('no slot'));
     expect(await rowSimulationCheck(ctx, 'g', gameRoot({}), 2, { evidence, slots: new Slots(1), pollMs: 1 })).toEqual({

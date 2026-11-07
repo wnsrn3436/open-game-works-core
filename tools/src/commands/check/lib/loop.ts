@@ -231,7 +231,7 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the fix
   // test proof runs beside them, and the performance measurements wait for both
   const checks = await gameChecks(ctx, game, settings, options, evidence, set, async (instance) => {
-    const proof = fixTestProofs(ctx, game, run, commit, proofOptions).then((proofs) => {
+    const proof = fixTestProofs(ctx, game, run, commit, { ...proofOptions, slots: instance.slots }).then((proofs) => {
       fixTestProof = proofs;
     });
     const [telemetry] = await Promise.allSettled([makeTelemetryRuns(ctx, game, run, commit, instance), proof]);
