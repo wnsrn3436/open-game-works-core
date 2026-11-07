@@ -1,0 +1,51 @@
+diff --git a/client/features/crypt/crypt_minimap.gd b/client/features/crypt/crypt_minimap.gd
+index 3348a0d..c56485c 100644
+--- a/client/features/crypt/crypt_minimap.gd
++++ b/client/features/crypt/crypt_minimap.gd
+@@ -32,6 +32,33 @@ func show_floor(run: CryptRun) -> void:
+ 	queue_redraw()
+ 
+ 
++## The faint grid of cells, as one node per cell made again each frame, so that it follows the size of the control.
++func _process(_delta: float) -> void:
++	for child: Node in get_children():
++		remove_child(child)
++		child.free()
++	if _run == null or _room_tex == null:
++		return
++	var step: Vector2 = CryptConstants.MAP_CELL + Vector2(CryptConstants.MAP_GAP, CryptConstants.MAP_GAP)
++	var middle: Vector2 = size * 0.5 - CryptConstants.MAP_CELL * 0.5
++	var bounds: Rect2 = Rect2(Vector2.ZERO, size)
++	var reach: Vector2i = Vector2i(ceili(size.x * 0.5 / step.x), ceili(size.y * 0.5 / step.y))
++	for y: int in range(-reach.y, reach.y + 1):
++		for x: int in range(-reach.x, reach.x + 1):
++			var cell_rect: Rect2 = Rect2(middle + Vector2(float(x), float(y)) * step, CryptConstants.MAP_CELL)
++			if not bounds.encloses(cell_rect):
++				continue
++			var cell: TextureRect = TextureRect.new()
++			cell.texture = _room_tex
++			cell.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
++			cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
++			cell.position = cell_rect.position
++			cell.size = cell_rect.size
++			cell.self_modulate = CryptConstants.MAP_EMPTY
++			cell.show_behind_parent = true
++			add_child(cell)
++
++
+ ## Whether the minimap draws `room`: it was visited or it is next to a visited room, and it is not a secret room that
+ ## was not found yet.
+ static func is_shown(rooms: Array[CryptRoom], room: CryptRoom) -> bool:
+@@ -95,12 +122,6 @@ func _draw() -> void:
+ 	var current: Vector2i = _run.room().cell
+ 	var middle: Vector2 = size * 0.5 - CryptConstants.MAP_CELL * 0.5
+ 	var bounds: Rect2 = Rect2(Vector2.ZERO, size)
+-	var reach: Vector2i = Vector2i(ceili(size.x * 0.5 / step.x), ceili(size.y * 0.5 / step.y))
+-	for y: int in range(-reach.y, reach.y + 1):
+-		for x: int in range(-reach.x, reach.x + 1):
+-			var cell_rect: Rect2 = Rect2(middle + Vector2(float(x), float(y)) * step, CryptConstants.MAP_CELL)
+-			if bounds.encloses(cell_rect):
+-				draw_texture_rect(_room_tex, cell_rect, false, CryptConstants.MAP_EMPTY)
+ 	var rooms: Array[CryptRoom] = _run.floor_map.rooms
+ 	for link: Vector2i in CryptMinimap.door_links(rooms):
+ 		var a: Rect2 = Rect2(middle + Vector2(rooms[link.x].cell - current) * step, CryptConstants.MAP_CELL)

@@ -1,0 +1,27 @@
+{
+  "state": "block-stack",
+  "class": "G2",
+  "element": "no blocker",
+  "expect": "caught",
+  "match": [
+    {
+      "check": "no blocker",
+      "where": "^step \\d+$",
+      "message": "^(softlock .*NoResponse|step did not end within)"
+    }
+  ],
+  "performance": false,
+  "fixer": "content",
+  "row": {
+    "id": "lobby-play-ignored-after-return",
+    "severity": "blocker",
+    "owner": "client content",
+    "source": "check",
+    "why": "after a run returns to the lobby, Play does nothing, so the player cannot start a second run"
+  },
+  "frozen": [],
+  "frozenColumns": [],
+  "oracle": false,
+  "regenerate": false,
+  "reference": "hand patch: the lobby start guard becomes a static variable that survives the scene change"
+}

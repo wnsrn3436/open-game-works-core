@@ -1,0 +1,22 @@
+diff --git b/client/common/theme.tres a/client/common/theme.tres
+index 151f218..3737bf9 100644
+--- b/client/common/theme.tres
++++ a/client/common/theme.tres
+@@ -229,7 +229,7 @@ modulate_color = Color(1, 1, 1, 0.94)
+ content_margin_left = 30.0
+ content_margin_top = 22.0
+ content_margin_right = 30.0
+-content_margin_bottom = 4.0
++content_margin_bottom = 24.0
+ texture = ExtResource("tex_panel")
+ texture_margin_left = 64.0
+ texture_margin_top = 64.0
+@@ -399,7 +399,7 @@ HudNumberLabel/colors/font_outline_color = Color(0.106, 0.102, 0.18, 1)
+ HudNumberLabel/constants/outline_size = 8
+ HudNumberLabel/font_sizes/font_size = 32
+ StatGrid/base_type = &"GridContainer"
+-StatGrid/constants/h_separation = 0
++StatGrid/constants/h_separation = 8
+ StatGrid/constants/v_separation = 2
+ StatCaptionLabel/base_type = &"CaptionLabel"
+ StatCaptionLabel/font_sizes/font_size = 24

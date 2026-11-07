@@ -1,0 +1,26 @@
+{
+  "state": "lantern-crypt",
+  "class": "G2",
+  "element": "logic bug from play",
+  "expect": "missed",
+  "match": [],
+  "performance": false,
+  "fixer": "content",
+  "row": {
+    "id": "result-rooms-count-wrong",
+    "severity": "major",
+    "owner": "client content",
+    "source": "play",
+    "why": "the result panel shows fewer rooms than the run cleared, so the player does not trust the count",
+    "where": "result panel",
+    "what": "none (waited 3s after the death) → the panel showed `밝힌 방` = 4 while the state said `rooms_cleared` = 6 (and `record.best_rooms` = 6 on the next run); the count-up of 800ms had long finished",
+    "evidence": [
+      "play feedback: result panel after a death on floor 2"
+    ]
+  },
+  "frozen": [],
+  "frozenColumns": [],
+  "oracle": true,
+  "regenerate": false,
+  "reference": "hand patch: the result panel counts the rooms cleared on the floor the run ended on"
+}

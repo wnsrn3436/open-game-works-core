@@ -1,0 +1,35 @@
+{
+  "state": "lantern-crypt",
+  "class": "no placeholder",
+  "element": "no placeholder",
+  "expect": "caught",
+  "match": [
+    {
+      "check": "no placeholder",
+      "where": "^data/",
+      "message": "^translation_(stale|missing) en "
+    },
+    {
+      "check": "static check",
+      "where": ".*",
+      "message": "^data check (translation_format|glossary_missing)\\b"
+    }
+  ],
+  "performance": false,
+  "fixer": "translation",
+  "row": {
+    "id": "translation-en-stale",
+    "severity": "major",
+    "owner": "data",
+    "source": "check",
+    "why": "English players see Korean or empty text where these rows are shown"
+  },
+  "frozen": [
+    "data/tables/**",
+    "data/system/**"
+  ],
+  "frozenColumns": [],
+  "oracle": false,
+  "regenerate": true,
+  "reference": "hand patch: three ko source texts changed (one with a format argument, one a glossary term) and two en texts emptied"
+}

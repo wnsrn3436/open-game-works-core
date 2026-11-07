@@ -1,0 +1,11 @@
+diff --git a/data/tables/opponent.csv b/data/tables/opponent.csv
+index eefc8d4..ffeef5a 100644
+--- a/data/tables/opponent.csv
++++ b/data/tables/opponent.csv
+@@ -3,5 +3,5 @@ All,Client,Client,Client,All,All,All,Client,All,All,Client,None,None,None,None,N
+ id(key),tstring<id>,tstring<id>,tstring<id>,int,int,ref<deck.id>,reskey,array<ref<card.id>>,array<ref<card.id>>,bool,int?,int?,int?,int?,int?,int?
+ id,name,desc,tip,order,hero_health,deck,portrait,reward_cards,reward_removes,ai_face,sim_solve_permille_min,sim_solve_permille_max,sim_turns_min,sim_turns_max,sim_damage_peak_min,sim_damage_peak_max
+ [opp_apprentice],수련생 미로,교환은 몰라도 영웅만 노리는 수련생. 영웅 체력이 낮아요,"수호 하수인으로 영웅을 지키고, 공격할 수 있는 하수인으로 영웅을 노려요",1,14,[deck_apprentice],image/opp_apprentice,"[card_lightning_lance],[card_dawn_knight],[card_insight]","[card_ember_imp],[card_moss_guard],[card_moss_guard]",true,850,null,5,14,6,null
+-[opp_warden],숲의 파수꾼 타라,수호 하수인으로 버티다 큰 나무로 밀어붙여요,수호 하수인은 마나 화살이나 번개 창으로 먼저 치워요,2,18,[deck_warden],image/opp_warden,"[card_firestorm],[card_war_drummer],[card_flame_wyvern]","[card_gale_hound],[card_crystal_turtle],[card_herb_healer]",false,400,900,10,24,null,null
++[opp_warden],숲의 파수꾼 타라,수호 하수인으로 버티다 큰 나무로 밀어붙여요,수호 하수인은 마나 화살이나 번개 창으로 먼저 치워요,2,34,[deck_warden],image/opp_warden,"[card_firestorm],[card_war_drummer],[card_flame_wyvern]","[card_gale_hound],[card_crystal_turtle],[card_herb_healer]",false,400,900,10,24,null,null
+ [opp_archmage],대마법사 벨로크,주문으로 판을 쓸어내는 사다리의 끝,화염 폭풍에 대비해 하수인을 한꺼번에 많이 내지 마세요,3,25,[deck_archmage],image/opp_archmage,"[card_sky_colossus],[card_ash_wraith],[card_elder_treant]","[card_gale_hound],[card_apprentice_scholar],[card_apprentice_scholar]",false,300,800,10,24,null,null

@@ -1,0 +1,29 @@
+diff --git b/client/features/crypt/crypt_scene.gd a/client/features/crypt/crypt_scene.gd
+index afcab83..670fe84 100644
+--- b/client/features/crypt/crypt_scene.gd
++++ a/client/features/crypt/crypt_scene.gd
+@@ -751,7 +751,7 @@ func _show_result(saved: bool) -> void:
+ 	_stage = Stage.RESULT
+ 	var param: CryptResultParam = CryptResultParam.new()
+ 	param.victory = _run.victory
+-	param.rooms_cleared = _cleared_rooms()
++	param.rooms_cleared = _run.rooms_cleared
+ 	param.kills = _run.world.kills
+ 	param.time_ms = _run.play_ms
+ 	param.relic_ids = _run.relic_ids
+@@ -765,15 +765,6 @@ func _show_result(saved: bool) -> void:
+ 	_publish_moment(CryptMomentEvent.Moment.RESULT, 0)
+ 
+ 
+-## The rooms the run cleared that the result counts up.
+-func _cleared_rooms() -> int:
+-	var cleared: int = 0
+-	for room: CryptRoom in _run.floor_map.rooms:
+-		if room.cleared:
+-			cleared += 1
+-	return cleared
+-
+-
+ func _on_pause_requested(_event: CryptPauseRequestedEvent) -> void:
+ 	_open_pause()
+ 

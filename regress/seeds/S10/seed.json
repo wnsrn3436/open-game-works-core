@@ -1,0 +1,26 @@
+{
+  "state": "lantern-crypt",
+  "class": "G5",
+  "element": "layout from a judge",
+  "expect": "missed",
+  "match": [],
+  "performance": false,
+  "fixer": "content",
+  "row": {
+    "id": "hud-stats-plate-overflow",
+    "severity": "major",
+    "owner": "client content",
+    "source": "judge",
+    "why": "the stats plate reads as broken: text on its border and values run into their labels",
+    "where": "HUD, stats plate (bottom left)",
+    "what": "The last row `행운 0` sits on the plate's bottom border, and `사거리6.79` has no gap between label and value",
+    "evidence": [
+      "judge result: HUD stats plate in the crypt"
+    ]
+  },
+  "frozen": [],
+  "frozenColumns": [],
+  "oracle": true,
+  "regenerate": false,
+  "reference": "hand patch: the HUD plate keeps almost no bottom margin and the stats grid no gap between label and value"
+}

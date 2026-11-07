@@ -1,0 +1,42 @@
+diff --git a/server/hooks/shop.ts b/server/hooks/shop.ts
+index bca396b..542826f 100644
+--- a/server/hooks/shop.ts
++++ b/server/hooks/shop.ts
+@@ -11,7 +11,7 @@ export function validate_upgrade_step(items: ItemLedgerContent): ShopProductHook
+   return (ctx: RequestCtx, product_id: number, quantity: number) => {
+     if (!ctx.data.UpgradeStepTable.has_row(product_id)) return 'pass';
+     const step = ctx.data.UpgradeStepTable.get_row(product_id);
+-    if (quantity !== 1 || items.get_balance(ctx, step.upgrade) !== BigInt(step.level - 1)) {
++    if (quantity !== 1) {
+       return GameContract.GameError.GAME_ERROR_UPGRADE_ORDER;
+     }
+     return 'pass';
+diff --git a/server/tests/shop.test.ts b/server/tests/shop.test.ts
+index 6af9a8b..cf3abb3 100644
+--- a/server/tests/shop.test.ts
++++ b/server/tests/shop.test.ts
+@@ -92,24 +92,6 @@ describe('lantern shrine upgrades', () => {
+     expect(await balance(server, session.user_id, GOLD)).toBe(0n);
+   });
+ 
+-  it('refuses a step before the earlier step and changes nothing', async () => {
+-    const gold = cost(MIGHT_2) * 2n;
+-    const session = await player(gold);
+-    const sent = await buy(session, MIGHT_2);
+-    expect(code(sent.envelope)).toBe(GameContract.GameError.GAME_ERROR_UPGRADE_ORDER);
+-    expect(await balance(server, session.user_id, MIGHT)).toBe(0n);
+-    expect(await balance(server, session.user_id, GOLD)).toBe(gold);
+-  });
+-
+-  it('refuses a step the user already passed and changes nothing', async () => {
+-    const session = await player(cost(MIGHT_2) * 3n);
+-    await set_balance(session, MIGHT, 2n);
+-    const sent = await buy(session, MIGHT_2);
+-    expect(code(sent.envelope)).toBe(GameContract.GameError.GAME_ERROR_UPGRADE_ORDER);
+-    expect(await balance(server, session.user_id, MIGHT)).toBe(2n);
+-    expect(await balance(server, session.user_id, GOLD)).toBe(cost(MIGHT_2) * 3n);
+-  });
+-
+   it('refuses a step without enough gold and changes nothing', async () => {
+     const gold = cost(MIGHT_1) - 1n;
+     const session = await player(gold);
