@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { requestRelease } from '../../../src/commands/instance/lib/releases.ts';
 import { jobsDir } from '../../../src/lib/jobs.ts';
 import { alternateSide, evaluateDeps, judgeAgent, judgeBudget } from '../../../src/commands/loop/lib/evaluate.ts';
 import type { EvaluateFile } from '../../../src/commands/loop/lib/files.ts';
@@ -649,6 +648,7 @@ describe('ogw loop evaluate', () => {
     const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0, maxConcurrentInstances: 4 });
     // other instances hold two slots and each judge group holds 2: the second waits until the first judge gives its instances back
     fake.others = 2;
+    const jobs = await jobsDir(g.ws.env);
     const firstIds: string[] = [];
     let secondStartedWhileFirstRan = false;
     fake.respond = (agent, k) => {
@@ -658,8 +658,9 @@ describe('ogw loop evaluate', () => {
         if (firstIds.length === 0) {
           const input = agent.input as { A: { instance: string }; B: { instance: string }; fixtures: { A: string | null; B: string | null }[] };
           firstIds.push(input.A.instance, input.B.instance, ...input.fixtures.flatMap((f) => [f.A, f.B]).filter((i): i is string => i !== null));
-          // `ogw instance release` of every instance of its input, from the broker sandbox
-          for (const id of firstIds) void requestRelease(g.ws.env, agent.id, id);
+          // `ogw instance release` of every instance of its input, all written before the next poll, so a poll never
+          // sees the release of the boss pair without that of the first-screen pair
+          for (const id of firstIds) release(jobs, agent, id);
         }
         return undefined;
       }
