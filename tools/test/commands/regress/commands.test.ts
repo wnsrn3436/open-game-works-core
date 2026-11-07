@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { regressChecks, type CheckResult } from '../../../src/commands/check/api.ts';
+import { OgwError } from '../../../src/lib/errors.ts';
 import { sideAgent, sideProbe } from '../../../src/commands/regress/lib/side.ts';
 import { stateSettings, upgradeCore } from '../../../src/commands/regress/lib/ops.ts';
 import { withRegressLock } from '../../../src/commands/regress/lib/repo.ts';
@@ -52,11 +53,15 @@ function bootstrap(ws: TestWorkspace, commit: string, seeds: Record<string, { ma
   sh(ws.harness, 'git', ['tag', 'core-v1.0.0']);
 }
 
-/** Fake checks: the leak shows on a checkout whose client/a.gd holds `leak`; unknown on `busy`, and on every second check of `flaky`. */
+/**
+ * Fake checks: the leak shows on a checkout whose client/a.gd holds `leak`; unknown on `busy`, and on every second check
+ * of `flaky`; the check does not run on `broken`.
+ */
 function fakeChecks(): void {
   let flaky = 0;
   vi.mocked(regressChecks).mockImplementation((_ctx, game) => {
     const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8');
+    if (code.includes('broken')) return Promise.reject(new OgwError('the bot client did not start'));
     const busy = code.includes('busy') || (code.includes('flaky') && flaky++ % 2 === 1);
     const blocker: CheckResult = busy ? item('no blocker', 'unknown', [['step 1', 'host busy']]) : item('no blocker', code.includes('leak') || code.includes('flaky') ? 'fail' : 'pass', code.includes('leak') || code.includes('flaky') ? [['step 2', LEAK]] : []);
     return Promise.resolve({ checks: [item('regression test', 'pass'), blocker, item('full flow', 'pass')], fixTestProof: [] });
@@ -206,7 +211,7 @@ describe('ogw regress refresh and admission', () => {
     expect(sh(state, 'git', ['worktree', 'list']).trim().split('\n')).toHaveLength(1);
   });
 
-  it('makes stale a seed whose patch does not apply, one not caught, and one whose catch is unknown', async () => {
+  it('makes stale a seed whose patch does not apply, one not caught, one whose catch is unknown, and one whose check does not run, each unknown with why', async () => {
     const ws = makeWorkspace();
     const commit = sourceGame(ws, 'src');
     bootstrap(ws, commit, {
@@ -214,6 +219,7 @@ describe('ogw regress refresh and admission', () => {
       S02: { manifest: MANIFEST, patch: patchOf('2') },
       S03: { manifest: MANIFEST, patch: patchOf('busy') },
       S04: { manifest: MANIFEST, patch: patchOf('flaky') },
+      S05: { manifest: MANIFEST, patch: patchOf('broken') },
     });
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
     const run = await ogw(ws, ['regress', 'refresh']);
@@ -221,9 +227,12 @@ describe('ogw regress refresh and admission', () => {
     const read = (id: string): Record<string, unknown> => JSON.parse(readFileSync(join(ws.regress, `seeds/${id}/admitted-1.0.0.json`), 'utf8')) as Record<string, unknown>;
     expect(read('S01')).toMatchObject({ result: 'stale', reason: expect.stringMatching(/^patch does not apply: /) as unknown });
     expect(read('S02')).toMatchObject({ result: 'stale', reason: 'not caught: missed, missed, missed' });
-    expect(read('S03')).toMatchObject({ result: 'stale', reason: 'not caught: unknown, unknown, unknown' });
+    const busy = 'unknown (no blocker: unknown: host busy)';
+    expect(read('S03')).toMatchObject({ result: 'stale', reason: `not caught: ${busy}, ${busy}, ${busy}`, catch: ['unknown', 'unknown', 'unknown'] });
     // one check of the three that does not catch it is enough to make it stale
-    expect(read('S04')).toMatchObject({ result: 'stale', reason: 'not caught: caught, unknown, caught' });
+    expect(read('S04')).toMatchObject({ result: 'stale', reason: `not caught: caught, ${busy}, caught` });
+    const broken = 'unknown (ogw regress check exit 1: the bot client did not start)';
+    expect(read('S05')).toMatchObject({ result: 'stale', reason: `not caught: ${broken}, ${broken}, ${broken}`, catch: ['unknown', 'unknown', 'unknown'] });
     expect(existsSync(join(ws.regress, 'seeds/S02/patch-1.0.0.diff'))).toBe(false);
     expect((await ogw(ws, ['regress', 'status'])).stdout).toContain('seed S02: stale (not caught: missed, missed, missed)');
   });

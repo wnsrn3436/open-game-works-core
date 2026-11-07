@@ -96,18 +96,25 @@ async function applySeed(ctx: Context, input: AdmitInput, state: GameRepo): Prom
   return { seeded: seeded.commit, reference: applied.commit };
 }
 
-/** Step 2 of admission: the catch of each of the checks of the seeded commit with the base check of the same number. */
-async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<string[]> {
+/**
+ * Step 2 of admission: the catch of each of the checks of the seeded commit with the base check of the same number,
+ * and its text for the stale reason: an `unknown` catch with why (the error of a check that did not run, or the reason
+ * of the catch).
+ */
+async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<{ catches: string[]; texts: string[] }> {
   const manifest = input.seed.manifest;
   const catches: string[] = [];
+  const texts: string[] = [];
   for (let i = 0; i < ADMISSION_CHECKS; i++) {
     const out = join(work, `seeded-${String(i + 1)}.json`);
     const checks = manifest.expect === 'caught' ? targetChecks(manifest) : null;
     const checked = await input.gate.run(manifest.performance, () => sideCheck(ctx, input.self, { game: state, commit: seeded, out, checks, performance: manifest.performance, proof: null }));
     const base = input.baseChecks[i] ?? input.baseChecks[0];
-    catches.push('file' in checked && base !== undefined ? catchOf(manifest, base, checked.file).catch : 'unknown');
+    const result = !('file' in checked) ? { catch: 'unknown', reason: checked.error } : base === undefined ? { catch: 'unknown', reason: 'no base check' } : catchOf(manifest, base, checked.file);
+    catches.push(result.catch);
+    texts.push(result.catch === 'unknown' ? `unknown (${result.reason ?? ''})` : result.catch);
   }
-  return catches;
+  return { catches, texts };
 }
 
 /** Step 3 of admission: the probe of the seeded commit and of the reference commit. */
@@ -128,9 +135,9 @@ export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admiss
   if ('result' in applied) return applied;
   const work = join(await dataDir(ctx), 'regress', `admit-${version}`, seed.id);
   await mkdir(work, { recursive: true });
-  const catches = await admissionCatches(ctx, input, state.name, applied.seeded, work);
+  const { catches, texts } = await admissionCatches(ctx, input, state.name, applied.seeded, work);
   const fields = { base: input.base, seeded: applied.seeded, reference: applied.reference, catch: catches };
-  if (catches.some((c) => c !== seed.manifest.expect)) return stale(`not ${seed.manifest.expect}: ${catches.join(', ')}`, fields);
+  if (catches.some((c) => c !== seed.manifest.expect)) return stale(`not ${seed.manifest.expect}: ${texts.join(', ')}`, fields);
   let oracle: Admission['oracle'] = null;
   if (applied.reference !== null) {
     const probed = await admissionOracle(ctx, input, state.name, applied.seeded, applied.reference, work);
