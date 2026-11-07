@@ -2,7 +2,7 @@ import { SCENARIO } from './bot-scenario.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { cellOf, type CsvRow, type DataTable } from './lib/csv.ts';
 import { repoPath } from './lib/files.ts';
-import { isRecord, parseJsonWithLines } from './lib/json-pos.ts';
+import { isRecord, JsonPosError, parseJsonWithLines } from './lib/json-pos.ts';
 import { instanceChain, nodeClass, sceneFiles } from './lib/scene-classes.ts';
 import { nodeInstance, strOf, type SceneNode, type TextScene } from './lib/tscn.ts';
 
@@ -59,11 +59,14 @@ function isNull(cell: string | undefined): boolean {
 
 async function stepFindings(sc: StaticContext, path: string, names: Set<string>): Promise<Finding[]> {
   if (!sc.has(path)) return [];
+  const text = await sc.text(path);
   let parsed;
   try {
-    parsed = parseJsonWithLines(await sc.text(path));
-  } catch {
-    return [];
+    parsed = parseJsonWithLines(text);
+  } catch (error) {
+    // a scenario that is not JSON is a finding of `bot scenario`; it names no anchor
+    if (error instanceof JsonPosError) return [];
+    throw error;
   }
   const steps = isRecord(parsed.value) && Array.isArray(parsed.value.steps) ? parsed.value.steps : [];
   const out: Finding[] = [];

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
-import { startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
+import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import {
   lowerMedian,
   parseTable,
@@ -44,6 +44,7 @@ const commands = [{ name: 'get_state' }, { name: 'puzzle.simulate_level' }, { na
 
 beforeEach(() => {
   vi.mocked(automationRequest).mockReset();
+  vi.mocked(listInstances).mockResolvedValue([]);
 });
 
 describe('row simulation calculation', () => {

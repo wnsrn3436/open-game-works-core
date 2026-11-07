@@ -68,6 +68,16 @@ describe('process CPU time of the host', () => {
     ]);
     expect(await procProcesses(join(proc, 'missing'), 100)).toBeNull();
   });
+
+  it('is a failed reading (null) when the proc folder cannot be read, and throws a stat that cannot be read for another reason', async () => {
+    const proc = mkdtempSync(join(tmpdir(), 'ogw-proc-'));
+    // a file where the proc folder is: a system error of the reading
+    writeFileSync(join(proc, 'file'), '');
+    expect(await procProcesses(join(proc, 'file'), 100)).toBeNull();
+    // a stat that is a folder is no process that ended
+    mkdirSync(join(proc, '5', 'stat'), { recursive: true });
+    await expect(procProcesses(proc, 100)).rejects.toMatchObject({ code: 'EISDIR' });
+  });
 });
 
 describe('CPU time of an instance tree', () => {
@@ -147,6 +157,9 @@ describe('hostProbe supervisorPid', () => {
     writeFileSync(join(dir, 'i1.json'), JSON.stringify({ id: 'i1', supervisorPid: 4321 }));
     const probe = hostProbe({ ...fakeContext(), env: { OGW_INSTANCES_DIR: dir } });
     expect(await probe.supervisorPid('i1')).toBe(4321);
-    expect(await probe.supervisorPid('none')).toBeNull();
+    writeFileSync(join(dir, 'i2.json'), JSON.stringify({ id: 'i2' }));
+    expect(await probe.supervisorPid('i2')).toBeNull();
+    // an instance without a record: the error is thrown, not read as an instance without a supervisor
+    await expect(probe.supervisorPid('none')).rejects.toThrow('instance not found: none');
   });
 });

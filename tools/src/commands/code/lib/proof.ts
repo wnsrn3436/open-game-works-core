@@ -7,7 +7,7 @@ import { readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { exists } from '../../../lib/fsx.ts';
-import { OgwError } from '../../../lib/errors.ts';
+import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
 import { git, gitRaw, revParse, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
 import { AGENT_KEY_ENV } from '../../../lib/jobs.ts';
@@ -113,7 +113,8 @@ async function toolProof(ctx: Context, repo: string, base: string, commit: strin
     if (files.flatMap(ranTests).length === 0) return { result: 'unknown', failures: [`no test ran: ${tests.join(', ')}`] };
     return { result: 'fail', failures: [NOT_PROVED(base, tests)] };
   } finally {
-    await worktreeRemove(repo, worktree, { env: ctx.env }).catch(() => undefined);
+    // the proof is decided; a worktree left behind (or one that was never made) changes no result
+    await worktreeRemove(repo, worktree, { env: ctx.env }).catch(ignoreCleanupError);
     await rm(folder, { recursive: true, force: true });
   }
 }
@@ -158,11 +159,16 @@ async function coreRun(ctx: Context, worktree: string, args: readonly string[], 
     timeoutMs: LIMITS.jobMs,
   });
   const command = `ogw core test ${args.join(' ')}`;
+  // no JSON object on stdout: the run stopped before it could report, and the proof is unknown with its exit code and output
+  const stopped = `${command}: exit code ${String(ran.code)}: ${(ran.stderr || ran.stdout).trim().split('\n')[0] ?? ''}`;
+  let data: unknown;
   try {
-    return targetProof(JSON.parse(ran.stdout) as CoreTestJson, command, target);
-  } catch {
-    return `${command}: exit code ${String(ran.code)}: ${(ran.stderr || ran.stdout).trim().split('\n')[0] ?? ''}`;
+    data = JSON.parse(ran.stdout);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return stopped;
   }
+  return typeof data === 'object' && data !== null ? targetProof(data, command, target) : stopped;
 }
 
 /** `core`: the changed test files of the target over `open-game-works-core-impl/` at the fix base; `ogw core test` of the target. */
@@ -181,7 +187,8 @@ async function coreProof(ctx: Context, repo: string, base: string, commit: strin
     if (unknown.length > 0) return { result: 'unknown', failures: unknown };
     return { result: 'fail', failures: [NOT_PROVED(base, changed.map((c) => c.path))] };
   } finally {
-    await worktreeRemove(repo, worktree, { env: ctx.env }).catch(() => undefined);
+    // the proof is decided; a worktree left behind (or one that was never made) changes no result
+    await worktreeRemove(repo, worktree, { env: ctx.env }).catch(ignoreCleanupError);
   }
 }
 

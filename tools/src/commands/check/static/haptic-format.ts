@@ -51,8 +51,10 @@ export function problems(text: string): [number, string][] {
 function decodeUtf8(bytes: Uint8Array): string | null {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return null;
+  } catch (error) {
+    // a fatal decoder throws a TypeError for bytes that are not UTF-8
+    if (error instanceof TypeError) return null;
+    throw error;
   }
 }
 

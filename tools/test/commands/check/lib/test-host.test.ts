@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -103,6 +103,27 @@ describe('test host', () => {
     expect(page.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect((await fetch(`${host.url}/app/none.html`)).status).toBe(404);
     expect((await raw(host.url, 'GET', '/app/..%2F..%2Fetc%2Fpasswd')).status).toBe(404);
+    // a folder is no file of the export
+    expect((await fetch(`${host.url}/app/sub`)).status).toBe(404);
+  });
+
+  it('answers a request it cannot carry out with 400 and the reason, and a file it cannot read is no missing file', async () => {
+    const app = mkdtempSync(join(tmpdir(), 'ogw-app-'));
+    writeFileSync(join(app, 'locked.js'), 'x');
+    host = await startTestHost(app);
+    await fetch(`${host.url}/servers`, { method: 'POST' });
+    const bad = await fetch(`${host.url}/servers/1/responses`, { method: 'PUT', body: 'nope' });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toMatch(/JSON/);
+    if (process.getuid?.() === 0) return;
+    chmodSync(join(app, 'locked.js'), 0o000);
+    try {
+      const locked = await fetch(`${host.url}/app/locked.js`);
+      expect(locked.status).toBe(400);
+      expect(((await locked.json()) as { error: string }).error).toMatch(/^EACCES/);
+    } finally {
+      chmodSync(join(app, 'locked.js'), 0o644);
+    }
   });
 
   it('gives each web export file the content type of web artifact deploy', async () => {

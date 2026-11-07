@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import { decodeRgba, type Rgba } from '../../resource/lib/image.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { automationRequest, restartClient, type AutomationResponse } from '../../instance/automation.ts';
@@ -319,6 +320,15 @@ const PAD_DIRECTIONS = ['dpad_up', 'dpad_down', 'dpad_left', 'dpad_right'];
 
 class SetupFailed extends Error {}
 
+/**
+ * A request the client did not answer (`automationRequest` throws an `OgwError`: no answer, a closed channel, a time
+ * limit): no response. Another error is thrown.
+ */
+function unanswered(error: unknown): null {
+  if (error instanceof OgwError) return null;
+  throw error;
+}
+
 /** An open command whose request threw (the client crashed or hangs); the run stops after reporting it. */
 class OpenThrew extends Error {}
 
@@ -387,7 +397,7 @@ class UiRun {
 
   /** `scene_key` of `get_state`, or {@link unknownSceneWhere} of `command` when the client does not answer it. */
   async sceneWhere(command: string): Promise<string> {
-    const response = await this.request('get_state', []).catch(() => null);
+    const response = await this.request('get_state', []).catch(unanswered);
     const state = response?.ok === true ? response.result : null;
     const key = typeof state === 'object' && state !== null ? (state as Record<string, unknown>).scene_key : undefined;
     return typeof key === 'string' && key !== '' ? key : unknownSceneWhere(command);
@@ -424,7 +434,7 @@ class UiRun {
   private async settle(): Promise<void> {
     const until = Date.now() + this.settleLimitMs;
     for (;;) {
-      const response = await this.request('get_state', []).catch(() => null);
+      const response = await this.request('get_state', []).catch(unanswered);
       const state = response?.ok === true && typeof response.result === 'object' && response.result !== null ? (response.result as Record<string, unknown>) : null;
       const known = state !== null && 'ui_flow' in state && 'finite_tweens' in state;
       if (known && state.ui_flow === false && state.finite_tweens === 0) return;
@@ -461,8 +471,12 @@ async function judgeCapture(run: UiRun, shot: Shot, item: MeasuredScreen, contex
   const ratio = item.pixelRatio;
   // the conditions look at the capture only through the elements of list_ui
   if (shot.elements.length > 0) {
-    const image = await decodeRgba(shot.png, 'capture_screen').catch(() => null);
-    if (image === null) run.report('capture_screen gave no PNG image', context, shot.evidence);
+    // decodeRgba fails with an OgwError that says why the bytes are no image
+    const image = await decodeRgba(shot.png, 'capture_screen').catch((error: unknown) => {
+      if (error instanceof OgwError) return error;
+      throw error;
+    });
+    if (image instanceof OgwError) run.report(`capture_screen gave no PNG image: ${image.message}`, context, shot.evidence);
     else for (const p of presentationProblems(shot.elements, image, run.where, quality, ratio)) run.report(p.message, context, shot.evidence, p.owner);
   }
   if (touch) for (const p of touchTargetProblems(shot.elements, ratio, quality.minTouchTarget)) run.report(p.message, context, shot.evidence, p.owner);

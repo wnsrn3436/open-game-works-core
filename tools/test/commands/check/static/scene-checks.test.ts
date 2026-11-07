@@ -1,3 +1,5 @@
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import * as actionReference from '../../../../src/commands/check/static/action-reference.ts';
 import * as anchorReference from '../../../../src/commands/check/static/anchor-reference.ts';
@@ -128,6 +130,16 @@ describe('anchor reference', () => {
       'client/dev/bot/fixtures/a.json:3 | anchor reference: step anchor `lost` is on no `UIAnchor`',
       'resource/prefab/shop/panel.tscn:10 | anchor reference: UI element of `AnchorTap` anchor `buy` has no `UIButton` child',
     ]));
+  });
+
+  it('names no step anchor of a scenario that is not JSON, and throws a scenario it cannot read', async () => {
+    const sc = memContext({ ...CORE_STUBS, 'settings.json': '{}', 'client/dev/bot/scenario.json': '{' });
+    expect(await anchorReference.run(sc)).toEqual([]);
+    const unreadable = memContext({ ...CORE_STUBS, 'settings.json': '{}', 'client/dev/bot/scenario.json': '{}' });
+    // a folder where the scenario is: the read error is thrown, not read as a scenario without steps
+    rmSync(join(unreadable.root, 'client/dev/bot/scenario.json'));
+    mkdirSync(join(unreadable.root, 'client/dev/bot/scenario.json'));
+    await expect(anchorReference.run(unreadable)).rejects.toMatchObject({ code: 'EISDIR' });
   });
 
   it('finds the UIButton inside the scene the UI element instances', async () => {

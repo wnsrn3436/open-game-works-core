@@ -1,6 +1,7 @@
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OgwError } from '../../../../lib/errors.ts';
+import { whenNotFound } from '../../../../lib/fsx.ts';
 import { LIMITS } from '../../../../lib/limits.ts';
 import { run } from '../../../../lib/proc.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../core/api.ts';
@@ -111,7 +112,7 @@ export function godotGlobalNames(sc: StaticContext): Promise<Set<string>> {
       const dir = await newPrivateTempFolder('ogw-api-', sc.ctx.env);
       try {
         const out = await run(godot, ['--headless', '--dump-extension-api'], { cwd: dir, env: sc.ctx.env, timeoutMs: LIMITS.shortMs });
-        const text = await readFile(join(dir, 'extension_api.json'), 'utf8').catch(() => null);
+        const text = await readFile(join(dir, 'extension_api.json'), 'utf8').catch(whenNotFound(null));
         if (out.timedOut || text === null) throw new OgwError(`godot could not dump its extension API: ${(out.stderr || out.stdout).trim()}`);
         const api = JSON.parse(text) as { classes?: { name?: unknown }[]; builtin_classes?: { name?: unknown }[]; global_enums?: { name?: unknown }[] };
         const names = [...(api.classes ?? []), ...(api.builtin_classes ?? []), ...(api.global_enums ?? [])].map((c) => c.name);

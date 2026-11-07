@@ -12,8 +12,10 @@ export function auditFailures(json: string): string[] | null {
     return Object.entries(report.vulnerabilities ?? {})
       .filter(([, v]) => v.severity === 'high' || v.severity === 'critical')
       .map(([name, v]) => `${name} ${String(v.severity)}`);
-  } catch {
-    return null;
+  } catch (error) {
+    // output that is not JSON: the caller reports the audit as failed with that output
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
 }
 

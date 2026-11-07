@@ -33,6 +33,11 @@ vi.mock('../../../src/commands/instance/automation.ts', () => ({
   restartClient: async (...args: Parameters<typeof import('./helpers.ts').fakeRestartClient>) => (await import('./helpers.ts')).fakeRestartClient(...args),
 }));
 vi.mock('../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
+vi.mock('../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of a fake check instance: a checkout without client/generated/core_settings.json (no input gap), no client pid
+  readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-check-instance', pids: {}, startedAt: 0 })),
+}));
 vi.mock('../../../src/lib/display.ts', () => ({ hostRefreshHz: () => Promise.resolve(null) }));
 vi.mock('../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
 vi.mock('../../../src/commands/check/static-api.ts', () => ({ staticCheck: vi.fn() }));
@@ -459,8 +464,8 @@ describe('ogw check --loop', () => {
         { game: 'g', platform: 'web', client: 'window', db: 'postgresql' },
       ]),
     );
-    // the flash recording of each platform profile: the phone screen at its CSS size, at targetFps
-    const recordings = vi.mocked(startInstance).mock.calls.map((c) => c[1]).filter((o) => o.movie !== undefined);
+    // the flash recording of each platform profile: the phone screen at its CSS size, at targetFps (the profiles run side by side: in either order)
+    const recordings = vi.mocked(startInstance).mock.calls.map((c) => c[1]).filter((o) => o.movie !== undefined).sort((a, b) => String(a.platform).localeCompare(String(b.platform)));
     expect(recordings.map((o) => [o.platform, o.client, o.db, o.movie?.resolution, o.movie?.fps, o.testScreen])).toEqual(
       ['ios', 'web'].map((p) => [p, 'window', 'postgresql', [411, 731], 60, { window: [1080, 1920], fillMode: 'Crop', notch: [0, 0, 0, 0] }]),
     );

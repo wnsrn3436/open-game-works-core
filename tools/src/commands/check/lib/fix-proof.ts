@@ -6,6 +6,7 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { ignoreCleanupError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { git, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
@@ -143,7 +144,8 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
   } catch (error) {
     return none(`the worktree of the fix base could not be made: ${(error as Error).message.split('\n')[0] as string}`);
   } finally {
-    await worktreeRemove(game.mainRoot, worktree, { env: ctx.env }).catch(() => undefined);
+    // the proof is decided; a worktree left behind (or one that was never made) changes no result
+    await worktreeRemove(game.mainRoot, worktree, { env: ctx.env }).catch(ignoreCleanupError);
   }
 }
 

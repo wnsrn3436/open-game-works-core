@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { cpus, freemem, totalmem } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { run } from '../../../lib/proc.ts';
 import { listInstances } from '../../instance/api.ts';
 import { readRecord } from '../../instance/lib/records.ts';
@@ -27,7 +29,7 @@ export interface HostProbe {
   cpuTimes(): CpuTimes;
   /** Every process of the host with its CPU time; null when this platform or this reading cannot be read. */
   processes(): Promise<ProcessCpu[] | null>;
-  /** The supervisor pid of instance `id`; null when it cannot be read. */
+  /** The supervisor pid of instance `id`; null when its record has none. */
   supervisorPid(id: string): Promise<number | null>;
   /** Memory use of the host in %. */
   memoryPercent(): number;
@@ -73,12 +75,30 @@ export function parseProcStat(text: string, ticksPerSecond: number): ProcessCpu 
   return { pid: Number(pid), ppid: Number(ppid), start, cpuMs: ((Number(utime) + Number(stime)) * 1000) / ticksPerSecond };
 }
 
-/** The processes of a Linux proc folder (`/proc`); a process that ended while it was read is left out. */
+/**
+ * A reading of the host that failed (ogw.md `### host load`: the CPU time of the instance in that second is then 0): a
+ * program that could not run or a system error (an error with an errno `code`). Another error is rethrown.
+ */
+function failedReading(error: unknown): null {
+  if (error instanceof OgwError || typeof (error as { code?: unknown } | null)?.code === 'string') return null;
+  throw error;
+}
+
+/** A `/proc/<pid>/stat` of a process that ended while it was read (its folder is gone): left out. Another error is rethrown. */
+function processEnded(error: unknown): null {
+  if (isNotFound(error) || (error as { code?: unknown } | null)?.code === 'ESRCH') return null;
+  throw error;
+}
+
+/**
+ * The processes of a Linux proc folder (`/proc`); a process that ended while it was read is left out. Null when the
+ * folder cannot be read (`failedReading`).
+ */
 export async function procProcesses(procRoot: string, ticksPerSecond: number): Promise<ProcessCpu[] | null> {
-  const names = await readdir(procRoot).catch(() => null);
+  const names = await readdir(procRoot).catch(failedReading);
   if (names === null) return null;
   const read = await Promise.all(
-    names.filter((n) => /^\d+$/.test(n)).map((n) => readFile(join(procRoot, n, 'stat'), 'utf8').then((t) => parseProcStat(t, ticksPerSecond), () => null)),
+    names.filter((n) => /^\d+$/.test(n)).map((n) => readFile(join(procRoot, n, 'stat'), 'utf8').then((t) => parseProcStat(t, ticksPerSecond), processEnded)),
   );
   return read.filter((p): p is ProcessCpu => p !== null);
 }
@@ -92,7 +112,7 @@ function clockTicks(): Promise<number | null> {
       const value = Number(r.stdout.trim());
       return r.code === 0 && Number.isInteger(value) && value > 0 ? value : null;
     },
-    () => null,
+    failedReading,
   );
   return cachedTicks;
 }
@@ -104,7 +124,7 @@ function clockTicks(): Promise<number | null> {
 async function hostProcesses(): Promise<ProcessCpu[] | null> {
   if (process.platform === 'darwin') {
     const env = { ...process.env, LC_ALL: 'C', TZ: 'UTC' };
-    const result = await run('ps', ['-A', '-o', 'pid=,ppid=,time=,lstart='], { timeoutMs: 10_000, env }).catch(() => null);
+    const result = await run('ps', ['-A', '-o', 'pid=,ppid=,time=,lstart='], { timeoutMs: 10_000, env }).catch(failedReading);
     return result?.code === 0 ? parsePs(result.stdout) : null;
   }
   if (process.platform === 'linux') {
@@ -127,7 +147,7 @@ export function hostProbe(ctx: Context): HostProbe {
       return { idle, total };
     },
     processes: hostProcesses,
-    supervisorPid: async (id) => (await readRecord(id, ctx.env).catch(() => null))?.supervisorPid ?? null,
+    supervisorPid: async (id) => (await readRecord(id, ctx.env)).supervisorPid ?? null,
     memoryPercent: () => (1 - freemem() / totalmem()) * 100,
     instances: async () => (await listInstances(ctx)).length,
   };
@@ -191,7 +211,9 @@ interface CpuReading {
 
 /**
  * ogw.md `### host load`: reads the host every `intervalMs` until `stop`. With `instance`, the CPU time that the
- * supervisor process of that instance and its descendants used is not counted as host CPU use.
+ * supervisor process of that instance and its descendants used is not counted as host CPU use. A failed reading of the
+ * processes is a reading without them (`failedReading`); any other error of a reading stops the readings and `stop`
+ * throws it.
  */
 export class HostLoadSampler {
   private readonly probe: HostProbe;
@@ -203,27 +225,40 @@ export class HostLoadSampler {
   private memoryMax = 0;
   private instancesMax = 0;
   private pending: Promise<void>;
+  /** The error that stopped the readings; `stop` throws it. */
+  private failure: { error: unknown } | null = null;
 
   constructor(probe: HostProbe, intervalMs: number, instance: string | null = null) {
     this.probe = probe;
     this.instance = instance;
-    this.pending = this.readCpu();
+    this.pending = this.guarded(() => this.readCpu());
     this.timer = setInterval(() => {
-      this.pending = this.pending.then(() => this.sample());
+      this.pending = this.pending.then(() => this.guarded(() => this.sample()));
     }, intervalMs);
+  }
+
+  /** Runs a reading unless one failed; a failure is kept for `stop` (a rejection nobody waits for would end the process). */
+  private async guarded(reading: () => Promise<void>): Promise<void> {
+    if (this.failure !== null) return;
+    try {
+      await reading();
+    } catch (error) {
+      this.failure = { error };
+      clearInterval(this.timer);
+    }
   }
 
   /** The supervisor pid of the instance, read until it is known: it stays for the life of the instance. */
   private async supervisor(): Promise<number | null> {
     if (this.instance === null || this.root !== null) return this.root;
-    this.root = await this.probe.supervisorPid(this.instance).catch(() => null);
+    this.root = await this.probe.supervisorPid(this.instance);
     return this.root;
   }
 
   /** Takes a CPU reading and keeps the maximum of the host CPU use outside the instance since the last one. */
   private async readCpu(): Promise<void> {
     const root = await this.supervisor();
-    const processes = root === null ? null : await this.probe.processes().catch(() => null);
+    const processes = root === null ? null : await this.probe.processes().catch(failedReading);
     const now: CpuReading = { host: this.probe.cpuTimes(), processes: processes === null ? null : processReading(processes) };
     const last = this.last;
     this.last = now;
@@ -239,15 +274,16 @@ export class HostLoadSampler {
   private async sample(): Promise<void> {
     await this.readCpu();
     this.memoryMax = Math.max(this.memoryMax, this.probe.memoryPercent());
-    const instances = await this.probe.instances().catch(() => 0);
+    const instances = await this.probe.instances();
     this.instancesMax = Math.max(this.instancesMax, instances);
   }
 
-  /** Takes a last reading and returns the maxima. */
+  /** Takes a last reading and returns the maxima; throws the error that stopped the readings. */
   async stop(): Promise<HostLoad> {
     clearInterval(this.timer);
     await this.pending;
-    await this.sample();
+    await this.guarded(() => this.sample());
+    if (this.failure !== null) throw this.failure.error;
     return { cpuMaxPercent: round(this.cpuMax), memoryMaxPercent: round(this.memoryMax), instancesMax: this.instancesMax };
   }
 }

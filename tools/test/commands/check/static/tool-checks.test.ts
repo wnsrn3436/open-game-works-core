@@ -311,6 +311,9 @@ describe('godot helpers', () => {
     expect(readFileSync(join(bin, 'count'), 'utf8')).toBe('dumped\n');
     mocks.engine = script(tempDir(), 'godot', 'echo nothing');
     await expect(godotGlobalNames(memContext({}))).rejects.toThrow('godot could not dump its extension API');
+    // a dump that cannot be read is no missing dump: its read error is thrown
+    mocks.engine = script(tempDir(), 'godot', 'mkdir extension_api.json');
+    await expect(godotGlobalNames(memContext({}))).rejects.toMatchObject({ code: 'EISDIR' });
   });
 
   it('fails when the engine is missing or prints nothing', async () => {

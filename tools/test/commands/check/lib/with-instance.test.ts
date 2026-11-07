@@ -65,6 +65,13 @@ describe('withInstance', () => {
     expect(order).toEqual(['failed after keep']);
   });
 
+  it('stops the instance and throws when whether a client ended cannot be read', async () => {
+    vi.mocked(startInstance).mockResolvedValue(instance({}));
+    vi.mocked(listInstances).mockRejectedValue(new Error('instances unreadable'));
+    await expect(withInstance(ctx, new Slots(1), { game: 'g' }, () => Promise.resolve('done'), evidence())).rejects.toThrow('instances unreadable');
+    expect(order).toEqual(['stop']);
+  });
+
   it('keeps nothing when the work passes and only the server ended, or without evidence', async () => {
     vi.mocked(startInstance).mockResolvedValue(instance({ server: 0 }));
     await withInstance(ctx, new Slots(1), { game: 'g' }, () => Promise.resolve('done'), evidence());

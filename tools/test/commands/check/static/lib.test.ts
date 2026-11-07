@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -199,6 +199,26 @@ describe('files', () => {
     symlinkSync('../resource', join(root, 'link'));
     expect(await listFiles(root)).toEqual(['.gitignore', 'a.txt', 'new.txt', 'resource/r.png']);
     expect(finding('x', at('a', 2), 'y')).toEqual({ where: 'a:2', message: 'x: y' });
+  });
+
+  it('leaves out tracked files that are not in the working tree, and throws a file it cannot look at', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-list-')));
+    gitInit(root);
+    writeFiles(root, { 'a.txt': 'a', 'gone.txt': 'g', 'folder/b.txt': 'b', 'locked/c.txt': 'c' });
+    commitAll(root);
+    // deleted, and a folder that is a file now
+    rmSync(join(root, 'gone.txt'));
+    rmSync(join(root, 'folder'), { recursive: true });
+    writeFileSync(join(root, 'folder'), 'f');
+    expect(await listFiles(root)).toEqual(['a.txt', 'folder', 'locked/c.txt']);
+    if (process.getuid?.() === 0) return;
+    // a folder without search permission: the file is there, but cannot be looked at
+    chmodSync(join(root, 'locked'), 0o600);
+    try {
+      await expect(listFiles(root)).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      chmodSync(join(root, 'locked'), 0o755);
+    }
   });
 });
 

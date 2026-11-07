@@ -1,5 +1,6 @@
 import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import { withWriterWithin, type RwLock } from '../../../lib/rwlock.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import type { CheckFailure, CheckResult, HostLoad } from '../api.ts';
@@ -239,9 +240,14 @@ export function tickOf(stateResult: unknown, statsResult: unknown, bound: TickBo
   };
 }
 
-/** Reads a tick every `intervalMs` from its start until `stop`; a tick that throws is not read. */
+/**
+ * Reads a tick every `intervalMs` from its start until `stop`. A tick whose request got no answer (`automationRequest`
+ * throws an `OgwError`: the client does not answer, the channel is closed or timed out) is a tick without an `ok`
+ * answer (ogw.md `## performance`: a scene load); any other error stops the readings and `stop` throws it.
+ */
 class FpsSampler {
   private readonly ticks: FpsTick[] = [];
+  private failure: { error: unknown } | null = null;
   private stopped = false;
   private timer: NodeJS.Timeout | null = null;
   private wake: (() => void) | null = null;
@@ -257,7 +263,16 @@ class FpsSampler {
   private async loop(read: () => Promise<FpsTick>, intervalMs: number): Promise<void> {
     while (!this.isStopped()) {
       const started = Date.now();
-      const tick = await read().catch(() => null);
+      let tick: FpsTick;
+      try {
+        tick = await read();
+      } catch (error) {
+        if (!(error instanceof OgwError)) {
+          this.failure = { error };
+          return;
+        }
+        tick = null;
+      }
       if (this.isStopped()) return;
       this.ticks.push(tick);
       await new Promise<void>((resolve) => {
@@ -267,11 +282,12 @@ class FpsSampler {
     }
   }
 
-  /** Stops reading and returns the ticks read; a tick still being read is dropped. */
+  /** Stops reading and returns the ticks read; a tick still being read is dropped. Throws the error that stopped the readings. */
   stop(): FpsTick[] {
     this.stopped = true;
     if (this.timer !== null) clearTimeout(this.timer);
     this.wake?.();
+    if (this.failure !== null) throw this.failure.error;
     return [...this.ticks];
   }
 }
@@ -363,7 +379,7 @@ export async function measureScenario(ctx: Context, id: string, scenario: Scenar
   const bound = {
     targetFps: options.targetFps,
     refreshHz: options.onHost ? await hostRefreshHz(ctx.env) : null,
-    levels: (await instanceCoreSettings(ctx, id).catch(() => null))?.['QualityCore.levels'] ?? null,
+    levels: (await instanceCoreSettings(ctx, id))?.['QualityCore.levels'] ?? null,
   };
   const sampler = new FpsSampler(() => readTick(ctx, id, bound), fpsSampling.intervalMs);
   let ticks: FpsTick[];

@@ -6,7 +6,7 @@ import type { CheckResult } from '../api.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from './evidence.ts';
 import { instanceServerLog } from './instance-probe.ts';
 import { withInstance, type Slots } from './instances.ts';
-import { clientLog } from './logs.ts';
+import { ClientLogUnreadable, clientLog } from './logs.ts';
 import { parseScenario, runScenario, type Scenario, type ScenarioOutcome } from './scenario.ts';
 
 /** Polling interval of instance state while a bot playtest scenario runs (`ogw check`, the shared-telemetry bot runs of `ogw loop evaluate`). */
@@ -46,12 +46,20 @@ function bothUnknown(where: string, message: string, evidence: (string | null)[]
   ];
 }
 
+/**
+ * Keeps the client and server logs of the run as evidence. A client log the client does not give (it ended or does not
+ * answer: `ClientLogUnreadable`) is left out; any other error, and an unreadable server log, is a failure of the check's
+ * work on the instance and is thrown.
+ */
 async function keepLogs(ctx: Context, id: string, evidence: Evidence, prefix: string): Promise<(string | null)[]> {
-  const client = await clientLog(ctx, id, 'main').catch(() => null);
-  const server = await instanceServerLog(ctx, id).catch(() => null);
+  const client = await clientLog(ctx, id, 'main').catch((error: unknown) => {
+    if (error instanceof ClientLogUnreadable) return null;
+    throw error;
+  });
+  const server = await instanceServerLog(ctx, id);
   return [
     client === null ? null : await writeEvidence(evidence, `${prefix}/client.log`, client),
-    server === null ? null : await writeEvidence(evidence, `${prefix}/server.log`, server),
+    await writeEvidence(evidence, `${prefix}/server.log`, server),
   ];
 }
 

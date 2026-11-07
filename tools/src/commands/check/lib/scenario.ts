@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
+import { whenNotFound } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { automationRequest, restartClient, type AutomationResponse, type ClientRef } from '../../instance/automation.ts';
 import { evaluate, jsonEqual, needsTelemetry, type Condition } from './condition.ts';
@@ -101,14 +102,17 @@ class Stop extends Error {
 
 const TIMEOUT: unique symbol = Symbol('timeout');
 
+/** The rejection of the deadline timer that `beforeDeadline` aborts once the race is decided; another error is rethrown. */
+function aborted(error: unknown): typeof TIMEOUT {
+  if (error instanceof Error && error.name === 'AbortError') return TIMEOUT;
+  throw error;
+}
+
 async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | typeof TIMEOUT> {
   const left = deadline - Date.now();
   if (left <= 0) return TIMEOUT;
   const controller = new AbortController();
-  const timer = sleep(left, undefined, { signal: controller.signal }).then(
-    (): typeof TIMEOUT => TIMEOUT,
-    (): typeof TIMEOUT => TIMEOUT,
-  );
+  const timer = sleep(left, undefined, { signal: controller.signal }).then((): typeof TIMEOUT => TIMEOUT, aborted);
   try {
     return await Promise.race([promise, timer]);
   } finally {
@@ -352,12 +356,12 @@ export async function autoInputGapMs(ctx: Context, id: string): Promise<number> 
 /** The game's merged core settings of an instance (`client/generated/core_settings.json` of its checkout), or null when that file is missing. */
 export async function instanceCoreSettings(ctx: Context, id: string): Promise<Record<string, unknown> | null> {
   const root = (await readRecord(id, ctx.env)).root;
-  const text = await readFile(join(root, 'client', 'generated', 'core_settings.json'), 'utf8').catch(() => null);
+  const text = await readFile(join(root, 'client', 'generated', 'core_settings.json'), 'utf8').catch(whenNotFound(null));
   return text === null ? null : (JSON.parse(text) as Record<string, unknown>);
 }
 
 export async function runScenario(ctx: Context, id: string, scenario: Scenario, options: ScenarioOptions): Promise<ScenarioOutcome> {
-  const run = new ScenarioRun(ctx, id, options, await autoInputGapMs(ctx, id).catch(() => 0));
+  const run = new ScenarioRun(ctx, id, options, await autoInputGapMs(ctx, id));
   try {
     for (const [i, step] of scenario.steps.entries()) {
       await run.runStep(step, i + 1);

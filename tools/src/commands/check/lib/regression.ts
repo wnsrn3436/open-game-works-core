@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { isNotFound } from '../../../lib/fsx.ts';
+import { isNotFound, whenNotFound } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
 import { checkedScriptErrors, engineErrorLines, gutRun, type GutRunResult } from '../../core/lib/godot.ts';
@@ -142,7 +142,8 @@ export function gutTarget(path: string): string[] {
 async function testWhere(root: string, name: string): Promise<string> {
   const [file = '', fn = ''] = name.split('::');
   const path = file.startsWith('res://') ? `client/${file.slice('res://'.length)}` : file;
-  const text = await readFile(join(root, path), 'utf8').catch(() => '');
+  // a test file that is not in the checkout (e.g. a GUT script of an addon): the failure is at its line 1
+  const text = await readFile(join(root, path), 'utf8').catch(whenNotFound(''));
   const index = text.split('\n').findIndex((line) => line.startsWith(`func ${fn}(`));
   return `${path}:${String(index + 1 || 1)}`;
 }

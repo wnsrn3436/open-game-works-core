@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { whenNotFound } from '../../../lib/fsx.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions } from '../../instance/api.ts';
 import { instanceFolder, readRecord } from '../../instance/lib/records.ts';
 import { writeEvidence, type Evidence } from './evidence.ts';
@@ -48,18 +49,18 @@ export async function keepInstanceLogs(ctx: Context, id: string, evidence: Evide
   if (evidence.dir === null) return [];
   const kept: string[] = [];
   const folder = await instanceFolder(id, ctx.env);
-  for (const name of (await readdir(folder).catch(() => [] as string[])).filter((n) => n.endsWith('.log')).sort()) {
+  for (const name of (await readdir(folder).catch(whenNotFound([] as string[]))).filter((n) => n.endsWith('.log')).sort()) {
     const path = await writeEvidence(evidence, `instance-${id}/${name}`, await readFile(join(folder, name)));
     if (path !== null) kept.push(path);
   }
   if (process.platform !== 'darwin') return kept;
-  const record = await readRecord(id, ctx.env).catch(() => null);
-  const clients = new Set(Object.entries(record?.pids ?? {}).filter(([name]) => name !== 'server').map(([, pid]) => pid));
+  const record = await readRecord(id, ctx.env);
+  const clients = new Set(Object.entries(record.pids).filter(([name]) => name !== 'server').map(([, pid]) => pid));
   if (clients.size === 0) return kept;
   const reports = join(ctx.env.HOME ?? homedir(), 'Library', 'Logs', 'DiagnosticReports');
-  for (const name of (await readdir(reports).catch(() => [] as string[])).filter((n) => CRASH_REPORT.test(n)).sort()) {
+  for (const name of (await readdir(reports).catch(whenNotFound([] as string[]))).filter((n) => CRASH_REPORT.test(n)).sort()) {
     const file = join(reports, name);
-    if (record !== null && (await stat(file)).mtimeMs < record.startedAt) continue;
+    if ((await stat(file)).mtimeMs < record.startedAt) continue;
     const text = await readFile(file);
     const pid = crashReportPid(text.toString('utf8'));
     if (pid === null || !clients.has(pid)) continue;
@@ -103,10 +104,19 @@ export async function withInstance<T>(
       failed = true;
       throw error;
     } finally {
-      if (failed || (evidence !== undefined && (await clientEnded(ctx, instance).catch(() => false)))) await keep(instance.id);
+      // when whether a client ended cannot be read, the instance is stopped all the same and then that error is thrown
+      const ended: { value: boolean; error?: unknown } =
+        failed || evidence === undefined
+          ? { value: failed }
+          : await clientEnded(ctx, instance).then(
+              (value) => ({ value }),
+              (error: unknown) => ({ value: false, error }),
+            );
+      if (ended.value) await keep(instance.id);
       await stopInstance(ctx, instance.id).catch((error: unknown) => {
         ctx.log(`cannot stop instance ${instance.id}: ${(error as Error).message}`);
       });
+      if ('error' in ended) throw ended.error;
     }
   } finally {
     slots.release();

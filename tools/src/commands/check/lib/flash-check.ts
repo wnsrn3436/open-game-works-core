@@ -2,6 +2,7 @@ import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import { decodeRgba, encodePng } from '../../resource/lib/image.ts';
@@ -94,7 +95,7 @@ class ImageFeed {
 
   /** The number of images written by now. */
   async count(): Promise<number> {
-    const names = await readdir(this.dir).catch(() => [] as string[]);
+    const names = await readdir(this.dir);
     for (const name of names) {
       const n = IMAGE.exec(name)?.[1];
       if (n !== undefined) this.written = Math.max(this.written, Number(n) + 1);
@@ -146,8 +147,9 @@ class ImageFeed {
       if (f.mask === null || this.detector === null) continue;
       const prefix = `flash-${this.platform}/frame-${String(f.frame).padStart(8, '0')}`;
       if (!this.kept.has(String(f.frame))) {
-        const image = await readFile(join(this.dir, imageName(f.frame))).catch(() => null);
-        const path = image === null ? null : await writeEvidence(this.options.evidence, `${prefix}.png`, image);
+        // the image of a frame is removed only `targetFps` frames after it, once it is final: it is still there
+        const image = await readFile(join(this.dir, imageName(f.frame)));
+        const path = await writeEvidence(this.options.evidence, `${prefix}.png`, image);
         if (path !== null) this.kept.set(String(f.frame), path);
       }
       const { width, height } = this.detector;
@@ -180,8 +182,15 @@ function unknownPart(where: string, message: string): FlashPart {
   return { failures: [failure(where, message)], unknown: true };
 }
 
+/**
+ * A `get_state` reading of the recording, or null when the client does not answer it (`automationRequest` throws an
+ * `OgwError`: no answer, a closed channel, a time limit). Another error is thrown.
+ */
 async function sceneReading(ctx: Context, id: string, feed: ImageFeed): Promise<Reading | null> {
-  const response = await automationRequest(ctx, id, 'get_state', []).catch(() => null);
+  const response = await automationRequest(ctx, id, 'get_state', []).catch((error: unknown) => {
+    if (error instanceof OgwError) return null;
+    throw error;
+  });
   const state = response?.ok === true && typeof response.result === 'object' && response.result !== null ? (response.result as Record<string, unknown>) : null;
   if (state === null) return null;
   return { written: await feed.count(), scene: typeof state.scene_key === 'string' ? state.scene_key : '' };

@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,9 +11,15 @@ import { instanceProcesses, instanceServerLog, listInstances, startInstance, sto
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
 import { decodeRgba, encodePng } from '../../../../src/commands/resource/lib/image.ts';
 import { createContext } from '../../../../src/lib/command.ts';
+import { OgwError } from '../../../../src/lib/errors.ts';
 import { makeWorkspace, type TestWorkspace } from '../../../helpers/workspace.ts';
 import { doneState, fakeAutomation, notOk, ok } from '../helpers.ts';
 
+// the reads of the check pass through; a test makes the read of a frame image for evidence fail
+vi.mock('node:fs/promises', async (orig) => {
+  const actual = await orig<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
@@ -23,6 +30,11 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({
   listInstances: vi.fn(),
   instanceProcesses: vi.fn(),
   instanceServerLog: vi.fn(),
+}));
+vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of the fake instance: a checkout without client/generated/core_settings.json (no input gap)
+  readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-flash-instance', pids: {}, startedAt: 0 })),
 }));
 
 const saved = { ...flashTiming };
@@ -238,6 +250,55 @@ describe('flash check recording', () => {
       failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'flash: the movie maker wrote no image', evidence: [] }],
     });
     expect(recordings()).toEqual([]);
+  });
+
+  it('leaves out a reading the client does not answer, and does not run on another error of a reading', async () => {
+    // once the scenario has read its goal, every get_state is a reading of the recording
+    const failing = (error: Error): void => {
+      let ended = false;
+      vi.mocked(automationRequest).mockImplementation((_c, _i, command) => {
+        if (command === 'get_telemetry') ended = true;
+        if (command === 'get_state') return ended ? Promise.reject(error) : Promise.resolve(ok(state));
+        return Promise.resolve(ok(command === 'get_telemetry' ? { goal_intervals: [{}] } : command === 'extract_logs' ? [] : null));
+      });
+    };
+    movie = () => [0, 0, 0];
+    failing(new OgwError('instance control /request timed out after 100 ms'));
+    expect(await flashCheck(ctx(), 'g', 'ios', options())).toEqual({ failures: [], unknown: false });
+    failing(new TypeError('state unreadable'));
+    expect(await flashCheck(ctx(), 'g', 'ios', options())).toEqual({
+      unknown: true,
+      failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'flash did not run: state unreadable', evidence: [] }],
+    });
+  });
+
+  it('does not run when the image of a failed frame cannot be read for its evidence, instead of leaving the image out', async () => {
+    const actual = vi.mocked(readFile).getMockImplementation();
+    if (actual === undefined) throw new Error('no readFile');
+    vi.mocked(readFile).mockImplementation(((path: string, ...rest: unknown[]) =>
+      /frame\d{8}\.png$/.test(path)
+        ? Promise.reject(Object.assign(new Error(`EACCES: permission denied, open '${path}'`), { code: 'EACCES' }))
+        : (actual as (...a: unknown[]) => Promise<unknown>)(path, ...rest)) as typeof readFile);
+    try {
+      const part = await flashCheck(ctx(), 'g', 'ios', options());
+      expect(part.unknown).toBe(true);
+      expect(part.failures[0]?.message).toMatch(/^flash did not run: EACCES: permission denied, open '.*frame\d{8}\.png'$/);
+    } finally {
+      vi.mocked(readFile).mockImplementation(actual);
+    }
+  });
+
+  it('does not run when the recording folder cannot be read, instead of reading it as no image', async () => {
+    vi.mocked(startInstance).mockImplementationOnce((_c, given: InstanceOptions) => {
+      // a file where the recording folder is
+      const folder = dirname(given.movie?.file ?? '');
+      rmSync(folder, { recursive: true, force: true });
+      writeFileSync(folder, '');
+      return Promise.resolve({ id: 'f1' } as Awaited<ReturnType<typeof startInstance>>);
+    });
+    const part = await flashCheck(ctx(), 'g', 'ios', options());
+    expect(part.unknown).toBe(true);
+    expect(part.failures[0]?.message).toMatch(/^flash did not run: ENOTDIR/);
   });
 
   it('is unknown without a recorded screen or a scenario, and starts no instance', async () => {

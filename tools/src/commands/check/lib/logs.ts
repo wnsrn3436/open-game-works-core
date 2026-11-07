@@ -54,8 +54,10 @@ export function serverErrorLines(log: string): string[] {
     if (line.trim() === '') return false;
     try {
       return (JSON.parse(line) as { level?: unknown }).level === 'error';
-    } catch {
-      return false;
+    } catch (error) {
+      // a line that is not JSON (e.g. a stack trace the runtime printed) is not a log line of the server log format
+      if (error instanceof SyntaxError) return false;
+      throw error;
     }
   });
 }

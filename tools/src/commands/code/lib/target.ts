@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '../../../lib/command.ts';
-import { exists } from '../../../lib/fsx.ts';
+import { exists, whenNotFound } from '../../../lib/fsx.ts';
 import { resolveCoreImpl } from '../../../lib/game.ts';
 import { git, revParse } from '../../../lib/git.ts';
 import { OgwError } from '../../../lib/errors.ts';
@@ -153,6 +153,6 @@ export function packageFolders(files: readonly string[]): string[] {
 
 /** Engines of `client/<engine>/engine.json` in `open-game-works-core-impl/`. */
 export async function coreEngines(root: string): Promise<string[]> {
-  const entries = await readdir(join(root, 'client'), { withFileTypes: true }).catch(() => []);
+  const entries = await readdir(join(root, 'client'), { withFileTypes: true }).catch(whenNotFound([]));
   return entries.filter((e) => e.isDirectory() && exists(join(root, 'client', e.name, 'engine.json'))).map((e) => e.name).sort();
 }

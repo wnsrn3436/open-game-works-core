@@ -49,4 +49,25 @@ describe('keepInstanceLogs', () => {
     expect(readFileSync(join(base, 'evidence/instance-i1/runner.log'), 'utf8')).toBe('main exited with null\n');
     expect(await keepInstanceLogs(ctx, 'i1', { root: base, dir: null, relative: true })).toEqual([]);
   });
+
+  it('keeps nothing of a folder or a crash report folder that is not there, and throws what cannot be read', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'ogw-keep-logs-'));
+    const instances = join(base, 'instances');
+    mkdirSync(instances, { recursive: true });
+    writeFileSync(join(instances, 'i1.json'), JSON.stringify({ id: 'i1', startedAt: 0, pids: { server: 100, main: 200 } }));
+    // no instance folder and no ~/Library/Logs/DiagnosticReports
+    const env = { ...process.env, HOME: join(base, 'home'), OGW_INSTANCES_DIR: instances };
+    const ctx = createContext({ cwd: base, env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const evidence = { root: base, dir: 'evidence', relative: true };
+    expect(await keepInstanceLogs(ctx, 'i1', evidence)).toEqual([]);
+    // the instance folder is a file: the read error is thrown, not read as a folder without logs
+    writeFileSync(join(instances, 'i1'), 'not a folder');
+    await expect(keepInstanceLogs(ctx, 'i1', evidence)).rejects.toMatchObject({ code: 'ENOTDIR' });
+    if (process.platform !== 'darwin') return;
+    // on macOS the record names the client processes: a record that cannot be read is thrown, not read as no client
+    const other = { ...env, OGW_INSTANCES_DIR: join(base, 'none') };
+    mkdirSync(join(base, 'none', 'i2'), { recursive: true });
+    const ctx2 = createContext({ cwd: base, env: other, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    await expect(keepInstanceLogs(ctx2, 'i2', evidence)).rejects.toThrow('instance not found: i2');
+  });
 });

@@ -4,6 +4,7 @@ import type { AddressInfo, Socket } from 'node:net';
 import { join, normalize } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { contentTypeOf } from '../../deploy/lib/s3.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { isInside } from '../../../lib/paths.ts';
 import { rawBytes } from '../../../lib/wsdata.ts';
 
@@ -82,14 +83,21 @@ function parseInput(body: Buffer): TestInput | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body.toString('utf8'));
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
   const value = parsed as Record<string, unknown>;
   if (value.type === 'click' && typeof value.x === 'number' && typeof value.y === 'number') return { type: 'click', x: value.x, y: value.y };
   if (value.type === 'key' && typeof value.key === 'string' && value.key !== '') return { type: 'key', key: value.key };
   return null;
+}
+
+/** A path of the web export that is no file there (missing, or a folder): 404. Another read error is thrown. */
+function noFile(error: unknown): null {
+  if (isNotFound(error) || (error as { code?: unknown } | null)?.code === 'EISDIR') return null;
+  throw error;
 }
 
 /** A close code a WebSocket close frame may carry: 1000-1003, 1007-1014 and 3000-4999. */
@@ -155,7 +163,8 @@ class Relay {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch {
+    } catch (thrown) {
+      if (!(thrown instanceof SyntaxError)) throw thrown;
       error('the control frame is not JSON');
       return;
     }
@@ -346,7 +355,7 @@ class Host {
     res.on('close', () => {
       if (!res.writableFinished) this.appCutOff.push(path);
     });
-    const content = await readFile(file).catch(() => null);
+    const content = await readFile(file).catch(noFile);
     if (content === null) send(res, 404);
     else res.writeHead(200, { 'content-type': contentTypeOf(file) }).end(content); // a browser checks the type of module scripts and audio worklets
   }
@@ -356,8 +365,9 @@ class Host {
 export async function startTestHost(appDir: string | null = null): Promise<TestHost> {
   const host = new Host(appDir);
   const server = createServer((req, res) => {
-    host.handle(req, res).catch(() => {
-      if (!res.headersSent) send(res, 400);
+    // a request the host cannot carry out (e.g. a registration that is not JSON) is answered 400 with the reason
+    host.handle(req, res).catch((error: unknown) => {
+      if (!res.headersSent) send(res, 400, { error: error instanceof Error ? error.message : String(error) });
       else res.end();
     });
   });

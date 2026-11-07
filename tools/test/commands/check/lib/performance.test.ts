@@ -10,6 +10,8 @@ import { instanceProcesses, instanceServerLog } from '../../../../src/commands/c
 import { HostLoadSampler, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { hostRefreshHz } from '../../../../src/lib/display.ts';
+import { OgwError } from '../../../../src/lib/errors.ts';
+import { readRecord, type InstanceRecord } from '../../../../src/commands/instance/lib/records.ts';
 import {
   fpsBound,
   fpsHolds,
@@ -43,6 +45,11 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
 vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
 vi.mock('../../../../src/lib/display.ts', () => ({ hostRefreshHz: vi.fn() }));
+vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of the fake instance: a checkout without client/generated/core_settings.json (no input gap, no QualityCore.levels)
+  readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-perf-instance', pids: {}, startedAt: 0 })),
+}));
 
 const ctx = fakeContext();
 
@@ -278,9 +285,25 @@ describe('HostLoadSampler', () => {
     expect(await sampler.stop()).toEqual({ cpuMaxPercent: 90, memoryMaxPercent: 72.4, instancesMax: 5 });
   });
 
-  it('a failing instance count reads as 0', async () => {
-    const probe = { ...fixedProbe([{ idle: 0, total: 0 }], [10], []), instances: () => Promise.reject(new Error('x')) };
-    expect(await new HostLoadSampler(probe, 1000).stop()).toEqual({ cpuMaxPercent: 0, memoryMaxPercent: 10, instancesMax: 0 });
+  it('a failing instance count or supervisor pid stops the readings, and stop throws it', async () => {
+    const probe = { ...fixedProbe([{ idle: 0, total: 0 }], [10], []), instances: () => Promise.reject(new Error('instances unreadable')) };
+    await expect(new HostLoadSampler(probe, 1000).stop()).rejects.toThrow('instances unreadable');
+    const supervisor = { ...fixedProbe([{ idle: 0, total: 0 }], [10], [1]), supervisorPid: () => Promise.reject(new Error('instance not found: p1')) };
+    await expect(new HostLoadSampler(supervisor, 1000, 'p1').stop()).rejects.toThrow('instance not found: p1');
+  });
+
+  it('reads a failed reading of the processes as no process reading, and stops on another error', async () => {
+    const all = [proc(100, 1, 10), proc(101, 100, 690), proc(102, 101, 300), proc(200, 1, 0)];
+    const base = (): HostProbe => fixedProbe([{ idle: 0, total: 0 }, { idle: 0, total: 1000 }], [40], [1], [TREE_BEFORE, all], 100);
+    // the readings themselves: the host is at 100% CPU, all of it by the instance
+    expect((await new HostLoadSampler(base(), 60_000, 'p1').stop()).cpuMaxPercent).toBe(0);
+    // a program that cannot run (OgwError) or a system error: the instance share is 0, so the host use is all outside it
+    for (const error of [new OgwError('cannot run ps: spawn ps ENOENT'), Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })]) {
+      const failed = { ...base(), processes: () => Promise.reject(error) };
+      expect((await new HostLoadSampler(failed, 60_000, 'p1').stop()).cpuMaxPercent).toBe(100);
+    }
+    const broken = { ...base(), processes: () => Promise.reject(new TypeError('not a reading')) };
+    await expect(new HostLoadSampler(broken, 60_000, 'p1').stop()).rejects.toThrow('not a reading');
   });
 
   it('does not count the CPU time of the instance supervisor and its descendants', async () => {
@@ -410,6 +433,7 @@ beforeEach(() => {
   vi.mocked(hostRefreshHz).mockReset().mockResolvedValue(null);
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
+  vi.mocked(listInstances).mockResolvedValue([]);
   vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
   vi.mocked(instanceServerLog).mockResolvedValue('');
 });
@@ -441,6 +465,37 @@ describe('performanceCheck', () => {
     expect(new Set(record.samples.lobby?.map((v) => `${String(v.fps)}/${String(v.boundFps)}`))).toEqual(new Set(['59/59']));
     expect(record.samples.lobby?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
     expect(new Set(record.samples.battle?.map((v) => v.fps))).toEqual(new Set([58]));
+  });
+
+  it('reads a get_stats that gets no answer as a tick without one, and does not run on another error of a reading or of the core settings', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const failingStats = (error: Error): void => {
+      fakeGame({ lobby: 59, battle: 59 }, []);
+      const game = vi.mocked(automationRequest).getMockImplementation();
+      if (game === undefined) throw new Error('no fake game');
+      let stats = 0;
+      vi.mocked(automationRequest).mockImplementation((...args) => {
+        if (args[2] === 'get_stats' && ++stats === 3) return Promise.reject(error);
+        return game(...args);
+      });
+    };
+    failingStats(new OgwError('instance control /request timed out after 100 ms'));
+    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).result).toBe('pass');
+    failingStats(new TypeError('stats unreadable'));
+    expect(await performanceCheck(ctx, 'g', 'web', scenario, options(root))).toMatchObject({
+      result: 'unknown',
+      failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'performance did not run: stats unreadable' }],
+    });
+    // merged core settings that cannot be read for QualityCore.levels (a folder where the file is; the first record read
+    // is that of the levels, the scenario reads the default record after it): not read as a game without levels
+    const checkout = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    mkdirSync(join(checkout, 'client', 'generated', 'core_settings.json'), { recursive: true });
+    vi.mocked(readRecord).mockResolvedValueOnce({ id: 'p1', root: checkout, pids: {}, startedAt: 0 } as unknown as InstanceRecord);
+    fakeGame({ lobby: 59, battle: 59 }, []);
+    expect(await performanceCheck(ctx, 'g', 'web', scenario, options(root))).toMatchObject({
+      result: 'unknown',
+      failures: [{ message: expect.stringMatching(/^performance did not run: EISDIR/) as unknown }],
+    });
   });
 
   it('passes without QualityCore at the fps bound', async () => {

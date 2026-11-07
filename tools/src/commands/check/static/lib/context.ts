@@ -2,6 +2,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../../lib/command.ts';
 import { OgwError } from '../../../../lib/errors.ts';
+import { isNotFound } from '../../../../lib/fsx.ts';
 import type { GameRepo } from '../../../../lib/game.ts';
 import { git } from '../../../../lib/git.ts';
 import { harnessRoot } from '../../../../lib/paths.ts';
@@ -82,6 +83,15 @@ function cached<T>(map: Map<string, Promise<T>>, key: string, fn: () => Promise<
   return value;
 }
 
+/**
+ * A listed path that is not in the working tree: a tracked file deleted there (`ENOENT`), or one whose folder is a file
+ * now (`ENOTDIR`). Another error is thrown.
+ */
+function notThere(error: unknown): null {
+  if (isNotFound(error) || (error as { code?: unknown } | null)?.code === 'ENOTDIR') return null;
+  throw error;
+}
+
 /** Working tree files (tracked and untracked, not ignored) that exist as regular files. */
 export async function listFiles(root: string): Promise<string[]> {
   const out = await git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
@@ -89,7 +99,7 @@ export async function listFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   await Promise.all(
     paths.map(async (p) => {
-      const stat = await lstat(join(root, p)).catch(() => null);
+      const stat = await lstat(join(root, p)).catch(notThere);
       if (stat?.isFile()) files.push(p);
     }),
   );

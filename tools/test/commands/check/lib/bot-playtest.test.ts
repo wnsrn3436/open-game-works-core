@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
-import { startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
+import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
 import { botPlaytest, judge, readScenario } from '../../../../src/commands/check/lib/bot-playtest.ts';
 import { Slots, withInstance } from '../../../../src/commands/check/lib/instances.ts';
@@ -15,6 +15,11 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
 }));
 vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
+vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of the fake instance: a checkout without client/generated/core_settings.json (no input gap)
+  readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-bot-instance', pids: {}, startedAt: 0 })),
+}));
 
 const logs: string[] = [];
 const ctx = fakeContext(logs);
@@ -45,6 +50,7 @@ beforeEach(() => {
   logs.length = 0;
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'b1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
+  vi.mocked(listInstances).mockResolvedValue([]);
   vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
   vi.mocked(instanceServerLog).mockResolvedValue('{"level":"info"}\n');
 });
@@ -73,20 +79,35 @@ describe('botPlaytest', () => {
     ]);
   });
 
-  it('a blocker fails both; logs that cannot be read are left out', async () => {
+  it('a blocker fails both; a client log the client does not give is left out', async () => {
     const dir = root({ steps, goal });
-    serve(1, notOk('blocked'));
-    vi.mocked(instanceServerLog).mockRejectedValue(new Error('gone'));
+    vi.mocked(automationRequest).mockImplementation(fakeAutomation((command) => {
+      if (command === 'get_state') return ok(doneState());
+      if (command === 'tap') return notOk('blocked');
+      if (command === 'extract_logs') return notOk('the client ended');
+      return ok(null);
+    }));
     const [noBlocker, fullFlow] = await botPlaytest(ctx, 'g', await readScenario(dir), { evidence: { root: dir, dir: 'ev', relative: true }, slots: new Slots(1), pollMs: 1 });
     expect(noBlocker).toEqual({
       name: 'no blocker',
       platform: null,
       result: 'fail',
-      failures: [{ where: 'step 1', message: 'tap returned ok false: "blocked"', evidence: ['ev/bot-playtest/client.log'] }],
+      failures: [{ where: 'step 1', message: 'tap returned ok false: "blocked"', evidence: ['ev/bot-playtest/server.log'] }],
       warnings: [],
     });
     expect(fullFlow.result).toBe('fail');
     expect(fullFlow.failures[0]?.message).toBe('scenario stopped at step 1');
+  });
+
+  it('a server log that cannot be read is no log left out: both are unknown with the reason', async () => {
+    const dir = root({ steps, goal });
+    serve(1, notOk('blocked'));
+    vi.mocked(instanceServerLog).mockRejectedValue(Object.assign(new Error('EACCES: permission denied, open server.log'), { code: 'EACCES' }));
+    const options = { evidence: { root: dir, dir: 'ev', relative: true }, slots: new Slots(1), pollMs: 1 };
+    const [noBlocker, fullFlow] = await botPlaytest(ctx, 'g', await readScenario(dir), options);
+    const failure = { where: 'client/dev/bot/scenario.json:1', message: 'bot playtest did not run: EACCES: permission denied, open server.log', evidence: [] };
+    expect(noBlocker).toEqual({ name: 'no blocker', platform: null, result: 'unknown', failures: [failure], warnings: [] });
+    expect(fullFlow).toEqual({ name: 'full flow', platform: null, result: 'unknown', failures: [failure], warnings: [] });
   });
 
   it('a stop that is not a blocker leaves no blocker and full flow unknown', async () => {

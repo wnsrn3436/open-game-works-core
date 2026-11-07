@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest, type AutomationResponse } from '../../../../src/commands/instance/automation.ts';
-import { startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
+import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import {
   keyboardProblem,
@@ -26,6 +26,7 @@ import { fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
 import { encodePng, type Rgba } from '../../../../src/commands/resource/lib/image.ts';
 import { flashCheck } from '../../../../src/commands/check/lib/flash-check.ts';
 import { checkResult } from '../../../../src/commands/check/lib/evidence.ts';
+import { OgwError } from '../../../../src/lib/errors.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
@@ -362,6 +363,7 @@ function options(evidenceRoot: string, extra: Partial<UiQualityOptions> = {}): U
 beforeEach(() => {
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'u1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
+  vi.mocked(listInstances).mockResolvedValue([]);
   vi.mocked(flashCheck).mockReset().mockResolvedValue({ failures: [], unknown: false });
 });
 
@@ -510,9 +512,10 @@ describe('uiQualityCheck', () => {
     );
     const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1, keyboard: 600 }];
     const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, gamepadSupported: false }));
+    // the failure says why the bytes are no image
     expect(result.failures.map((f) => f.message).filter((m) => m.includes('PNG'))).toEqual([
-      'capture_screen gave no PNG image (en, phone, shop.open_main, text scale 1000)',
-      'capture_screen gave no PNG image (en, phone, inv.open_bag, text scale 1000)',
+      expect.stringMatching(/^capture_screen gave no PNG image: capture_screen: cannot read image: .+ \(en, phone, shop\.open_main, text scale 1000\)$/),
+      expect.stringMatching(/^capture_screen gave no PNG image: capture_screen: cannot read image: .+ \(en, phone, inv\.open_bag, text scale 1000\)$/),
     ]);
   });
 
@@ -570,14 +573,34 @@ describe('uiQualityCheck', () => {
     let crashed = false;
     vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) => {
       if (command === 'shop.open_main') crashed = true;
-      if (crashed) throw new Error('connection refused');
+      // a client that is gone: the request gets no answer (automationRequest throws an OgwError)
+      if (crashed) throw new OgwError('instance control /request: connection refused');
       return base?.(c, i, command, args, client) ?? ok(null);
     });
     const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'] }));
     expect(result.result).toBe('fail');
     expect(result.failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
-      'client/dev/features/shop/shop_dev.gd:1 | shop.open_main failed: connection refused (en, phone)',
+      'client/dev/features/shop/shop_dev.gd:1 | shop.open_main failed: instance control /request: connection refused (en, phone)',
     ]);
+  });
+
+  it('does not run when get_state fails other than by getting no answer, instead of reading it as no scene or an unsettled screen', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
+    fakeUi();
+    const base = vi.mocked(automationRequest).getMockImplementation();
+    // the `failing`-th get_state after the open command throws: the 1st reads the scene, the 2nd waits for the screen to settle
+    for (const failing of [1, 2]) {
+      let after = 0;
+      let opened = false;
+      vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) => {
+        if (command === 'shop.open_main') opened = true;
+        if (opened && command === 'get_state' && ++after === failing) throw new TypeError('state unreadable');
+        return base?.(c, i, command, args, client) ?? ok(null);
+      });
+      const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'] }));
+      expect(result.result).toBe('unknown');
+      expect(result.failures.map((f) => f.message)).toEqual(['UI quality did not run: state unreadable']);
+    }
   });
 
   it('keeps failures judged before a setup command fails: the result is fail, not unknown', async () => {

@@ -22,7 +22,8 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
 }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
-vi.mock('../../../../src/commands/instance/lib/records.ts', () => ({ readRecord: vi.fn(() => Promise.reject(new Error('no record'))) }));
+// the instance record of the fake instance: a checkout without client/generated/core_settings.json (no input gap)
+vi.mock('../../../../src/commands/instance/lib/records.ts', () => ({ readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-scenario-instance' })) }));
 
 const ctx = fakeContext();
 const calls: string[] = [];
@@ -273,6 +274,26 @@ describe('runScenario', () => {
     writeFileSync(join(bare, 'client', 'generated', 'core_settings.json'), JSON.stringify({ 'QACore.commandTimeoutMs': 1000 }));
     vi.mocked(readRecord).mockResolvedValueOnce({ root: bare } as InstanceRecord);
     expect(await autoInputGapMs(ctx, 'i1')).toBe(0);
+  });
+
+  it('leaves no gap without core_settings.json, and fails when the merged core settings or the record cannot be read', async () => {
+    serve(client());
+    const bare = mkdtempSync(join(tmpdir(), 'ogw-gap-'));
+    vi.mocked(readRecord).mockResolvedValueOnce({ root: bare } as InstanceRecord);
+    expect(await autoInputGapMs(ctx, 'i1')).toBe(0);
+    // a folder where the file is: the read error is thrown, not read as no gap
+    const folder = mkdtempSync(join(tmpdir(), 'ogw-gap-'));
+    mkdirSync(join(folder, 'client', 'generated', 'core_settings.json'), { recursive: true });
+    vi.mocked(readRecord).mockResolvedValueOnce({ root: folder } as InstanceRecord);
+    await expect(runScenario(ctx, 'i1', scenario([step('tap')]), { pollMs: 1 })).rejects.toMatchObject({ code: 'EISDIR' });
+    const broken = mkdtempSync(join(tmpdir(), 'ogw-gap-'));
+    mkdirSync(join(broken, 'client', 'generated'), { recursive: true });
+    writeFileSync(join(broken, 'client', 'generated', 'core_settings.json'), '{');
+    vi.mocked(readRecord).mockResolvedValueOnce({ root: broken } as InstanceRecord);
+    await expect(runScenario(ctx, 'i1', scenario([step('tap')]), { pollMs: 1 })).rejects.toThrow(SyntaxError);
+    vi.mocked(readRecord).mockRejectedValueOnce(new Error('instance not found: i1'));
+    await expect(runScenario(ctx, 'i1', scenario([step('tap')]), { pollMs: 1 })).rejects.toThrow('instance not found: i1');
+    expect(calls).toEqual([]);
   });
 
   it('stops at the blocker of a client the runner did not start, after the process blocker', async () => {

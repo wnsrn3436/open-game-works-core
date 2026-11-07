@@ -222,6 +222,19 @@ describe('regressionTest', () => {
     expect(JSON.parse(readFileSync(godot.argsFile, 'utf8'))).toContain('-gtest=res://tests/shop/test_buy.gd');
   });
 
+  it('puts a failed test of a file not in the checkout at its line 1, and throws a test file it cannot read', async () => {
+    const root = gameRoot({ 'client/tests/shop/test_buy.gd': 'func test_buy_ok():\n' });
+    const run = async (name: string): Promise<Awaited<ReturnType<typeof regressionTest>>> => {
+      const godot = fakeGodot({ result: { ...passing, results: [{ name, status: 'fail', message: 'x' }] } });
+      return regressionTest(ctx, root, { client: 'client/tests/shop/test_buy.gd', server: null }, {
+        godot: godot.path, evidence: { root, dir: null, relative: true }, runTimeLimitMs: null, startTimeLimitMs: null,
+      });
+    };
+    expect((await run('res://addons/gut/test_x.gd::test_a')).failures[0]?.where).toBe('client/addons/gut/test_x.gd:1');
+    // a test file name that is a folder of the checkout: the read error is thrown, not read as a file without the test
+    await expect(run('res://tests/shop::test_a')).rejects.toMatchObject({ code: 'EISDIR' });
+  });
+
   it('fails when import fails, no result comes, or the run passes its time limit', async () => {
     const root = gameRoot();
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
