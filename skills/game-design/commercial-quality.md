@@ -62,6 +62,13 @@ Where play happens in a place (rooms, levels, a map, a table). On a fixed board 
 - Danger and targeting are crisp shapes in a color reserved for that meaning. Check: is every danger area a crisp shape in a color nothing else uses?
 - Where play happens in a place, the space is furnished in layers: obstacles, breakables and dressing; each prop's look tells what it does. Check: where play happens in a place, is it more than a bare floor or one stamped object?
 
+## accessibility
+
+Automated checks decide what a tool can decide: the option entries of [`client-content`](../client-content/SKILL.md) and the text size, contrast and touch target rules of `## UI quality` of [`ogw`](../../tools/ogw.md). What follows needs a look at the game.
+
+- Color is never the only carrier of a meaning: a state, a side, a pickup, a hazard or a rarity that color tells apart is also told apart by a shape, a mark, an icon or text, so that a player who does not tell those colors apart reads it the same. Check: is every meaning that color carries on the screen also carried by a shape, mark, icon or text?
+- Sound is never the only carrier of what the player must react to: an attack about to land, a timer running out, a threat off the screen or a turn passing also shows on the screen, so that a player who plays without sound misses nothing. Check: does every event the player must react to show on the screen, not only in the sound?
+
 ## motion and feedback
 
 - Feedback is budgeted by consequence: a routine hit gets a short tint on the target only; kills, damage to the player, rewards and deaths get more; the loudest tools (shake, full-screen flash, long sequences) are kept for rare moments. A routine hit does not shake the screen
