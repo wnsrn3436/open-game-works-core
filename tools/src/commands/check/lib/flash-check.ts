@@ -5,7 +5,7 @@ import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { automationRequest } from '../../instance/automation.ts';
-import { decodeRgba, encodePng } from '../../resource/lib/image.ts';
+import { decodeRgba, encodePng, type Rgba } from '../../resource/lib/image.ts';
 import type { CheckFailure } from '../api.ts';
 import { SCENARIO_WHERE, type InstanceCheckOptions } from './bot-playtest.ts';
 import { failure, writeEvidence } from './evidence.ts';
@@ -71,13 +71,23 @@ export function sceneOf(readings: readonly Reading[], frame: number): string | n
 }
 
 /**
+ * How many images ahead of the one the detector takes next are being decoded: the decodes run in the thread pool of
+ * sharp (4 threads of libuv by default) while the detector, on the JS thread, takes the images in frame order.
+ */
+const DECODE_AHEAD = 4;
+
+type Decoded = { image: Rgba } | { error: unknown };
+
+/**
  * Reads the images of the movie maker folder in frame order into the detector while they are written, and removes each
  * image once its frame is final. An image is read once the next one exists (the engine wrote it whole), and the last one
- * when the recording ends.
+ * when the recording ends. The images after the next are decoded beside the detector, at most `DECODE_AHEAD` at a time.
  */
 class ImageFeed {
   private next = 0;
   private written = 0;
+  /** The decodes started of images the detector has not taken, by frame number. */
+  private readonly decoding = new Map<number, Promise<Decoded>>();
   private readonly failed: FailedFrame[] = [];
   private detector: FlashDetector | null = null;
   private readonly kept = new Map<string, string>();
@@ -103,17 +113,33 @@ class ImageFeed {
     return this.written;
   }
 
+  /** The decode of image `n`, started once; its failure is a value, so that one decoded ahead is not an unhandled rejection. */
+  private decode(n: number): Promise<Decoded> {
+    let pending = this.decoding.get(n);
+    if (pending === undefined) {
+      pending = decodeRgba(join(this.dir, imageName(n)), imageName(n)).then(
+        (image): Decoded => ({ image }),
+        (error: unknown): Decoded => ({ error }),
+      );
+      this.decoding.set(n, pending);
+    }
+    return pending;
+  }
+
   /** Reads the images whose next image exists; with `last`, every image left, an unreadable last one left out. */
   async feed(last = false): Promise<void> {
     const written = await this.count();
-    while (this.next < (last ? written : written - 1)) {
+    const end = last ? written : written - 1;
+    while (this.next < end) {
       const n = this.next;
-      const path = join(this.dir, imageName(n));
-      const image = await decodeRgba(path, imageName(n)).catch((error: unknown) => {
-        if (last && n === written - 1) return null;
-        throw error;
-      });
-      if (image === null) break;
+      for (let ahead = n; ahead < Math.min(end, n + DECODE_AHEAD); ahead++) void this.decode(ahead);
+      const decoded = await this.decode(n);
+      this.decoding.delete(n);
+      if ('error' in decoded) {
+        if (last && n === written - 1) break;
+        throw decoded.error;
+      }
+      const image = decoded.image;
       this.detector ??= new FlashDetector(image.width, image.height, this.options.targetFps, fieldGeometry([image.width, image.height], this.screen.window, this.screen.pixelRatio));
       await this.take(this.detector.push(image.data));
       this.next++;

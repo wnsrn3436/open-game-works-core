@@ -20,6 +20,11 @@ vi.mock('node:fs/promises', async (orig) => {
   const actual = await orig<typeof import('node:fs/promises')>();
   return { ...actual, readFile: vi.fn(actual.readFile) };
 });
+// the decodes of the check pass through; a test delays them
+vi.mock('../../../../src/commands/resource/lib/image.ts', async (orig) => {
+  const actual = await orig<typeof import('../../../../src/commands/resource/lib/image.ts')>();
+  return { ...actual, decodeRgba: vi.fn(actual.decodeRgba) };
+});
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
@@ -160,6 +165,30 @@ describe('flash check recording', () => {
     // the scenario ran on the recording client
     expect(calls).toContain('tap 1 1');
     expect(recordings()).toEqual([]);
+  });
+
+  it('decodes the images after the next one beside the detector, at most four at once, and judges them in frame order', async () => {
+    const actual = (await vi.importActual<typeof import('../../../../src/commands/resource/lib/image.ts')>('../../../../src/commands/resource/lib/image.ts')).decodeRgba;
+    const spans: { start: number; end: number }[] = [];
+    vi.mocked(decodeRgba).mockImplementation(async (input, where) => {
+      const frame = Number(/frame(\d+)\.png$/.exec(String(input))?.[1] ?? '-1');
+      const start = Date.now();
+      // the later images of each four decode sooner: a feed that took them as their decodes end would take them out of order
+      await new Promise((resolve) => setTimeout(resolve, 2 + 3 * (3 - (frame % 4))));
+      const image = await actual(input, where);
+      if (frame >= 0) spans.push({ start, end: Date.now() });
+      return image;
+    });
+    try {
+      const part = await flashCheck(ctx(), 'g', 'ios', options());
+      expect(part.failures.map((f) => f.message)).toEqual(['flash general: more than 3 flashes in one second over 30000 CSS px² of a 341x256 CSS px field, frames 3-45 in scene/play (tablet)']);
+      expect(spans).toHaveLength(frames);
+      const most = Math.max(...spans.map((s) => spans.filter((o) => o.start <= s.start && s.start < o.end).length));
+      expect(most).toBeGreaterThan(1);
+      expect(most).toBeLessThanOrEqual(4);
+    } finally {
+      vi.mocked(decodeRgba).mockImplementation(actual);
+    }
   });
 
   it('puts a flash at the scenario when its reading names no scene', async () => {
