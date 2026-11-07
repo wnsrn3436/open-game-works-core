@@ -1,12 +1,12 @@
 // `ogw time` (ogw.md `## time`): the tree of a job or run, its critical path, self times, waits and flags.
-import { writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../../src/commands/index.ts';
 import type { CommandDef } from '../../../src/lib/command.ts';
 import type { JobRecord } from '../../../src/lib/jobs.ts';
-import { withLock } from '../../../src/lib/lock.ts';
+import { withLock, withLockWithin } from '../../../src/lib/lock.ts';
 import { span, type SpanLine } from '../../../src/lib/spans.ts';
 import { makeGame, ogw } from '../../helpers/workspace.ts';
 import { jobWorkspace, writeJob } from '../job/helpers.ts';
@@ -273,6 +273,8 @@ describe('ogw time', () => {
     expect(one.root.key).toBe('run create-1');
     expect(one.root.children.map((c) => c.key)).toEqual(['a1', 'k1']);
     expect(one.wallMs).toBe(490 * S);
+    // 490 s less a1 (80 s) and k1 (100 s)
+    expect(one.selfTime[0]).toEqual({ key: 'run create-1', name: 'run create-1 iteration 1', ms: 310 * S });
     const two = await timeOf(ws, ['g', '--run', 'create-1', '--iteration', '2']);
     expect(two.root.children.map((c) => c.key)).toEqual(['a2', 'k2']);
     expect(two.criticalPath.map((e) => e.key)).toEqual(['run create-1', 'a2', 'k2', 'k3']);
@@ -317,6 +319,41 @@ describe('ogw time', () => {
     expect(root.children[1]?.waits[0]?.ms).toBeGreaterThanOrEqual(150);
   });
 
+  it('fails a job command whose spans file cannot be written when it ends, after letting go of the lock it waited for', async () => {
+    const ws = jobWorkspace();
+    const lock = join(ws.root, 'held.lock');
+    let ran = false;
+    const steps: CommandDef = {
+      name: ['steps'],
+      usage: 'ogw steps',
+      run: async () => {
+        await span('step', () => withLock(lock, () => sleep(10)));
+        ran = true;
+        return { text: 'ok' };
+      },
+    };
+    writeJob(ws.jobs, { id: 'f1', startedAt: Date.now() });
+    // a folder where the spans file goes: no line can be written
+    mkdirSync(join(ws.jobs, 'f1.spans.jsonl'));
+    let release: () => void = () => undefined;
+    await new Promise<void>((resolve) => {
+      void withLock(lock, () => new Promise<void>((done) => {
+        release = done;
+        resolve();
+      }));
+    });
+    setTimeout(() => {
+      release();
+    }, 300);
+    const run = await ogw(ws, ['steps'], { commands: [...commands, steps], env: { ...ws.env, OGW_JOB_ID: 'f1' } });
+    expect(ran).toBe(true);
+    expect(run.code).toBe(1);
+    expect(run.stderr).toMatch(/^cannot write the spans file .*f1\.spans\.jsonl: EISDIR/);
+    // the lock that the wait was written for is free again
+    expect(existsSync(lock)).toBe(false);
+    expect((await withLockWithin(lock, () => Promise.resolve(1), 0)).ran).toBe(true);
+  });
+
   it('refuses a bad command line and fails on a spans file it cannot read', async () => {
     const ws = jobWorkspace();
     expect((await ogw(ws, ['time'])).stderr).toBe('usage: ogw time <job id> | ogw time <game> --run <run> [--iteration <n>]\n');
@@ -329,5 +366,9 @@ describe('ogw time', () => {
     job(ws, 'b2', 0, 10);
     spans(ws, 'b2', [['a', 'x', 'missing', 0, 5]]);
     expect((await ogw(ws, ['time', 'b2'])).stderr).toBe('job b2: span a is in span missing, which its spans file does not hold\n');
+    job(ws, 'b3', 0, 10);
+    spans(ws, 'b3', [['a', 'x', null, 0, 5]]);
+    job(ws, 'b4', 1, 4, { parentJob: 'b3', parentSpan: 'gone' });
+    expect((await ogw(ws, ['time', 'b3'])).stderr).toBe('job b3: job b4 is in span gone, which its spans file does not hold\n');
   });
 });

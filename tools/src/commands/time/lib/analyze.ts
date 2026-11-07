@@ -70,7 +70,6 @@ export function criticalPath(root: TimeSpan): PathEntry[] {
 /** The spans of the tree with the largest self time, largest first, at most `count`. */
 export function largestSelf(root: TimeSpan, count: number): { span: TimeSpan; ms: number }[] {
   return spansOf(root)
-    .filter((span) => span.kind !== 'run')
     .map((span) => ({ span, ms: selfMs(span) }))
     .sort((a, b) => b.ms - a.ms || a.span.key.localeCompare(b.span.key))
     .slice(0, count);

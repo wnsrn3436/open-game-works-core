@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { closeSync, openSync, writeSync } from 'node:fs';
+import { OgwError } from './errors.ts';
 
 /**
  * A line of the spans file of a job (ogw.md `## time`): a step span or a wait. Each is written once when it starts,
@@ -30,18 +31,28 @@ export interface WaitLine {
   end: number | null;
 }
 
-/** The spans file of the job a process runs: opened at the first line, appended to with one write per line. */
+/**
+ * The spans file of the job a process runs: opened at the first line, appended to with one write per line. A line that
+ * cannot be written is kept as `failure` and no line is written after it, so that the step, lock, slot or share that
+ * wrote it goes on as without a job (a take lets go of what it took); `inJob` fails the command with it when it ends.
+ */
 class SpanFile {
   readonly path: string;
   #fd: number | null = null;
+  failure: Error | null = null;
 
   constructor(path: string) {
     this.path = path;
   }
 
   write(line: SpanLine): void {
-    this.#fd ??= openSync(this.path, 'a');
-    writeSync(this.#fd, `${JSON.stringify(line)}\n`);
+    if (this.failure !== null) return;
+    try {
+      this.#fd ??= openSync(this.path, 'a');
+      writeSync(this.#fd, `${JSON.stringify(line)}\n`);
+    } catch (error) {
+      this.failure = error instanceof Error ? error : new Error(String(error));
+    }
   }
 
   close(): void {
@@ -77,14 +88,20 @@ function nextId(): string {
   return `${process.pid.toString(36)}.${lastId.toString(36)}`;
 }
 
-/** Runs the command of job `job`, whose steps and waits go to the spans file `path` (ogw.md `## time`). */
+/**
+ * Runs the command of job `job`, whose steps and waits go to the spans file `path` (ogw.md `## time`). When a line could
+ * not be written, the command fails with that error once `fn` ends; a failure of `fn` itself stays its result.
+ */
 export async function inJob<T>(job: string, path: string, fn: () => Promise<T>): Promise<T> {
   const file = new SpanFile(path);
+  let value: T;
   try {
-    return await storage.run({ job, file, span: null, take: null }, fn);
+    value = await storage.run({ job, file, span: null, take: null }, fn);
   } finally {
     file.close();
   }
+  if (file.failure !== null) throw new OgwError(`cannot write the spans file ${path}: ${file.failure.message}`);
+  return value;
 }
 
 /** The job and step span that run in this async context; null outside a job. */

@@ -96,7 +96,7 @@ export async function runReport(ctx: Context, game: string, runName: string, ite
   if (run === undefined) throw new OgwError(`no run ${runName} in game ${repo.name}`);
   const records = await listJobs(ctx.env);
   const source = timeSource(records, ctx.env);
-  const window = windowOf(records, run, iteration, source.now);
+  const window = windowOf(records.filter((job) => job.game === repo.name), run, iteration, source.now);
   const jobs = jobsOfRun(run, records, repo.name).filter((job) => job.startedAt >= window.start && job.startedAt < window.end);
   const ids = new Set(jobs.map((job) => job.id));
   const seen = new Set<string>();
