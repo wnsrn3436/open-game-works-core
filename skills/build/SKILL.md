@@ -10,7 +10,7 @@ description: Covers the procedure of the `build` command (hardening, hardening r
 `<env>` is the environment name. In command arguments it is uppercase (`DEV`, `STG`, `PROD`), and inside other names, paths, branches, tags and image tags it is lowercase (`dev`, `stg`, `prod`).
 
 1. Runs `ogw build start <game> <env> [<platform>...] [--version <version>] [--bundle-for <app version>]`. When it succeeds, it prints the run name, the version and the branch: the version is set, branch `build/<env>-<version>` is created and checked out, the run name is `build-<env>-<version>`, and `records/loops/<run>/` exists. When it exits with a nonzero code, it made nothing, and the lead agent acts on what it output
-   - build stage values missing (items whose `x-stage` is `build` in the game settings schema): asks the human and fills them by the build stage value rules of [`game-setup`](../game-setup/SKILL.md) 5, then runs `ogw secret generate <game> <environment>` for each environment that had missing values (also PROD when PROD values were missing in an STG build), commits the changed `settings.json` to main with `ogw settings commit game <game>` as `## start` 7 of [`game-loop`](../game-loop/SKILL.md) says, and starts again. The static check failures that it prints are content problems of the build run: the `ogw check` of a fix iteration or of 4 fails on them, and a fix iteration fixes them
+   - build stage values missing (items whose `x-stage` is `build` in the game settings schema): asks the human and fills them by the build stage value rules of [`game-setup`](../game-setup/SKILL.md) 5, then runs `ogw secret generate <game> <environment>` for each environment that had missing values (also PROD when PROD values were missing in an STG build), commits the changed `settings.json` to main with `ogw settings commit game <game>` as `## start` 7 of [`game-loop`](../game-loop/SKILL.md) says, and starts again. The static check failures that it prints are content problems of the build run, which the hardening agents give to the content agent (`## hardening`) and a fix iteration of 3 fixes
    - failed human checks: stops and tells the human the human target of each failed human check
    - an `ogw judge calibrate` job of the game runs: waits and runs the command again by `## judge calibration` of [`game-loop`](../game-loop/SKILL.md)
    - any other failure: stops and tells the human what it output
@@ -46,6 +46,8 @@ The path of a hardening record is `records/hardening/<env>-<version>-<server|cli
 | `## changes` | Per fixed place: file:line, the problem found, the fix, the tests added |
 | `## content agent fixes` | A table with columns `file:line`, `owner`, `problem`, `task`. One row per item: `file:line` is the place to fix, `owner` is `contract` when the file to fix is contract, `data` when data, `server content` when server content code, `client content` when client content code, `problem` is the problem, and `task` is what the content agent does. `none` when there are none |
 | `## unknown` | What could not be checked, what is unknown, and why |
+
+A failure of `ogw check <game> --static` that the commit hardening starts from already has (the hardening agent's own change did not cause it) is a content problem: the hardening agent does not fix it, whichever folder it is in, and writes it in `## content agent fixes`, with the `where` of the failure as `file:line`.
 
 ## build-time check
 

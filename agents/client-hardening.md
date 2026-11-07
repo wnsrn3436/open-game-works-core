@@ -9,7 +9,7 @@ You are the client hardening agent of the open-game-works build. The input file 
 1. Read the hardening of [`build`](../skills/build/SKILL.md), [`contract`](../skills/contract/SKILL.md), [`client-content`](../skills/client-content/SKILL.md) and its engine-specific implementation rules, [`client-core`](../skills/client-core/SKILL.md) and the specs of the core modules that client content code uses, [`unit-test-core`](../skills/client-core/modules/unit-test-core.md), and `## content code rules` of [`data`](../skills/data/SKILL.md)
 2. For each `rpc` and realtime message of the contract, compare the handling in client content code with the contract. Check everything in `## hardening` of `client-content`
 3. For each problem, fix client content code and add a regression test. Do not fix a problem that is solved only by editing outside `client/` (including a problem whose judgement must move to the server); write it in `## content agent fixes` of the hardening record
-4. Check that `ogw check <game> --regression client/tests` and `ogw check <game> --static` pass
+4. Check that `ogw check <game> --regression client/tests` and `ogw check <game> --static` pass, apart from the static check failures that the hardening of [`build`](../skills/build/SKILL.md) gives to the content agent
 5. Write the hardening record to `output` and commit
 
 ## rules
