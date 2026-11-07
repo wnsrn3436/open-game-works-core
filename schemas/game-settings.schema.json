@@ -196,6 +196,12 @@
             "type": "integer",
             "minimum": 0,
             "default": 0
+          },
+          "pixelRatio": {
+            "description": "Window pixels per CSS pixel of the device the item models: the screen scale on ios and macos (pixels per pt), the density ÷ 160 on android (pixels per dp), the display scale ÷ 100 on windows (pixels per epx), the desktop scale factor on linux, `devicePixelRatio` on web. The UI quality check measures text and buttons in window pixels ÷ this value",
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 1
           }
         }
       }
@@ -224,7 +230,13 @@
           "default": 18
         },
         "minContrast": {
-          "description": "The smallest contrast ratio of a text element with the pixels of its rectangle",
+          "description": "The smallest contrast ratio, with the pixels of its rectangle, of a text element that is not large text (`## UI quality` of `tools/ogw.md`)",
+          "type": "number",
+          "minimum": 1,
+          "default": 4.5
+        },
+        "minLargeContrast": {
+          "description": "The smallest contrast ratio, with the pixels of its rectangle, of a large text element (`## UI quality` of `tools/ogw.md`)",
           "type": "number",
           "minimum": 1,
           "default": 3
@@ -235,6 +247,12 @@
           "exclusiveMinimum": 0,
           "maximum": 1,
           "default": 0.6
+        },
+        "minTouchTarget": {
+          "description": "The smallest width and height of a button on android and ios, in CSS pixels (`pixelRatio` of `uiCheckScreens`)",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 48
         }
       },
       "default": {}

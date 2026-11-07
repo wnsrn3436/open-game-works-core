@@ -106,7 +106,7 @@ describe('ogw settings describe', () => {
     expect(terms).toContain('properties: TERMS, PRIVACY');
     expect(terms.some((line) => line.startsWith('item properties:'))).toBe(false);
     const screens = (await describeCmd('game', 'mygame', 'uiCheckScreens')).stdout.split('\n');
-    expect(screens).toContain('item properties: name, window, fillMode, notch, keyboard');
+    expect(screens).toContain('item properties: name, window, fillMode, notch, keyboard, pixelRatio');
     expect(screens.some((line) => line.startsWith('properties:'))).toBe(false);
     const json = JSON.parse((await ogw(ws, ['settings', 'describe', 'game', 'mygame', 'termsDocuments.TERMS', '--json'])).stdout) as { properties: string[]; itemProperties: string[] };
     expect(json.properties).toEqual(['version', 'url']);

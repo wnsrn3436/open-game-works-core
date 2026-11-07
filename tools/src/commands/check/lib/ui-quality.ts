@@ -15,6 +15,8 @@ export interface UiCheckScreen {
   fillMode: string;
   notch: [number, number, number, number];
   keyboard?: number;
+  /** Window pixels per CSS pixel of the device the item models. */
+  pixelRatio?: number;
 }
 
 export interface UiQualityOptions extends InstanceCheckOptions {
@@ -34,8 +36,13 @@ export interface UiQualityLimits {
   settleLimitMs: number;
   maxFontSizes: number;
   minFontPx: number;
+  /** The smallest contrast ratio of text that is not large text. */
   minContrast: number;
+  /** The smallest contrast ratio of large text. */
+  minLargeContrast: number;
   maxEmptyShare: number;
+  /** The smallest width and height of a target button on a touch platform, in CSS pixels. */
+  minTouchTarget: number;
 }
 
 interface Rect {
@@ -124,6 +131,25 @@ function luminance(r: number, g: number, b: number): number {
 /** The shortest side of a panel body, in pixels of a window 1080 high: a thinner element is a bar, not a panel. */
 const PANEL_MIN_SIDE = 64;
 
+/** The smallest `font_size` of large text, in CSS pixels (ogw.md `## UI quality`). */
+const LARGE_TEXT_CSS_PX = 24;
+
+/** The platforms whose UI quality check judges touch targets (ogw.md `## UI quality`). */
+const TOUCH_PLATFORMS: readonly string[] = ['android', 'ios'];
+
+/** Target buttons (ogw.md `## UI quality`): the elements with a `UIButton` that no modal panel or popup covers. */
+export function targetButtons(elements: readonly UiElement[]): UiElement[] {
+  return elements.filter((e) => e.button && !e.modalCovered);
+}
+
+/** Touch target problems of one capture: target buttons narrower or lower than `minTouchTarget` CSS pixels. */
+export function touchTargetProblems(elements: readonly UiElement[], pixelRatio: number, minTouchTarget: number): { owner: string; message: string }[] {
+  return targetButtons(elements)
+    .map((e) => ({ e, w: e.rect.w / pixelRatio, h: e.rect.h / pixelRatio }))
+    .filter(({ w, h }) => w < minTouchTarget || h < minTouchTarget)
+    .map(({ e, w, h }) => ({ owner: e.owner, message: `small touch target ${e.path}: ${w.toFixed(1)}x${h.toFixed(1)} CSS px, under ${String(minTouchTarget)}` }));
+}
+
 /** Integer pixel bounds of a rect clipped to the image: [x0, y0, x1, y1), or null when nothing is left. */
 function bounds(rect: Rect, image: Rgba): [number, number, number, number] | null {
   const x0 = Math.max(0, Math.round(rect.x));
@@ -199,13 +225,15 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
 
 /**
  * The presentation conditions of one capture (ogw.md `## UI quality`): text sizes, small text, the contrast of text
- * that is not dimmed and empty panels, each with the `owner` of the problem.
+ * that is not dimmed and empty panels, each with the `owner` of the problem. `pixelRatio` is that of the
+ * `uiCheckScreens` item of the capture: large text is text of at least 24 CSS pixels.
  */
 export function presentationProblems(
   elements: readonly UiElement[],
   image: Rgba,
   sceneKey: string,
   limits: UiQualityLimits,
+  pixelRatio: number,
 ): { owner: string; message: string }[] {
   const problems: { owner: string; message: string }[] = [];
   const texts = elements.filter((e) => e.text !== '');
@@ -217,7 +245,9 @@ export function presentationProblems(
     // text under a modal panel or popup is not seen; text under one whose modal is off stays measured
     if (e.dimmed || e.modalCovered || !inside(e.rect, image.width, image.height)) continue;
     const contrast = rectContrast(image, e.rect);
-    if (contrast !== null && contrast < limits.minContrast) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1` });
+    const css = e.fontSize / pixelRatio;
+    const min = css >= LARGE_TEXT_CSS_PX ? limits.minLargeContrast : limits.minContrast;
+    if (contrast !== null && contrast < min) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1, under ${String(min)}:1 for ${css.toFixed(1)} CSS px text` });
   }
   for (const body of panelBodies(elements, sceneKey, image)) {
     const area = bounds(body.rect, image);
@@ -401,19 +431,32 @@ async function keyboardCaptures(run: UiRun, elements: UiElement[], item: UiCheck
   return true;
 }
 
-async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits): Promise<void> {
+type Shot = Awaited<ReturnType<UiRun['capture']>>;
+
+/**
+ * The conditions of a capture at text scale 1000 that is not a keyboard capture (ogw.md `## UI quality`), in CSS pixels
+ * of `pixelRatio` of its screen; touch targets when `touch`, the platform of the check being a touch platform.
+ */
+async function judgeCapture(run: UiRun, shot: Shot, item: UiCheckScreen, context: string, quality: UiQualityLimits, touch: boolean): Promise<void> {
+  const ratio = item.pixelRatio ?? 1;
+  // the conditions look at the capture only through the elements of list_ui
+  if (shot.elements.length > 0) {
+    const image = await decodeRgba(shot.png, 'capture_screen').catch(() => null);
+    if (image === null) run.report('capture_screen gave no PNG image', context, shot.evidence);
+    else for (const p of presentationProblems(shot.elements, image, run.where, quality, ratio)) run.report(p.message, context, shot.evidence, p.owner);
+  }
+  if (touch) for (const p of touchTargetProblems(shot.elements, ratio, quality.minTouchTarget)) run.report(p.message, context, shot.evidence, p.owner);
+}
+
+/** Captures of one screen; `touch` when the platform of the check is a touch platform. */
+async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits, touch: boolean): Promise<void> {
   if (!(await run.open(command, `${language}, ${item.name}`))) return;
   for (const scale of scales) {
     if (scale !== null) await run.setup('set_text_scale', [String(scale)]);
     const context = `${language}, ${item.name}, ${command}, text scale ${String(scale ?? 1000)}`;
     const shot = await run.capture(`${language}-${item.name}-${command}-${String(scale ?? 1000)}`);
     for (const p of layoutProblems(shot.elements)) run.report(p.message, context, shot.evidence, p.owner);
-    // the conditions look at the capture only through the elements of list_ui
-    if ((scale ?? 1000) === 1000 && shot.elements.length > 0) {
-      const image = await decodeRgba(shot.png, 'capture_screen').catch(() => null);
-      if (image === null) run.report('capture_screen gave no PNG image', context, shot.evidence);
-      else for (const p of presentationProblems(shot.elements, image, run.where, quality)) run.report(p.message, context, shot.evidence, p.owner);
-    }
+    if ((scale ?? 1000) === 1000) await judgeCapture(run, shot, item, context, quality, touch);
     if ((item.keyboard ?? 0) >= 1 && !(await keyboardCaptures(run, shot.elements, item, command, context))) return;
   }
 }
@@ -435,7 +478,7 @@ async function gamepadUnreached(run: UiRun, command: string, context: string): P
   if (!(await run.open(command, context))) return null;
   await run.setup('set_input_device', ['Gamepad']);
   const elements = toElements((await run.setup('list_ui', [])).result);
-  const targets = elements.filter((e) => e.button && !e.modalCovered);
+  const targets = targetButtons(elements);
   const reached = new Set([...elements.filter((e) => e.focused), ...targets.filter((e) => e.padAction)].map((e) => e.path));
   const expanded = new Set<string>();
   for (let next = [...reached].find((p) => !expanded.has(p)); next !== undefined; next = [...reached].find((p) => !expanded.has(p))) {
@@ -479,7 +522,7 @@ async function inspect(ctx: Context, id: string, platform: string, options: UiQu
       await run.language(language);
       for (const item of screens) {
         await run.screen(item);
-        for (const command of commands) await screenCaptures(run, language, item, command, scales, options.quality);
+        for (const command of commands) await screenCaptures(run, language, item, command, scales, options.quality, TOUCH_PLATFORMS.includes(platform));
       }
     }
     if (options.gamepadSupported) await gamepadCheck(run, options, screens, commands);

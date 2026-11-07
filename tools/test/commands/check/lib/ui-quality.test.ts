@@ -12,13 +12,15 @@ import {
   presentationProblems,
   rectContrast,
   screensOfOrientation,
+  targetButtons,
   toElements,
+  touchTargetProblems,
   uiQualityCheck,
   type UiElement,
   type UiQualityOptions,
 } from '../../../../src/commands/check/lib/ui-quality.ts';
 import { fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
-import type { Rgba } from '../../../../src/commands/resource/lib/image.ts';
+import { encodePng, type Rgba } from '../../../../src/commands/resource/lib/image.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
@@ -29,7 +31,7 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.f
 const ctx = fakeContext();
 
 /** Limits no capture breaks, for the tests of the other conditions. */
-const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, maxEmptyShare: 2 };
+const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, minLargeContrast: 1, maxEmptyShare: 2, minTouchTarget: 0 };
 /** A 1 × 1 white PNG, as capture_screen gives it. */
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
 
@@ -51,7 +53,7 @@ function canvas(width: number, height: number, color: [number, number, number], 
   return { width, height, data };
 }
 
-const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 3, maxEmptyShare: 0.6 };
+const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 4.5, minLargeContrast: 3, maxEmptyShare: 0.6, minTouchTarget: 48 };
 
 describe('UI quality presentation conditions', () => {
   it('counts text sizes, finds small text and low contrast', () => {
@@ -68,14 +70,56 @@ describe('UI quality presentation conditions', () => {
       // one color, under a modal panel or popup that covers it: its contrast is not judged
       el('shop/covered', { text: 'C', font_size: 20, rect: [100, 100, 100, 40], owner: 'run', modal_covered: true }),
     ]);
-    expect(presentationProblems(list, image, 'run', LIMITS).map((p) => p.message)).toEqual([
+    expect(presentationProblems(list, image, 'run', LIMITS, 1).map((p) => p.message)).toEqual([
       '3 text sizes (12, 20, 40 px), more than 2',
-      'low contrast hud/body: 1.00:1',
+      'low contrast hud/body: 1.00:1, under 4.5:1 for 20.0 CSS px text',
       'small text hud/tiny: 12.0 px at 1080 high',
-      'low contrast hud/tiny: 1.00:1',
+      'low contrast hud/tiny: 1.00:1, under 4.5:1 for 12.0 CSS px text',
     ]);
     // half the pixels of a rect bright: the 98th percentile is bright, the 2nd dark
     expect(rectContrast(canvas(10, 10, [0, 0, 0], [[0, 0, 10, 5, [255, 255, 255]]]), { x: 0, y: 0, w: 10, h: 10 })).toBeCloseTo(21, 5);
+  });
+
+  it('holds text under 24 CSS pixels to minContrast and larger text to minLargeContrast, CSS pixels being window pixels ÷ pixelRatio', () => {
+    // text pixels of luminance 0.125 over black: a contrast between minLargeContrast 3 and minContrast 4.5
+    const image = canvas(400, 200, [0, 0, 0], [[0, 0, 400, 10, [99, 99, 99]], [0, 100, 400, 10, [99, 99, 99]]]);
+    const ratio = rectContrast(image, { x: 0, y: 0, w: 400, h: 40 }) ?? 0;
+    expect(ratio).toBeGreaterThan(3);
+    expect(ratio).toBeLessThan(4.5);
+    const limits = { ...LIMITS, maxFontSizes: 10, minFontPx: 0 };
+    const text = (path: string, fontSize: number, y: number): Record<string, unknown> => el(path, { text: 'T', font_size: fontSize, rect: [0, y, 400, 40], owner: 'run' });
+    const low = (list: Record<string, unknown>[], pixelRatio: number): string[] => presentationProblems(elements(list), image, 'run', limits, pixelRatio).map((p) => p.message);
+    // a 1920 × 1080 display at pixel ratio 1: 24 window pixels are 24 CSS pixels, large text
+    expect(low([text('hud/title', 24, 0), text('hud/body', 23.9, 100)], 1)).toEqual(['low contrast hud/body: 3.50:1, under 4.5:1 for 23.9 CSS px text']);
+    // a 2556 × 1179 phone at pixel ratio 3: 72 window pixels are 24 CSS pixels, and 24 window pixels only 8
+    expect(low([text('hud/title', 72, 0), text('hud/body', 71.7, 100)], 3)).toEqual(['low contrast hud/body: 3.50:1, under 4.5:1 for 23.9 CSS px text']);
+    expect(low([text('hud/title', 24, 0)], 3)).toEqual(['low contrast hud/title: 3.50:1, under 4.5:1 for 8.0 CSS px text']);
+    // large text under minLargeContrast fails too
+    expect(presentationProblems(elements([text('hud/title', 72, 0)]), image, 'run', { ...limits, minLargeContrast: 4 }, 3).map((p) => p.message)).toEqual([
+      'low contrast hud/title: 3.50:1, under 4:1 for 24.0 CSS px text',
+    ]);
+  });
+
+  it('judges each target button against minTouchTarget CSS pixels in width and in height', () => {
+    const list = elements([
+      el('hud/ok', { button: true, rect: [0, 0, 144, 144] }),
+      el('hud/close', { button: true, rect: [200, 0, 132, 132], owner: 'shop' }),
+      el('hud/wide', { button: true, rect: [0, 200, 600, 120] }),
+      // under the dim of a popup whose modal is off: still pressed by a touch
+      el('hud/dimmed', { button: true, dimmed: true, rect: [0, 400, 30, 30] }),
+      // not a target button: under a modal popup, or no UIButton
+      el('hud/covered', { button: true, modal_covered: true, rect: [0, 500, 30, 30] }),
+      el('hud/icon', { rect: [0, 600, 30, 30] }),
+    ]);
+    expect(targetButtons(list).map((e) => e.path)).toEqual(['hud/ok', 'hud/close', 'hud/wide', 'hud/dimmed']);
+    // a phone at pixel ratio 3: 144 window pixels are 48 CSS pixels, 132 only 44
+    expect(touchTargetProblems(list, 3, 48)).toEqual([
+      { owner: 'shop', message: 'small touch target hud/close: 44.0x44.0 CSS px, under 48' },
+      { owner: 'lobby', message: 'small touch target hud/wide: 200.0x40.0 CSS px, under 48' },
+      { owner: 'lobby', message: 'small touch target hud/dimmed: 10.0x10.0 CSS px, under 48' },
+    ]);
+    // the same rects at pixel ratio 1 are 3 times as large in CSS pixels
+    expect(touchTargetProblems(list, 1, 48).map((p) => p.message)).toEqual(['small touch target hud/dimmed: 30.0x30.0 CSS px, under 48']);
   });
 
   it('takes the top non-text, non-input, non-window elements of a popup or panel as panel bodies', () => {
@@ -106,11 +150,11 @@ describe('UI quality presentation conditions', () => {
       el('p', { owner: 'pop', rect: [10, 10, 80, 80] }),
       el('p/label', { owner: 'pop', text: 'Hi', font_size: 20, rect: [20, 20, 20, 10] }),
     ]);
-    expect(presentationProblems(list, flat, 'scene', big).map((p) => p.message)).toEqual(['empty panel p: 97% empty']);
+    expect(presentationProblems(list, flat, 'scene', big, 1).map((p) => p.message)).toEqual(['empty panel p: 97% empty']);
     // a descendant wholly left of, right of, above or below the panel covers none of it (the first one spans the panel's top row)
     for (const rect of [[0, 5, 5, 50], [0, 20, 5, 10], [95, 20, 5, 10], [20, 0, 10, 5], [20, 95, 10, 5]] as const) {
       const outside = elements([el('p', { owner: 'pop', rect: [10, 10, 80, 80] }), el('p/side', { owner: 'pop', rect: [...rect] })]);
-      expect(presentationProblems(outside, flat, 'scene', big).map((p) => p.message)).toEqual(['empty panel p: 100% empty']);
+      expect(presentationProblems(outside, flat, 'scene', big, 1).map((p) => p.message)).toEqual(['empty panel p: 100% empty']);
     }
     // stripes every other row in two colors 40 apart, and children covering most of it
     const stripes: [number, number, number, number, [number, number, number]][] = [];
@@ -121,9 +165,9 @@ describe('UI quality presentation conditions', () => {
       el('p/a', { owner: 'pop', rect: [10, 10, 80, 40] }),
       el('p/b', { owner: 'pop', rect: [10, 50, 80, 30] }),
     ]);
-    expect(presentationProblems(filled, textured, 'scene', big)).toEqual([]);
+    expect(presentationProblems(filled, textured, 'scene', big, 1)).toEqual([]);
     // a flat panel is a form of the game's UI style (commercial quality), not a defect
-    expect(presentationProblems(filled, flat, 'scene', big)).toEqual([]);
+    expect(presentationProblems(filled, flat, 'scene', big, 1)).toEqual([]);
   });
 });
 
@@ -510,6 +554,41 @@ describe('uiQualityCheck', () => {
     expect(result.failures.at(-1)).toEqual({ where: 'lobby', message: 'capture_screen  failed: "headless"', evidence: [] });
     vi.mocked(startInstance).mockRejectedValue(new Error('wait timeout'));
     expect((await uiQualityCheck(ctx, 'g', 'web', options(root))).failures).toEqual([{ where: 'settings.json:1', message: 'UI quality did not run: wait timeout', evidence: [] }]);
+  });
+
+  it('measures text and buttons of each screen in CSS pixels of its pixelRatio, and judges touch targets only on android and ios', async () => {
+    // the game scales its UI with the window height: 24 px text and a 48 px button at 1080 high
+    const image = canvas(400, 200, [0, 0, 0], [[0, 0, 400, 10, [99, 99, 99]]]);
+    const png = await encodePng(image);
+    let height = 0;
+    vi.mocked(automationRequest).mockImplementation(fakeAutomation((command, args) => {
+      if (command === 'set_test_screen') height = Number(args[1]);
+      if (command === 'list_commands') return ok([{ name: 'hud.open_main' }]);
+      if (command === 'get_state') return ok({ boot_stage: 'Done', scene_key: 'lobby', ui_flow: false, finite_tweens: 0 });
+      if (command === 'capture_screen') return ok(null, png);
+      const scale = height / 1080;
+      if (command === 'list_ui') {
+        return ok([
+          el('hud/title', { text: 'T', font_size: 24 * scale, rect: [0, 0, 400, 40] }),
+          el('hud/pause', { button: true, rect: [0, 100, 48 * scale, 48 * scale] }),
+        ]);
+      }
+      return ok(null);
+    }));
+    const screens = [
+      { name: 'display', window: [1920, 1080] as [number, number], fillMode: 'Letterbox', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1 },
+      { name: 'phone', window: [2556, 1179] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 3 },
+    ];
+    const quality = { ...NO_LIMITS, minContrast: 4.5, minLargeContrast: 3, minTouchTarget: 48 };
+    const run = (platform: string) => uiQualityCheck(ctx, 'g', platform, options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { languages: ['en'], screens, baseResolution: [1920, 1080], gamepadSupported: false, maxTextScale: 1400, quality }));
+    // the display passes: 24 CSS px text is large text and the button is 48 CSS px; the phone shows the same layout at
+    // 1179 ÷ 1080 of those window pixels, a third of them in CSS pixels. Captures at text scale 1400 are not judged
+    expect((await run('ios')).failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
+      'lobby | low contrast hud/title: 3.50:1, under 4.5:1 for 8.7 CSS px text in lobby (en, phone, hud.open_main, text scale 1000)',
+      'lobby | small touch target hud/pause: 17.5x17.5 CSS px, under 48 in lobby (en, phone, hud.open_main, text scale 1000)',
+    ]);
+    // no touch target on a platform of the other platform profile
+    expect((await run('macos')).failures.map((f) => f.message)).toEqual(['low contrast hud/title: 3.50:1, under 4.5:1 for 8.7 CSS px text in lobby (en, phone, hud.open_main, text scale 1000)']);
   });
 
   it('is unknown when boot does not reach Done after set_language', async () => {

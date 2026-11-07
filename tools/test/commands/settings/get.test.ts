@@ -49,6 +49,17 @@ describe('ogw settings get', () => {
     expect((await get('harness', 'useLocalCore')).stdout).toBe('false\nsource: schema default\n');
   });
 
+  it('gives the UI quality defaults of text contrast by size, touch target and the pixel ratio of a screen', async () => {
+    expect((await get('game', 'mygame', 'uiQuality.minContrast')).stdout).toBe('4.5\nsource: schema default\n');
+    expect((await get('game', 'mygame', 'uiQuality.minLargeContrast')).stdout).toBe('3\nsource: schema default\n');
+    expect((await get('game', 'mygame', 'uiQuality.minTouchTarget')).stdout).toBe('48\nsource: schema default\n');
+    expect((await get('game', 'mygame', 'uiCheckScreens.0.pixelRatio')).stdout).toBe('1\nsource: schema default\n');
+    const set = (value: string) => ogw(ws, ['settings', 'set', 'game', 'mygame', 'uiCheckScreens.0.pixelRatio', value]);
+    expect((await set('0')).stderr).toBe('uiCheckScreens.0.pixelRatio: must be > 0\n');
+    expect((await set('2.625')).code).toBe(0);
+    expect((await get('game', 'mygame', 'uiCheckScreens.0.pixelRatio')).stdout).toBe('2.625\n');
+  });
+
   it('gives a core settings key of game settings with its source', async () => {
     expect((await get('game', 'mygame', 'core.InputBlockCore.maxDurationMs')).stdout).toBe('40000\nsource: game settings\n');
     expect((await get('game', 'mygame', 'core.NetworkCore.requestTimeoutMs')).stdout).toBe('10000\nsource: core settings\n');

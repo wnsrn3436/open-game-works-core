@@ -31,6 +31,7 @@ const UI_KINDS: readonly [RegExp, string][] = [
   [/^overlap /, 'overlap'],
   [/^[0-9]+ text sizes /, 'text sizes'],
   [/^gamepad focus does not reach /, 'gamepad focus'],
+  [/^small touch target /, 'small touch target'],
 ];
 
 function kebab(text: string): string {

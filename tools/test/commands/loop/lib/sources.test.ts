@@ -149,6 +149,9 @@ describe('finding sources', () => {
     ]);
     expect(out[0]?.why).toBe('UI quality: low contrast in prefab/match/hud_panel');
     expect(uiQualityFields('overlap A B in prefab/x/y (ko, s, keyboard)')).toMatchObject({ id: 'overlap-prefab-x-y' });
+    expect(uiQualityFields('small touch target A: 17.5x17.5 CSS px, under 48 in prefab/x/y (en, phone, x.open_y, text scale 1000)')).toEqual({
+      id: 'small-touch-target-prefab-x-y', severity: 'major', owner: 'client content', why: 'UI quality: small touch target in prefab/x/y',
+    });
     expect(uiQualityFields('clipped A')).toEqual({});
   });
 
