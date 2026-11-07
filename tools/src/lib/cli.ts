@@ -39,6 +39,24 @@ function usageList(commands: readonly CommandDef[]): string {
   return ['usage: ogw <command> [--json]', ...commands.map((def) => `  ${def.usage}`)].join('\n');
 }
 
+/**
+ * The commands of the command group `words` (ogw.md `## help`): leading words of command names that name no command.
+ * Empty when `words` is empty or is no such group.
+ */
+function groupCommands(commands: readonly CommandDef[], words: readonly string[]): CommandDef[] {
+  if (words.length === 0) return [];
+  return commands.filter((def) => def.name.length > words.length && words.every((word, i) => def.name[i] === word));
+}
+
+/** `ogw <command group> --help` and `ogw <command group>`: the usages of the group's commands, or null when argv is not one of these. */
+function groupHelp(commands: readonly CommandDef[], argv: readonly string[], io: CliIo): number | null {
+  const help = argv.at(-1) === '--help';
+  const group = groupCommands(commands, help ? argv.slice(0, -1) : argv);
+  if (group.length === 0) return null;
+  (help ? io.stdout : io.stderr)(`${group.map((def) => `usage: ${def.usage}`).join('\n')}\n`);
+  return help ? 0 : 1;
+}
+
 function withoutFlag(tokens: readonly string[], name: string): { tokens: string[]; found: boolean } {
   const rest = tokens.filter((token) => token !== `--${name}`);
   return { tokens: rest, found: rest.length !== tokens.length };
@@ -132,6 +150,8 @@ export function backgroundCommandOf(commands: readonly CommandDef[], argv: reado
 function prepare(commands: readonly CommandDef[], argv: readonly string[], io: CliIo): Prepared | number {
   const def = findCommand(commands, argv);
   if (!def) {
+    const group = groupHelp(commands, argv, io);
+    if (group !== null) return group;
     const wantsHelp = argv.length === 0 || argv[0] === '--help';
     (wantsHelp ? io.stdout : io.stderr)(`${usageList(commands)}\n`);
     return wantsHelp ? 0 : 1;

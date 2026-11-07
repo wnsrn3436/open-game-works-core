@@ -65,6 +65,30 @@ describe('runCli', () => {
     const ws = makeWorkspace();
     expect((await ogw(ws, ['nothing'], { commands: [echo] })).code).toBe(1);
   });
+
+  it('prints the usages of a command group for --help with exit code 0, and on stderr with 1 for the group alone', async () => {
+    const ws = makeWorkspace();
+    const say: CommandDef = { name: ['echo', 'say'], usage: 'ogw echo say <word>', run: () => Promise.resolve({}) };
+    const other: CommandDef = { name: ['other'], usage: 'ogw other', run: () => Promise.resolve({}) };
+    const commands = [echo, say, other];
+    const usages = 'usage: ogw echo it <word>\nusage: ogw echo say <word>\n';
+    expect(await ogw(ws, ['echo', '--help'], { commands })).toEqual({ code: 0, stdout: usages, stderr: '' });
+    expect(await ogw(ws, ['echo'], { commands })).toEqual({ code: 1, stdout: '', stderr: usages });
+    // words that are no group and no command get the whole list
+    const unknown = await ogw(ws, ['echo', 'nope', '--help'], { commands });
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr).toContain('usage: ogw <command> [--json]');
+    // a command's own --help is its usage alone
+    expect(await ogw(ws, ['echo', 'say', '--help'], { commands })).toEqual({ code: 0, stdout: 'usage: ogw echo say <word>\n', stderr: '' });
+  });
+
+  it('prints the settings commands for ogw settings --help', async () => {
+    const ws = makeWorkspace();
+    const run = await ogw(ws, ['settings', '--help']);
+    expect(run.code).toBe(0);
+    expect(run.stdout.split('\n').filter((l) => l !== '').every((l) => l.startsWith('usage: ogw settings '))).toBe(true);
+    expect(run.stdout).toContain('usage: ogw settings get ');
+  });
 });
 
 describe('jobs', () => {

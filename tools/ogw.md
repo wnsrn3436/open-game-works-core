@@ -3,6 +3,7 @@
 Defines the internal behavior of the harness tool `ogw` that the agents calling its commands do not use, and the procedure for fixing `ogw`. The lead agent of `update harness tool`, the agent that fixes `ogw` and a review agent whose target is an `ogw` command read it.
 
 - update harness tool
+- help
 - agent
 - agent merge
 - loop start
@@ -87,6 +88,11 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
   - The lead agent fixes `out of scope` lines (severity `critical`, `high`) and `review must fix added:` lines with `(was D<n>)` right away. Those items go into `## must fix` of the next round's input, and whether they were fixed is checked. When the last round is `done`, it runs `--reopen` after fixing
   - When the command ends, the lead agent reports the item count of each debt list of the harness repo to the human and asks, with a recommendation, whether to run the debt review of those targets (`ogw review next tool <target> --debt`)
   - The target test files of `fix test proof` are the files under `tools/test/`; the changed `*.test.ts` among them run with `vitest run`. When `tools/package.json` or `tools/package-lock.json` of the fix base differs from the current working tree, `npm ci` in that worktree gets the dependencies of the fix base. When one or more test files fail or do not load, the result is `pass`. A file that loads but has no tests does not count as a failure. When no test ran (a skipped test did not run), the result is `unknown`
+
+## help
+
+- `ogw <command> --help` prints the usage of that command and ends with exit code 0
+- command group: leading words of command names that are not the name of a command. e.g. `settings` of `ogw settings get`, `ogw settings set`. `ogw <command group> --help` prints the usages of the commands whose names start with those words and ends with exit code 0. `ogw <command group>` with no other argument prints them on stderr and ends with exit code 1
 
 ## agent
 
