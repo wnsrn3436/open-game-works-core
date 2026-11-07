@@ -8,9 +8,12 @@ import type { Scope } from './lib/gd-walk.ts';
 
 /**
  * literal timing: content code assigns (with any assignment operator) a number literal to `AnimationPlayer.speed_scale`
- * or `Timer.wait_time`, or passes a number literal as `AnimationPlayer.play()` `custom_blend` or `custom_speed`,
- * `SceneTree.create_timer()` time, or `Timer.wait_time`. A value built only from number literals (arithmetic, a ternary
- * whose two results are such values, `as`) is a number literal. A receiver whose type is not known counts as the named class.
+ * or `Timer.wait_time`, or passes a number literal as the `custom_blend`, `custom_speed` or `duration` argument of the
+ * `AnimationPlayer` methods `play()`, `play_backwards()`, `play_section()`, `play_section_backwards()`,
+ * `play_section_with_markers()`, `play_section_with_markers_backwards()` and `play_with_capture()`, as the
+ * `SceneTree.create_timer()` time, or as `Timer.wait_time` (`set_wait_time()`, `start()`). A value built only from number
+ * literals (arithmetic, a ternary whose two results are such values, `as`) is a number literal. A receiver whose type is
+ * not known counts as the named class, except for `Timer.start()`, whose receiver must be known as a `Timer`.
  */
 export const NAME = 'literal timing';
 
@@ -48,6 +51,17 @@ interface CallRule {
 
 const CALL_RULES: Record<string, CallRule> = {
   play: { args: [1, 2], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.play()`' },
+  play_backwards: { args: [1], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.play_backwards()`' },
+  play_section: { args: [3, 4], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.play_section()`' },
+  play_section_backwards: { args: [3], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.play_section_backwards()`' },
+  play_section_with_markers: { args: [3, 4], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.play_section_with_markers()`' },
+  play_section_with_markers_backwards: {
+    args: [3],
+    cls: 'AnimationPlayer',
+    known: false,
+    message: 'number literal passed to `AnimationPlayer.play_section_with_markers_backwards()`',
+  },
+  play_with_capture: { args: [1, 2, 3], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.play_with_capture()`' },
   create_timer: { args: [0], cls: null, known: false, message: 'number literal passed to `SceneTree.create_timer()`' },
   set_speed_scale: { args: [0], cls: 'AnimationPlayer', known: false, message: 'number literal passed to `AnimationPlayer.speed_scale`' },
   set_wait_time: { args: [0], cls: 'Timer', known: false, message: 'number literal passed to `Timer.wait_time`' },

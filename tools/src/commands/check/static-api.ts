@@ -12,6 +12,7 @@ import * as dataLiteral from './static/data-literal.ts';
 import * as dataMutation from './static/data-mutation.ts';
 import * as debugText from './static/debug-text.ts';
 import * as designTarget from './static/design-target.ts';
+import * as documentFormat from './static/document-format.ts';
 import * as determinism from './static/determinism.ts';
 import * as devReference from './static/dev-reference.ts';
 import * as embeddedScript from './static/embedded-script.ts';
@@ -45,8 +46,10 @@ import * as shortcutRootPanel from './static/shortcut-root-panel.ts';
 import * as simulationTarget from './static/simulation-target.ts';
 import * as systemClock from './static/system-clock.ts';
 import * as testInput from './static/test-input.ts';
+import * as testSkip from './static/test-skip.ts';
 import * as tweenPreset from './static/tween-preset.ts';
 import * as typeCheck from './static/type-check.ts';
+import * as uiPrefab from './static/ui-prefab.ts';
 import * as virtualPadLayout from './static/virtual-pad-layout.ts';
 
 export interface StaticCheckModule {
@@ -56,10 +59,10 @@ export interface StaticCheckModule {
 
 /** The checks that `ogw check --static` runs, in report order. */
 export const STATIC_CHECKS: readonly StaticCheckModule[] = [
-  coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, framePolling,
-  hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, finiteTween, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
+  coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, testSkip, framePolling,
+  hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, finiteTween, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget, documentFormat,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
-  literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference, gamepadInput, shortcutRootPanel, playGuideInput,
+  literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference, gamepadInput, shortcutRootPanel, playGuideInput, uiPrefab,
 ];
 
 function toFailure(f: Finding): CheckFailure {

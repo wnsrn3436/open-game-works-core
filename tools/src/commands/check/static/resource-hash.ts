@@ -1,8 +1,32 @@
 import { keyFilesIn, LIST_PATH, listSha } from '../../resource/lib/list.ts';
 import { absence, at, finding, type Finding, type StaticContext } from './lib/context.ts';
 
-/** resource hash: the SHA-256 of a resource file differs from `resources.csv` `sha256` (`resource` `## resource list`). */
+/**
+ * resource hash: the SHA-256 of a resource file differs from `resources.csv` `sha256` (`resource` `## resource list`),
+ * and a file under `resource/` other than `resources.csv` and the engine meta files is no file of a row
+ * (`resource` `## resource key`).
+ */
 export const NAME = 'resource hash';
+
+/** The engine meta files of Godot (`client-core` Godot `## engine meta file`). */
+const META_EXTENSIONS = ['.import', '.uid'];
+
+/** Whether a `resource/` path is `resource/<key>.<extension>` or `resource/<key>.<n>.<extension>` of one of the keys. */
+export function isKeyFile(path: string, keys: ReadonlySet<string>): boolean {
+  const m = /^resource\/(.+)\.[A-Za-z0-9]+$/.exec(path);
+  if (!m) return false;
+  const base = m[1] as string;
+  if (keys.has(base)) return true;
+  const variant = /^(.+)\.[0-9]+$/.exec(base);
+  return variant !== null && keys.has(variant[1] as string);
+}
+
+/** Files under `resource/` that are not `resources.csv`, an engine meta file or a file of a row. */
+function strayFiles(sc: StaticContext, keys: ReadonlySet<string>): Finding[] {
+  return sc
+    .filter((p) => p.startsWith('resource/') && p !== LIST_PATH && !META_EXTENSIONS.some((ext) => p.endsWith(ext)) && !isKeyFile(p, keys))
+    .map((p) => finding(NAME, at(p, 1), `\`${p}\` is no file of a row of ${LIST_PATH}; add its row or delete the file`));
+}
 
 /**
  * `variants` of a `spec` cell; 1 when absent or not a positive integer. Lenient: an invalid `spec` is
@@ -26,7 +50,7 @@ export function filesOf(files: readonly string[], key: string, variants: number)
 export async function run(sc: StaticContext): Promise<Finding[]> {
   const list = await sc.headerTable(LIST_PATH);
   if (list === null) return [];
-  const out: Finding[] = [];
+  const out: Finding[] = strayFiles(sc, new Set(list.rows.map((row) => row.values.key ?? '').filter((key) => key !== '')));
   for (const row of list.rows) {
     const key = row.values.key ?? '';
     if (key === '') continue;

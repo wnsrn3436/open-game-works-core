@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as coreDiff from '../../../../src/commands/check/static/core-diff.ts';
 import * as contractCheck from '../../../../src/commands/check/static/contract.ts';
 import * as generatedDiff from '../../../../src/commands/check/static/generated-diff.ts';
-import { godotExecutable, godotKeyNames } from '../../../../src/commands/check/static/lib/engine.ts';
+import { godotExecutable, godotGlobalNames, godotInherits, godotKeyNames } from '../../../../src/commands/check/static/lib/engine.ts';
 import { StaticContext } from '../../../../src/commands/check/static/lib/context.ts';
 import * as lint from '../../../../src/commands/check/static/lint.ts';
 import * as typeCheck from '../../../../src/commands/check/static/type-check.ts';
@@ -287,6 +287,30 @@ describe('godot helpers', () => {
     expect(mocks.engineAsks).toEqual(['godot 4.5.1.stable']);
     expect([...(await godotKeyNames(sc, ['Space', 'Spcae']))]).toEqual([['Space', true], ['Spcae', false]]);
     expect((await godotKeyNames(sc, [])).size).toBe(0);
+  });
+
+  it('asks Godot which engine classes are a base class or inherit it', async () => {
+    const bin = tempDir();
+    mocks.engine = script(bin, 'godot', 'shift 4\nbase="$1"\nshift\nout=""\nfor n in "$@"; do if [ "$n" = "$base" ] || [ "$n" = "TextureRect" ]; then out="$out,true"; else out="$out,false"; fi; done\necho "OGW_INHERITS [${out#,}]"');
+    const sc = memContext({ 'settings.json': '{}' });
+    expect([...(await godotInherits(sc, ['TextureRect', 'Node2D', 'Control'], 'Control'))]).toEqual([['TextureRect', true], ['Node2D', false], ['Control', true]]);
+    expect((await godotInherits(sc, [], 'Control')).size).toBe(0);
+    mocks.engine = script(tempDir(), 'godot', 'echo "OGW_INHERITS [true]"');
+    await expect(godotInherits(memContext({}), ['A', 'B'], 'Control')).rejects.toThrow('godot returned a wrong engine class result');
+    mocks.engine = script(tempDir(), 'godot', 'echo nothing');
+    await expect(godotInherits(memContext({}), ['A'], 'Control')).rejects.toThrow('godot could not check engine classes');
+  });
+
+  it('reads the class, built-in type and global enum names of the extension API that Godot dumps, once per run', async () => {
+    const bin = tempDir();
+    const api = JSON.stringify({ classes: [{ name: 'Node' }, { name: 'Timer' }], builtin_classes: [{ name: 'Signal' }], global_enums: [{ name: 'Error' }, { name: 'Variant.Type' }], native_structures: [{ name: 'AudioFrame' }] });
+    mocks.engine = script(bin, 'godot', `[ "$1 $2" = "--headless --dump-extension-api" ] || exit 2\necho '${api}' > extension_api.json\necho dumped >> "${bin}/count"`);
+    const sc = memContext({ 'settings.json': '{}' });
+    expect([...(await godotGlobalNames(sc))].sort()).toEqual(['Error', 'Node', 'Signal', 'Timer']);
+    await godotGlobalNames(sc);
+    expect(readFileSync(join(bin, 'count'), 'utf8')).toBe('dumped\n');
+    mocks.engine = script(tempDir(), 'godot', 'echo nothing');
+    await expect(godotGlobalNames(memContext({}))).rejects.toThrow('godot could not dump its extension API');
   });
 
   it('fails when the engine is missing or prints nothing', async () => {

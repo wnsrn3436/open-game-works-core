@@ -1,10 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as forbiddenApi from '../../../../src/commands/check/static/forbidden-api.ts';
 import type { Expr, Stmt } from '../../../../src/commands/check/static/lib/gd-ast.ts';
 import { lexGd } from '../../../../src/commands/check/static/lib/gd-lexer.ts';
 import { parseGd, parseGdExpr } from '../../../../src/commands/check/static/lib/gd-parser.ts';
 import { classFuncs, exprChildren, stmtExprs, visitClass } from '../../../../src/commands/check/static/lib/gd-walk.ts';
 import { lines, memContext, sorted } from './helpers.ts';
+
+vi.mock('../../../../src/commands/check/static/lib/engine.ts', async (original) => ({
+  ...(await original<typeof import('../../../../src/commands/check/static/lib/engine.ts')>()),
+  godotGlobalNames: () => Promise.resolve(new Set(['Node', 'Error', 'Side', 'Signal', 'Timer'])),
+}));
+
 
 function kinds(stmts: readonly Stmt[]): string[] {
   return stmts.map((s) => s.k);

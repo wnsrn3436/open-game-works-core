@@ -142,7 +142,8 @@ export const loopStart: CommandDef = {
       }
       await requireReference(game);
       const paths = await writeFiles(ctx, game, name, command, stdin);
-      await commitPaths(game.root, paths, `loop ${name}: start`, { env: ctx.env });
+      // the draft brief has empty headings that static check `document format` blocks: the content agent fills them (ogw.md `## loop start`)
+      await commitPaths(game.root, paths, `loop ${name}: start`, { env: ctx.env, noVerify: true });
     } catch (error) {
       await rollBack(game, branch, origin);
       await dropRun(game, name);

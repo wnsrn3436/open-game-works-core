@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as blockToken from '../../../../src/commands/check/static/block-token.ts';
 import * as dataMutation from '../../../../src/commands/check/static/data-mutation.ts';
 import * as debugText from '../../../../src/commands/check/static/debug-text.ts';
@@ -12,9 +12,66 @@ import * as resourceLoad from '../../../../src/commands/check/static/resource-lo
 import * as testInput from '../../../../src/commands/check/static/test-input.ts';
 import { CORE_STUBS, lines, memContext, sorted } from './helpers.ts';
 
+vi.mock('../../../../src/commands/check/static/lib/engine.ts', async (original) => ({
+  ...(await original<typeof import('../../../../src/commands/check/static/lib/engine.ts')>()),
+  godotGlobalNames: () => Promise.resolve(new Set(['Node', 'Error', 'Side', 'Signal', 'Timer'])),
+}));
+
+
 const gd = (body: string): string => body.replace(/^\n/, '');
 
 describe('forbidden GDScript API', () => {
+  it('finds class and enum names that are global names of Godot, scene change calls, and fake adapter class names in tests and DEV code', async () => {
+    const fake = 'class_name FakeAdsAdapter\nextends AdsAdapter\n\nvar shown: int = 0\n';
+    const sc = memContext({
+      ...CORE_STUBS,
+      'client/core/ad_core/dev/adapters/fake_ads_adapter.gd': fake,
+      'client/core/scene_core/scene_core.gd': 'class_name SceneCore\nextends Node\n\nfunc f() -> void:\n\tget_tree().change_scene_to_file("res://x.tscn")\n',
+      'client/features/shop/shop_view.gd': gd(`
+class_name Timer
+extends Node
+enum Side { LEFT, RIGHT }
+enum ShopTab { ALL }
+class Error extends RefCounted:
+	enum Signal { A }
+class ShopRow extends RefCounted:
+	pass
+func f() -> void:
+	get_tree().change_scene_to_file("res://resource/scene/lobby/lobby.tscn")
+	get_tree().change_scene_to_packed(null)
+	get_tree().reload_current_scene()
+	get_tree().unload_current_scene()
+	get_tree().change_scene_to_node(self)
+	get_tree().change_scene()
+`),
+      'client/tests/shop/test_ads.gd': gd(`
+extends UnitTestCase
+const FakeAds = preload("res://core/ad_core/dev/adapters/fake_ads_adapter.gd")
+func test_a() -> void:
+	var fake: FakeAdsAdapter = FakeAdsAdapter.new()
+	var ok: FakeAds = FakeAds.new()
+	assert_eq(ok.shown, 0)
+	assert_eq(self.FakeAdsAdapter, null)
+`),
+      'client/dev/features/shop/shop_dev.gd': 'class_name ShopDev\nextends RefCounted\n\nconst FakeAdsAdapter = preload("res://core/ad_core/dev/adapters/fake_ads_adapter.gd")\n\nstatic func register() -> void:\n\tvar f: FakeAdsAdapter = FakeAdsAdapter.new()\n',
+      'client/features/shop/shop_fake.gd': 'class_name ShopFake\nextends Node\n\nvar a: FakeAdsAdapter\n',
+    });
+    expect(lines(await forbiddenApi.run(sc))).toEqual(sorted([
+      'client/features/shop/shop_view.gd:1 | forbidden GDScript API: `class_name` `Timer` is a global name of Godot; give it a name of its own',
+      'client/features/shop/shop_view.gd:1 | forbidden GDScript API: file name `shop_view.gd` is not the snake_case of `class_name Timer` (`timer.gd`)',
+      'client/features/shop/shop_view.gd:3 | forbidden GDScript API: enum `Side` is a global name of Godot; give it a name of its own',
+      'client/features/shop/shop_view.gd:5 | forbidden GDScript API: inner class `Error` is a global name of Godot; give it a name of its own',
+      'client/features/shop/shop_view.gd:6 | forbidden GDScript API: enum `Signal` is a global name of Godot; give it a name of its own',
+      'client/features/shop/shop_view.gd:10 | forbidden GDScript API: `change_scene_to_file()`; change scenes with SceneCore',
+      'client/features/shop/shop_view.gd:11 | forbidden GDScript API: `change_scene_to_packed()`; change scenes with SceneCore',
+      'client/features/shop/shop_view.gd:12 | forbidden GDScript API: `reload_current_scene()`; change scenes with SceneCore',
+      'client/features/shop/shop_view.gd:13 | forbidden GDScript API: `unload_current_scene()`; change scenes with SceneCore',
+      'client/features/shop/shop_view.gd:14 | forbidden GDScript API: `change_scene_to_node()`; change scenes with SceneCore',
+      'client/tests/shop/test_ads.gd:4 | forbidden GDScript API: `FakeAdsAdapter` is the `class_name` of a fake adapter; read its members through a `preload()` constant of its file',
+      'client/tests/shop/test_ads.gd:4 | forbidden GDScript API: `FakeAdsAdapter` is the `class_name` of a fake adapter; read its members through a `preload()` constant of its file',
+    ]));
+  });
+
   it('names the Packed array of each value element type', async () => {
     const sc = memContext({
       ...CORE_STUBS,
@@ -250,10 +307,13 @@ func _helper() -> void:
 	scene.instantiate()
 	queue_free()
 	await get_tree().process_frame
+	var hit := HitEffect.new()
+	var node := Data.Inner.new()
 func _other() -> void:
 	pass
 func _ready() -> void:
 	var d := $D
+	var e := HitEffect.new()
 func _gui_input(event: InputEvent) -> void:
 	_helper()
 `),
@@ -264,6 +324,8 @@ func _gui_input(event: InputEvent) -> void:
       'client/features/battle/battle_view.gd:13 | frame code: `PackedScene.instantiate()` in `_helper` called from `_process`',
       'client/features/battle/battle_view.gd:14 | frame code: `queue_free()` in `_helper` called from `_process`',
       'client/features/battle/battle_view.gd:15 | frame code: `await` in `_helper` called from `_process`',
+      'client/features/battle/battle_view.gd:16 | frame code: `HitEffect.new()` (take objects from PoolCore) in `_helper` called from `_process`',
+      'client/features/battle/battle_view.gd:17 | frame code: `Data.Inner.new()` (take objects from PoolCore) in `_helper` called from `_process`',
       'client/features/battle/battle_view.gd:5 | frame code: `get_node()` in `_process`',
       'client/features/battle/battle_view.gd:6 | frame code: `$` node path in `_process`',
     ]));
@@ -320,6 +382,17 @@ func f() -> void:
 	speed_scale = 4
 	var t2 := Timer.new()
 	t2.start(1.5)
+	anim.play_backwards("hit", 0.2)
+	anim.play_backwards("hit")
+	anim.play_section("hit", 0.0, 1.0, 0.2)
+	anim.play_section("hit", 0.0, 1.0, Data.blend(), 2.0)
+	anim.play_section("hit", 0.0, 1.0)
+	anim.play_section_backwards("hit", 0.0, 1.0, 0.3)
+	anim.play_section_with_markers("hit", &"a", &"b", Data.blend(), 1.5)
+	anim.play_section_with_markers_backwards("hit", &"a", &"b", 0.1)
+	anim.play_with_capture("hit", 0.4)
+	anim.play_with_capture("hit", -1.0, 0.2)
+	anim.play_with_capture("hit", Data.capture(), Data.blend(), 1.2)
 `),
     });
     expect(lines(await literalTiming.run(sc))).toEqual(sorted([
@@ -331,6 +404,15 @@ func f() -> void:
       'client/features/fx/fx_view.gd:16 | literal timing: number literal assigned to `AnimationPlayer.speed_scale`',
       'client/features/fx/fx_view.gd:7 | literal timing: number literal assigned to `AnimationPlayer.speed_scale`',
       'client/features/fx/fx_view.gd:8 | literal timing: number literal passed to `AnimationPlayer.play()`',
+      'client/features/fx/fx_view.gd:22 | literal timing: number literal passed to `AnimationPlayer.play_backwards()`',
+      'client/features/fx/fx_view.gd:24 | literal timing: number literal passed to `AnimationPlayer.play_section()`',
+      'client/features/fx/fx_view.gd:25 | literal timing: number literal passed to `AnimationPlayer.play_section()`',
+      'client/features/fx/fx_view.gd:27 | literal timing: number literal passed to `AnimationPlayer.play_section_backwards()`',
+      'client/features/fx/fx_view.gd:28 | literal timing: number literal passed to `AnimationPlayer.play_section_with_markers()`',
+      'client/features/fx/fx_view.gd:29 | literal timing: number literal passed to `AnimationPlayer.play_section_with_markers_backwards()`',
+      'client/features/fx/fx_view.gd:30 | literal timing: number literal passed to `AnimationPlayer.play_with_capture()`',
+      'client/features/fx/fx_view.gd:31 | literal timing: number literal passed to `AnimationPlayer.play_with_capture()`',
+      'client/features/fx/fx_view.gd:32 | literal timing: number literal passed to `AnimationPlayer.play_with_capture()`',
     ]));
   });
 });

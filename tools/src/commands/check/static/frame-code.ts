@@ -1,13 +1,13 @@
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { isClientContentGd } from './lib/files.ts';
 import type { ClassDecl, Expr, FuncDecl, GdFile } from './lib/gd-ast.ts';
-import { allClasses, callTarget, classFuncs, visitFuncBody } from './lib/gd-walk.ts';
+import { allClasses, callTarget, chainText, classFuncs, visitFuncBody } from './lib/gd-walk.ts';
 
 /**
  * frame code: the body of `_process()`, `_physics_process()`, `_input()`, `_unhandled_input()`, `_unhandled_key_input()`,
  * `_shortcut_input()`, `_gui_input()` and the bodies of every same-class function they call, following the calls
  * transitively (client-content engines/godot `## GDScript`), use `get_node()`, `$` and `%` node paths, `find_child()`,
- * `PackedScene.instantiate()`, `queue_free()` or `await`.
+ * `PackedScene.instantiate()`, `<class>.new()`, `queue_free()` or `await`.
  */
 export const NAME = 'frame code';
 
@@ -55,6 +55,7 @@ function forbidden(e: Expr): string | null {
   if (!target) return null;
   if (FORBIDDEN_CALLS.has(target.name)) return `\`${target.name}()\``;
   if (target.name === 'instantiate' && target.recv !== null) return '`PackedScene.instantiate()`';
+  if (target.name === 'new' && target.recv !== null) return `\`${chainText(target.recv) ?? '<class>'}.new()\` (take objects from PoolCore)`;
   return null;
 }
 

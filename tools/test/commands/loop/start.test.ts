@@ -131,6 +131,17 @@ describe('ogw loop start', () => {
     expect(git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['brief.md', `records/loops/${run}/request.md`]);
   });
 
+  it('commits the brief draft without the pre-commit hook, which blocks its empty headings', async () => {
+    const g = setupGame();
+    const hooks = join(g.root, '.git', 'hooks');
+    git(g.root, 'config', 'core.hooksPath', hooks);
+    writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(hooks, 'pre-commit'), 0o755);
+    const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'create', '--json'], { stdin: 'make it fast' });
+    expect(out.code).toBe(0);
+    expect(git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n')).toContain('brief.md');
+  });
+
   it('keeps an existing brief.md and adds no line when the setup request lacks a newline', async () => {
     const g = setupGame({}, { 'brief.md': 'mine\n', 'records/setup/request.md': 'no newline' });
     const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'create', '--json'], { stdin: 'x' });
@@ -172,11 +183,11 @@ describe('ogw loop start', () => {
     }
     // the video on this host is enough, though git does not hold it, and a rolled back start leaves it in place
     write(g.root, 'records/setup/reference/hollow.mp4', 'video');
-    write(g.root, '.git/hooks/pre-commit', '#!/bin/sh\nexit 1\n');
-    chmodSync(join(g.root, '.git/hooks/pre-commit'), 0o755);
+    write(g.root, '.git/hooks/prepare-commit-msg', '#!/bin/sh\nexit 1\n');
+    chmodSync(join(g.root, '.git/hooks/prepare-commit-msg'), 0o755);
     expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'x' })).code).not.toBe(0);
     expect(read(g.root, 'records/setup/reference/hollow.mp4')).toBe('video');
-    rmSync(join(g.root, '.git/hooks/pre-commit'));
+    rmSync(join(g.root, '.git/hooks/prepare-commit-msg'));
     expect((await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'x' })).code).toBe(0);
   });
 
@@ -298,8 +309,9 @@ describe('ogw loop start', () => {
 
   it('rolls back the branch, files and run state when the commit fails', async () => {
     const g = setupGame();
-    write(g.root, '.git/hooks/pre-commit', '#!/bin/sh\nexit 1\n');
-    chmodSync(join(g.root, '.git/hooks/pre-commit'), 0o755);
+    // the start commit skips the pre-commit hook; prepare-commit-msg still runs
+    write(g.root, '.git/hooks/prepare-commit-msg', '#!/bin/sh\nexit 1\n');
+    chmodSync(join(g.root, '.git/hooks/prepare-commit-msg'), 0o755);
     const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'create'], { stdin: 'x' });
     expect(out.code).not.toBe(0);
     expect(git(g.root, 'branch', '--show-current')).toBe('main');

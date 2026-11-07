@@ -21,6 +21,11 @@ vi.mock('../../../../src/commands/generate/api.ts', () => ({
   runGenerate: () => Promise.resolve(),
   gameModules: () => Promise.resolve({ client: ['AuthCore', 'NativeUiCore', 'SoundCore', 'UICore'], server: [] }),
   gameCoreSpec: () => Promise.resolve({ version: '1.0.0', modules: [] }),
+  mergedCoreSettings: () => Promise.resolve({}),
+}));
+vi.mock('../../../../src/commands/check/static/lib/engine.ts', async (original) => ({
+  ...(await original<typeof import('../../../../src/commands/check/static/lib/engine.ts')>()),
+  godotGlobalNames: () => Promise.resolve(new Set(['Node'])),
 }));
 vi.mock('../../../../src/commands/data/api.ts', () => ({
   runData: () => Promise.resolve({ exitCode: mocks.dataLines.some((l) => (l as { level: string }).level === 'ERROR') ? 1 : 0, lines: mocks.dataLines, stderr: '' }),
@@ -69,11 +74,11 @@ const GAME = {
 describe('staticCheck', () => {
   it('lists the static checks except data check and debug text', () => {
     expect(STATIC_CHECKS.map((c) => c.NAME)).toEqual([
-      'core diff', 'generated diff', 'contract', 'DEV reference', 'type check', 'lint', 'data literal', 'resource hash', 'nine slice size', 'block token', 'test input',
+      'core diff', 'generated diff', 'contract', 'DEV reference', 'type check', 'lint', 'data literal', 'resource hash', 'nine slice size', 'block token', 'test input', 'test skip',
       'frame polling', 'haptic format', 'embedded script', 'theme only', 'font weight', 'scene links', 'tween preset', 'finite tween', 'system clock', 'game state lock', 'shared formula', 'bot scenario', 'option entry',
-      'game settings owner', 'design target', 'simulation target', 'feature boundary', 'forbidden GDScript API', 'settings access',
+      'game settings owner', 'design target', 'document format', 'simulation target', 'feature boundary', 'forbidden GDScript API', 'settings access',
       'resource load', 'engine random', 'data mutation', 'frame code', 'literal timing', 'object destroy', 'determinism',
-      'virtual pad layout', 'format args', 'action reference', 'anchor reference', 'gamepad input', 'shortcut root panel', 'play guide input',
+      'virtual pad layout', 'format args', 'action reference', 'anchor reference', 'gamepad input', 'shortcut root panel', 'play guide input', 'UI prefab',
     ]);
   });
 

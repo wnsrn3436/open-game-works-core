@@ -52,6 +52,7 @@ describe('resource hash', () => {
       'resource/resources.csv:8 | resource hash: file of `icon/dash` is missing',
     ]);
     expect(lines(found)).toEqual([
+      'resource/icon/dash.p-g:1 | resource hash: `resource/icon/dash.p-g` is no file of a row of resource/resources.csv; add its row or delete the file',
       `resource/resources.csv:3 | resource hash: SHA-256 of \`icon/bad\` is ${sha('bad')}, not \`${sha('other')}\`; run \`ogw resource sync\``,
       'resource/resources.csv:5 | resource hash: file of `sfx/missing` is missing',
       'resource/resources.csv:6 | resource hash: file of `icon/none` is missing',
@@ -60,6 +61,31 @@ describe('resource hash', () => {
     expect(resourceHash.variantsOf('length=1;variants=0')).toBe(1);
     expect(resourceHash.variantsOf('variants=3')).toBe(3);
     expect(resourceHash.variantsOf('')).toBe(1);
+  });
+
+  it('fails a file under resource/ that is no file of a row, other than resources.csv and the engine meta files', async () => {
+    const sc = memContext({
+      'resource/resources.csv': ['key,description,spec,status,method,source,license,attribution,sha256', `icon/ok,x,size=8x8,final,,,,,${sha('ok')}`, `sfx/hit,x,length=100;variants=2,final,,,,,${sha(sha('a') + sha('b'))}`, ''].join('\n'),
+      'resource/resources.csv.import': 'meta',
+      'resource/icon/ok.png': 'ok',
+      'resource/icon/ok.png.import': 'meta',
+      'resource/icon/ok.png.uid': 'uid://x',
+      'resource/sfx/hit.1.wav': 'a',
+      'resource/sfx/hit.2.wav': 'b',
+      'resource/icon/ok_old.png': 'old',
+      'resource/icon/ok': 'no extension',
+      'resource/resources.ko.translation': 'stray',
+      'resource/icon/sub/ok.png': 'other folder',
+      'client/icon/ok.png': 'outside resource/',
+    });
+    expect(lines(await resourceHash.run(sc))).toEqual([
+      'resource/icon/ok_old.png:1 | resource hash: `resource/icon/ok_old.png` is no file of a row of resource/resources.csv; add its row or delete the file',
+      'resource/icon/ok:1 | resource hash: `resource/icon/ok` is no file of a row of resource/resources.csv; add its row or delete the file',
+      'resource/icon/sub/ok.png:1 | resource hash: `resource/icon/sub/ok.png` is no file of a row of resource/resources.csv; add its row or delete the file',
+      'resource/resources.ko.translation:1 | resource hash: `resource/resources.ko.translation` is no file of a row of resource/resources.csv; add its row or delete the file',
+    ]);
+    expect(resourceHash.isKeyFile('resource/sfx/hit.3.wav', new Set(['sfx/hit']))).toBe(true);
+    expect(resourceHash.isKeyFile('resource/sfx/hit.x.wav', new Set(['sfx/hit']))).toBe(false);
   });
 
   it('does nothing without resources.csv', async () => {
@@ -119,7 +145,8 @@ describe('design target', () => {
       '| nope | a | b | |',
       '',
     ].join('\n');
-    const sc = memContext({ 'design.md': doc });
+    const stage = ['', 'All,All', 'id(key),int', 'id,reward_every', '[s1],3', ''].join('\n');
+    const sc = memContext({ 'design.md': doc, 'data/tables/stage.csv': stage });
     expect(lines(await designTarget.run(sc))).toEqual([
       'design.md:7 | design target: `fun_ms` is not a metric name',
       'design.md:8 | design target: max `x` of `reward_interval_ms` is not an integer',
@@ -128,6 +155,21 @@ describe('design target', () => {
       'design.md:14 | design target: `content.` is not a metric name',
     ]);
     expect(await designTarget.run(memContext({ 'a.md': '' }))).toEqual([]);
+  });
+
+  it('fails a data cell that names no column of a table and no game_setting row', async () => {
+    const row = (data: string): string => `| \`goal_interval_ms\` | 1 | 2 | ${data} |`;
+    const doc = ['## tuning targets', '', '| metric | min | max | data |', '|---|---|---|---|', ...['`stage.reward_every`', '`game_setting.points_to_win`', '', '`stage.reward`', '`level.reward_every`', '`game_setting.serve_delay`', 'stage reward', '`game_setting.[points_to_win]`'].map(row), ''].join('\n');
+    const stage = ['', 'All,All', 'id(key),int', 'id,reward_every', '[s1],3', ''].join('\n');
+    const settings = ['', 'All,None,None,All', 'id(key),string,string,string', 'id,target,data_type,value', '[points_to_win],All,int,7', '#[serve_delay],All,int,1', ''].join('\n');
+    const sc = memContext({ 'design.md': doc, 'data/tables/stage.csv': stage, 'data/system/game_setting.csv': settings });
+    expect(lines(await designTarget.run(sc))).toEqual([
+      'design.md:8 | design target: `data` `stage.reward` of `goal_interval_ms` names no column `reward` of data/tables/stage.csv',
+      'design.md:9 | design target: `data` `level.reward_every` of `goal_interval_ms` names no table: data/tables/level.csv does not exist',
+      'design.md:10 | design target: `data` `game_setting.serve_delay` of `goal_interval_ms` names no row `[serve_delay]` of data/system/game_setting.csv',
+      'design.md:11 | design target: `data` `stage reward` of `goal_interval_ms` is not `<table>.<column>` or `game_setting.<name>`',
+      'design.md:12 | design target: `data` `game_setting.[points_to_win]` of `goal_interval_ms` is not `<table>.<column>` or `game_setting.<name>`',
+    ]);
   });
 });
 

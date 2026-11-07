@@ -7,20 +7,21 @@ description: Holds the format of the documents the content agent writes (brief.m
 
 ## brief
 
-`brief.md` has the headings below in this order. In `create game`, `ogw loop start` writes a draft that has every heading and fills the name and path in `## reference game` and the original request text in `## request`. The content agent fills the rest. In `create game`, when the work branch already has `brief.md`, there is no draft, and the content agent edits that `brief.md` to match `request.md` in iteration 1.
+The `##` headings of `brief.md` are the headings below, each once, in this order; a heading under them has three or more `#`. In `create game`, `ogw loop start` writes a draft that has every heading and fills the name and path in `## reference game` and the original request text in `## request`. The content agent fills the rest. In `create game`, when the work branch already has `brief.md`, there is no draft, and the content agent edits that `brief.md` to match `request.md` in iteration 1.
 
 | heading | contents |
 |---|---|
 | `## player fantasy` | One sentence. When one existing game title sums it up, rewrite it |
 | `## emotion` | One core emotion and the emotional curve over one round |
 | `## memorable moment` | One moment the player is to remember |
-| `## genre conventions` | Per genre convention, one of `accept`, `twist`, `reject` and the reason. When all are `accept`, rewrite it |
-| `## prohibitions` | Two or more prohibitions. One of them removes a standard feature of the genre |
+| `## genre conventions` | A table with the columns `convention`, `decision`, `reason`: one row per genre convention, whose `decision` is one of `accept`, `twist`, `reject`. When every `decision` is `accept`, rewrite it |
+| `## prohibitions` | A list of two or more prohibitions, one per top-level list item. One of them removes a standard feature of the genre |
 | `## failure penalty` | The share of progress lost per mistake, the duration limit (ms) of the loss state, and the delay limit (ms) from the end of the loss until control is possible again. A game without a failure state writes `no failure state` on the first line and does not write the three values |
 | `## prediction` | A sentence in the form "if it works, the player will do something". Written so that play can check it |
 | `## reference game` | The reference game name in `records/setup/reference/reference.md` and its file path (in the draft). What this game does differently from the reference game |
 | `## request` | The original text of the human's request (in the draft), and the items that the content agent decided because the request did not have them |
 
+- Static check `document format` blocks a `##` heading that is missing, repeated, out of this order or not in the table, a `## genre conventions` without that table, with another `decision` or with every `decision` `accept`, and a `## prohibitions` with fewer than two top-level list items
 - Genre conventions include the screens that players of the genre expect, not only rules of play (e.g. character select in a fighting game, results and leaderboards in a racing game, an upgrade choice in a roguelike, a guided tutorial in a card game or a match-three game). A store or ads fall under line 1 of `## deciding without asking`
 - When the failure penalty rejects (`reject`) or twists (`twist`) a failure pressure convention (death, timer, game over, penalty), write the replacement pressure as numbers under the same heading: its base value and the multiplier applied to that base value (e.g. scroll speed 200, multiplied by 1.1 per room)
 
@@ -28,7 +29,7 @@ description: Holds the format of the documents the content agent writes (brief.m
 
 `design.md` holds the whole current design state of the game. It is not completed in advance; write only what is made and what is to be made.
 
-It has the headings below in this order. Under a heading not decided yet, write `none`.
+Its `##` headings are the headings below, each once, in this order; a heading under them has three or more `#`. Under a heading not decided yet, write `none`. Static check `document format` blocks a `##` heading that is missing, repeated, out of this order or not in the table, and a `##` heading with no non-empty line before the next `##` heading.
 
 | heading | contents |
 |---|---|
@@ -52,7 +53,7 @@ It has the headings below in this order. Under a heading not decided yet, write 
 - `## art direction` and `## audio direction` give this game's look and sound. [commercial quality](commercial-quality.md) says what any look and sound must meet, whatever the theme
 
 - When `## art direction` has no play layer or no UI style, the content agent writes them before it requests art
-- `## feel targets` and `## tuning targets` are tables with the columns `metric`, `min`, `max`, `data`. `metric` is one metric name below, `min` and `max` are integers (for `feedback_per_input` and `feedback_share`, numbers that may have decimals), and `data` is the data table and column that change that value, or an empty cell when there is none. e.g. `reward_interval_ms` | 30000 | 60000 | `stage.reward_every`
+- `## feel targets` and `## tuning targets` are tables with the columns `metric`, `min`, `max`, `data`. `metric` is one metric name below, `min` and `max` are integers (for `feedback_per_input` and `feedback_share`, numbers that may have decimals), and `data` is the data that changes that value: `<table>.<column>` for a column of `data/tables/<table>.csv`, `game_setting.<name>` for the row `[<name>]` of `data/system/game_setting.csv`, or an empty cell when there is none. e.g. `reward_interval_ms` | 30000 | 60000 | `stage.reward_every`. Static check `design target` blocks a row that breaks these rules
 - A goal that cannot be measured by a metric is not written as a target. When editing, bring the value of `ogw measure` into the range
 - Metrics are calculated from the telemetry and `QAState` of the play instances that `ogw loop evaluate` started without a save fixture. When there is no value, the metric is `unknown`
 - A free scene is a scene whose mode in `## play mode` of `play-guide.md` of the commit of that instance is `free`, and the free scene time of a span is the part of it spent in free scenes. When `## play mode` has no scene of another mode, no scene is a free scene, so `first_reward_ms`, `goal_interval_ms` and `idle_span_ms` include the time the agent took between inputs
@@ -91,7 +92,7 @@ It has the headings below in this order. Under a heading not decided yet, write 
 
 `play-guide.md` is a document of facts, written so that the play agent can play the game right after seeing it for the first time. When the game changes, it is edited in the same commit.
 
-It has all the headings below in this order. Under a heading with no content, write `none`.
+Its `##` headings are the headings below, each once, in this order; a heading under them has three or more `#`. Under a heading with no content, write `none`. Static check `document format` blocks a `##` heading that is missing, repeated, out of this order or not in the table, a `##` heading with no non-empty line before the next `##` heading, and a `## play mode` without its table or with a row that breaks it.
 
 | heading | contents |
 |---|---|
@@ -101,7 +102,7 @@ It has all the headings below in this order. Under a heading with no content, wr
 | `## failure` | The states in which the player fails, and the input that restarts after a failure. `none` when `## failure penalty` of `brief.md` is `no failure state` |
 | `## input lock window` | The spans in which input is locked on purpose (title, cutscene, turn wait, presentation) and their length (ms) |
 | `## fastest start path` | The shortest input order from the first screen to actual play |
-| `## play mode` | Per scene, the mode (`free`, `step`, `script`) and, for `step`, the step ms to advance at a time |
+| `## play mode` | A table with the columns `scene`, `mode`, `step ms`: one row per scene, whose `scene` is the resource key of a `scene` row of `resources.csv`, whose `mode` is one of `free`, `step`, `script`, and whose `step ms` is, for `step`, the ms to advance at a time (an integer of 1 or more) and an empty cell otherwise |
 
 - Do not write evaluative sentences (fun, quality, difficulty assessment, whether it can be cleared)
 - A fact that was not checked gets `unconfirmed`
