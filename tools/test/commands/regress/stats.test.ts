@@ -118,8 +118,18 @@ describe('report', () => {
     const runs = [run('S1', 'before', 1, { fixed: 1, 'cost USD': 2 }), run('S1', 'before', 2, { fixed: 1, 'cost USD': 2 }), run('S1', 'after', 1, { fixed: 1, 'cost USD': 1 }), run('S1', 'after', 2, { fixed: 1, 'cost USD': 1 })];
     const data: RunData = { run: 5, catchOnly: false, sides: [side('before'), side('after')], seeds: [], catches, seedRuns: runs };
     const { text, difference: lines } = renderReport(data, 20, 0.1);
-    expect(lines.filter((l) => !l.startsWith('- catch')).map((l) => l.split(':')[0])).toEqual(['- fixed', '- iterations', '- new defects', '- guards', '- unconfirmed claims', '- test first', '- input tokens', '- cached tokens', '- output tokens', '- cost USD', '- turns', '- agent minutes']);
+    expect(lines.filter((l) => !l.startsWith('- catch')).map((l) => l.split(':')[0])).toEqual(['- fixed', '- iterations', '- new defects', '- guards', '- unconfirmed claims', '- test first', '- input tokens', '- cached tokens', '- output tokens', '- cost USD', '- turns', '- agent minutes', '- check minutes']);
     expect(lines.find((l) => l.startsWith('- cost USD'))).toMatch(/^- cost USD: before 2, after 1, D -0\.405 ratio 0\.667, p [0-9.]+, (no difference|better) \(1 seeds\)$/);
     expect(text).toContain('- before: 2 seed-runs, 2 fixed, 0 unknown, input tokens none, cost USD 4.00');
+  });
+
+  it('compares check minutes as an ln measure that is better lower: slower checks of the after side are worse', () => {
+    // the after side's checks take 3 times as long in each of 6 seeds
+    const runs = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].flatMap((s) => [1, 2].flatMap((k) => [run(s, 'before', k, { 'check minutes': 9 + k }), run(s, 'after', k, { 'check minutes': 29 + k })]));
+    const line = differenceOf(runs, 'check minutes', 500, 0.1, 1);
+    expect(line.verdict).toBe('worse');
+    expect(line.d).toBeCloseTo((Math.log1p(30) + Math.log1p(31)) / 2 - (Math.log1p(10) + Math.log1p(11)) / 2, 9);
+    const data: RunData = { run: 5, catchOnly: false, sides: [side('before'), side('after')], seeds: [], catches, seedRuns: runs };
+    expect(renderReport(data, 500, 0.1).difference.find((l) => l.startsWith('- check minutes'))).toMatch(/^- check minutes: before 10\.50, after 30\.50, D 1\.0\d\d ratio 2\.\d+, p [0-9.]+, worse \(6 seeds\)$/);
   });
 });

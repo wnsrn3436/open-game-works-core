@@ -785,14 +785,14 @@ final commit: the HEAD of `main` when the seed-run ends. On it the tool runs eve
 | `test first` | the fix test proof of the last iteration whose report says `fixed`: 1 for `pass`, 0 for `fail`, no value for `unknown` or without such an iteration | higher |
 | `input tokens`, `cached tokens`, `output tokens`, `cost USD`, `turns` | the sum of that value of `usage` (`### usage` of `## agent`) over the fixer jobs; no value when a job has none | lower |
 | `agent minutes` | the sum over the fixer jobs of the time from their start to their end | lower |
-| `check minutes` | the sum of the time of the confirmations and the final check | none |
+| `check minutes` | the sum of the time of the confirmations and the final check | lower |
 | `placeholders` | the `no placeholder` failures of the final check that the seeded check has not: the resource and translation work made | none |
 | `own fixed` | for the before side, 1 when its own target checks and oracle on the final commit do not find the defect and give a result, 0 when they find it, no value otherwise | none |
 
 ### regress comparison
 
 - A seed-run counts for a measure when it is not `unknown` and has a value of the measure. A seed counts for a measure when each side has at least 2 seed-runs that count
-- transformed value: ln(1 + value) for `input tokens`, `cached tokens`, `output tokens`, `cost USD`, `turns` and `agent minutes`, whose differences are ratios; the value for the other measures
+- transformed value: ln(1 + value) for `input tokens`, `cached tokens`, `output tokens`, `cost USD`, `turns`, `agent minutes` and `check minutes`, whose differences are ratios; the value for the other measures
 - difference D: the mean over the seeds that count of the mean of the after side minus the mean of the before side of the transformed values
 - permutation test: for each of harness settings `regress.permutations` permutations, the side labels of the seed-runs that count are shuffled within each seed that counts, with the count of each side kept, and D is computed again. p is (1 + the number of permutations whose |D| is at least the |D| of the run) ÷ (1 + `regress.permutations`). The shuffles take the PRNG mulberry32 seeded with the `<unix ms>` of the run, so the same results give the same p
 - verdict of a measure: `better` when p is below harness settings `regress.level` and D goes the way the measure is better, `worse` when p is below `regress.level` and D goes the other way, `no difference` otherwise, and `unknown` when no seed counts. A measure whose better is `none` gets no verdict

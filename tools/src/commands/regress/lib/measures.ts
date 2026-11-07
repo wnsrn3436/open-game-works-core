@@ -34,13 +34,13 @@ export const BETTER: Readonly<Record<Measure, 'higher' | 'lower' | null>> = {
   'cost USD': 'lower',
   turns: 'lower',
   'agent minutes': 'lower',
-  'check minutes': null,
+  'check minutes': 'lower',
   placeholders: null,
   'own fixed': null,
 };
 
 /** The measures whose transformed value is ln(1 + value) (ogw.md `### regress comparison`). */
-export const LOG_MEASURES: ReadonlySet<Measure> = new Set<Measure>(['input tokens', 'cached tokens', 'output tokens', 'cost USD', 'turns', 'agent minutes']);
+export const LOG_MEASURES: ReadonlySet<Measure> = new Set<Measure>(['input tokens', 'cached tokens', 'output tokens', 'cost USD', 'turns', 'agent minutes', 'check minutes']);
 
 export type MeasureValues = Record<Measure, number | null>;
 
