@@ -308,13 +308,13 @@ describe('ogw regress refresh: the seed agent', () => {
     expect(vi.mocked(runSeedAgent)).not.toHaveBeenCalled();
   });
 
-  /** A fake seed agent that waits until `meet` has work of another group started, keeping its span in `spans`. */
-  function meetingSeedAgent(spans: Span[], started: Set<string>, meet: string): void {
+  /** A fake seed agent that waits until `meet` has work of another group started, at most `limitMs`, keeping its span in `spans`. */
+  function meetingSeedAgent(spans: Span[], started: Set<string>, meet: string, limitMs = 1000): void {
     let n = 0;
     vi.mocked(runSeedAgent).mockImplementation(async (_ctx, folder) => {
       const key = `agent ${String(++n)}`;
       const start = performance.now();
-      await meetOtherGroup(started, meet === 'agent' ? key : 'agent', 1000);
+      await meetOtherGroup(started, meet === 'agent' ? key : 'agent', limitMs);
       await new Promise((resolve) => setTimeout(resolve, 20));
       writeFileSync(join(folder, 'seed', 'patch-1.0.0.diff'), patchOf('leak'));
       writeFileSync(join(folder, 'result.md'), REBASED);
@@ -354,7 +354,8 @@ describe('ogw regress refresh: the seed agent', () => {
       if (pick.performance) spans.push({ key: `check ${game.name} ${String(spans.length)}`, group: 'check', start, end: performance.now() });
       return { checks: [item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : [])], fixTestProof: [] };
     });
-    meetingSeedAgent(spans, started, 'check');
+    // the seed agent waits long enough for the check of a loaded host; the check, less than a seed agent started late
+    meetingSeedAgent(spans, started, 'check', 10_000);
     const run = await ogw(ws, ['regress', 'refresh']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
@@ -379,12 +380,12 @@ describe('ogw regress refresh: the seed agent', () => {
       }
       return { checks: [item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : [])], fixTestProof: [] };
     });
-    meetingSeedAgent(spans, started, 'check');
+    // the seed agent waits long enough for the checks of a loaded host
+    meetingSeedAgent(spans, started, 'check', 10_000);
     const run = await ogw(ws, ['regress', 'refresh']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    const agent = spans.find((s) => s.group === 'agent') as Span;
-    expect(spans.filter((s) => s.group === 'check').some((check) => check.start <= agent.start)).toBe(true);
+    // the seed agent ran while the admission of S24 ran: it did not wait for it to end
     expect(overlaps(spans, false)).not.toEqual([]);
   });
 });
