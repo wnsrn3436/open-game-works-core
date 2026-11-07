@@ -90,7 +90,7 @@
     "coreImpl": "open-game-works-core-impl",
     "coreReleases": "open-game-works-core-releases",
     "games": "games",
-    "worktrees": "worktrees"
+    "worktrees": "worktrees.noindex"
   },
   "coreReleaseRepository": "wnsrn3436/open-game-works-core-impl",
   "useLocalCore": false,
