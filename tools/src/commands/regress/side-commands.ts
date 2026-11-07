@@ -49,6 +49,7 @@ export const sideCommand: CommandDef = {
       promptBytes: { content: await promptBytes(harness, 'content'), translation: await promptBytes(harness, 'translation') },
       agents: (await ctx.settings()).agents,
       instanceLease: true,
+      stepLease: true,
     };
     return { text: JSON.stringify(info), data: info };
   },

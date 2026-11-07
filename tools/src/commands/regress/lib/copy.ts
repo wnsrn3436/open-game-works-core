@@ -64,7 +64,8 @@ export async function makeCopyRepo(ctx: Context, name: string, source: CopySourc
     await git(target, ['init', '--quiet', '--initial-branch', 'main'], { env: ctx.env });
     // every file of the tree was tracked in the source, also one that its .gitignore names
     await git(target, ['add', '--all', '--force'], { env: ctx.env });
-    await git(target, ['commit', '--quiet', '--no-verify', '--allow-empty', '-m', message], { env: ctx.env });
+    // no `gc --auto` left running behind the commit: a clone of the repo (`cloneCopyRepo`) copies it as the commit left it
+    await git(target, ['-c', 'gc.auto=0', 'commit', '--quiet', '--no-verify', '--allow-empty', '-m', message], { env: ctx.env });
     if (source.registry !== null) {
       const temp = await newPrivateTempFolder('ogw-regress-registry-', ctx.env);
       try {
@@ -78,6 +79,34 @@ export async function makeCopyRepo(ctx: Context, name: string, source: CopySourc
     await installHook(target, name, ctx.env, true);
     await writeMark(await commonDir(target, { env: ctx.env }), mark);
     return (await git(target, ['rev-parse', 'HEAD'], { env: ctx.env })).trim();
+  } catch (error) {
+    await rm(target, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/**
+ * Whether this host clones a folder of a copy repo (`cloneCopyRepo`): macOS, whose `cp -c` makes an APFS clone of each
+ * file, which shares the blocks of the file until one of the two changes it.
+ */
+export function canCloneFolders(): boolean {
+  return process.platform === 'darwin';
+}
+
+/**
+ * Makes the game repo `games/<name>/` in its reserved, empty folder as a clone of the copy repo `from` (ogw.md `### regress
+ * run` 4): the same tree, `main`, `id-registry` and regression mark, with the pre-commit hook of `<name>`. `from` must
+ * be one that nothing changed since `makeCopyRepo` made it. Returns its root.
+ */
+export async function cloneCopyRepo(ctx: Context, from: string, name: string): Promise<string> {
+  const target = join((await ctx.workspace()).games, name);
+  if (!exists(target) || (await readdir(target)).length > 0) throw new OgwError(`${target} is not an empty folder`);
+  try {
+    // `<from>/` copies what is in it into the folder
+    await runOk('cp', ['-c', '-R', `${from}/`, target], { env: ctx.env, timeoutMs: LIMITS.programMs });
+    // the hook names its game, and `core.hooksPath` names the hooks folder of its repo
+    await installHook(target, name, ctx.env, true);
+    return target;
   } catch (error) {
     await rm(target, { recursive: true, force: true });
     throw error;

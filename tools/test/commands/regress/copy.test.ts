@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { makeCopyRepo } from '../../../src/commands/regress/lib/copy.ts';
+import { cloneCopyRepo, makeCopyRepo } from '../../../src/commands/regress/lib/copy.ts';
 import { guardViolations, testCount } from '../../../src/commands/regress/lib/guards.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
 import { commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
@@ -52,6 +52,31 @@ describe('copy repo (regression state, fix repo)', () => {
     expect(await readMark(join(repo, '.git'))).toEqual({ kind: 'fix', state: 's' });
     await expect(make('ogw-regress-fix-1')).rejects.toThrow('is not an empty folder');
     expect(existsSync(join(repo, 'client/a.gd'))).toBe(true);
+  });
+
+  it('clones a fix repo into a reserved, empty folder with the same history and mark and a hook of its own', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws);
+    const source = join(ws.games, 'src');
+    const ctx = ctxOf(ws);
+    const registry = sh(source, 'git', ['rev-parse', 'id-registry']).trim();
+    mkdirSync(join(ws.games, 'ogw-regress-fix-1'));
+    const main = await makeCopyRepo(ctx, 'ogw-regress-fix-1', { repo: source, commit, registry }, { kind: 'fix', state: 's' }, 'fix repo', true);
+    const from = join(ws.games, 'ogw-regress-fix-1');
+    await expect(cloneCopyRepo(ctx, from, 'ogw-regress-fix-2')).rejects.toThrow('is not an empty folder');
+    mkdirSync(join(ws.games, 'ogw-regress-fix-2'));
+    const clone = await cloneCopyRepo(ctx, from, 'ogw-regress-fix-2');
+    expect(clone).toBe(join(ws.games, 'ogw-regress-fix-2'));
+    for (const ref of ['main', 'id-registry']) expect(sh(clone, 'git', ['rev-parse', ref]).trim()).toBe(sh(from, 'git', ['rev-parse', ref]).trim());
+    expect(sh(clone, 'git', ['rev-parse', 'main']).trim()).toBe(main);
+    expect(sh(clone, 'git', ['status', '--porcelain']).trim()).toBe('');
+    expect(await readMark(join(clone, '.git'))).toEqual({ kind: 'fix', state: 's' });
+    expect(sh(clone, 'git', ['config', 'core.hooksPath']).trim()).toBe(join(clone, '.git', 'hooks'));
+    expect(readFileSync(join(clone, '.git', 'hooks', 'pre-commit'), 'utf8')).toContain('# ogw pre-commit hook of game ogw-regress-fix-2\n');
+    // a change in the clone leaves the fix repo it was cloned from as it was
+    write(clone, 'client/a.gd', 'var x = 2\n');
+    expect(readFileSync(join(from, 'client/a.gd'), 'utf8')).toBe('var x = 1\n');
+    expect(readFileSync(join(from, '.git', 'hooks', 'pre-commit'), 'utf8')).toContain('# ogw pre-commit hook of game ogw-regress-fix-1\n');
   });
 });
 

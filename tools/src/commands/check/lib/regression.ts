@@ -8,7 +8,8 @@ import { LIMITS } from '../../../lib/limits.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
 import { checkedScriptErrors, engineErrorLines, gutRun, type GutRunResult } from '../../core/lib/godot.ts';
 import { startPostgres } from '../../core/lib/postgres.ts';
-import { runServerTests, serverRunFailures, type ServerTestInputs } from '../../core/lib/server-tests.ts';
+import { runServerTests, serverRunFailures, type ServerTestInputs, type ServerTestRun } from '../../core/lib/server-tests.ts';
+import { withHeavyStep } from '../../generation/lib/lease.ts';
 import { importClient } from './engine.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from './evidence.ts';
 
@@ -97,15 +98,24 @@ export function targetWhere(path: string): string {
   return `${path}:1`;
 }
 
+/**
+ * A server test run of `target` in the checkout `game` (`testing` `### test run`), as a heavy step of the check (ogw.md
+ * `### performance lease`).
+ */
+export function serverTestRun(ctx: Context, game: GameRepo, target: string, inputs: ServerTestInputs, timeoutMs: number): Promise<ServerTestRun> {
+  return withHeavyStep(ctx, game, () => runServerTests({ checkout: game.root, target, kind: 'regression', inputs, env: ctx.env, timeoutMs }));
+}
+
 /** Server regression test (`testing` `### test run`) of the `*.test.ts` files of `path`; none is run failure `no tests`. */
-export async function serverRegression(ctx: Context, root: string, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
+export async function serverRegression(ctx: Context, game: GameRepo, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
+  const root = game.root;
   const tests = (await filesUnder(join(root, path))).filter((file) => file.endsWith('.test.ts'));
   if (tests.length === 0) return [failure(targetWhere(path), 'run failure: no tests')];
   const db = await regressionDb(ctx, options.db);
   try {
     const timeoutMs = LIMITS.programMs;
     const inputs = regressionInputs(root, db?.url ?? null);
-    const run = await runServerTests({ checkout: root, target: path, kind: 'regression', inputs, env: ctx.env, timeoutMs });
+    const run = await serverTestRun(ctx, game, path, inputs, timeoutMs);
     const evidence = [
       run.result === null ? null : await writeEvidence(options.evidence, 'regression/server-result.json', `${JSON.stringify(run.result, null, 2)}\n`),
       await writeEvidence(options.evidence, 'regression/server-output.log', run.output),
@@ -175,9 +185,13 @@ export function clientTimeoutMs(options: Pick<ClientRunOptions, 'runTimeLimitMs'
   return (options.runTimeLimitMs ?? LIMITS.programMs) + LIMITS.shortMs;
 }
 
-/** The GUT run of the client regression test of `path` in the checkout `root`, whose `client/` is imported. */
-export async function clientGutRun(ctx: Context, root: string, path: string, options: Pick<ClientRunOptions, 'godot' | 'runTimeLimitMs' | 'startTimeLimitMs'>): Promise<GutRunResult> {
-  return gutRun(ctx, {
+/**
+ * The GUT run of the client regression test of `path` in the checkout `game`, whose `client/` is imported, as a heavy step
+ * of the check (ogw.md `### performance lease`).
+ */
+export async function clientGutRun(ctx: Context, game: GameRepo, path: string, options: Pick<ClientRunOptions, 'godot' | 'runTimeLimitMs' | 'startTimeLimitMs'>): Promise<GutRunResult> {
+  const root = game.root;
+  return withHeavyStep(ctx, game, () => gutRun(ctx, {
     godot: options.godot,
     project: join(root, 'client'),
     cwd: root,
@@ -190,7 +204,7 @@ export async function clientGutRun(ctx: Context, root: string, path: string, opt
     config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host, ogw_shared_fixture_dir: join(root, 'data', 'fixtures') }),
     timeoutMs: clientTimeoutMs(options),
     startLimitMs: options.startTimeLimitMs ?? null,
-  });
+  }));
 }
 
 /**
@@ -211,7 +225,7 @@ export async function clientRegression(ctx: Context, game: GameRepo, path: strin
     if (importFailure !== null) return [failure(where, importFailure)];
   }
   const timeoutMs = clientTimeoutMs(options);
-  const ran = await clientGutRun(ctx, root, path, options);
+  const ran = await clientGutRun(ctx, game, path, options);
   const result = ran.ran;
   const output = `${result.stdout}${result.stderr}`;
   const received = ran.json as RunResultFile | null;
@@ -232,7 +246,7 @@ export async function clientRegression(ctx: Context, game: GameRepo, path: strin
 /** `regression test`: client regression test and server regression test of the targets in the checkout `game`. */
 export async function regressionTest(ctx: Context, game: GameRepo, targets: RegressionTargets, options: ClientRunOptions): Promise<CheckResult> {
   const [server, client] = await Promise.all([
-    targets.server === null ? [] : serverRegression(ctx, game.root, targets.server, options),
+    targets.server === null ? [] : serverRegression(ctx, game, targets.server, options),
     targets.client === null ? [] : clientRegression(ctx, game, targets.client, options),
   ]);
   return checkResult('regression test', null, [...client, ...server]);

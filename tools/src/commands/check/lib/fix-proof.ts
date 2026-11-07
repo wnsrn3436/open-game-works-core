@@ -12,16 +12,16 @@ import { git, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
-import { runServerTests } from '../../core/lib/server-tests.ts';
 import { binaryBuild } from '../../data/lib/binary-build.ts';
 import { generateCheckout } from '../../generate/api.ts';
+import { withHeavyStep } from '../../generation/lib/lease.ts';
 import { proofExemption, type Defect, type DefectsFile, type ReportRow } from '../../loop/lib/defects.ts';
 import type { FixTestProof, ProofTest } from '../../loop/lib/files.ts';
 import { reportRows } from '../../loop/lib/record.ts';
 import { readGameText, readRunJson, runRel } from '../../loop/lib/run.ts';
 import { importClient } from './engine.ts';
 import type { Slots } from './instances.ts';
-import { clientGutRun, regressionDb, regressionInputs, type ClientRunOptions } from './regression.ts';
+import { clientGutRun, regressionDb, regressionInputs, serverTestRun, type ClientRunOptions } from './regression.ts';
 import { shareUnits, UnitQueue } from './units.ts';
 
 const TEST_DIRS = ['client/tests', 'server/tests'] as const;
@@ -96,20 +96,20 @@ interface ClientResultFile {
   results?: { name?: unknown; status?: unknown }[];
 }
 
-/** A client test file run alone, as `ogw check --regression <file>` runs it. */
-async function clientFile(ctx: Context, root: string, file: string, options: ProofOptions): Promise<FileRun> {
-  const ran = await clientGutRun(ctx, root, file, options);
+/** A client test file run alone in the checkout `checkout`, as `ogw check --regression <file>` runs it. */
+async function clientFile(ctx: Context, checkout: GameRepo, file: string, options: ProofOptions): Promise<FileRun> {
+  const ran = await clientGutRun(ctx, checkout, file, options);
   const results = new Map<string, string>();
   for (const test of (ran.json as ClientResultFile | null)?.results ?? []) results.set(normalName(String(test.name)), String(test.status));
   const why = ran.ran.stopped === true ? 'the test runner did not start' : ran.ran.timedOut ? 'the run reached its time limit' : ran.json === null ? `the run sent no result (exit code ${String(ran.ran.code ?? ran.ran.signal)})` : null;
   return { started: ran.started, why, results };
 }
 
-/** A server test file run alone, as `ogw check --regression <file>` runs it. */
-async function serverFile(ctx: Context, root: string, file: string, options: ProofOptions): Promise<FileRun> {
+/** A server test file run alone in the checkout `checkout`, as `ogw check --regression <file>` runs it. */
+async function serverFile(ctx: Context, checkout: GameRepo, file: string, options: ProofOptions): Promise<FileRun> {
   const db = await regressionDb(ctx, options.db);
   try {
-    const run = await runServerTests({ checkout: root, target: file, kind: 'regression', inputs: regressionInputs(root, db?.url ?? null), env: ctx.env, timeoutMs: LIMITS.programMs });
+    const run = await serverTestRun(ctx, checkout, file, regressionInputs(checkout.root, db?.url ?? null), LIMITS.programMs);
     const results = new Map((run.result?.results ?? []).map((t) => [t.name, t.status]));
     const why = run.timedOut ? 'the run reached its time limit' : run.result === null ? `vitest wrote no report (exit code ${String(run.exitCode)})` : null;
     return { started: run.result !== null || run.timedOut, why, results };
@@ -167,8 +167,10 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
     for (const c of changed.filter((d) => d.deleted)) await rm(join(worktree, c.path), { force: true });
     const checkout: GameRepo = { ...game, root: worktree, inWorktree: true };
     try {
-      await generateCheckout(ctx, checkout);
-      await binaryBuild(ctx, checkout, 'the generated files of the fix base could not be written');
+      await withHeavyStep(ctx, checkout, async () => {
+        await generateCheckout(ctx, checkout);
+        await binaryBuild(ctx, checkout, 'the generated files of the fix base could not be written');
+      });
     } catch (error) {
       return none((error as Error).message.split('\n')[0] as string);
     }
@@ -178,10 +180,10 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
     const clients = async (): Promise<void> => {
       if (client.length === 0) return;
       const importFailure = await importClient(ctx, options.godot, checkout);
-      if (importFailure === null) await runFiles(ctx, client, (file) => clientFile(ctx, worktree, file, options), runs, options.slots);
+      if (importFailure === null) await runFiles(ctx, client, (file) => clientFile(ctx, checkout, file, options), runs, options.slots);
       else for (const file of client) runs.set(file, { started: false, why: `the client import failed: ${importFailure}`, results: new Map() });
     };
-    const settled = await Promise.allSettled([runFiles(ctx, server, (file) => serverFile(ctx, worktree, file, options), runs, options.slots), clients()]);
+    const settled = await Promise.allSettled([runFiles(ctx, server, (file) => serverFile(ctx, checkout, file, options), runs, options.slots), clients()]);
     const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
     if (failed !== undefined) throw failed.reason;
     return runs;

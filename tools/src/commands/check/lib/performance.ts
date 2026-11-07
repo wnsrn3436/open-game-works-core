@@ -2,6 +2,7 @@ import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { withWriterWithin, type RwLock, type WriterWait } from '../../../lib/rwlock.ts';
+import { heavyStepsEnd } from '../../generation/lib/lease.ts';
 import { leaseHoldersEnd } from '../../instance/api.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import type { CheckFailure, CheckResult, HostLoad } from '../api.ts';
@@ -483,11 +484,14 @@ const LEASE_BUSY: Record<WriterWait, string> = {
   others: 'host busy: regress instance',
 };
 
+/** The message of the `unknown` items of a measurement whose wait ended while a heavy step of a regress check held the lease. */
+const STEPS_BUSY = 'host busy: regress check';
+
 /**
  * performance of every platform profile, one profile at a time so that no other instance of the check runs beside the
  * measured one (ogw.md `## performance`), holding the performance lease exclusively across all of them, once the
- * instances that hold it shared have stopped (ogw.md `### performance lease`). When the lease does not come within its
- * wait, nothing is measured and each item is `unknown`, with the host load read during the wait.
+ * instances and then the heavy steps that hold it shared have ended (ogw.md `### performance lease`). When the lease does
+ * not come within its wait, nothing is measured and each item is `unknown`, with the host load read during the wait.
  */
 export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
   const each = async (): Promise<CheckResult[]> => {
@@ -502,6 +506,13 @@ export async function performanceChecks(ctx: Context, game: string, platforms: r
     const hostLoad = await waiting.stop();
     return platforms.map((p) => withLoad(checkResult('performance', p, [failure(SCENARIO_WHERE, message)], true), hostLoad));
   };
+  // the holders that are no reader entry: the instances of regress games, then the heavy steps of their checks
+  let othersBusy = LEASE_BUSY.others;
+  const othersEnd = async (deadline: number): Promise<boolean> => {
+    if (!(await leaseHoldersEnd(ctx, deadline))) return false;
+    othersBusy = STEPS_BUSY;
+    return heavyStepsEnd(options.lease, deadline);
+  };
   try {
     const leased = await withWriterWithin(
       options.lease,
@@ -509,10 +520,10 @@ export async function performanceChecks(ctx: Context, game: string, platforms: r
         await waiting.stop();
         return each();
       },
-      (deadline) => leaseHoldersEnd(ctx, deadline),
+      othersEnd,
     );
     if (leased.ran) return leased.value;
-    return await unknown(LEASE_BUSY[leased.waited]);
+    return await unknown(leased.waited === 'others' ? othersBusy : LEASE_BUSY[leased.waited]);
   } catch (error) {
     return unknown(`performance did not run: ${(error as Error).message}`);
   }

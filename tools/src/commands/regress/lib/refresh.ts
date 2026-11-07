@@ -131,7 +131,7 @@ async function admissionCatches(ctx: Context, input: AdmitInput, state: string, 
   return { catches: results.map((r) => r.catch), texts: results.map((r) => (r.catch === 'unknown' ? `unknown (${r.reason ?? ''})` : r.catch)), files: results.map((r) => r.file) };
 }
 
-/** Step 4 of admission: the probes of the seeded commit and of the reference commit, together. */
+/** Step 4 of admission: the probes of the seeded commit and of the reference commit, together, beside the checks of step 3. */
 async function admissionOracle(ctx: Context, input: AdmitInput, state: string, seeded: string, reference: string, work: string): Promise<{ oracle: NonNullable<Admission['oracle']>; reason: string | null }> {
   const { self, pool, repo } = input.run;
   const folder = join(seedDir(repo, input.seed.id), 'oracle');
@@ -164,21 +164,22 @@ export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admiss
   if ('result' in applied) return applied;
   const work = join(await dataDir(ctx), 'regress', `admit-${version}`, seed.id);
   await mkdir(work, { recursive: true });
-  const { catches, texts, files } = await admissionCatches(ctx, input, state.name, applied.seeded, work);
+  const reference = applied.reference;
+  // the probes do not wait for the checks of the catch, nor the checks for the probes
+  const [{ catches, texts, files }, probed] = await every([
+    admissionCatches(ctx, input, state.name, applied.seeded, work),
+    reference === null ? Promise.resolve(null) : admissionOracle(ctx, input, state.name, applied.seeded, reference, work),
+  ]);
   // what `ogw regress expect` makes the target checks of a seed that the checks catch although no check was known to
   const added = seed.manifest.expect === 'missed' ? addedFailures(files, input.baseChecks) : null;
-  const fields = { base: input.base, seeded: applied.seeded, reference: applied.reference, catch: catches, added };
+  const oracle = probed?.oracle ?? null;
+  const fields = { base: input.base, seeded: applied.seeded, reference, catch: catches, added, oracle };
   if (catches.some((c) => c !== seed.manifest.expect)) return stale(`not ${seed.manifest.expect}: ${texts.join(', ')}`, fields);
-  let oracle: Admission['oracle'] = null;
-  if (applied.reference !== null) {
-    const probed = await admissionOracle(ctx, input, state.name, applied.seeded, applied.reference, work);
-    oracle = probed.oracle;
-    if (probed.reason !== null) return stale(probed.reason, { ...fields, oracle });
-  }
+  if (probed !== null && probed.reason !== null) return stale(probed.reason, fields);
   const folder = seedDir(input.run.repo, seed.id);
   await writeFileAtomic(join(folder, `patch-${version}.diff`), await git(state.mainRoot, ['diff', '--binary', input.base, applied.seeded], { env: ctx.env }));
   if (applied.reference !== null) await writeFileAtomic(join(folder, `reference-${version}.diff`), await git(state.mainRoot, ['diff', '--binary', applied.seeded, applied.reference], { env: ctx.env }));
-  return { result: 'admitted', ...fields, oracle, reason: null, at: Date.now() };
+  return { result: 'admitted', ...fields, reason: null, at: Date.now() };
 }
 
 export interface StateRefresh {

@@ -177,7 +177,7 @@ export async function addReader(lock: RwLock): Promise<() => Promise<void>> {
 }
 
 /** Leaves an entry of this process in `dir`; returns the function that removes it. */
-async function addEntry(dir: string): Promise<() => Promise<void>> {
+export async function addEntry(dir: string): Promise<() => Promise<void>> {
   const entry = join(dir, `${String(process.pid)}-${randomBytes(6).toString('hex')}`);
   await mkdir(entry, { recursive: true });
   await writeFile(join(entry, 'pid'), ownerText());
@@ -185,7 +185,7 @@ async function addEntry(dir: string): Promise<() => Promise<void>> {
 }
 
 /** The live entries of `dir`. An entry whose process is gone is left over from a crash: it is removed. */
-async function liveEntries(dir: string): Promise<number> {
+export async function liveEntries(dir: string): Promise<number> {
   let live = 0;
   for (const name of await readdir(dir).catch(whenNotFound([]))) {
     const entry = join(dir, name);

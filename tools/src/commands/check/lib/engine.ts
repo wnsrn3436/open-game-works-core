@@ -10,6 +10,7 @@ import { exists } from '../../../lib/fsx.ts';
 import { run } from '../../../lib/proc.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { installEnginePackages } from '../../generate/api.ts';
+import { withHeavyStep } from '../../generation/lib/lease.ts';
 import { engineExecutable } from '../../instance/lib/prepare.ts';
 
 /** Executable of the engine version the game uses (`engineExecutable` of the runner). Fails when this host does not have it. */
@@ -49,12 +50,13 @@ export async function withClientPackages<T>(ctx: Context, game: GameRepo, fn: ()
 }
 
 /**
- * `godot --headless --path client --import` of the checkout under {@link withClientPackages}. Returns null when it
- * succeeded, else the failure message. A failed import removes `client/.godot/` before the lock is released
- * (ogw.md `## runner`), so no instance of the checkout starts on a broken import.
+ * `godot --headless --path client --import` of the checkout under {@link withClientPackages}, as a heavy step of the check
+ * (ogw.md `### performance lease`), which waits for the lease before it takes the lock. Returns null when it succeeded,
+ * else the failure message. A failed import removes `client/.godot/` before the lock is released (ogw.md `## runner`),
+ * so no instance of the checkout starts on a broken import.
  */
 export async function importClient(ctx: Context, godot: string, game: GameRepo): Promise<string | null> {
-  return withClientPackages(ctx, game, () => runImport(ctx, godot, game.root));
+  return withHeavyStep(ctx, game, () => withClientPackages(ctx, game, () => runImport(ctx, godot, game.root)));
 }
 
 /**

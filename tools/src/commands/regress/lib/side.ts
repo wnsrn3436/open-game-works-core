@@ -38,6 +38,12 @@ export interface SideInfo {
    * absent for a side tool from before, whose checks with performance run alone (`### regress run`).
    */
   instanceLease?: true;
+  /**
+   * The heavy steps of the checks of regress games that the side tool runs hold the performance lease (ogw.md
+   * `### performance lease`); absent for a side tool from before. Two sides of which only one has it keep the coarse rule
+   * of `### regress run`.
+   */
+  stepLease?: true;
 }
 
 export interface Side extends SideSpec {

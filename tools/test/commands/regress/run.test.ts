@@ -3,9 +3,21 @@ import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { regressChecks, type CheckResult } from '../../../src/commands/check/api.ts';
 import { jobFacts, makeSide, removeSide, sideAgent, sideCheck, sideMerge, sideProbe, type Side, type SideSpec } from '../../../src/commands/regress/lib/side.ts';
-import { seedRunPlan } from '../../../src/commands/regress/lib/run.ts';
+import { makeCopyRepo } from '../../../src/commands/regress/lib/copy.ts';
+import * as regressPoolModule from '../../../src/commands/regress/lib/pool.ts';
+import { leasedAlike, seedRunPlan } from '../../../src/commands/regress/lib/run.ts';
+import { pooled } from '../../../src/lib/pool.ts';
 import { ogw, makeWorkspace, sh, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
 import { item, meetOtherGroup, overlaps, runningBeside, sourceGame, write, type Span } from './helpers.ts';
+
+vi.mock('../../../src/commands/regress/lib/copy.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/commands/regress/lib/copy.ts')>();
+  return { ...actual, makeCopyRepo: vi.fn(actual.makeCopyRepo) };
+});
+vi.mock('../../../src/lib/pool.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/lib/pool.ts')>();
+  return { ...actual, pooled: vi.fn(actual.pooled) };
+});
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
@@ -74,9 +86,13 @@ async function admitted(ws: TestWorkspace, secondState = false): Promise<void> {
   vi.mocked(sideCheck).mockReset();
 }
 
-/** A side whose side tool runs; with `leased` false, one from before its instances held the performance lease. */
-function fakeSide(spec: SideSpec, coreVersion = '1.0.0', leased = true): Side {
-  return { ...spec, worktree: `/sides/${spec.name}`, unknown: null, info: { commit: spec.commit, coreVersion, promptBytes: { content: 1000, translation: 500 }, agents: { content: { cli: 'claude-code', model: `${spec.name}-model`, effort: 'high' } }, ...(leased ? { instanceLease: true as const } : {}) } };
+/**
+ * A side whose side tool runs; with `lease` `instances`, one from before its heavy steps held the performance lease, and
+ * with `none`, one from before its instances held it too.
+ */
+function fakeSide(spec: SideSpec, coreVersion = '1.0.0', lease: 'all' | 'instances' | 'none' = 'all'): Side {
+  const leases = { ...(lease === 'none' ? {} : { instanceLease: true as const }), ...(lease === 'all' ? { stepLease: true as const } : {}) };
+  return { ...spec, worktree: `/sides/${spec.name}`, unknown: null, info: { commit: spec.commit, coreVersion, promptBytes: { content: 1000, translation: 500 }, agents: { content: { cli: 'claude-code', model: `${spec.name}-model`, effort: 'high' } }, ...leases } };
 }
 
 /** The content of client/a.gd at a commit of a game repo. */
@@ -86,6 +102,7 @@ function codeAt(ws: TestWorkspace, game: string, commit: string): string {
 
 beforeEach(() => {
   for (const fn of [makeSide, removeSide, sideCheck, sideAgent, sideMerge, sideProbe, jobFacts, regressChecks]) vi.mocked(fn).mockReset();
+  for (const fn of [makeCopyRepo, pooled]) vi.mocked(fn).mockClear();
   vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec)));
   vi.mocked(removeSide).mockResolvedValue();
   vi.mocked(jobFacts).mockResolvedValue({ usage: { cli: 'claude-code', model: 'm', effort: 'high', inputTokens: 100, cachedTokens: 0, outputTokens: 1, costUsd: 1, costUnknown: null, turns: 2 }, startedAt: 0, endedAt: 60_000 });
@@ -179,7 +196,7 @@ describe('ogw regress run', () => {
     const ws = makeWorkspace();
     await admitted(ws, true);
     const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
-    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after')));
+    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after' ? 'all' : 'none')));
     const spans: (Span & { performance: boolean })[] = [];
     timedChecks(ws, spans, (request) => !request.performance);
     const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
@@ -302,7 +319,7 @@ describe('ogw regress run', () => {
     const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 8 } });
     await admitted(ws, true);
     const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
-    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after')));
+    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after' ? 'all' : 'none')));
     vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 }));
     const spans: Span[] = [];
     timedFixer(ws, spans, 2, 500);
@@ -313,6 +330,99 @@ describe('ogw regress run', () => {
     for (const span of s09) expect(runningBeside(spans, span)).toEqual([]);
     const s08 = spans.filter((s) => s.group.startsWith('var x = leak8'));
     expect(Math.max(...s08.map((s) => s.end))).toBeLessThanOrEqual(Math.min(...s09.map((s) => s.start)));
+  });
+
+  it('keeps the coarse rule, with the pool of ogw, for sides of which only one keeps its heavy steps off a measurement', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 8 } });
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after' ? 'all' : 'instances')));
+    vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 }));
+    const spans: Span[] = [];
+    timedFixer(ws, spans, 2, 500);
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--repeats', '2', '--seeds', 'S08', 'S09']);
+    expect(run.code).toBe(0);
+    const s09 = spans.filter((s) => s.group.startsWith('var x = leak9'));
+    expect(s09).toHaveLength(4);
+    for (const span of s09) expect(runningBeside(spans, span)).toEqual([]);
+    // the seed-runs go through the pool of ogw, which the regress pool does not copy
+    expect(vi.mocked(pooled).mock.calls.filter((c) => c[1] === 8).map((c) => c[0].length)).toEqual([4]);
+    expect(Object.keys(regressPoolModule)).not.toContain('pooled');
+    const info = (lease: 'all' | 'instances' | 'none'): NonNullable<Side['info']> => fakeSide({ name: 'before', commit: head, agents: {} }, '1.0.0', lease).info as NonNullable<Side['info']>;
+    expect([leasedAlike(info('all'), info('all')), leasedAlike(info('instances'), info('instances')), leasedAlike(info('instances'), info('all')), leasedAlike(info('all'), info('none'))]).toEqual([true, true, false, false]);
+  });
+
+  it('starts the seed-runs of a seed once the after side has caught it, while the catch of another seed runs on', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 8 } });
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    const fixers: { seed: string; start: number }[] = [];
+    const slowEnded = new Map<string, number>();
+    vi.mocked(sideCheck).mockImplementation(async (_ctx, side, request) => {
+      const code = codeAt(ws, request.game, request.commit).trim();
+      // the catch of S01 by the after side and that of S08 by the before side end only once a fixer of S08 has started,
+      // at most after 5 s
+      const slow = request.out.includes('/catch/') && ((code === 'var x = leak' && side.name === 'after') || (code === 'var x = leak8' && side.name === 'before'));
+      if (slow) {
+        for (const until = Date.now() + 5000; !fixers.some((f) => f.seed === 'S08') && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 5));
+        slowEnded.set(`${side.name} ${code}`, performance.now());
+      }
+      return { file: { commit: request.commit, checks: [blockerOf(code), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 };
+    });
+    vi.mocked(sideAgent).mockImplementation((_ctx, _side, request) => {
+      const repo = join(ws.games, request.game);
+      const code = readFileSync(join(repo, 'client/a.gd'), 'utf8').trim();
+      fixers.push({ seed: code === 'var x = leak8' ? 'S08' : code === 'var x = leak' ? 'S01' : code, start: performance.now() });
+      const [records, n] = request.seedRun.split(':') as [string, string];
+      write(repo, 'client/a.gd', 'var x = 1\n');
+      write(repo, `records/loops/${records}/content-${n}.md`, '## defects\n\n| id | result | note |\n|---|---|---|\n| flame-leak | fixed | done |\n');
+      sh(repo, 'git', ['add', '-A']);
+      sh(repo, 'git', ['commit', '-qm', 'fix', '--no-verify']);
+      return Promise.resolve({ job: 'j', status: 'done', output: null, reason: null });
+    });
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--repeats', '1', '--seeds', 'S01', 'S08']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(fixers.map((f) => f.seed).sort()).toEqual(['S01', 'S01', 'S08', 'S08']);
+    // the seed-runs of S08 start before the after side's catch of S01 and the before side's catch of S08 have ended, those
+    // of S01 only after the after side's catch of S01
+    const s08 = Math.min(...fixers.filter((f) => f.seed === 'S08').map((f) => f.start));
+    expect(s08).toBeLessThan(slowEnded.get('after var x = leak') as number);
+    expect(s08).toBeLessThan(slowEnded.get('before var x = leak8') as number);
+    expect(Math.min(...fixers.filter((f) => f.seed === 'S01').map((f) => f.start))).toBeGreaterThan(slowEnded.get('after var x = leak') as number);
+    const ms = /records\/runs\/(\d+)\.md/.exec(run.stdout)?.[1] ?? '';
+    const data = JSON.parse(readFileSync(join(ws.regress, 'records', 'runs', ms, 'run.json'), 'utf8')) as { seedRuns: { id: string }[] };
+    // the results keep the order of the seed-runs
+    expect(data.seedRuns.map((r) => r.id)).toEqual(['S01-before-1', 'S01-after-1', 'S08-before-1', 'S08-after-1']);
+  });
+
+  it('makes the fix repo of a seed once from its seeded commit and those of its other seed-runs as clones of it, each with its own hook', async () => {
+    const ws = makeWorkspace();
+    await admitted(ws);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 }));
+    const repos: { game: string; hook: string; hooksPath: string; root: string }[] = [];
+    fakeFixer(ws, [], () => undefined);
+    const fixer = vi.mocked(sideAgent).getMockImplementation() as typeof sideAgent;
+    vi.mocked(sideAgent).mockImplementation((ctx, side, request) => {
+      const repo = join(ws.games, request.game);
+      if (request.seedRun.endsWith(':1')) {
+        const hooksPath = sh(repo, 'git', ['config', 'core.hooksPath']).trim();
+        repos.push({ game: request.game, hook: readFileSync(join(hooksPath, 'pre-commit'), 'utf8'), hooksPath, root: sh(repo, 'git', ['rev-list', '--max-parents=0', 'main']).trim() });
+      }
+      return fixer(ctx, side, request);
+    });
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--repeats', '2']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(repos.map((r) => r.game).sort()).toEqual(['ogw-regress-fix-1', 'ogw-regress-fix-2', 'ogw-regress-fix-3', 'ogw-regress-fix-4']);
+    // one fix repo made from the seeded commit, the 3 others clones of it on this host
+    expect(vi.mocked(makeCopyRepo).mock.calls.filter((c) => c[1].startsWith('ogw-regress-fix-')).map((c) => c[1])).toEqual(process.platform === 'darwin' ? ['ogw-regress-fix-1'] : ['ogw-regress-fix-1', 'ogw-regress-fix-2', 'ogw-regress-fix-3', 'ogw-regress-fix-4']);
+    for (const repo of repos) {
+      expect(repo.hooksPath).toBe(join(ws.games, repo.game, '.git', 'hooks'));
+      expect(repo.hook).toContain(`# ogw pre-commit hook of game ${repo.game}\n`);
+    }
+    expect(new Set(repos.map((r) => r.root)).size).toBe(1);
   });
 
   it('writes only sides and unknown with an unknown side and ends with exit code 1', async () => {

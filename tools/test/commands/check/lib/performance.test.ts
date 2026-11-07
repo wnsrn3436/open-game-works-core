@@ -914,6 +914,33 @@ describe('performanceChecks: the performance lease', () => {
     expect(await writerHoldsOrWaits(lease)).toBe(false);
   });
 
+  it('waits, after the instances, for the heavy steps of regress checks that hold the lease, and is unknown when they do not end by then', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const order: string[] = [];
+    trackInstances(order);
+    fakeGame({ lobby: 60, battle: 60 }, []);
+    const lease = await leaseOf(root, 3000);
+    const other = spawn('sleep', ['30'], { stdio: 'ignore' });
+    try {
+      // a heavy step of another process holds the lease
+      const entry = join(`${lease.base}-steps`, 'step');
+      leave(entry, ownerOf(other.pid as number));
+      vi.mocked(leaseHoldersEnd).mockImplementation(() => Promise.resolve(order.push('instances ended') > 0));
+      const checks = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }));
+      await sleep(600);
+      expect(order).toEqual(['instances ended']);
+      rmSync(entry, { recursive: true });
+      expect((await checks).map((r) => r.result)).toEqual(['pass']);
+      expect(order).toEqual(['instances ended', 'start', 'stop']);
+      leave(entry, ownerOf(other.pid as number));
+      order.length = 0;
+      expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease: await leaseOf(root, 300) }))).toEqual([busy('web', 'host busy: regress check')]);
+      expect(order).toEqual(['instances ended']);
+    } finally {
+      other.kill('SIGKILL');
+    }
+  });
+
   it('is unknown without measuring when the measurement of another check holds the lease past the wait', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     trackInstances([]);

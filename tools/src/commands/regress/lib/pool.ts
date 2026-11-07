@@ -8,28 +8,6 @@ export async function every<T extends readonly unknown[] | []>(work: T): Promise
   return results.map((r) => (r as PromiseFulfilledResult<unknown>).value) as { -readonly [P in keyof T]: Awaited<T[P]> };
 }
 
-/** Runs `work` over `items`, at most `limit` at a time, keeping the order of the results. */
-export async function pooled<T, R>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
-  let next = 0;
-  let failed = false;
-  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-    // after a failure no more work starts; the work that runs ends
-    while (!failed) {
-      const index = next++;
-      if (index >= items.length) return;
-      try {
-        results[index] = await work(items[index] as T, index);
-      } catch (error) {
-        failed = true;
-        throw error;
-      }
-    }
-  });
-  await every(lanes);
-  return results;
-}
-
 /** Runs pieces of work at most `limit` at a time, in the order they came. */
 export interface Limiter {
   run<T>(work: () => Promise<T>): Promise<T>;

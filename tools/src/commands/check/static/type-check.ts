@@ -1,6 +1,7 @@
 import { join, relative, sep } from 'node:path';
 import { godotTypeCheck } from '../../code/gdscript-checks.ts';
 import { vitestGlobals } from '../../code/lib/typescript.ts';
+import { withHeavyStep } from '../../generation/lib/lease.ts';
 import { withClientPackages } from '../lib/engine.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { godotExecutable } from './lib/engine.ts';
@@ -24,9 +25,9 @@ async function gdscript(sc: StaticContext): Promise<Finding[]> {
   const godot = await godotExecutable(sc);
   const project = { root: sc.root, folder: 'client', repoPathOf: repoPath };
   // after the import of `ogw check --loop` the instance clients may run: no import may write `client/.godot/` again
-  const errors = sc.imported
-    ? await godotTypeCheck(godot, project, files, sc.ctx.env, { imported: true })
-    : await withClientPackages(sc.ctx, sc.game, () => godotTypeCheck(godot, project, files, sc.ctx.env));
+  const errors = await withHeavyStep(sc.ctx, sc.game, () =>
+    sc.imported ? godotTypeCheck(godot, project, files, sc.ctx.env, { imported: true }) : withClientPackages(sc.ctx, sc.game, () => godotTypeCheck(godot, project, files, sc.ctx.env)),
+  );
   return errors.map((e) => finding(NAME, at(e.path, e.line), e.message));
 }
 
@@ -71,11 +72,14 @@ export function typescriptErrors(root: string, files: readonly string[]): Findin
   return out;
 }
 
-/** The Godot type check starts first; `tsc` runs beside it in a worker thread (`offThread`). */
+/**
+ * The Godot type check starts first; `tsc` runs beside it in a worker thread (`offThread`). Each is a heavy step of the
+ * check (ogw.md `### performance lease`).
+ */
 export async function run(sc: StaticContext): Promise<Finding[]> {
   const godot = gdscript(sc);
   const files = sc.filter(isServerContentTs);
-  const server = files.length === 0 ? Promise.resolve([]) : offThread({ kind: 'tsc', root: sc.root, files: [...files] });
+  const server = files.length === 0 ? Promise.resolve([]) : withHeavyStep(sc.ctx, sc.game, () => offThread({ kind: 'tsc', root: sc.root, files: [...files] }));
   const [gd, ts] = await Promise.allSettled([godot, server]);
   if (gd.status === 'rejected') throw gd.reason;
   if (ts.status === 'rejected') throw ts.reason;

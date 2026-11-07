@@ -171,9 +171,10 @@ export function selectionOf(set: CheckSet): Selection {
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
  * the bot playtest (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry
- * runs and the fix test proof of `--loop`); the failure of each is logged under its name. The work that does not read
- * the checkout's `client/` (the server regression test and no placeholder) runs beside its import. The performance
- * measurements start once every other instance of the check has stopped (ogw.md `## performance`).
+ * runs and the fix test proof of `--loop`, the fix test proof of `ogw regress check`); the failure of each is logged under
+ * its name. The work that does not read the checkout's `client/` (the server regression test and no placeholder) runs
+ * beside its import. The performance measurements start once every other instance of the check has stopped and the work
+ * of `alongside` has ended (ogw.md `## performance`).
  */
 export async function gameChecks(
   ctx: Context,

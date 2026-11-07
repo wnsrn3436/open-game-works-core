@@ -320,6 +320,44 @@ describe('ogw regress refresh and admission', () => {
     expect(s10).toMatchObject({ result: 'stale', reason: 'oracle: seeded pass (var x = 6), reference pass (var x = 1)' });
   });
 
+  it('probes an oracle seed beside the checks of its catch, and keeps the probes of a seed that the checks make stale', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    const missed = { ...MANIFEST, expect: 'missed', match: [], oracle: true, row: { ...MANIFEST.row, source: 'play', where: 'result', what: 'shows 4', evidence: ['play'] } };
+    const reference = (from: string): string => ['diff --git a/client/a.gd b/client/a.gd', '--- a/client/a.gd', '+++ b/client/a.gd', '@@ -1 +1 @@', `-var x = ${from}`, '+var x = 1', ''].join('\n');
+    // S11 is caught by its checks, though it is to be missed
+    bootstrap(ws, commit, { S09: { manifest: missed, patch: patchOf('5'), reference: reference('5'), oracle: true }, S11: { manifest: missed, patch: patchOf('leak'), reference: reference('leak'), oracle: true } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const state = join(ws.games, 'ogw-regress-lc');
+    const spans: Span[] = [];
+    const started = new Set<string>();
+    const timed = async <T>(key: string, group: string, work: () => Promise<T>): Promise<T> => {
+      const start = performance.now();
+      // a probe and a check of the seeded commit of S09 that run together meet at once, one after another only at the limit
+      if (key.includes('S09')) await meetOtherGroup(started, group, 3000);
+      const value = await work();
+      spans.push({ key, group, start, end: performance.now() });
+      return value;
+    };
+    const checks = vi.mocked(regressChecks).getMockImplementation();
+    vi.mocked(regressChecks).mockImplementation((ctx, game, ...rest) => {
+      const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8').trim();
+      return timed(`check ${code === 'var x = 5' ? 'S09' : code}`, 'check', () => (checks as NonNullable<typeof checks>)(ctx, game, ...rest));
+    });
+    vi.mocked(sideProbe).mockImplementation((_ctx, _side, request) => {
+      const code = sh(state, 'git', ['show', `${request.commit}:client/a.gd`]).trim();
+      const seed = request.oracle.includes('S09') ? 'S09' : 'S11';
+      return timed(`probe ${seed} ${code}`, 'probe', () => Promise.resolve({ result: code === 'var x = 1' ? 'pass' : 'fail', reason: code }));
+    });
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(1);
+    const s09 = spans.filter((s) => s.key.includes('S09'));
+    expect(s09.filter((s) => s.group === 'probe')).toHaveLength(2);
+    expect(s09.filter((s) => s.group === 'check')).toHaveLength(3);
+    expect(overlaps(s09, false)).not.toEqual([]);
+    expect(JSON.parse(readFileSync(join(ws.regress, 'seeds/S09/admitted-1.0.0.json'), 'utf8'))).toMatchObject({ result: 'admitted', oracle: { seeded: 'fail', reference: 'pass' } });
+    expect(JSON.parse(readFileSync(join(ws.regress, 'seeds/S11/admitted-1.0.0.json'), 'utf8'))).toMatchObject({ result: 'stale', reason: 'not missed: caught, caught, caught', oracle: { seeded: 'fail', reference: 'pass' } });
+  });
+
   it('upgrades a state below the core version of the harness and runs one content agent before the base checks', async () => {
     const ws = makeWorkspace();
     const commit = sourceGame(ws, 'src');
