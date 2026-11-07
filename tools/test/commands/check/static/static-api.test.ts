@@ -19,6 +19,7 @@ vi.mock('../../../../src/commands/env/api.ts', () => ({
 }));
 vi.mock('../../../../src/commands/generate/api.ts', () => ({
   runGenerate: () => Promise.resolve(),
+  installEnginePackages: () => Promise.resolve({ written: [], removed: [] }),
   gameModules: () => Promise.resolve({ client: ['AuthCore', 'NativeUiCore', 'SoundCore', 'UICore'], server: [] }),
   gameCoreSpec: () => Promise.resolve({ version: '1.0.0', modules: [] }),
   mergedCoreSettings: () => Promise.resolve({}),

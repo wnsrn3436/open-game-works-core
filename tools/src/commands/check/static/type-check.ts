@@ -1,7 +1,7 @@
 import { join, relative, sep } from 'node:path';
 import { godotTypeCheck } from '../../code/gdscript-checks.ts';
 import { vitestGlobals } from '../../code/lib/typescript.ts';
-import { withClientImport } from '../lib/engine.ts';
+import { withClientPackages } from '../lib/engine.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { godotExecutable } from './lib/engine.ts';
 import { isClientContentGd, isServerContentTs, isServerTest, repoPath } from './lib/files.ts';
@@ -11,8 +11,8 @@ import { ts } from './lib/ts-source.ts';
 /**
  * type check: content code fails the type check of `ogw code check`. GDScript: `godot --headless --path client --import`,
  * then `godot --headless --path client --check-only --script <file>` per content `.gd` ends without an error
- * (ogw.md `## code check`), under the import lock of the checkout (`withClientImport`). TypeScript: `tsc`
- * `strict` on server content code.
+ * (ogw.md `## code check`), under the import lock of the checkout with the engine packages put in first
+ * (`withClientPackages`). TypeScript: `tsc` `strict` on server content code.
  */
 export const NAME = 'type check';
 
@@ -25,7 +25,7 @@ async function gdscript(sc: StaticContext): Promise<Finding[]> {
   // after the import of `ogw check --loop` the instance clients may run: no import may write `client/.godot/` again
   const errors = sc.imported
     ? await godotTypeCheck(godot, project, files, sc.ctx.env, { imported: true })
-    : await withClientImport(sc.ctx, sc.root, () => godotTypeCheck(godot, project, files, sc.ctx.env));
+    : await withClientPackages(sc.ctx, sc.game, () => godotTypeCheck(godot, project, files, sc.ctx.env));
   return errors.map((e) => finding(NAME, at(e.path, e.line), e.message));
 }
 

@@ -3,6 +3,7 @@ import { join, posix } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { isNotFound, whenNotFound } from '../../../lib/fsx.ts';
+import type { GameRepo } from '../../../lib/game.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
 import { checkedScriptErrors, engineErrorLines, gutRun, type GutRunResult } from '../../core/lib/godot.ts';
@@ -188,15 +189,17 @@ export async function clientGutRun(ctx: Context, root: string, path: string, opt
 }
 
 /**
- * Client regression test: GUT headless pass of the Godot project `client/` with a `UnitTestCore` test host. The import
- * runs under the import lock; the GUT run gets a `user://` of its own (`godotDataVariable`), so the `release` and test
- * setup of this run and the instances and runs of the same project name do not delete each other's app storage files.
+ * Client regression test: GUT headless pass of the Godot project `client/` of the checkout `game` with a `UnitTestCore`
+ * test host. The import (`importClient`, which puts GUT in first) runs under the import lock; the GUT run gets a `user://`
+ * of its own (`godotDataVariable`), so the `release` and test setup of this run and the instances and runs of the same
+ * project name do not delete each other's app storage files.
  */
-export async function clientRegression(ctx: Context, root: string, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
+export async function clientRegression(ctx: Context, game: GameRepo, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
+  const root = game.root;
   const where = targetWhere(path);
   if (options.importFailure !== undefined) return [failure(where, options.importFailure)];
   if (options.imported !== true) {
-    const importFailure = await importClient(ctx, options.godot, root);
+    const importFailure = await importClient(ctx, options.godot, game);
     if (importFailure !== null) return [failure(where, importFailure)];
   }
   const timeoutMs = clientTimeoutMs(options);
@@ -218,11 +221,11 @@ export async function clientRegression(ctx: Context, root: string, path: string,
   return failures;
 }
 
-/** `regression test`: client regression test and server regression test of the targets. */
-export async function regressionTest(ctx: Context, root: string, targets: RegressionTargets, options: ClientRunOptions): Promise<CheckResult> {
+/** `regression test`: client regression test and server regression test of the targets in the checkout `game`. */
+export async function regressionTest(ctx: Context, game: GameRepo, targets: RegressionTargets, options: ClientRunOptions): Promise<CheckResult> {
   const [server, client] = await Promise.all([
-    targets.server === null ? [] : serverRegression(ctx, root, targets.server, options),
-    targets.client === null ? [] : clientRegression(ctx, root, targets.client, options),
+    targets.server === null ? [] : serverRegression(ctx, game.root, targets.server, options),
+    targets.client === null ? [] : clientRegression(ctx, game, targets.client, options),
   ]);
   return checkResult('regression test', null, [...client, ...server]);
 }

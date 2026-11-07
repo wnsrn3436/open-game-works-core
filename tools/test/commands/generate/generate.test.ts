@@ -6,6 +6,7 @@ import {
   gameCoreSpec,
   gameModules,
   generateCheckout,
+  installEnginePackages,
   mergedCoreSettings,
   mergeReleaseSettings,
   moduleFilesWithoutDev,
@@ -285,6 +286,28 @@ describe('runGenerate and ogw generate', () => {
     sh(root, 'rm', ['-rf', join(root, '.git', 'ogw-generate.lock')]);
     expect(await pending).toEqual(expect.objectContaining({ removed: [] }));
     expect(existsSync(join(root, 'client', 'project.godot'))).toBe(true);
+  });
+});
+
+describe('installEnginePackages', () => {
+  it('writes only GUT and the plugins of this host OS, under the generate lock, then nothing when the bytes are the same', async () => {
+    const { ws, root } = setup({ 'client/generated/core_modules.gd': 'committed\n' });
+    const ctx = ctxOf(ws);
+    write(join(root, '.git', 'ogw-generate.lock', 'pid'), String(process.pid));
+    const pending = installEnginePackages(ctx, await ctx.game('g'));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(existsSync(join(root, 'client', 'addons'))).toBe(false);
+    sh(root, 'rm', ['-rf', join(root, '.git', 'ogw-generate.lock')]);
+    expect((await pending).written.sort()).toEqual([
+      'client/addons/gut/gut_cmdln.gd',
+      'client/addons/ogw-secure-storage/lib.gdextension',
+      'client/addons/webrtc/webrtc.gdextension',
+    ]);
+    expect(readFileSync(join(root, 'client', 'generated', 'core_modules.gd'), 'utf8')).toBe('committed\n');
+    for (const path of ['client/project.godot', 'client/core', 'server/core', 'client/resource']) expect(existsSync(join(root, path))).toBe(false);
+    expect(await installEnginePackages(ctx, await ctx.game('g'))).toEqual({ written: [], removed: [] });
+    makeGame(ws, 'u', { 'settings.json': { ...GAME_SETTINGS, engine: 'unity' } });
+    await expect(installEnginePackages(ctx, await ctx.game('u'))).rejects.toThrow('not defined: engine rules for engine unity');
   });
 });
 

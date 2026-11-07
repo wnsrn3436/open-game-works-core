@@ -13,12 +13,22 @@ import {
 } from '../../../../src/commands/check/lib/regression.ts';
 import { godotDataVariable } from '../../../../src/commands/core/lib/godot.ts';
 import { startPostgres } from '../../../../src/commands/core/lib/postgres.ts';
+import type { GameRepo } from '../../../../src/lib/game.ts';
 import { LIMITS } from '../../../../src/lib/limits.ts';
 import { fakeContext } from '../helpers.ts';
 import { gitOnlyHarness } from '../../../helpers/workspace.ts';
 import { fakeProgram } from '../../../helpers/fake-child.ts';
 
 vi.mock('../../../../src/commands/core/lib/postgres.ts', () => ({ startPostgres: vi.fn() }));
+// the engine packages of a checkout that the import puts in first: whether the import lock of the checkout was held
+const packages = vi.hoisted((): string[] => []);
+vi.mock('../../../../src/commands/generate/api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../src/commands/generate/api.ts')>()),
+  installEnginePackages: vi.fn((_ctx: unknown, game: GameRepo) => {
+    packages.push(`${game.root} ${existsSync(join(game.root, '.ogw-import.lock')) ? 'locked' : 'unlocked'}`);
+    return Promise.resolve({ written: [], removed: [] });
+  }),
+}));
 // a run that must send PUT /started within a start limit runs its engine in this process (`fakeProgram`), so how long
 // a process takes to boot on a loaded host does not decide the run
 vi.mock('node:child_process', async (importOriginal) => (await import('../../../helpers/fake-child.ts')).fakeSpawn(await importOriginal()));
@@ -32,6 +42,11 @@ function gameRoot(files: Record<string, string> = {}): string {
     writeFileSync(join(root, path), text);
   }
   return root;
+}
+
+/** The checkout of a game folder that is not a git checkout. */
+function checkout(root: string): GameRepo {
+  return { name: 'g', root, mainRoot: root, commonDir: join(root, '.git'), inWorktree: false };
 }
 
 /**
@@ -132,7 +147,7 @@ describe('regressionTest', () => {
     const root = gameRoot({ 'client/tests/shop/test_buy.gd': 'func test_buy_ok():\n' });
     const godot = fakeGodot({ result: passing, output: 'All tests passed\n' });
     const out = mkdtempSync(join(tmpdir(), 'ogw-out-'));
-    const result = await regressionTest(ctx, root, { client: 'client/tests', server: null }, {
+    const result = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, {
       godot: godot.path,
       evidence: { root: out, dir: 'ev', relative: true },
       runTimeLimitMs: 30_000, startTimeLimitMs: null,
@@ -151,8 +166,9 @@ describe('regressionTest', () => {
     expect(config.ogw_run_id).toMatch(/^[0-9a-z]{9,}$/);
     expect(JSON.parse(readFileSync(join(out, 'ev/regression/client-result.json'), 'utf8'))).toEqual(passing);
     expect(readFileSync(join(out, 'ev/regression/client-output.log'), 'utf8')).toBe('All tests passed\n');
-    // the import holds the lock the runner's import takes
+    // the import holds the lock the runner's import takes, and puts the engine packages in first under it
     expect(readFileSync(godot.importsFile, 'utf8')).toBe('locked\n');
+    expect(packages.filter((line) => line.startsWith(`${root} `))).toEqual([`${root} locked`]);
     expect(existsSync(join(root, '.ogw-import.lock'))).toBe(false);
   });
 
@@ -162,7 +178,7 @@ describe('regressionTest', () => {
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
     const shared = mkdtempSync(join(tmpdir(), 'ogw-shared-data-'));
     const sharedCtx = { ...ctx, env: { ...ctx.env, [godotDataVariable()]: shared } };
-    expect((await regressionTest(sharedCtx, root, { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null })).result).toBe('pass');
+    expect((await regressionTest(sharedCtx, checkout(root), { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null })).result).toBe('pass');
     const seen = JSON.parse(readFileSync(godot.dataFile, 'utf8')) as { data: string; exists: boolean };
     expect(seen.exists).toBe(true);
     expect(seen.data).not.toBe(shared);
@@ -174,8 +190,10 @@ describe('regressionTest', () => {
     const godot = fakeGodot({ result: passing });
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
     const options = { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null, imported: true };
-    expect((await regressionTest(ctx, root, { client: 'client/tests', server: null }, options)).result).toBe('pass');
+    expect((await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, options)).result).toBe('pass');
     expect(existsSync(godot.importsFile)).toBe(false);
+    // the caller's import put the engine packages in
+    expect(packages.filter((line) => line.startsWith(`${root} `))).toEqual([]);
   });
 
   it('passes a run whose SCRIPT ERROR: lines are the ones its tests checked, and fails one with more', async () => {
@@ -184,7 +202,7 @@ describe('regressionTest', () => {
     const run = async (output: string) => {
       const godot = fakeGodot({ result, output });
       const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
-      return regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null });
+      return regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 30_000, startTimeLimitMs: null });
     };
     expect((await run('SCRIPT ERROR: checked\n')).result).toBe('pass');
     const more = await run('SCRIPT ERROR: checked\nSCRIPT ERROR: other\n');
@@ -205,7 +223,7 @@ describe('regressionTest', () => {
     };
     const godot = fakeGodot({ result, output: 'SCRIPT ERROR: boom\n', code: 1 });
     const out = mkdtempSync(join(tmpdir(), 'ogw-out-'));
-    const checked = await regressionTest(ctx, root, { client: 'client/tests/shop/test_buy.gd', server: null }, {
+    const checked = await regressionTest(ctx, checkout(root), { client: 'client/tests/shop/test_buy.gd', server: null }, {
       godot: godot.path,
       evidence: { root: out, dir: 'ev', relative: false },
       runTimeLimitMs: null, startTimeLimitMs: null,
@@ -226,7 +244,7 @@ describe('regressionTest', () => {
     const root = gameRoot({ 'client/tests/shop/test_buy.gd': 'func test_buy_ok():\n' });
     const run = async (name: string): Promise<Awaited<ReturnType<typeof regressionTest>>> => {
       const godot = fakeGodot({ result: { ...passing, results: [{ name, status: 'fail', message: 'x' }] } });
-      return regressionTest(ctx, root, { client: 'client/tests/shop/test_buy.gd', server: null }, {
+      return regressionTest(ctx, checkout(root), { client: 'client/tests/shop/test_buy.gd', server: null }, {
         godot: godot.path, evidence: { root, dir: null, relative: true }, runTimeLimitMs: null, startTimeLimitMs: null,
       });
     };
@@ -238,9 +256,9 @@ describe('regressionTest', () => {
   it('fails when import fails, no result comes, or the run passes its time limit', async () => {
     const root = gameRoot();
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
-    const importFails = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: fakeGodot({ importCode: 3 }).path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null });
+    const importFails = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: fakeGodot({ importCode: 3 }).path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null });
     expect(importFails.failures).toEqual([{ where: 'client/tests:1', message: 'godot --import failed (3)', evidence: [] }]);
-    const silent = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: fakeGodot({}).path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null });
+    const silent = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: fakeGodot({}).path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null });
     expect(silent.failures).toEqual([{ where: 'client/tests:1', message: 'the test run sent no result', evidence: [] }]);
   });
 
@@ -248,7 +266,7 @@ describe('regressionTest', () => {
     const root = gameRoot();
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
     const started = Date.now();
-    const stalled = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: fakeGodot({ hang: true }).path, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300 });
+    const stalled = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: fakeGodot({ hang: true }).path, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300 });
     expect(Date.now() - started).toBeLessThan(20_000);
     expect(stalled.failures.map((f) => f.message)).toContain('test run did not start within 300 ms (no PUT /started)');
     // a GUT run that sends PUT /started at once and its result 1000 ms later, past the start limit, and exits; the
@@ -266,18 +284,18 @@ describe('regressionTest', () => {
         });
       });
     });
-    const ran = await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: starts, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300, imported: true });
+    const ran = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: starts, evidence, runTimeLimitMs: 60_000, startTimeLimitMs: 300, imported: true });
     expect(ran.failures).toEqual([]);
   }, 60_000);
 
   it('a failed import removes client/.godot/; a failure of the caller\'s import is reported without importing again', async () => {
     const root = gameRoot();
     const evidence = { root: mkdtempSync(join(tmpdir(), 'ogw-out-')), dir: null, relative: true };
-    await regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: fakeGodot({ importCode: 3 }).path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null });
+    await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: fakeGodot({ importCode: 3 }).path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null });
     expect(existsSync(join(root, 'client', '.godot'))).toBe(false);
     const godot = fakeGodot({ result: passing });
     const options = { godot: godot.path, evidence, runTimeLimitMs: 1, startTimeLimitMs: null, importFailure: 'godot --import failed (timed out)' };
-    const reported = await regressionTest(ctx, root, { client: 'client/tests', server: null }, options);
+    const reported = await regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, options);
     expect(reported.failures).toEqual([{ where: 'client/tests:1', message: 'godot --import failed (timed out)', evidence: [] }]);
     expect(existsSync(godot.importsFile)).toBe(false);
     expect(existsSync(godot.argsFile)).toBe(false);
@@ -292,7 +310,7 @@ describe('regressionTest', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       let settled = false;
-      const checking = regressionTest(ctx, root, { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 1000, startTimeLimitMs: null }).finally(() => {
+      const checking = regressionTest(ctx, checkout(root), { client: 'client/tests', server: null }, { godot: godot.path, evidence, runTimeLimitMs: 1000, startTimeLimitMs: null }).finally(() => {
         settled = true;
       });
       while (!existsSync(godot.sentFile)) await realSleep(10);
@@ -311,17 +329,17 @@ describe('regressionTest', () => {
     const options = { godot: '/nonexistent', evidence: { root: '/tmp', dir: null, relative: true }, runTimeLimitMs: null, startTimeLimitMs: null };
     const empty = gameRoot({ 'server/tests/README': 'x', 'server/tests/helper.ts': '' });
     const noTests = { name: 'regression test', platform: null, result: 'fail', failures: [{ where: 'server/tests:1', message: 'run failure: no tests', evidence: [] }], warnings: [] };
-    expect(await regressionTest(ctx, empty, { client: null, server: 'server/tests' }, options)).toEqual(noTests);
-    expect(await regressionTest(ctx, gameRoot(), { client: null, server: 'server/tests' }, options)).toEqual(noTests);
+    expect(await regressionTest(ctx, checkout(empty), { client: null, server: 'server/tests' }, options)).toEqual(noTests);
+    expect(await regressionTest(ctx, checkout(gameRoot()), { client: null, server: 'server/tests' }, options)).toEqual(noTests);
     const root = gameRoot({
       'server/tests/shop/buy.test.ts': "it('buys', () => { expect(process.env.OGW_DEFAULT_DB).toBe('sqlite'); expect(process.env.OGW_POSTGRESQL).toBeUndefined(); });\n",
       'server/tests/shop/sell.test.ts': "describe('sell', () => { it('sells', () => { expect(1).toBe(2); }); it.skip('later', () => undefined); });\n",
     });
     const dir = mkdtempSync(join(tmpdir(), 'ogw-reg-ev-'));
     const evidence = { root: dir, dir: 'e', relative: true };
-    const one = await regressionTest(ctx, root, { client: null, server: 'server/tests/shop/buy.test.ts' }, { ...options, evidence });
+    const one = await regressionTest(ctx, checkout(root), { client: null, server: 'server/tests/shop/buy.test.ts' }, { ...options, evidence });
     expect(one.result).toBe('pass');
-    const all = await regressionTest(ctx, root, { client: null, server: 'server/tests' }, { ...options, evidence });
+    const all = await regressionTest(ctx, checkout(root), { client: null, server: 'server/tests' }, { ...options, evidence });
     expect(all.result).toBe('fail');
     expect(all.failures.map((f) => [f.where, f.message.split('\n')[0]])).toEqual([
       ['server/tests/shop/sell.test.ts:1', 'server/tests/shop/sell.test.ts::sell > sells AssertionError: expected 1 to be 2 // Object.is equality'],
@@ -348,11 +366,11 @@ describe('regressionTest', () => {
     const withSettings = { ...ctx, settings: () => Promise.resolve({ tools: { postgresql: { tag: '17', digest: 'sha256:x' } } }) } as unknown as typeof ctx;
     const root = gameRoot({ 'server/tests/db.test.ts': "it('db', () => { expect(process.env.OGW_POSTGRESQL).toBe('postgresql://p/ogw_regression'); expect(process.env.OGW_DEFAULT_DB).toBe('postgresql'); });\n" });
     const options = { godot: '/nonexistent', evidence: { root: '/tmp', dir: null, relative: true }, runTimeLimitMs: null, startTimeLimitMs: null, db: 'postgresql' as const };
-    expect((await regressionTest(withSettings, root, { client: null, server: 'server/tests' }, options)).result).toBe('pass');
+    expect((await regressionTest(withSettings, checkout(root), { client: null, server: 'server/tests' }, options)).result).toBe('pass');
     expect(startPostgres).toHaveBeenCalledWith(withSettings, { tag: '17', digest: 'sha256:x' });
     expect(remove).toHaveBeenCalledTimes(1);
     vi.mocked(startPostgres).mockResolvedValue({ id: 'c', createDatabase: () => Promise.reject(new Error('createdb failed')), remove });
-    await expect(regressionTest(withSettings, root, { client: null, server: 'server/tests' }, options)).rejects.toThrow('createdb failed');
+    await expect(regressionTest(withSettings, checkout(root), { client: null, server: 'server/tests' }, options)).rejects.toThrow('createdb failed');
     expect(remove).toHaveBeenCalledTimes(2);
   }, 60_000);
 });

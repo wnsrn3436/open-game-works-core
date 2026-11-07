@@ -178,10 +178,12 @@ export async function gameChecks(
     lease: { base: await performanceLeaseBase(ctx), waitMs: (await ctx.settings()).performanceLeaseWaitTimeoutMs },
   };
   const ui = { ...instance, ...uiSettings(settings), maxTextScale: await maxTextScale(ctx, game, modules.client), scenario };
-  // One import before the checks run together: an instance skips its import once `client/.godot/` exists, so no import
-  // may still be writing it when the instances start. A failed import removed `client/.godot/` (each instance start then
-  // fails on its own import); the regression test and the type check report it and do not import again.
-  const importFailure = await importClient(ctx, options.godot, game.root);
+  // One import before the checks run together, with the engine packages put in first: an instance skips its import once
+  // `client/.godot/` exists, so no import may still be writing it when the instances start, and the import that the
+  // instance clients run on holds the plugins that their runner's `ogw generate` puts in later. A failed import removed
+  // `client/.godot/` (each instance start then fails on its own import); the regression test and the type check report
+  // it and do not import again.
+  const importFailure = await importClient(ctx, options.godot, game);
   const imported = importFailure === null ? { imported: true } : { importFailure };
   const db = options.db ? { db: options.db } : {};
   const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...imported, ...db };
@@ -201,7 +203,7 @@ export async function gameChecks(
           }),
         ];
   const tasks: Promise<CheckResult | CheckResult[]>[] = [
-    ...(wants('regression test') ? [guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client))] : []),
+    ...(wants('regression test') ? [guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))] : []),
     ...(wants('static check') ? [guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported }))] : []),
     ...instances,
     ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))] : []),

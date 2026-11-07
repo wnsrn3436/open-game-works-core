@@ -68,7 +68,7 @@ interface Inputs {
 }
 
 /** GUT and the `engine.json` plugins whose `platforms` hold this host OS, put into `client/`. */
-async function enginePackages(ctx: Context, inputs: Inputs, engine: string, clientDir: string, plan: Plan): Promise<void> {
+async function enginePackages(ctx: Context, release: CoreRelease, engine: string, clientDir: string, plan: Plan): Promise<void> {
   const engineJson = await readJson<EngineJson>(join(clientDir, 'engine.json'));
   plan.overlays.push({ source: await packageDir(ctx, gutPackage(engineJson)), target: 'client' });
   const platform = hostPlatform();
@@ -77,9 +77,9 @@ async function enginePackages(ctx: Context, inputs: Inputs, engine: string, clie
       plan.overlays.push({ source: await packageDir(ctx, plugin), target: 'client' });
       continue;
     }
-    const plugins = await extractedAsset(ctx, inputs.release, `client-${engine}-plugins.zip`);
+    const plugins = await extractedAsset(ctx, release, `client-${engine}-plugins.zip`);
     const source = join(plugins, plugin.name, platform);
-    if (!exists(source)) throw new OgwError(`client-${engine}-plugins.zip of core ${inputs.release.version} has no ${plugin.name}/${platform}/`);
+    if (!exists(source)) throw new OgwError(`client-${engine}-plugins.zip of core ${release.version} has no ${plugin.name}/${platform}/`);
     plan.overlays.push({ source, target: 'client' });
   }
 }
@@ -88,7 +88,7 @@ async function coreFolders(ctx: Context, inputs: Inputs, engine: string, plan: P
   const client = await extractedAsset(ctx, inputs.release, `client-${engine}.zip`);
   plan.mirrors.push({ source: join(client, 'core'), target: 'client/core' });
   plan.mirrors.push({ source: await extractedAsset(ctx, inputs.release, 'server.tgz'), target: 'server/core' });
-  await enginePackages(ctx, inputs, engine, client, plan);
+  await enginePackages(ctx, inputs.release, engine, client, plan);
 }
 
 /**
@@ -172,11 +172,17 @@ async function loadInputs(ctx: Context, game: GameRepo): Promise<Inputs> {
   return { root: game.root, settings, release, spec, modules, devModules: devCodeModules(spec, modules), resources };
 }
 
+/** The engine of game settings, whose engine rules `ogw generate` has: Godot. */
+function definedEngine(settings: GameSettings): 'godot' {
+  const engine = settings.engine;
+  if (engine !== 'godot') throw new OgwError(`not defined: engine rules for engine ${String(engine)}`);
+  return engine;
+}
+
 /** Everything `ogw generate` writes for the checkout. */
 export async function planGenerate(ctx: Context, game: GameRepo): Promise<Plan> {
   const inputs = await loadInputs(ctx, game);
-  const engine = inputs.settings.engine;
-  if (engine !== 'godot') throw new OgwError(`not defined: engine rules for engine ${String(engine)}`);
+  const engine = definedEngine(inputs.settings);
   const plan = emptyPlan();
   await projectFiles(inputs, plan);
   await generatedFiles(ctx, inputs, plan);
@@ -188,6 +194,21 @@ export async function planGenerate(ctx: Context, game: GameRepo): Promise<Plan> 
 export async function generateCheckout(ctx: Context, game: GameRepo): Promise<Applied> {
   return withLock(await checkoutLock(game.root, 'ogw-generate.lock', { env: ctx.env }), async () => {
     return applyPlan(game.root, await planGenerate(ctx, game));
+  });
+}
+
+/**
+ * The engine packages of `ogw generate` alone (GUT and the `engine.json` plugins of this host OS) put into `client/` of
+ * the checkout, holding the generate lock: no other file of `ogw generate` is written, so the committed generated files
+ * stay as they are (ogw.md `## check`). Returns the written files.
+ */
+export async function installEnginePackages(ctx: Context, game: GameRepo): Promise<Applied> {
+  return withLock(await checkoutLock(game.root, 'ogw-generate.lock', { env: ctx.env }), async () => {
+    const engine = definedEngine(await loadGameSettings(game.root));
+    const release = await coreReleaseOfGame(ctx, game);
+    const plan = emptyPlan();
+    await enginePackages(ctx, release, engine, await extractedAsset(ctx, release, `client-${engine}.zip`), plan);
+    return applyPlan(game.root, plan);
   });
 }
 

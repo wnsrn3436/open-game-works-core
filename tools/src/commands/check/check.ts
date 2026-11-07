@@ -91,7 +91,7 @@ async function regression(ctx: Context, game: GameRepo, godot: string, path: str
   const evidence = { root: dir, dir: '.', relative: false };
   let result: CheckResult | null = null;
   try {
-    result = await regressionTest(ctx, game.root, targets, { godot, evidence, runTimeLimitMs: limit, startTimeLimitMs: startLimit, ...(db ? { db } : {}) });
+    result = await regressionTest(ctx, game, targets, { godot, evidence, runTimeLimitMs: limit, startTimeLimitMs: startLimit, ...(db ? { db } : {}) });
   } finally {
     // the evidence folder is done when no failure the output prints points into it (a passing run points at none)
     if (result === null || !result.failures.some((f) => f.evidence.length > 0)) await rm(dir, { recursive: true, force: true });
@@ -105,7 +105,7 @@ async function regression(ctx: Context, game: GameRepo, godot: string, path: str
  * `--loop` does, so that the client does not run on an import older than the checkout.
  */
 async function bot(ctx: Context, game: GameRepo, godot: string, db: 'postgresql' | undefined): Promise<CommandResult> {
-  const importFailure = await importClient(ctx, godot, game.root);
+  const importFailure = await importClient(ctx, godot, game);
   if (importFailure !== null) {
     const failure = [{ where: 'client/project.godot:1', message: `the client import failed: ${importFailure}`, evidence: [] }];
     const checks = [checkResult('no blocker', null, failure), checkResult('full flow', null, failure)];

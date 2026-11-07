@@ -11,7 +11,7 @@ import { staticCheck } from '../../../src/commands/check/static-api.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../src/commands/core/api.ts';
 import { runData } from '../../../src/commands/data/api.ts';
 import { requireEngine } from '../../../src/commands/env/api.ts';
-import { gameModules, mergedCoreSettings } from '../../../src/commands/generate/api.ts';
+import { gameModules, installEnginePackages, mergedCoreSettings } from '../../../src/commands/generate/api.ts';
 import { listInstances, startInstance, stopInstance, type InstanceOptions } from '../../../src/commands/instance/api.ts';
 import { encodePng } from '../../../src/commands/resource/lib/image.ts';
 import { automationRequest } from '../../../src/commands/instance/automation.ts';
@@ -44,7 +44,7 @@ vi.mock('../../../src/commands/check/static-api.ts', () => ({ staticCheck: vi.fn
 vi.mock('../../../src/commands/core/api.ts', () => ({ coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
 vi.mock('../../../src/commands/env/api.ts', () => ({ requireEngine: vi.fn() }));
 vi.mock('../../../src/commands/data/api.ts', () => ({ runData: vi.fn() }));
-vi.mock('../../../src/commands/generate/api.ts', () => ({ gameModules: vi.fn(), mergedCoreSettings: vi.fn(), generateCheckout: vi.fn() }));
+vi.mock('../../../src/commands/generate/api.ts', () => ({ gameModules: vi.fn(), mergedCoreSettings: vi.fn(), generateCheckout: vi.fn(), installEnginePackages: vi.fn() }));
 vi.mock('../../../src/commands/core/lib/postgres.ts', () => ({
   startPostgres: () => Promise.resolve({ id: 'c', createDatabase: (name: string) => Promise.resolve(`postgresql://p/${name}`), remove: () => Promise.resolve() }),
 }));
@@ -169,6 +169,7 @@ beforeEach(() => {
   vi.mocked(staticCheck).mockReset().mockResolvedValue({ name: 'static check', platform: null, result: 'pass', failures: [], warnings: [] });
   vi.mocked(gameModules).mockReset().mockResolvedValue({ client: ['QualityCore', 'AccessibilityCore'], server: [] });
   vi.mocked(mergedCoreSettings).mockReset().mockResolvedValue({ 'AccessibilityCore.textScales': [1000, 1300], 'UnitTestCore.runTimeLimitMs': 30_000 });
+  vi.mocked(installEnginePackages).mockReset().mockResolvedValue({ written: [], removed: [] });
   let n = 0;
   vi.mocked(startInstance).mockReset().mockImplementation(async (_c, given) => {
     await stillMovie(given);
@@ -613,11 +614,19 @@ put('/started', { run_id: config.ogw_run_id })
       seenAtStart.push(existsSync(imports) ? readFileSync(imports, 'utf8') : '');
       return Promise.resolve({ id: `i${String(seenAtStart.length)}` } as Awaited<ReturnType<typeof startInstance>>);
     });
+    // the engine packages go in once, before that import
+    const seenAtPackages: boolean[] = [];
+    vi.mocked(installEnginePackages).mockImplementation(() => {
+      seenAtPackages.push(existsSync(imports));
+      return Promise.resolve({ written: [], removed: [] });
+    });
     const run = await ogw(ws, ['check', 'g', '--loop']);
     expect(run.stderr).toBe('');
     expect(readFileSync(imports, 'utf8')).toBe('import\n');
     expect(seenAtStart.length).toBeGreaterThan(0);
     expect(seenAtStart.every((text) => text === 'import\n')).toBe(true);
+    expect(seenAtPackages).toEqual([false]);
+    expect(vi.mocked(installEnginePackages).mock.calls[0]?.[1]).toMatchObject({ name: 'g', root: join(ws.games, 'g') });
   });
 
   it('a failed import removes client/.godot/ before any instance starts, and no check imports again', async () => {

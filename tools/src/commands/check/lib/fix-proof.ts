@@ -135,7 +135,7 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
       return none((error as Error).message.split('\n')[0] as string);
     }
     const client = files.filter((f) => f.startsWith('client/'));
-    const importFailure = client.length > 0 ? await importClient(ctx, options.godot, worktree) : null;
+    const importFailure = client.length > 0 ? await importClient(ctx, options.godot, checkout) : null;
     for (const file of files) {
       if (file.startsWith('client/') && importFailure !== null) runs.set(file, { started: false, why: `the client import failed: ${importFailure}`, results: new Map() });
       else runs.set(file, file.startsWith('client/') ? await clientFile(ctx, worktree, file, options) : await serverFile(ctx, worktree, file, options));

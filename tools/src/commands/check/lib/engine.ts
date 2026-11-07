@@ -9,6 +9,7 @@ import { withLock } from '../../../lib/lock.ts';
 import { exists } from '../../../lib/fsx.ts';
 import { run } from '../../../lib/proc.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
+import { installEnginePackages } from '../../generate/api.ts';
 import { engineExecutable } from '../../instance/lib/prepare.ts';
 
 /** Executable of the engine version the game uses (`engineExecutable` of the runner). Fails when this host does not have it. */
@@ -36,12 +37,24 @@ export async function withClientImport<T>(ctx: Context, root: string, fn: () => 
 }
 
 /**
- * `godot --headless --path client --import` of the checkout under {@link withClientImport}. Returns null when it
+ * Runs `fn`, a step of a check that imports the checkout's `client/` or runs Godot on it, under {@link withClientImport}
+ * once the engine packages of `ogw generate` are in `client/` (`installEnginePackages`): `client/addons/` is not
+ * committed, so a checkout no `ogw generate` ran in has no GUT and no plugins (ogw.md `## check`).
+ */
+export async function withClientPackages<T>(ctx: Context, game: GameRepo, fn: () => Promise<T>): Promise<T> {
+  return withClientImport(ctx, game.root, async () => {
+    await installEnginePackages(ctx, game);
+    return fn();
+  });
+}
+
+/**
+ * `godot --headless --path client --import` of the checkout under {@link withClientPackages}. Returns null when it
  * succeeded, else the failure message. A failed import removes `client/.godot/` before the lock is released
  * (ogw.md `## runner`), so no instance of the checkout starts on a broken import.
  */
-export async function importClient(ctx: Context, godot: string, root: string): Promise<string | null> {
-  return withClientImport(ctx, root, () => runImport(ctx, godot, root));
+export async function importClient(ctx: Context, godot: string, game: GameRepo): Promise<string | null> {
+  return withClientPackages(ctx, game, () => runImport(ctx, godot, game.root));
 }
 
 /**

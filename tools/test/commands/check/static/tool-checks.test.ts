@@ -24,6 +24,8 @@ interface Mocks {
   engineAsks: string[];
   gdlint: string | null;
   generate: (root: string) => void;
+  /** Per call of `installEnginePackages`: the checkout and whether its import lock was held. */
+  packages: string[];
   data: string[];
   dataOptions: unknown[];
   contract: string[];
@@ -40,6 +42,7 @@ const mocks = vi.hoisted(
     engineAsks: [],
     gdlint: null,
     generate: () => undefined,
+    packages: [],
     data: [],
     dataOptions: [],
     contract: [],
@@ -67,6 +70,12 @@ vi.mock('../../../../src/commands/generate/api.ts', () => ({
   runGenerate: (_ctx: unknown, game: GameRepo) => {
     mocks.generate(game.root);
     return Promise.resolve();
+  },
+  // puts GUT in, as the real one does
+  installEnginePackages: (_ctx: unknown, game: GameRepo) => {
+    mocks.packages.push(`${game.root} ${existsSync(join(game.root, '.ogw-import.lock')) ? 'locked' : 'unlocked'}`);
+    writeFiles(game.root, { 'client/addons/gut/gut_cmdln.gd': 'extends SceneTree\n' });
+    return Promise.resolve({ written: ['client/addons/gut/gut_cmdln.gd'], removed: [] });
   },
 }));
 
@@ -334,13 +343,14 @@ describe('type check', () => {
     mocks.assets = { 'client-godot.zip': zip };
   });
 
-  it('runs godot import then check-only per content file under the import lock and reads its errors', async () => {
+  it('runs godot import then check-only per content file under the import lock, after the engine packages went in, and reads its errors', async () => {
     const bin = tempDir();
     const log = join(bin, 'log');
+    mocks.packages = [];
     mocks.engine = script(
       bin,
       'godot',
-      `echo "$@" >> ${log}\n[ -d "$3/../.ogw-import.lock" ] || echo "$@" >> ${log}.unlocked\n${bothModes(`case "$*" in\n  *res://features/a/bad.gd*) echo "SCRIPT ERROR: Parse Error: Identifier \\"x\\" not declared."; echo "   at: GDScript::reload (res://features/a/bad.gd:3)"; echo "ERROR: Failed to load script"; exit 1;;\n  *res://features/a/odd.gd*) echo "ERROR: something"; exit 0;;\n  *res://features/a/exit.gd*) exit 2;;\nesac\nexit 0`)}`,
+      `echo "$@" >> ${log}\n[ -d "$3/../.ogw-import.lock" ] || echo "$@" >> ${log}.unlocked\n[ -f "$3/addons/gut/gut_cmdln.gd" ] || echo "$@" >> ${log}.nogut\n${bothModes(`case "$*" in\n  *res://features/a/bad.gd*) echo "SCRIPT ERROR: Parse Error: Identifier \\"x\\" not declared."; echo "   at: GDScript::reload (res://features/a/bad.gd:3)"; echo "ERROR: Failed to load script"; exit 1;;\n  *res://features/a/odd.gd*) echo "ERROR: something"; exit 0;;\n  *res://features/a/exit.gd*) exit 2;;\nesac\nexit 0`)}`,
     );
     const sc = memContext({
       'client/features/a/bad.gd': 'x',
@@ -361,6 +371,9 @@ describe('type check', () => {
     // the import and the check-only runs hold the lock the runner's import takes; it is gone after the check
     expect(existsSync(`${log}.unlocked`)).toBe(false);
     expect(existsSync(join(sc.root, '.ogw-import.lock'))).toBe(false);
+    // the engine packages went in once under that lock, before the import
+    expect(mocks.packages).toEqual([`${sc.root} locked`]);
+    expect(existsSync(`${log}.nogut`)).toBe(false);
   });
 
   it('fails on an engine error line before the first script, as a project setting\'s missing resource, and keeps no pass', async () => {
@@ -410,7 +423,10 @@ describe('type check', () => {
     mocks.engine = script(bin, 'godot', `echo "$@" >> ${log}\n${bothModes('exit 0')}`);
     const sc = memContext({ 'client/features/a/good.gd': 'x' });
     sc.imported = true;
+    mocks.packages = [];
     expect(lines(await typeCheck.run(sc))).toEqual([]);
+    // the caller's import put the engine packages in
+    expect(mocks.packages).toEqual([]);
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatch(new RegExp(`^--headless --path ${join(sc.root, 'client')} -s `));
