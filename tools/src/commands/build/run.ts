@@ -83,10 +83,10 @@ async function exportPlatforms(input: ClientCheckInput): Promise<CheckPlatform[]
 }
 
 /**
- * The client checks (ogw.md `## build run`). The check workspaces and check `repeat test`, which measure nothing, run
- * beside the other build-time checks (`load`). The performance measurements `device performance` and `web smoke` start
- * when all of them have ended, and `soak test` when those two have ended, so that no other work of this build loads the
- * host while they measure.
+ * The client checks (ogw.md `## build run`). The check workspaces are prepared beside the other build-time checks
+ * (`load`). The checks that run the game measure or judge times on the modelled device, so they start when all of
+ * `load` has ended: `device performance` and `web smoke` together, `repeat test` when `web smoke` has ended, and
+ * `soak test` when `repeat test` and `device performance` have ended.
  */
 async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promise<{ checks: CheckWithHuman[]; loadingMs: number | null }> {
   const base: ClientCheckInput = {
@@ -95,15 +95,16 @@ async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promis
   return withCheckWorkspaces(base, async (workspaces) => {
     const input: ClientCheckInput = { ...base, workspaces };
     const preparing = (await exportPlatforms(input)).map((platform) => workspaces.prepare(platform));
-    const repeat = repeatTest(input);
     // a check workspace that failed fails the checks that export from it, not the build run
-    const quiet = Promise.allSettled([...load, repeat, ...preparing]).then(() => allSettledOrThrow([...load, repeat]));
-    const measured = quiet.then(() => Promise.all([devicePerformance(input), webSmoke(input)]));
-    const soak = measured.then(() => soakTest(input));
-    await allSettledOrThrow([repeat, measured, soak]);
-    const [device, web] = await measured;
-    const checks = [device, web?.check, await repeat, await soak].filter((c): c is BuildCheck => c !== null && c !== undefined);
-    return { checks: checks.map((check) => ({ check, human: null })), loadingMs: web?.loadingMs ?? null };
+    const quiet = Promise.allSettled([...load, ...preparing]).then(() => allSettledOrThrow(load));
+    const device = quiet.then(() => devicePerformance(input));
+    const web = quiet.then(() => webSmoke(input));
+    const repeat = web.then(() => repeatTest(input));
+    const soak = Promise.allSettled([repeat, device]).then(() => allSettledOrThrow([repeat, device])).then(() => soakTest(input));
+    await allSettledOrThrow([device, web, repeat, soak]);
+    const smoke = await web;
+    const checks = [await device, smoke?.check, await repeat, await soak].filter((c): c is BuildCheck => c !== null && c !== undefined);
+    return { checks: checks.map((check) => ({ check, human: null })), loadingMs: smoke?.loadingMs ?? null };
   });
 }
 
@@ -217,11 +218,16 @@ interface ServerFacts {
   matchWaitMs: number | null;
 }
 
-/** The server side facts of a build with data: none reads an artifact, so they are found beside the platform build. */
-async function serverFacts(b: Build, versions: DataVersions): Promise<ServerFacts> {
+/**
+ * The server side facts of a build with data: none reads an artifact, so they are found beside the platform build.
+ * Null when `stopWhen` gave true (the artifact checks blocked the build) before they were all found.
+ */
+async function serverFacts(b: Build, versions: DataVersions, stopWhen: () => boolean): Promise<ServerFacts | null> {
   const { ctx, game, open } = b;
   const appVersion = open.run.bundleFor;
-  const apps = [...(appVersion === null ? [open.version] : []), ...(await compatibleApps(ctx, game, open.env, b.tags, versions))];
+  const earlier = await compatibleApps(ctx, game, open.env, b.tags, versions, stopWhen);
+  if (earlier === null || stopWhen()) return null;
+  const apps = [...(appVersion === null ? [open.version] : []), ...earlier];
   if (!b.lastProd) return { apps: [...new Set(apps)], protocolChange: null, matchWaitMs: null };
   const commit = await tagCommit(game.root, b.lastProd.tag);
   const last = await dataVersionsAt(ctx, game, commit);
@@ -305,9 +311,10 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
       throw error;
     },
   );
-  // a build whose artifacts failed pushes no image: its cache build stops
-  const warm = withData && open.env !== 'PROD' ? warmServerImage(ctx, image, () => artifactsDone.failed) : Promise.resolve(false);
-  const facts = withData ? serverFacts(b, versions) : Promise.resolve(null);
+  // a build whose artifacts failed needs no image and no server side facts: the cache build and the app versions stop
+  const stop = (): boolean => artifactsDone.failed;
+  const warm = withData && open.env !== 'PROD' ? warmServerImage(ctx, image, stop) : Promise.resolve(false);
+  const facts = withData ? serverFacts(b, versions, stop) : Promise.resolve(null);
   const prod = prodFacts(b);
   await Promise.allSettled([artifacts, warm, facts, prod]);
   await artifacts;
@@ -315,7 +322,9 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   if (result.checks.some((c) => blocksBuild(c, open.env))) return finishResult(b, result, true);
   await allSettledOrThrow([warm, facts, prod]);
   const server = await facts;
-  if (withData && server !== null) {
+  if (withData) {
+    // only a build that the artifact checks block stops them
+    if (server === null) throw new OgwError('the server side facts stopped although the artifact checks passed');
     result.serverDataVersions = { client_data_version: versions.clientForServer, compat_client_data_version: versions.compat };
     result.serverImage = await serverImage(b, image);
     await writeUpdate(game.root, b.outDir, versions.client, server.apps);

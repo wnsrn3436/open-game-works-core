@@ -43,10 +43,11 @@ export function latestBundleTag(tags: readonly BuildTag[], env: Env, appVersion:
  * build's data can go to them (ogw.md `## deploy`, `update.json` `apps`). The app version has the resource keys of
  * `resources.csv` at its tag commit and at its latest bundle's tag commit.
  */
-export async function compatibleApps(ctx: Context, game: GameRepo, env: Env, tags: readonly BuildTag[], build: DataVersions): Promise<string[]> {
+export async function compatibleApps(ctx: Context, game: GameRepo, env: Env, tags: readonly BuildTag[], build: DataVersions, stopWhen: () => boolean): Promise<string[] | null> {
   const own = tags.filter((t) => t.env === env && t.bundle === null).sort((a, b) => compareVersions(requireVersion(a.version), requireVersion(b.version)));
   const dataKeys = await dataResourceKeys(game.root);
-  // each app version is its own worktree and data build: they run together, at most one per CPU of this host
+  // each app version is its own worktree and data build: they run together, at most one per CPU of this host; a build
+  // that no longer needs them (`stopWhen`) starts no other and gets null
   const fits = await pooled(own, appCheckLimit.count(), async (tag) => {
     const commit = await tagCommit(game.root, tag.tag);
     const app = await dataVersionsAt(ctx, game, commit);
@@ -55,7 +56,8 @@ export async function compatibleApps(ctx: Context, game: GameRepo, env: Env, tag
     const bundle = latestBundleTag(tags, env, tag.version);
     if (bundle) for (const key of await resourceKeysAt(game.root, await tagCommit(game.root, bundle.tag))) appKeys.add(key);
     return dataBundleFailures({ appVersion: tag.version, app, build, dataKeys, appKeys }).length === 0;
-  });
+  }, stopWhen);
+  if (fits === null) return null;
   return own.filter((_, i) => fits[i] === true).map((tag) => tag.version);
 }
 

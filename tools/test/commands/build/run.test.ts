@@ -44,7 +44,7 @@ vi.mock('../../../src/commands/build/lib/saveschema.ts', async (orig) => {
 
 const DOCKER = `case "$1 $2" in
   "login ghcr.io") cat > /dev/null;;
-  "buildx build") case "$*" in *type=cacheonly*) touch "$FAKE_DIR/warmed"; [ -n "$FAKE_WARM_FAIL" ] && { echo "cache build failed" >&2; exit 1; }; exit 0;; *type=tar,dest=*) for a; do case "$a" in type=tar,dest=*) cp "$FAKE_IMAGE_TAR" "\${a#type=tar,dest=}";; esac; done; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/tar_core_settings.json"; cp "$last/generated/server_modules.json" "$FAKE_DIR/tar_server_modules.json"; exit 0;; esac; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/server_core_settings.json"; ls "$last" > "$FAKE_DIR/server_ls"; echo "$last" > "$FAKE_DIR/server_context";;
+  "buildx build") case "$*" in *type=cacheonly*) touch "$FAKE_DIR/warmed"; [ -n "$FAKE_WARM_FAIL" ] && { echo "cache build failed" >&2; exit 1; }; [ -n "$FAKE_WARM_HANG" ] && { echo $$ > "$FAKE_DIR/warm.pid"; while :; do sleep 0.1; done; }; exit 0;; *type=tar,dest=*) for a; do case "$a" in type=tar,dest=*) cp "$FAKE_IMAGE_TAR" "\${a#type=tar,dest=}";; esac; done; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/tar_core_settings.json"; cp "$last/generated/server_modules.json" "$FAKE_DIR/tar_server_modules.json"; exit 0;; esac; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/server_core_settings.json"; ls "$last" > "$FAKE_DIR/server_ls"; echo "$last" > "$FAKE_DIR/server_context";;
   "buildx imagetools") case "$*" in *Manifest*) echo '{"digest":"sha256:pushed"}';; *) echo '{"config":{"Labels":{"ogw.compat_client_data_version":"'"$FAKE_LABEL"'"}}}';; esac;;
 esac`;
 const GH = `case "$1 $2" in "auth token") echo tok;; "api user") echo me;; esac`;
@@ -272,6 +272,51 @@ describe('build run', () => {
     expect(result(dir, 'dev-0.1.0').checks.find((c) => c.name === 'secret')?.details).toEqual(['builds/dev-0.1.0/linux/g.pck: secret db']);
   });
 
+  it('stops the cache build of the server image and the checks of the earlier app versions when the artifacts leak a secret', { timeout: 30_000 }, async () => {
+    const ws = makeWorkspace();
+    const { dir, env, log } = prepare(ws);
+    for (const version of ['0.1.0', '0.1.1', '0.1.2', '0.1.3']) {
+      write(dir, 'notes.txt', version);
+      commit(dir, version);
+      git(dir, 'tag', `dev-${version}`);
+    }
+    await openBuildRun(ws, dir, { version: '0.2.0', platforms: ['linux'] });
+    const real = vi.mocked(runData).getMockImplementation() as typeof runData;
+    let appBuilds = 0;
+    vi.mocked(runData).mockImplementation(async (ctx, repo, options) => {
+      // the data build of an earlier app version, in its own worktree
+      if (repo.inWorktree) {
+        appBuilds += 1;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return real(ctx, repo, options);
+    });
+    const fake = join(ws.root, 'fake-bin');
+    vi.mocked(buildPlatforms).mockImplementation(async (_c, input) => {
+      // the artifact leaks while the cache build runs, which ends only when it is killed
+      for (let i = 0; i < 250 && !existsSync(join(fake, 'warm.pid')); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      write(join(input.outDir, 'linux'), 'g.pck', 'has DB-CONNECTION');
+      return { artifacts: [{ platform: 'linux', path: 'builds/dev-0.1.0/linux' }], devCode: [] };
+    });
+    const cpus = appCheckLimit.count;
+    appCheckLimit.count = () => 1;
+    let out: Awaited<ReturnType<typeof ogw>>;
+    try {
+      out = await ogw(ws, ['build', 'run', 'g'], { env: { ...env, FAKE_WARM_HANG: '1' } });
+    } finally {
+      appCheckLimit.count = cpus;
+    }
+    expect([out.code, out.stderr]).toEqual([1, '']);
+    expect(result(dir, 'dev-0.2.0').checks.find((c) => c.name === 'secret')?.details).toEqual(['builds/dev-0.2.0/linux/g.pck: secret db']);
+    // the cache build was killed, and nothing was pushed
+    const pid = Number(readFileSync(join(fake, 'warm.pid'), 'utf8'));
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(readFileSync(log, 'utf8')).not.toContain('--push');
+    // one app version at a time: after the leak no other one starts
+    expect(appBuilds).toBeLessThanOrEqual(2);
+    expect(result(dir, 'dev-0.2.0').serverImage).toBeNull();
+  });
+
   it('records web smoke with its first loading ms; a DEV warning does not block, a STG failure does', async () => {
     const ws = makeWorkspace();
     const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
@@ -307,7 +352,7 @@ describe('build run', () => {
     expect(buildPlatforms).not.toHaveBeenCalled();
   });
 
-  it('runs the build-time checks together and the measurements after them: device performance and web smoke together, then soak test; DEV warning and unknown do not block, a STG failure does', async () => {
+  it('runs the build-time checks that run no game together, and the checks that run the game after them: device performance and web smoke together, repeat test after web smoke, soak test after both; DEV warning and unknown do not block, a STG failure does', async () => {
     const ws = makeWorkspace();
     const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
     (environments.DEV as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
@@ -316,18 +361,19 @@ describe('build run', () => {
     git(dir, 'tag', 'prod-0.0.9');
     await openBuildRun(ws, dir, { platforms: ['web', 'android'] });
     const order: string[] = [];
-    const load = ['static check', 'placeholder', 'contract', 'repeat test'];
+    const load = ['static check', 'placeholder', 'contract'];
     const started = new Set<string>();
-    // a check that measures nothing ends only when every other one has started (or after 5 s): run one after another, they would not
+    // a check that runs no game ends only when every other one has started (or after 5 s): run one after another, they would not
     const allStarted = async (): Promise<void> => {
       for (let i = 0; i < 250 && !load.every((name) => started.has(name)); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     };
+    // device performance outlasts web smoke and the repeat test: the soak test waits for it too
+    const lasts: Record<string, number> = { 'device performance': 400, 'repeat test': 100 };
     const traced = <T>(name: string, value: T) => async (): Promise<T> => {
       order.push(`${name} start`);
       started.add(name);
       if (load.includes(name)) await allStarted();
-      // the repeat test ends last: the measurements wait for it too
-      await new Promise((resolve) => setTimeout(resolve, name === 'repeat test' ? 300 : 20));
+      await new Promise((resolve) => setTimeout(resolve, lasts[name] ?? 20));
       order.push(`${name} end`);
       return value;
     };
@@ -343,12 +389,13 @@ describe('build run', () => {
     const at = (event: string): number => order.indexOf(event);
     const loadEnd = Math.min(...load.map((name) => at(`${name} end`)));
     const lastLoadEnd = Math.max(...load.map((name) => at(`${name} end`)));
-    // the checks that measure nothing start before any of them ends
+    // the checks that run no game start before any of them ends
     for (const name of load) expect(at(`${name} start`)).toBeLessThan(loadEnd);
-    // the measurements start after every other check ended; device performance and web smoke overlap as before; soak test comes last
-    for (const name of ['device performance', 'web smoke']) expect(at(`${name} start`)).toBeGreaterThan(lastLoadEnd);
+    // the checks that run the game start after all of those ended; device performance and web smoke overlap as before
+    for (const name of ['device performance', 'web smoke', 'repeat test', 'soak test']) expect(at(`${name} start`)).toBeGreaterThan(lastLoadEnd);
     expect(Math.max(at('device performance start'), at('web smoke start'))).toBeLessThan(Math.min(at('device performance end'), at('web smoke end')));
-    expect(at('soak test start')).toBeGreaterThan(Math.max(at('device performance end'), at('web smoke end')));
+    expect(at('repeat test start')).toBeGreaterThan(at('web smoke end'));
+    expect(at('soak test start')).toBeGreaterThan(Math.max(at('device performance end'), at('repeat test end')));
     const checks = result(dir, 'dev-0.1.0').checks.map((c) => `${c.name}:${c.result}`);
     expect(checks.slice(-6)).toEqual(['placeholder:pass', 'device performance:pass', 'web smoke:pass', 'repeat test:warn', 'soak test:unknown', 'backward compatibility:pass']);
     expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'DEV', version: '0.1.0', exportVersion: '0.1.0', platforms: ['web', 'android'] });

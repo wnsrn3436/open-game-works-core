@@ -7,14 +7,22 @@ export const GIT_PROCESSES = 8;
 /**
  * `work` of each item, at most `limit` at a time, a finished one starting the next; the results keep the order of the
  * items. Once a work item fails no other starts, and when the started ones have ended, the failure of the first failed
- * item in order is thrown, as running them one after another would throw it.
+ * item in order is thrown, as running them one after another would throw it. When `stopWhen` gives true, no other item
+ * starts either, and the result is null once the started ones have ended.
  */
-export async function pooled<T, R>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<R>): Promise<R[]> {
+export async function pooled<T, R>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<R>): Promise<R[]>;
+export async function pooled<T, R>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<R>, stopWhen: () => boolean): Promise<R[] | null>;
+export async function pooled<T, R>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<R>, stopWhen: () => boolean = () => false): Promise<R[] | null> {
   const results = new Array<R>(items.length);
   const failures: { index: number; error: unknown }[] = [];
   let next = 0;
+  const state = { stopped: false };
   const lane = async (): Promise<void> => {
     while (failures.length === 0 && next < items.length) {
+      if (stopWhen()) {
+        state.stopped = true;
+        return;
+      }
       const index = next++;
       try {
         results[index] = await work(items[index] as T, index);
@@ -26,7 +34,7 @@ export async function pooled<T, R>(items: readonly T[], limit: number, work: (it
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
   const [first] = failures.sort((a, b) => a.index - b.index);
   if (first !== undefined) throw first.error;
-  return results;
+  return state.stopped ? null : results;
 }
 
 type Outcome<R> = { value: R } | { error: unknown };

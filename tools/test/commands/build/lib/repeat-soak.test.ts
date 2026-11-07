@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { constants, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { cp } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,6 +33,10 @@ import { createContext } from '../../../../src/lib/command.ts';
 import { makeWorkspace, type TestWorkspace } from '../../../helpers/workspace.ts';
 import { commit, fakeBin, gameRepo, gameSettings, setupGame, write } from '../helpers.ts';
 
+vi.mock('node:fs/promises', async (orig) => {
+  const real = await orig<typeof import('node:fs/promises')>();
+  return { ...real, cp: vi.fn(real.cp) };
+});
 vi.mock('../../../../src/commands/core/api.ts', async (orig) => ({ ...(await orig<object>()), coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
 vi.mock('../../../../src/commands/env/api.ts', async (orig) => ({ ...(await orig<object>()), requireEngine: vi.fn(), toolProgram: vi.fn() }));
 vi.mock('../../../../src/commands/data/api.ts', async (orig) => ({ ...(await orig<object>()), runData: vi.fn() }));
@@ -67,7 +72,7 @@ const SCENARIO = { steps: [{ kind: 'auto', command: 'f.bot_next_input', args: []
 /** Fake Godot: the check export copies `generated/launch_values.json` to the output file; the import leaves a marker in `.godot/`. */
 const GODOT = `case "$*" in
   *--export-*) for last; do :; done; cp "$3/generated/launch_values.json" "$last"; printf 'const CACHE_VERSION = "v1";\\n' > "$(dirname "$last")/index.service.worker.js";;
-  *--import*) mkdir -p "$3/.godot" && touch "$3/.godot/imported-once";;
+  *--import*) mkdir -p "$3/.godot" && touch -t 202001010000 "$3/.godot/imported-once";;
 esac`;
 const MIB = 1024 * 1024;
 const TAP = { ok: true, result: { command: 'tap', args: ['1', '2'] } };
@@ -289,6 +294,7 @@ describe('repeat test', () => {
       events.push('instance start');
       return (instanceStart as typeof startInstance)(...args);
     });
+    vi.mocked(cp).mockClear();
     // each export records its start and end around a delay: an export started beside it starts in that delay
     let exporting = 0;
     let mostExporting = 0;
@@ -297,8 +303,10 @@ describe('repeat test', () => {
       exporting += 1;
       mostExporting = Math.max(mostExporting, exporting);
       copies.push(args[3]);
-      // the copy holds the imported workspace: the fake import's marker came along
-      expect(existsSync(join(args[3], 'client', '.godot', 'imported-once'))).toBe(true);
+      // the copy holds the imported workspace with the times of its files, so that the engine imports nothing again
+      const marker = 'client/.godot/imported-once';
+      expect(statSync(join(args[3], marker)).mtimeMs).toBe(new Date(2020, 0, 1).getTime());
+      expect(statSync(join(args[3], marker)).mtimeMs).toBe(statSync(join(args[3], '..', '..', marker)).mtimeMs);
       await new Promise((resolve) => setTimeout(resolve, 50));
       exporting -= 1;
       return real.godotCheckExport(...args);
@@ -313,6 +321,10 @@ describe('repeat test', () => {
     // two runs at a time (maxConcurrentInstances 2): their exports overlap
     expect(mostExporting).toBe(2);
     expect(copies.map((c) => c.split('/').slice(-2).join('/')).sort()).toEqual(['.ogw-copy/web-run-1', '.ogw-copy/web-run-2', '.ogw-copy/web-run-3']);
+    // each copy holds client/ and resource/, cloned where the file system clones, with the file times and the links as they are
+    const copied = vi.mocked(cp).mock.calls.filter((c) => String(c[1]).includes('/.ogw-copy/'));
+    expect(copied.map((c) => String(c[1]).split('/').slice(-2).join('/')).sort()).toEqual(['web-run-1/client', 'web-run-1/resource', 'web-run-2/client', 'web-run-2/resource', 'web-run-3/client', 'web-run-3/resource']);
+    for (const call of copied) expect(call[2]).toEqual({ recursive: true, mode: constants.COPYFILE_FICLONE, preserveTimestamps: true, verbatimSymlinks: true });
     expect(readdirSync(join(s.ws.worktrees, 'g'))).toEqual([]);
   });
 });
