@@ -79,6 +79,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 ## update harness tool
 
 - The requested behavior is first defined in the skill read by the agent that uses that behavior, or in this document; then `ogw` is fixed per that definition and tests are added
+- An error that `ogw` catches is either the one error the definition expects there, checked by its code or class (e.g. a file that may be absent: `isNotFound`, `whenNotFound`), with every other error thrown again, or a failure that becomes the result the definition gives for it (`unknown` with the reason, a failure line with the error message). A failure the definition does not name is not turned into a value (absent, empty, 0, `pass`): the command fails with the error. Only a cleanup whose failure cannot change a result (e.g. removing a temporary folder after the result is written) drops its error, through `ignoreCleanupError`
 - When there is no definition or the documents differ from each other, nothing is fixed and the human is asked
 - The work ends only when the tests of `ogw`, `ogw docs check` and the review and code check below pass
 - review and code check: a target is one `ogw` command. The targets are the fixed commands and the commands that call them. Each target is handled the same as `## review and code check` of [core command](../skills/core/command.md); the only differences are below
@@ -1461,6 +1462,8 @@ How `ogw review next` and `ogw review run` carry out `## review and code check` 
 - The review agent jobs, core agent jobs and core test jobs that all `ogw review run` jobs on this host run together are at most harness settings `reviewRunConcurrency`. When there is no free slot, a job waits until a slot frees up
 
 ## code check
+
+lint of `ogw code check tool` (and `node scripts/lint.ts` in `tools/`): the TypeScript lint, and for the files under `tools/src/` the rule `ogw/no-swallowed-error`. It fails a `catch` clause, a `.catch(...)` handler and the rejection handler of `.then(...)` that does not use its error and can end other than by a throw. A handler given by name or by a factory call is checked at its definition in its file. A name that its file does not define passes only when it is `whenNotFound` (it turns a not-found error into a value and throws every other error), `ignoreCleanupError` (a cleanup whose failure cannot change a result) or the `reject` of a promise executor.
 
 type check (`ogw code check` and the static check `type check`): after `godot --headless --path <project> --import`, one Godot process loads the script of each `.gd` file (the same load and validity check as `--check-only`) and ends without errors. A script that depends on a script that failed earlier does not report the error of that dependency again. When that process does not end without errors, each file is checked again with `godot --headless --path <project> --check-only --script <file>` to find which file causes it. Not ending without errors means an error line that belongs to no script's load (before the first script, between two scripts, after the last script), a non-zero exit code, or exceeding the time limit.
 

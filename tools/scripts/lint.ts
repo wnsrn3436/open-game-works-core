@@ -3,7 +3,7 @@ import { ESLint } from 'eslint';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { typescriptLintConfig } from '../src/commands/code/eslint-options.ts';
+import { toolLintConfig } from '../src/commands/code/eslint-options.ts';
 
 const tools = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const settings = JSON.parse(readFileSync(join(tools, '..', 'settings.json'), 'utf8')) as {
@@ -12,7 +12,7 @@ const settings = JSON.parse(readFileSync(join(tools, '..', 'settings.json'), 'ut
 const eslint = new ESLint({
   cwd: tools,
   overrideConfigFile: true,
-  overrideConfig: typescriptLintConfig(tools, settings.codeCheck.maxComplexity),
+  overrideConfig: toolLintConfig(tools, settings.codeCheck.maxComplexity),
 });
 const targets = process.argv.slice(2);
 const results = await eslint.lintFiles(targets.length > 0 ? targets : ['src/**/*.ts', 'test/**/*.ts']);

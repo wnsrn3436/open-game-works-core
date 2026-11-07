@@ -97,6 +97,21 @@ describe('ogw code check tool', () => {
     expect(byName.get('dependency')?.failures).toEqual(['sub: npm ci failed: ci broke']);
   });
 
+  it('fails a catch of src/ that drops its error, and passes the same catch in test/ and the allowed forms', async () => {
+    const ws = makeWorkspace();
+    const swallow = "export async function read(load: () => Promise<string>): Promise<string> {\n  return load().catch(() => '');\n}\n";
+    fixture(ws, {
+      'tools/src/commands/demo/swallow.ts': swallow,
+      'tools/src/commands/demo/allowed.ts':
+        "import { whenNotFound } from './lib/fsx.ts';\n\nexport async function read(load: () => Promise<string>): Promise<string> {\n  return load().catch(whenNotFound(''));\n}\n",
+      'tools/src/commands/demo/lib/fsx.ts': 'export function whenNotFound<T>(value: T): (error: unknown) => T {\n  return (error: unknown) => {\n    if ((error as { code?: unknown }).code === \'ENOENT\') return value;\n    throw error;\n  };\n}\n',
+      'tools/test/commands/demo/swallow.ts': swallow,
+    });
+    const run = await ogw(ws, ['code', 'check', 'tool', '--json'], { env: fakeNpm(ws) });
+    expect(run.code).toBe(1);
+    expect(checksOf(run.stdout).get('lint')?.failures).toEqual([expect.stringMatching(/^src\/commands\/demo\/swallow\.ts:2:23 ogw\/no-swallowed-error /) as string]);
+  });
+
   it('loads ambient declaration files and checks .mts, .cts and .tsx files', async () => {
     const ws = makeWorkspace();
     fixture(ws, {

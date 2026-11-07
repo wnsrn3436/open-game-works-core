@@ -3,7 +3,7 @@ import { ESLint } from 'eslint';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { run } from '../../../lib/proc.ts';
-import { typescriptLintConfig } from '../eslint-options.ts';
+import { toolLintConfig, typescriptLintConfig } from '../eslint-options.ts';
 import { typescriptCompilerOptions } from '../ts-options.ts';
 import { ogwRequire, ogwTools, isBenchmarkPath, isTypeDeclaration, isTypeScript, type CheckTarget } from './target.ts';
 
@@ -62,7 +62,7 @@ export async function lintTypeScript(target: CheckTarget, tsconfig: string | nul
   const eslint = new ESLint({
     cwd: target.root,
     overrideConfigFile: true,
-    overrideConfig: typescriptLintConfig(target.root, maxComplexity, tsconfig),
+    overrideConfig: (target.side === 'tool' ? toolLintConfig : typescriptLintConfig)(target.root, maxComplexity, tsconfig),
   });
   const files = typeScriptFiles(target).filter(isTypeScript).map((path) => join(target.root, path));
   const results = await eslint.lintFiles(files);

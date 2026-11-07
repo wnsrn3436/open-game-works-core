@@ -32,7 +32,7 @@ When `side` of the input is `spec`, do not read code; compare the defining docum
 
 | aspect | finding |
 |---|---|
-| `correctness` | A wrong result for which a reproducing input or run order can be written, crash, state that breaks under concurrent runs, unhandled failure path |
+| `correctness` | A wrong result for which a reproducing input or run order can be written, crash, state that breaks under concurrent runs, unhandled failure path, a caught error turned into a value or result that the defining documents do not set for that error |
 | `spec` | Behavior that differs from the defining documents, behavior written in the defining documents that has no test, public API, hook, event or settings key not in the defining documents |
 | `test evidence` | An assert that does not check the result of the behavior, a test that does not fail when the target code is changed, a test that does not go through a failure path that the defining documents set |
 | `security` | Defects in authentication, session, token. Missing permission check (admin operation, data of another user). Missing input validation and injection (SQL, path, command). Missing payment receipt verification and double grant. Exposure of secrets and personal information in storage, log, response. Defects in cryptography and signature verification. Missing rate limit and resource exhaustion caused by input size. Code that trusts a value sent by the client without validation. Dangerous use of dependencies |
