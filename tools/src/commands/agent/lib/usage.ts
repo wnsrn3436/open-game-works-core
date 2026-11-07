@@ -43,12 +43,14 @@ export const SESSION_FIELDS = ['inputTokens', 'cachedTokens', 'outputTokens', 'c
 function lineObject(line: string): JsonObject | null {
   const text = line.trim();
   if (!text.startsWith('{')) return null;
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(text);
-    return isPlainObject(value) ? value : null;
-  } catch {
-    return null;
+    value = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
+  return isPlainObject(value) ? value : null;
 }
 
 /** The last line of `log` that is a JSON object `matches` takes, else null. */

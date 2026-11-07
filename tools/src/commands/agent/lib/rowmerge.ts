@@ -1,3 +1,4 @@
+import { OgwError } from '../../../lib/errors.ts';
 import { pick3 } from './jsonmerge.ts';
 import { column, formatCsv, onHeader, parseCsv, type CsvTable } from './csv.ts';
 
@@ -179,8 +180,9 @@ function keyedOrBroken(text: string | null | undefined, columns: readonly string
   if (text === undefined) return undefined;
   try {
     return keyed(text, columns, keyOf);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof OgwError) return undefined;
+    throw error;
   }
 }
 

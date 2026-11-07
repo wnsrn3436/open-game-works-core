@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
-import { readJsonIfExists } from '../../../lib/fsx.ts';
+import { readJsonIfExists, whenNotFound } from '../../../lib/fsx.ts';
 import { showFile } from '../../../lib/git.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { SCENARIO } from '../../check/lib/bot-playtest.ts';
@@ -102,7 +103,11 @@ function isRuns(value: unknown): value is BotRun[] | null {
  * `sha256`; null when there is no such file, or it names other commits or another scenario, or has another form.
  */
 export async function checkTelemetryRuns(game: GameRepo, run: Pick<RunState, 'name'>, n: number, want: Omit<CheckTelemetryRuns, 'runs'>): Promise<PairRuns | null> {
-  const file = await readJsonIfExists(join(game.root, telemetryRunsRel(run, n))).catch(() => null);
+  // a file that is not JSON names no commits (`OgwError` of `readJsonIfExists`); a file that cannot be read fails
+  const file = await readJsonIfExists(join(game.root, telemetryRunsRel(run, n))).catch((error: unknown) => {
+    if (error instanceof OgwError) return null;
+    throw error;
+  });
   if (typeof file !== 'object' || file === null) return null;
   const { commit, baseline, scenario, runs } = file as Record<string, unknown>;
   if (commit !== want.commit || baseline !== want.baseline || scenario !== want.scenario) return null;
@@ -114,18 +119,15 @@ export async function checkTelemetryRuns(game: GameRepo, run: Pick<RunState, 'na
 
 /**
  * Runs the scenario on the instance up to its last step or its first failed step and reads the telemetry of its
- * client. null when the run did not reach every step, or its telemetry could not be read.
+ * client. null when the run did not reach every step; a run or a telemetry read that fails throws, and the caller says
+ * why the commit has no bot run.
  */
 export async function botRun(ctx: Context, instance: { id: string; root: string }, scenario: Scenario, pollMs: number): Promise<BotRun | null> {
-  try {
-    const outcome = await runScenario(ctx, instance.id, scenario, { pollMs });
-    if (outcome.stop !== null && outcome.stop.step < scenario.steps.length) return null;
-    const telemetry = await readTelemetry(ctx, instance.id);
-    const guide = await readFile(join(instance.root, 'play-guide.md'), 'utf8').catch(() => null);
-    return { telemetry, guide };
-  } catch {
-    return null;
-  }
+  const outcome = await runScenario(ctx, instance.id, scenario, { pollMs });
+  if (outcome.stop !== null && outcome.stop.step < scenario.steps.length) return null;
+  const telemetry = await readTelemetry(ctx, instance.id);
+  const guide = await readFile(join(instance.root, 'play-guide.md'), 'utf8').catch(whenNotFound(null));
+  return { telemetry, guide };
 }
 
 /**

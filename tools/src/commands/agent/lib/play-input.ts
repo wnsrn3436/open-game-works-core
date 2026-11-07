@@ -87,12 +87,13 @@ async function copyReferenceVideos(input: Json, givenInput: string, inputDir: st
  * with only those field values changed to the copied files. Fails when the input is not JSON or a file is missing.
  */
 export async function preparePlayInput(role: 'play' | 'judge', givenInput: string, folder: string): Promise<PreparedPlayInput> {
+  const text = await readText(givenInput);
   let input: unknown;
   try {
-    input = JSON.parse(await readText(givenInput));
+    input = JSON.parse(text);
   } catch (error) {
-    if (error instanceof OgwError && error.message.startsWith('file not found')) throw error;
-    throw new OgwError(`${role} input is not JSON: ${givenInput}`);
+    if (error instanceof SyntaxError) throw new OgwError(`${role} input is not JSON: ${givenInput}`);
+    throw error;
   }
   if (!isObject(input)) throw new OgwError(`${role} input is not a JSON object: ${givenInput}`);
   const inputDir = join(folder, 'input');

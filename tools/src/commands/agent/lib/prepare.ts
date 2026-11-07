@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { agentContext, markAgentRunning, runLogPath } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { exists, readText } from '../../../lib/fsx.ts';
+import { exists, readText, whenNotFound } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { currentBranch, git, head, revParse } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
@@ -313,13 +313,13 @@ export async function nextOrder(ctx: Context, game: GameRepo, role: 'play' | 'ju
 /** Whether Claude Code keeps the session file of `id`: `projects/<project folder>/<id>.jsonl` of its config folder. */
 async function claudeSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
   const projects = join(defaultConfigFolder('claude-code', env), 'projects');
-  const folders = await readdir(projects).catch(() => [] as string[]);
+  const folders = await readdir(projects).catch(whenNotFound([] as string[]));
   return folders.some((folder) => exists(join(projects, folder, `${id}.jsonl`)));
 }
 
 /** Whether Codex keeps the session file of `id`: a file under `sessions/` of its config folder named `rollout-...<id>...`. */
 async function codexSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
-  const entries = await readdir(join(defaultConfigFolder('codex', env), 'sessions'), { recursive: true, withFileTypes: true }).catch(() => []);
+  const entries = await readdir(join(defaultConfigFolder('codex', env), 'sessions'), { recursive: true, withFileTypes: true }).catch(whenNotFound([]));
   return entries.some((entry) => entry.isFile() && entry.name.startsWith('rollout-') && entry.name.includes(id));
 }
 

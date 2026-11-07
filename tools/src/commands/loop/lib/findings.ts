@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
+import { whenNotFound } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { buildTagName, parseHardeningRecordName } from '../../build/lib/names.ts';
@@ -168,7 +169,7 @@ export function settleUiFindings(findings: readonly Finding[], defects: readonly
 }
 
 async function uiPlaceholders(game: GameRepo): Promise<boolean> {
-  const rows = await readList(game.root).catch(() => []);
+  const rows = await readList(game.root);
   return rows.some((r) => (r.status === 'placeholder' || r.status === 'requested') && UI_RESOURCE_TYPES.includes(parseKey(r.key)?.type ?? ''));
 }
 
@@ -204,7 +205,7 @@ export async function iterationFindings(game: GameRepo, run: RunState, n: number
 export async function hardeningRecords(game: GameRepo, run: RunState): Promise<{ round: number; records: string[] }> {
   if (run.env === null || run.version === null) throw new OgwError(`run ${run.name} has no environment and version`);
   const { env, version } = run;
-  const names = await readdir(join(game.root, 'records', 'hardening')).catch(() => [] as string[]);
+  const names = await readdir(join(game.root, 'records', 'hardening')).catch(whenNotFound([] as string[]));
   const found = names
     .map((name) => ({ name, parsed: parseHardeningRecordName(name, env, version) }))
     .flatMap((f) => (f.parsed === null ? [] : [{ rel: `records/hardening/${f.name}`, round: f.parsed.round }]));
@@ -257,7 +258,7 @@ export async function collectHardeningFindings(game: GameRepo, run: RunState): P
 
 /** The most recent `findings-hardening-<round>.json` of the run. */
 export async function latestHardeningFindings(game: GameRepo, run: RunState): Promise<{ round: number; rel: string } | null> {
-  const names = await readdir(abs(game, runRel(run, ''))).catch(() => [] as string[]);
+  const names = await readdir(abs(game, runRel(run, ''))).catch(whenNotFound([] as string[]));
   const rounds = names.map((n) => /^findings-hardening-(\d+)\.json$/.exec(n)?.[1]).filter((r): r is string => r !== undefined).map(Number);
   if (rounds.length === 0) return null;
   const round = Math.max(...rounds);

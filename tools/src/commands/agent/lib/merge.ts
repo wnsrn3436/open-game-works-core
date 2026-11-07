@@ -18,7 +18,7 @@ import { runData } from '../../data/api.ts';
 import { changeAgentMeta, readAgentJob, type AgentMeta } from './meta.ts';
 import { column, parseCsv } from './csv.ts';
 import { mergeCsvRows, mergeJson, type JsonMerge } from './jsonmerge.ts';
-import { coreSpecDependencies, mergeOrder, topologicalOrder, type MergeCandidate } from './order.ts';
+import { coreSpecDependencies, InvalidCoreSpec, mergeOrder, topologicalOrder, type MergeCandidate } from './order.ts';
 import { mergeGlossary, mergeResources, mergeTranslation, type RowMerge } from './rowmerge.ts';
 import { GLOSSARY, RESOURCES, translationPaths, utf8Text } from './translation-files.ts';
 
@@ -243,7 +243,7 @@ async function checkCoreTest(repo: string, id: string, meta: AgentMeta): Promise
   const passed = await enginesPassed(repo, engines);
   const notPassed = engines.filter((engine) => !passed.has(engine));
   if (await exemptForEngine(repo, id, meta, changed, engines, passed)) return;
-  const log = meta.runLog === undefined ? null : ((await readJsonIfExists(meta.runLog).catch(() => null)) as RunLog | null);
+  const log = meta.runLog === undefined ? null : await readJsonIfExists<RunLog>(meta.runLog);
   // a run of one test file (`--file`) is not a run of its module
   const runs = (log?.runs ?? []).filter((run) => run.command.startsWith('ogw core test') && !/\s--file(\s|=)/.test(run.command));
   // a tool job while an engine's client core has not passed: `ogw core test tools` leaves that round trip out, `unknown`;
@@ -312,7 +312,7 @@ async function mainTypeCheck(ctx: Context, repo: string, commit: string): Promis
   const tools = await harnessToolsTree(ctx.env);
   const folder = join(await commonDir(harnessRoot(ctx.env), { env: ctx.env }), 'ogw-cache', 'core-type-check');
   const file = tools === null ? null : join(folder, `${commit}-${tools}.json`);
-  const kept = file === null ? null : await readJsonIfExists<{ failures?: unknown }>(file).catch(() => null);
+  const kept = file === null ? null : await readJsonIfExists<{ failures?: unknown }>(file);
   if (Array.isArray(kept?.failures) && kept.failures.every((line) => typeof line === 'string')) return kept.failures;
   const checked = await runCoreTypeCheck(ctx, commit, repo);
   // a check that stopped with an error (for example an engine not on this host) is not the commit's result
@@ -423,8 +423,10 @@ function csvMerged(path: string, base: string, ours: string, theirs: string): { 
     // a data table has a 4-row header (`data` SKILL.md `## CSV format`); translations, glossary and the other files have one
     const merged = mergeCsvRows(base, ours, theirs, /^test-data\/data\/(tables|system)\//.test(path) ? 4 : 1);
     return 'conflict' in merged ? { conflict: `${path}: ${merged.conflict}` } : merged;
-  } catch {
-    return { conflict: `${path} is not CSV on a side` };
+  } catch (error) {
+    // the CSV parser throws `OgwError` for a text that is not CSV
+    if (error instanceof OgwError) return { conflict: `${path} is not CSV on a side` };
+    throw error;
   }
 }
 
@@ -433,8 +435,9 @@ function jsonMerged(path: string, base: string, ours: string, theirs: string): {
   try {
     const parse = (text: string): unknown => (text === '' ? undefined : JSON.parse(text));
     merged = mergeJson(parse(base), parse(ours), parse(theirs), { schema: path.endsWith('.schema.json') });
-  } catch {
-    return { conflict: `${path} is not JSON on a side` };
+  } catch (error) {
+    if (error instanceof SyntaxError) return { conflict: `${path} is not JSON on a side` };
+    throw error;
   }
   return 'conflict' in merged ? { conflict: `${path}: both sides changed ${merged.conflict}` } : { text: formatJson(merged.value) };
 }
@@ -480,7 +483,13 @@ interface Candidate extends MergeCandidate {
 async function candidates(ctx: Context, ids: readonly string[]): Promise<Candidate[]> {
   const list: Candidate[] = [];
   for (const id of ids) {
-    const meta = await readAgentJob(id, ctx.env).then((r) => r.meta).catch(() => null);
+    // an id that is no ogw agent job (`OgwError`) is ordered as a job without modules; merging it then reports it
+    const meta = await readAgentJob(id, ctx.env)
+      .then((r) => r.meta)
+      .catch((error: unknown) => {
+        if (error instanceof OgwError) return null;
+        throw error;
+      });
     const core = meta?.role === 'core' && meta.place.kind === 'core-worktree' ? meta.place : null;
     list.push({ id, modules: meta?.role === 'core' ? meta.modules : [], baseCommit: core?.baseCommit ?? null });
   }
@@ -503,7 +512,10 @@ async function mergeDependencies(ctx: Context, coreImpl: string, main: string, l
     // a branch whose core-spec/ cannot be read adds nothing; its job is then reported as not ordered
     if (diff.code !== 0) continue;
     const paths = diff.stdout.split('\0').filter((path) => path !== '');
-    const added = await coreSpecDependencies(coreImpl, branch, { paths }).catch(() => new Map<string, string[]>());
+    const added = await coreSpecDependencies(coreImpl, branch, { paths }).catch((error: unknown) => {
+      if (error instanceof InvalidCoreSpec) return new Map<string, string[]>();
+      throw error;
+    });
     for (const [name, deps] of added) dependencies.set(name, deps);
   }
   return dependencies;

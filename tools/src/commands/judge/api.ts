@@ -1,3 +1,4 @@
+import { OgwError } from '../../lib/errors.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { gitRaw, showFile } from '../../lib/git.ts';
 import { CALIBRATION_DIR, LABELS_FILE, parseLabels } from './lib/pairs.ts';
@@ -13,8 +14,10 @@ async function labelCount(game: GameRepo, env: NodeJS.ProcessEnv): Promise<strin
   if (text === null) return '0';
   try {
     return String(parseLabels(text.toString('utf8')).length);
-  } catch {
-    return 'unreadable';
+  } catch (error) {
+    // `parseLabels` throws `OgwError` for a text that is not an array of entries
+    if (error instanceof OgwError) return 'unreadable';
+    throw error;
   }
 }
 

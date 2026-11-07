@@ -163,6 +163,19 @@ describe('ogw loop findings', () => {
     expect(git(g.root, 'status', '--porcelain')).toBe(`?? ${R}/findings-1.json`);
   });
 
+  it('fails on a resource list that cannot be read instead of reading it as one without UI placeholders', async () => {
+    const { g } = await iterationOne();
+    write(g.root, 'resource/resources.csv', 'key,status\n"unclosed,placeholder\n');
+    commit(g.root);
+    const out = await ogw(g.ws, ['loop', 'findings', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('resource/resources.csv');
+    // without the resource list: no UI placeholder
+    git(g.root, 'rm', '-q', 'resource/resources.csv');
+    commit(g.root);
+    expect((await ogw(g.ws, ['loop', 'findings', 'g'])).code).toBe(0);
+  });
+
   it('reads the integer bounds above 2^53 of measure-<n>.json with their digits', async () => {
     const { g, sha } = await iterationOne();
     // the digits as `ogw measure` writes them: a JSON number that a JS number would round

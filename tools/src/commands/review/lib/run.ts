@@ -4,7 +4,7 @@
  */
 import { join } from 'node:path';
 import type { CommandResult, Context } from '../../../lib/command.ts';
-import { OgwError, EXIT_STILL_RUNNING } from '../../../lib/errors.ts';
+import { OgwError, EXIT_STILL_RUNNING, ignoreCleanupError } from '../../../lib/errors.ts';
 import { jobsDir, readJob, startJob, waitJob, type WaitResult } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { withLock } from '../../../lib/lock.ts';
@@ -223,6 +223,18 @@ interface CoreTestOutput {
   error?: string;
 }
 
+/** The core test output a job printed on stdout; null when it is not a JSON object (the command failed before it tested). */
+function coreTestOutput(waited: WaitResult): CoreTestOutput | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(waited.stdout);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
+}
+
 /** The outcome of each module of a core test output (`outcomeOf`). */
 function moduleOutcomes(data: CoreTestOutput): [string, Outcome][] {
   return Object.entries(data.modules ?? {}).map(([module, result]) => [module, outcomeOf(result, data.unknown?.[module] ?? null)]);
@@ -243,14 +255,12 @@ function moduleLines(command: string, data: CoreTestOutput): string[] {
 
 export function failedLines(args: readonly string[], waited: WaitResult): string[] {
   const command = `ogw core test ${args.join(' ')}`;
-  try {
-    const data = JSON.parse(waited.stdout) as CoreTestOutput;
+  const data = coreTestOutput(waited);
+  if (data !== null) {
     if (typeof data.error === 'string') return [`${command}: ${data.error}`];
     const lines = moduleLines(command, data);
     // a run with an `unknown` module and no `fail` ends with exit code 1 and no failing test
     if (lines.length > 0 || waited.job.exitCode === 0 || moduleOutcomes(data).some(([, o]) => o.result === 'unknown')) return lines;
-  } catch {
-    // not JSON: the command failed before it tested
   }
   return [`${command}: exit code ${String(waited.job.exitCode)}: ${(waited.stderr || waited.stdout).trim().split('\n')[0] ?? ''}`];
 }
@@ -258,13 +268,9 @@ export function failedLines(args: readonly string[], waited: WaitResult): string
 /** Lines of the `unknown` modules of a core test output, each with its reason; none for an output that is not one. */
 export function unknownLines(args: readonly string[], waited: WaitResult): string[] {
   const command = `ogw core test ${args.join(' ')}`;
-  try {
-    const data = JSON.parse(waited.stdout) as CoreTestOutput;
-    if (typeof data.error === 'string') return [];
-    return moduleOutcomes(data).flatMap(([module, o]) => (o.result === 'unknown' ? [`${command}: ${module} unknown: ${o.reason ?? NOT_RECORDED}; ${rerunHint(o.reason ?? NOT_RECORDED)}`] : []));
-  } catch {
-    return [];
-  }
+  const data = coreTestOutput(waited);
+  if (data === null || typeof data.error === 'string') return [];
+  return moduleOutcomes(data).flatMap(([module, o]) => (o.result === 'unknown' ? [`${command}: ${module} unknown: ${o.reason ?? NOT_RECORDED}; ${rerunHint(o.reason ?? NOT_RECORDED)}`] : []));
 }
 
 /** The failed lines of one core test run after a fix, with the modules whose tests failed in it. */
@@ -279,25 +285,17 @@ export interface FixRun {
 
 /** `pass` or `fail` as a core test output reports `module`, or null for any other output or result. */
 function moduleResult(waited: WaitResult, module: string): 'pass' | 'fail' | null {
-  try {
-    const data = JSON.parse(waited.stdout) as CoreTestOutput;
-    if (typeof data.error === 'string') return null;
-    const result = data.modules?.[module];
-    return result === 'pass' || result === 'fail' ? result : null;
-  } catch {
-    return null;
-  }
+  const data = coreTestOutput(waited);
+  if (data === null || typeof data.error === 'string') return null;
+  const result = data.modules?.[module];
+  return result === 'pass' || result === 'fail' ? result : null;
 }
 
 /** The modules a core test output reports as `fail`, or null when it is not such an output. */
 function failedModules(waited: WaitResult): string[] | null {
-  try {
-    const data = JSON.parse(waited.stdout) as CoreTestOutput;
-    if (typeof data.error === 'string') return null;
-    return Object.entries(data.modules ?? {}).filter(([, result]) => result === 'fail').map(([module]) => module);
-  } catch {
-    return null;
-  }
+  const data = coreTestOutput(waited);
+  if (data === null || typeof data.error === 'string') return null;
+  return Object.entries(data.modules ?? {}).filter(([, result]) => result === 'fail').map(([module]) => module);
 }
 
 /** Runs the core tests after the fix, each in a slot of its own and together. */
@@ -337,7 +335,8 @@ async function resultAt(drive: Drive, args: readonly string[], module: string, c
       return moduleResult(await waitEnd(drive, id), module);
     });
   } finally {
-    await worktreeRemove(ws.coreImpl, worktree, { env: drive.ctx.env }).catch(() => undefined);
+    // the worktree is gone once its result is read; a worktree add that failed leaves none to remove
+    await worktreeRemove(ws.coreImpl, worktree, { env: drive.ctx.env }).catch(ignoreCleanupError);
   }
 }
 
@@ -523,7 +522,7 @@ export async function reviewRun(ctx: Context, target: string, first: Omit<NextOp
       // a step ends with the last round judged: the option is kept before the run can go on in another process
       await keepPending(drive, true);
       // the run goes on from the review state, so after a step it can go on in a process of the changed harness code
-      if (tools !== null && (await harnessToolsTree(ctx)) !== tools) return RUN_AGAIN;
+      if ((await harnessToolsTree(ctx)) !== tools) return RUN_AGAIN;
     }
   }, 0).catch((error: unknown) => {
     if (!entered && error instanceof OgwError && error.message.startsWith('lock busy')) {
@@ -545,11 +544,7 @@ const RUN_AGAIN = Symbol('run again with the changed harness code');
 /** The time limit of a `ogw review run` job: it goes through the rounds of its target and waits for free slots between them, longer than one job. */
 export const RUN_TIME_LIMIT_MS = 4 * LIMITS.jobMs;
 
-/** The tree of the harness `tools/` at HEAD, or null when it cannot be read: a job keeps the code it started with. */
-async function harnessToolsTree(ctx: Context): Promise<string | null> {
-  try {
-    return (await git((await ctx.workspace()).harness, ['rev-parse', 'HEAD:tools'], { env: ctx.env })).trim();
-  } catch {
-    return null;
-  }
+/** The tree of the harness `tools/` at HEAD; a git failure fails the job. */
+async function harnessToolsTree(ctx: Context): Promise<string> {
+  return (await git((await ctx.workspace()).harness, ['rev-parse', 'HEAD:tools'], { env: ctx.env })).trim();
 }

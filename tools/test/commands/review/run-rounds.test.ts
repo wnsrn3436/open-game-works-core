@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listJobs, readJob } from '../../../src/lib/jobs.ts';
@@ -55,6 +56,18 @@ describe('ogw review run', () => {
     const run = await ogw(ws, ['review', 'run', 'core', 'routing', '--since', since], { env: fake.env });
     expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 1\nout of scope: round 1: src/old.ts:4: high an old bug\nround 1: review must fix added: routing M1: src/old.ts:4: high an old bug\n' });
     expect(commitRange(ws, 'routing', 1)).toBe(`${since}..${main}`);
+  });
+
+  it('fails when the tree of the harness tools/ at HEAD cannot be read, instead of keeping the code it started with', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { routing: spec('routing', 'server') });
+    execFileSync('git', ['-C', ws.harness, 'rm', '-r', '-q', '--cached', 'tools']);
+    execFileSync('git', ['-C', ws.harness, 'commit', '-q', '-m', 'no tools', '--no-verify']);
+    const fake = agents(ws, { 1: reviewFile([]) }, GOOD_FIX);
+    const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('git rev-parse HEAD:tools failed');
+    expect(fake.calls()).toHaveLength(0);
   });
 
   it('hands the count of invalid rounds in a row to the process of the changed harness code', async () => {

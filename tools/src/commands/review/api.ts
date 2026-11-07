@@ -1,7 +1,7 @@
 import { readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Context } from '../../lib/command.ts';
-import { exists } from '../../lib/fsx.ts';
+import { exists, whenNotFound } from '../../lib/fsx.ts';
 import { branchExists, gitRaw } from '../../lib/git.ts';
 import { listJobs } from '../../lib/jobs.ts';
 import { privateTempDir } from '../../lib/secret-files.ts';
@@ -48,7 +48,7 @@ export async function changedSinceDone(ctx: Context, side: 'core' | 'tool'): Pro
  */
 async function removeSpecReviews(ctx: Context): Promise<void> {
   const temp = await privateTempDir(ctx.env);
-  const names = await readdir(temp).catch(() => []);
+  const names = await readdir(temp).catch(whenNotFound([] as string[]));
   for (const name of names.filter((n) => n.startsWith('ogw-review-spec-'))) await rm(join(temp, name), { recursive: true, force: true });
   for (const job of await listJobs(ctx.env)) {
     const meta = job.meta as Partial<AgentMeta>;

@@ -8,7 +8,7 @@ import { ogw, commitAll, makeWorkspace, type TestWorkspace } from '../../helpers
 import { fakeAgentCli } from '../agent/helpers.ts';
 
 /** Faults the tests turn on: a commit that lands after the first HEAD read, and a code check job that cannot start. */
-const faults = vi.hoisted(() => ({ commitAfterHead: null as string | null, failCodeCheckStart: false }));
+const faults = vi.hoisted(() => ({ commitAfterHead: null as string | null, failCodeCheckStart: false, failKill: false }));
 
 vi.mock('../../../src/lib/git.ts', async (importOriginal) => {
   const real = await importOriginal<typeof Git>();
@@ -34,6 +34,10 @@ vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
     async startJob(options: Jobs.StartJobOptions): Promise<string> {
       if (faults.failCodeCheckStart && options.command === 'code check') throw new Error('cannot write the job record');
       return real.startJob(options);
+    },
+    async killJob(id: string, ...rest: unknown[]): Promise<void> {
+      if (faults.failKill) throw new Error(`cannot kill ${id}\nmore`);
+      await (real.killJob as (id: string, ...rest: unknown[]) => Promise<void>)(id, ...rest);
     },
   };
 });
@@ -82,6 +86,19 @@ describe('ogw review next: starting a round', () => {
     expect(existsSync(statePath(ws))).toBe(false);
 
     const quick = fakeAgentCli(ws, `fs.writeFileSync(output, ${JSON.stringify(EMPTY_REVIEW)});`).env;
+    // the kill of the review agent fails too: the start failure stays the failure, and the kill that failed is said
+    faults.failCodeCheckStart = true;
+    faults.failKill = true;
+    try {
+      const failed = await ogw(ws, ['review', 'next', 'tool', 'agent', 'merge', ...definitions(ws)], { env: quick });
+      expect(failed.code).not.toBe(0);
+      expect(failed.stderr).toContain('cannot write the job record');
+      expect(failed.stderr).toMatch(/killing job \w+ failed: cannot kill \w+\n/);
+    } finally {
+      faults.failCodeCheckStart = false;
+      faults.failKill = false;
+    }
+    for (const job of await listJobs(ws.env)) if (job.status === 'running') await (await import('../../../src/lib/jobs.ts')).killJob(job.id, ws.env);
     const started = await ogw(ws, ['review', 'next', 'tool', 'agent', 'merge', ...definitions(ws)], { env: quick });
     expect(started.stdout).toContain('round: 1');
     expect((await ogw(ws, ['review', 'wait', 'tool', 'agent', 'merge', '--timeout', '120000'])).stdout).toBe('result: done\nround: 1\n');

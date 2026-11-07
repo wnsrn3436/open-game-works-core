@@ -157,14 +157,25 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
 });
 
 const killed = vi.hoisted(() => [] as string[]);
+/** Jobs whose kill fails, and jobs whose record cannot be read. */
+const killFails = vi.hoisted(() => new Set<string>());
+const unreadable = vi.hoisted(() => new Set<string>());
 
-vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../src/lib/jobs.ts')>()),
-  killJob: vi.fn((id: string) => {
-    killed.push(id);
-    return Promise.resolve();
-  }),
-}));
+vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/lib/jobs.ts')>();
+  return {
+    ...original,
+    killJob: vi.fn((id: string) => {
+      killed.push(id);
+      return killFails.has(id) ? Promise.reject(new Error(`job ${id} runs in the PID namespace of a play or judge sandbox\nmore`)) : Promise.resolve();
+    }),
+    // the job record of a fake agent: one with no result file path
+    readJob: vi.fn((id: string, env?: NodeJS.ProcessEnv) => {
+      if (unreadable.has(id)) return Promise.reject(new Error(`the record of ${id} cannot be read`));
+      return fake.agents.some((a) => a.id === id) ? Promise.resolve({ id, meta: {} }) : original.readJob(id, env);
+    }),
+  };
+});
 
 const measure = vi.hoisted(() => ({ collected: [] as string[][], collect: [] as [string, string][], dead: [] as string[] }));
 
@@ -284,6 +295,8 @@ beforeEach(() => {
   evaluateDeps.resignal = signalDeps.resignal;
   evaluateDeps.signalSettleMs = signalDeps.signalSettleMs;
   killed.length = 0;
+  killFails.clear();
+  unreadable.clear();
   fake.instances = [];
   fake.running = new Set();
   fake.stopped = [];
@@ -499,6 +512,17 @@ describe('ogw loop evaluate', () => {
     expect(measure.collected).toEqual([]);
   });
 
+  it('fails the run when the job record of a failed agent cannot be read', async () => {
+    const { g } = await loop({ playInstances: 1 });
+    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));
+    fake.agentStarting = (id) => {
+      if (fake.agents.find((a) => a.id === id)?.role === 'play') unreadable.add(id);
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toMatch(/the record of a\d+ cannot be read/);
+  });
+
   it('removes the budget noted for a play job and a judge job when it sees each job end', async () => {
     const { g } = await loop({ playInstances: 1 });
     const budgets = join(await jobsDir(g.ws.env), 'play-budget');
@@ -537,6 +561,28 @@ describe('ogw loop evaluate', () => {
     expect(file.judges[0]).toMatchObject({ status: 'failed', votes: null, vsReference: 'unknown', result: '' });
     expect(file.votes?.every((v) => v.this === 0 && v.baseline === 0)).toBe(true);
     expect(git(g.root, 'ls-files', `${R}/measure-1.json`)).toBe('');
+  });
+
+  it('fails the run on a judge result that cannot be read, instead of taking it as one whose tables cannot be read', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    fake.respond = (agent) => (agent.role === 'play' ? null : 'no tables');
+    const agentApi = await import('../../../src/commands/agent/api.ts');
+    const outcome = agentApi.agentOutcome as unknown as { mockImplementation: (f: (ctx: unknown, id: string) => Promise<unknown>) => void; getMockImplementation: () => (ctx: unknown, id: string) => Promise<unknown> };
+    const base = outcome.getMockImplementation();
+    outcome.mockImplementation((ctx, id) => {
+      const agent = fake.agents.find((a) => a.id === id);
+      if (agent?.role !== 'judge') return base(ctx, id);
+      // the judge result is a folder
+      mkdirSync(agent.output, { recursive: true });
+      return Promise.resolve({ status: 'done', output: agent.output });
+    });
+    try {
+      const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain('EISDIR');
+    } finally {
+      outcome.mockImplementation(base);
+    }
   });
 
   it('reads no ## vs baseline of a judge whose input has B null, though the pair has a baseline game', async () => {
@@ -1195,12 +1241,12 @@ describe('ogw loop evaluate', () => {
     ]);
   });
 
-  it('keeps a play whose client cannot answer telemetry or measure as done without its raw data', async () => {
+  it('keeps a play whose client cannot answer telemetry or measure as done without its raw data, and says why it has none', async () => {
     const { g } = await loop();
     measure.dead = ['i9'];
     fake.respond = (agent) => (agent.role === 'play' ? '## coverage\n\nunknown: none\n\n## observations\n\n1 | lobby | tap | crash | stuck | blocker | c.png\n' : judgeText('A', 'A', 'fail'));
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-    expect(out.stderr).toBe('');
+    expect(out.stderr).toBe('measure: no raw data of instance i9: get_telemetry failed\n');
     expect(out.code).toBe(0);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.plays.filter((p) => p.moment === null).map((p) => [p.instance, p.status])).toEqual([['i9', 'done'], ['i10', 'done']]);
@@ -1221,6 +1267,20 @@ describe('ogw loop evaluate', () => {
     expect(out.stderr).toContain('instance start failed: cannot start');
     expect(fake.running.size).toBe(0);
     expect(git(g.root, 'ls-files', `${R}/evaluate-1.json`)).toBe('');
+  });
+
+  it('keeps the failure of the run when a kill of its cleanup fails too, and says that kill in the log', async () => {
+    const { g } = await loop();
+    fake.failStart = (opts) => (opts.platform === 'web' ? 'start' : null);
+    fake.respond = () => null;
+    const outcome = (await import('../../../src/commands/agent/api.ts')).agentOutcome as unknown as { mockImplementationOnce: (f: () => Promise<unknown>) => void };
+    outcome.mockImplementationOnce(() => Promise.resolve({ status: 'running', output: null }));
+    killFails.add('a1');
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('killing job a1 failed: job a1 runs in the PID namespace of a play or judge sandbox\n');
+    expect(out.stderr).toContain('instance start failed: cannot start');
+    expect(fake.running.size).toBe(0);
   });
 
   it('stops everything when a save fixture instance cannot start for another reason than the fixture', async () => {

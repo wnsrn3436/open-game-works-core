@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { parseTokens, type CommandResult, type Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import { listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { sideAndTarget } from '../next.ts';
 import { run } from '../run.ts';
@@ -21,8 +22,10 @@ export interface TargetStatus {
 function runTarget(job: JobRecord): string | null {
   try {
     return sideAndTarget(parseTokens(job.argv.slice(2), run.options ?? {}), run.usage).target;
-  } catch {
-    return null;
+  } catch (error) {
+    // arguments that do not parse fail with `OgwError`
+    if (error instanceof OgwError) return null;
+    throw error;
   }
 }
 

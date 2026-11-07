@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
+import { isNotFound } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { gitRaw } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
@@ -321,8 +322,9 @@ export async function iterationRecords(game: GameRepo, run: RunState): Promise<P
   let names: string[];
   try {
     names = await readdir(dir);
-  } catch {
-    return [];
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
   }
   const numbers = recordNumbers(names);
   const records: ParsedRecord[] = [];

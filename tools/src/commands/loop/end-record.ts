@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { expectPositionals, flag, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, writeFileAtomic } from '../../lib/fsx.ts';
+import { exists, whenNotFound, writeFileAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { commitPaths, showFile } from '../../lib/git.ts';
 import type { RunState } from '../../lib/runstate.ts';
@@ -23,7 +23,7 @@ const USAGE = 'ogw loop end-record <game> [--stopped-by-human] [--human <file>]'
 
 /** The highest `<n>` of `records/loops/<run>/<prefix><n>.json`. */
 async function lastNumbered(game: GameRepo, run: RunState, prefix: string): Promise<number | null> {
-  const names = await readdir(abs(game, runRel(run, ''))).catch(() => [] as string[]);
+  const names = await readdir(abs(game, runRel(run, ''))).catch(whenNotFound([] as string[]));
   const numbers = names
     .map((name) => (name.startsWith(prefix) ? /^(\d+)\.json$/.exec(name.slice(prefix.length))?.[1] : undefined))
     .filter((n): n is string => n !== undefined)

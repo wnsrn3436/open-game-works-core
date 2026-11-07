@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { whenNotFound } from '../../../lib/fsx.ts';
 import type { AgentCli } from './cli-command.ts';
 import { agentCliLog } from './meta.ts';
 import { withResultText } from './usage.ts';
@@ -31,9 +32,10 @@ function codexEventMessage(line: string): string | null {
   let value: unknown;
   try {
     value = JSON.parse(line);
-  } catch {
+  } catch (error) {
     // a line that is not JSON (a stderr line) has no event message
-    return null;
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
   if (typeof value !== 'object' || value === null) return null;
   const event = value as { type?: unknown; message?: unknown; error?: unknown };
@@ -62,6 +64,6 @@ export function hasLimitMessage(cli: AgentCli, output: string): boolean {
 
 /** True when the agent CLI output of the `ogw agent` job has a limit message of `cli`; false without that output. */
 export async function agentHitLimit(id: string, cli: AgentCli, env: NodeJS.ProcessEnv): Promise<boolean> {
-  const output = await readFile(await agentCliLog(id, env), 'utf8').catch(() => '');
+  const output = await readFile(await agentCliLog(id, env), 'utf8').catch(whenNotFound(''));
   return hasLimitMessage(cli, output);
 }

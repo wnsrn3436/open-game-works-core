@@ -5,9 +5,9 @@ import { basename, delimiter, dirname, join, relative, resolve } from 'node:path
 import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey } from '../../../lib/agentctx.ts';
 import type { CommandResult, Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { exists, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { BROKER_ENV, BROKER_RUN, BROKER_WORKER } from '../../../lib/broker-client.ts';
-import { commitPaths, commonDir, gitDir, gitIdentity, gitLine, head, withGitConfig, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
+import { commitPaths, commonDir, gitDir, gitIdentity, gitLine, gitRaw, head, withGitConfig, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { AGENT_KEY_ENV, endJobsOfAgent, jobsDir, listJobs } from '../../../lib/jobs.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { escapeRegExp } from '../../../lib/regexp.ts';
@@ -506,6 +506,17 @@ async function runCli(
 }
 
 /**
+ * The top folder of the git checkout that holds `dir`; null when git says it is in no checkout. Any other failure of
+ * git (it cannot run, it times out, it fails otherwise) is thrown.
+ */
+async function checkoutTop(dir: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  const result = await gitRaw(dir, ['rev-parse', '--show-toplevel'], { env });
+  if (!result.timedOut && result.code === 0) return result.stdout.replace(/\r?\n$/, '');
+  if (!result.timedOut && /not a git repository/i.test(result.stderr)) return null;
+  throw new OgwError(`git rev-parse --show-toplevel in ${dir} failed: ${result.timedOut ? 'timed out' : (result.stderr || result.stdout).trim()}`);
+}
+
+/**
  * Commits `paths` in the checkout that holds `dir`, if any, under the agent commit lock of that checkout, so the
  * commits of `ogw agent` jobs and retries in the same checkout never run at once.
  */
@@ -515,7 +526,7 @@ export async function commitInCheckout(
   message: string,
   options: { env: NodeJS.ProcessEnv; noVerify: boolean },
 ): Promise<void> {
-  const top = await gitLine(dir, ['rev-parse', '--show-toplevel'], { env: options.env }).catch(() => null);
+  const top = await checkoutTop(dir, options.env);
   if (top === null) return;
   // the folder resolved, the name not: a symlink is committed as itself, never the path it points to
   const inside = paths.filter((path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined).map((path) => relative(top, join(realpathSync(dirname(path)), basename(path))));
@@ -596,7 +607,7 @@ async function finish(id: string, ctx: Context, meta: AgentMeta): Promise<{ meta
 }
 
 async function tail(path: string, lines: number): Promise<string> {
-  const text = await readFile(path, 'utf8').catch(() => '');
+  const text = await readFile(path, 'utf8').catch(whenNotFound(''));
   return text.split('\n').slice(-lines - 1).join('\n').trimEnd();
 }
 
@@ -655,22 +666,44 @@ async function runWithBroker<T>(
   });
   await markAgentRunning(id, ctx.env);
   let broker: Broker | null = null;
+  let workFailed = false;
   try {
     if (run.socket !== null && toRun.brokerCommand !== null) {
       // the forwarded commands run as this agent: its environment outside the sandbox, with its key
       broker = await startBroker({ socket: run.socket, key: key.value, command: toRun.brokerCommand, worker: toRun.brokerWorker ?? undefined, env: childEnv(agentEnv(ctx.env, meta.folder), key.value) });
     }
     return await work((command, prompt) => runCli(id, ctx, meta, toRun, command, prompt, run.logPath, key.value));
+  } catch (error) {
+    workFailed = true;
+    throw error;
   } finally {
     ctx.env = run.afterEnv;
     await agentCliEnded(id, ctx.env, run.runLog);
-    // a job or instance the agent left running holds the host (and an instance slot) until someone ends it; the jobs
-    // first, so a waiting `instance start` does not start one after the list
-    await endJobsOfAgent(id, ctx.env).catch(() => undefined);
-    await stopInstancesOfAgent(ctx, id).catch(() => undefined);
-    if (broker !== null) await broker.close().catch(() => undefined);
-    if (toRun.profileFolder !== null) await rm(toRun.profileFolder, { recursive: true, force: true });
+    try {
+      await endWhatTheAgentLeft(ctx, id, broker, workFailed);
+    } finally {
+      if (toRun.profileFolder !== null) await rm(toRun.profileFolder, { recursive: true, force: true });
+    }
   }
+}
+
+/**
+ * Ends what an agent left when its CLI ended: its jobs still running, its instances, its broker. A job or instance the
+ * agent left running holds the host (and an instance slot) until someone ends it; the jobs first, so a waiting
+ * `instance start` does not start one after the list. Each runs although one before it failed. After work that ended
+ * well, the first end that failed fails the job; after work that failed, that failure stays the failure of the job and
+ * each end that failed is said in the log with its error.
+ */
+export async function endWhatTheAgentLeft(ctx: Context, id: string, broker: Pick<Broker, 'close'> | null, workFailed: boolean): Promise<void> {
+  const failures: unknown[] = [];
+  const failed = (error: unknown): void => {
+    failures.push(error);
+  };
+  await endJobsOfAgent(id, ctx.env).catch(failed);
+  await stopInstancesOfAgent(ctx, id).catch(failed);
+  if (broker !== null) await broker.close().catch(failed);
+  if (!workFailed && failures.length > 0) throw failures[0];
+  for (const failure of failures) ctx.log(`agent ${id}: ${failure instanceof Error ? failure.message : String(failure)}`);
 }
 
 /** The background job of `ogw agent`: runs the agent CLI and handles its result. */
@@ -791,7 +824,7 @@ async function runRounds(
 
 /** The output of each run in the CLI log, the runs starting at the byte offsets `starts`. */
 async function runLogs(logPath: string, starts: readonly number[]): Promise<string[]> {
-  const log = await readFile(logPath).catch(() => Buffer.alloc(0));
+  const log = await readFile(logPath).catch(whenNotFound(Buffer.alloc(0)));
   return starts.map((start, i) => log.subarray(start, starts[i + 1] ?? log.length).toString('utf8'));
 }
 

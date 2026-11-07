@@ -82,12 +82,22 @@ interface Started {
   element: string;
 }
 
+/**
+ * The handler of a kill of a variant agent job after a signal or a failed start: that signal or failure stays the result,
+ * so a kill that failed is said in the log with its error.
+ */
+function killFailed(ctx: Context, job: string): (error: unknown) => void {
+  return (error: unknown) => {
+    ctx.log(`killing job ${job} failed: ${(error instanceof Error ? error.message : String(error)).split('\n', 1)[0] as string}`);
+  };
+}
+
 /** Waits until every variant agent ended; a signal kills them before this process ends. */
 async function waitAgents(ctx: Context, jobs: readonly string[]): Promise<Map<string, AgentOutcome>> {
   const outcomes = new Map<string, AgentOutcome>();
   const off = evaluateDeps.onSignal((signal) => {
     off();
-    void Promise.all(jobs.map((id) => killJob(id, ctx.env).catch(() => undefined))).finally(() => {
+    void Promise.all(jobs.map((id) => killJob(id, ctx.env).catch(killFailed(ctx, id)))).finally(() => {
       evaluateDeps.resignal(signal);
     });
   });
@@ -196,7 +206,7 @@ async function startVariants(ctx: Context, game: GameRepo, run: RunState, count:
       started.push({ k, job, element: targetElement(k, n) });
     }
   } catch (error) {
-    await Promise.all(started.map((s) => killJob(s.job, ctx.env).catch(() => undefined)));
+    await Promise.all(started.map((s) => killJob(s.job, ctx.env).catch(killFailed(ctx, s.job))));
     throw error;
   }
   return { base, started };

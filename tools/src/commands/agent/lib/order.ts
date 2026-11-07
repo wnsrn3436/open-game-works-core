@@ -3,6 +3,9 @@ import { git, showFile } from '../../../lib/git.ts';
 import { byteCompare } from '../../../lib/order.ts';
 import { TOOLS } from '../../core/lib/tools.ts';
 
+/** A `core-spec/` file that is not JSON or has no name. */
+export class InvalidCoreSpec extends OgwError {}
+
 /**
  * `dependencies` of every module in `core-spec/` at a commit of `open-game-works-core-impl/`, or of the `core-spec/` files in
  * `paths` only. With `skipInvalid`, a file that is not JSON or has no name is left out instead of failing.
@@ -17,16 +20,17 @@ export async function coreSpecDependencies(
   for (const path of listed.filter((p) => p.startsWith('core-spec/') && p.endsWith('.json'))) {
     const bytes = await showFile(coreImpl, commit, path);
     if (bytes === null) continue;
-    let spec: { name?: unknown; dependencies?: unknown };
+    let spec: { name?: unknown; dependencies?: unknown } | null;
     try {
-      spec = JSON.parse(bytes.toString('utf8')) as { name?: unknown; dependencies?: unknown };
-    } catch {
+      spec = JSON.parse(bytes.toString('utf8')) as typeof spec;
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
       if (options.skipInvalid === true) continue;
-      throw new OgwError(`invalid JSON in ${path} at ${commit}`);
+      throw new InvalidCoreSpec(`invalid JSON in ${path} at ${commit}`);
     }
-    if (typeof spec.name !== 'string') {
+    if (typeof spec?.name !== 'string') {
       if (options.skipInvalid === true) continue;
-      throw new OgwError(`${path} has no name`);
+      throw new InvalidCoreSpec(`${path} has no name`);
     }
     const deps = Array.isArray(spec.dependencies) ? spec.dependencies.filter((d): d is string => typeof d === 'string') : [];
     modules.set(spec.name, deps);

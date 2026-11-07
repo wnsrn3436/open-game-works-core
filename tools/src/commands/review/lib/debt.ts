@@ -9,7 +9,7 @@ import { readdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { formatJson, readJsonIfExists, writeFileAtomic } from '../../../lib/fsx.ts';
+import { formatJson, isNotFound, readJsonIfExists, whenNotFound, writeFileAtomic } from '../../../lib/fsx.ts';
 import { checkoutLock, commitPaths, currentBranch } from '../../../lib/git.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { byteCompare } from '../../../lib/order.ts';
@@ -78,7 +78,7 @@ export async function readList(repo: string, kind: ListKind, target: string): Pr
 /** Every list of a kind in the checkout, by file name. */
 export async function readAllLists(repo: string, kind: ListKind): Promise<ReviewList[]> {
   const dir = join(repo, KINDS[kind].dir);
-  const names = (await readdir(dir).catch(() => [] as string[])).filter((name) => name.endsWith('.json')).sort(byteCompare);
+  const names = (await readdir(dir).catch(whenNotFound([] as string[]))).filter((name) => name.endsWith('.json')).sort(byteCompare);
   const lists: ReviewList[] = [];
   for (const name of names) {
     const value = await readJsonIfExists(join(dir, name));
@@ -237,7 +237,8 @@ function relativeFile(location: string, root: string): string | null {
 function realPath(path: string): string {
   try {
     return realpathSync(path);
-  } catch {
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
     const parent = dirname(path);
     return parent === path ? path : join(realPath(parent), basename(path));
   }

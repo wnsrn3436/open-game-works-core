@@ -118,8 +118,10 @@ export async function runBrokerWorker(env: NodeJS.ProcessEnv): Promise<number> {
     let message: { argv?: unknown; cwd?: unknown; stdin?: unknown; chunk?: unknown; end?: unknown };
     try {
       message = JSON.parse(text) as typeof message;
-    } catch {
-      return;
+    } catch (error) {
+      // a line that is not JSON is no call
+      if (error instanceof SyntaxError) return;
+      throw error;
     }
     if (Array.isArray(message.argv) && message.argv.every((arg) => typeof arg === 'string') && typeof message.cwd === 'string') {
       queue.push({ argv: message.argv, cwd: message.cwd });

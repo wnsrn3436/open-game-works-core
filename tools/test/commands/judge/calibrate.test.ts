@@ -75,6 +75,12 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
   };
 });
 
+vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/lib/jobs.ts')>();
+  // the job record of a fake agent: one with no result file path
+  return { ...original, readJob: vi.fn((id: string, env?: NodeJS.ProcessEnv) => (fake.agents.some((a) => a.id === id) ? Promise.resolve({ id, meta: {} }) : original.readJob(id, env))) };
+});
+
 vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
   botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {

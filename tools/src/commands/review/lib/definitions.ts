@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { exists, readText } from '../../../lib/fsx.ts';
+import { exists, readText, whenNotFound } from '../../../lib/fsx.ts';
 import { revParse } from '../../../lib/git.ts';
 import { markdownSection, tableCells } from '../../agent/lib/prompt.ts';
 import { coreSpecDependencies } from '../../agent/lib/order.ts';
@@ -34,7 +34,7 @@ export async function moduleSpecs(harness: string): Promise<ModuleSpec[]> {
 
 async function engines(coreImpl: string): Promise<string[]> {
   const client = join(coreImpl, 'client');
-  const entries = await readdir(client, { withFileTypes: true }).catch(() => []);
+  const entries = await readdir(client, { withFileTypes: true }).catch(whenNotFound([]));
   return entries.filter((e) => e.isDirectory() && exists(join(client, e.name, 'engine.json'))).map((e) => e.name).sort();
 }
 

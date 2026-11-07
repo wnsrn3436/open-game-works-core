@@ -32,7 +32,7 @@ import {
   type VsBaseline,
   type VsReference,
 } from './files.ts';
-import { appendCoverage, judgeReadingOf, judgeVerdict, type JudgeVerdict } from './results.ts';
+import { appendCoverage, judgeReadingOf, judgeResultErrors, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
 import { botRun, checkTelemetryRuns, comparisonText, pairRuns, scenarioAtHead, withInputLatency, type BotRun, type PairRuns, type SharedScenario } from './shared-telemetry.ts';
 import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
@@ -707,17 +707,24 @@ function rel(state: State, path: string | null): string {
 }
 
 async function expectedOutput(state: State, job: string): Promise<string | null> {
-  const meta = (await readJob(job, state.ctx.env).catch(() => null))?.meta;
-  return typeof meta?.output === 'string' ? meta.output : null;
+  const meta = (await readJob(job, state.ctx.env)).meta;
+  return typeof meta.output === 'string' ? meta.output : null;
 }
 
 function firstLine(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).split('\n', 1)[0] as string;
 }
 
+/** The handler of a sleep that a wake may end early: its `AbortError` ends the sleep, any other error is thrown. */
+function whenAborted(error: unknown): void {
+  if (error instanceof Error && error.name === 'AbortError') return;
+  throw error;
+}
+
 /**
  * Adds the telemetry summary to the feedback and collects the measure raw data. A client that crashed or hung during
- * the play cannot answer: the feedback gets `- telemetry: unknown (<error>)` and the instance gives no raw data.
+ * the play cannot answer: the feedback gets `- telemetry: unknown (<error>)` and the instance gives no raw data, which
+ * the log says with the error.
  */
 async function finishPlay(state: State, slot: PlaySlot, output: string): Promise<void> {
   const instance = slot.instance as InstanceInfo;
@@ -727,7 +734,10 @@ async function finishPlay(state: State, slot: PlaySlot, output: string): Promise
     const out = state.plan.site.measure(instance.id);
     const collected = await collectMeasure(state.ctx, state.plan.game.name, instance.id, out).then(
       () => true,
-      () => false,
+      (error: unknown) => {
+        state.ctx.log(`measure: no raw data of instance ${instance.id}: ${firstLine(error)}`);
+        return false;
+      },
     );
     if (collected) slot.measureFile = out;
   }
@@ -812,15 +822,14 @@ async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> 
 
 /**
  * Reads the judge result as its judge input sets (ogw.md `## loop evaluate`): the input file the judge got, not the
- * pair, says whether it compared with the baseline game and with the reference game. Null when its tables cannot be read.
+ * pair, says whether it compared with the baseline game and with the reference game. Null when its tables cannot be read
+ * (`judgeResultErrors`); a file that cannot be read fails.
  */
 async function readVerdict(slot: JudgeSlot, output: string): Promise<JudgeVerdict | null> {
-  try {
-    const reading = judgeReadingOf(JSON.parse(await readFile(slot.input as string, 'utf8')));
-    return judgeVerdict(await readFile(output, 'utf8'), slot.side, { ...reading, judgeMoments: slot.moments.map((m) => m.name) });
-  } catch {
-    return null;
-  }
+  const reading = judgeReadingOf(JSON.parse(await readFile(slot.input as string, 'utf8')));
+  const text = await readFile(output, 'utf8');
+  if (judgeResultErrors(text, reading).length > 0) return null;
+  return judgeVerdict(text, slot.side, { ...reading, judgeMoments: slot.moments.map((m) => m.name) });
 }
 
 async function retryOrFail(state: State, slot: Slot): Promise<void> {
@@ -900,16 +909,30 @@ async function fallBack(state: State, slot: JudgeSlot): Promise<boolean> {
   return true;
 }
 
+/**
+ * The handler of one cleanup of `abort`: the run already failed or got a signal, and that failure stays its result, so
+ * the cleanup that failed is said in the log with its error and the other cleanups go on.
+ */
+function cleanupFailed(state: State, what: string): (error: unknown) => void {
+  return (error: unknown) => {
+    state.ctx.log(`${what} failed: ${firstLine(error)}`);
+  };
+}
+
 /** Kills every agent job and stops every instance of this run, the ones still starting too, all at once. */
 async function abort(state: State): Promise<void> {
   const graceMs = state.stoppedBy === null ? undefined : SIGNAL_KILL_GRACE_MS;
   const starting = [...state.starting];
   state.starting.clear();
   await Promise.all([
-    ...[...state.jobs].map((job) => killJob(job, state.ctx.env, graceMs).catch(() => undefined)),
-    ...[...state.instances.values()].map((instance) => stop(state, instance).catch(() => undefined)),
-    ...starting.map((id) => stopInstance(state.ctx, id).catch(() => undefined)),
-    ...[...state.jobs].flatMap((job) => [clearReleases(state.ctx.env, job).catch(() => undefined), clearUnstarted(state.ctx.env, job).catch(() => undefined), clearPlayBudget(state.ctx.env, job).catch(() => undefined)]),
+    ...[...state.jobs].map((job) => killJob(job, state.ctx.env, graceMs).catch(cleanupFailed(state, `killing job ${job}`))),
+    ...[...state.instances.values()].map((instance) => stop(state, instance).catch(cleanupFailed(state, `stopping instance ${instance.id}`))),
+    ...starting.map((id) => stopInstance(state.ctx, id).catch(cleanupFailed(state, `stopping instance ${id}`))),
+    ...[...state.jobs].flatMap((job) => [
+      clearReleases(state.ctx.env, job).catch(cleanupFailed(state, `clearing the slot releases of job ${job}`)),
+      clearUnstarted(state.ctx.env, job).catch(cleanupFailed(state, `clearing the unstarted instances of job ${job}`)),
+      clearPlayBudget(state.ctx.env, job).catch(cleanupFailed(state, `clearing the play budget of job ${job}`)),
+    ]),
   ]);
 }
 
@@ -999,7 +1022,8 @@ async function runSlots(state: State): Promise<void> {
       checkStopped(state);
       if (await poll(state, slot)) changed = true;
     }
-    if (!changed) await sleep(evaluateDeps.pollMs, undefined, { signal: state.wake.signal }).catch(() => undefined);
+    // a wake (a signal, an ended agent) ends the sleep early with an `AbortError`
+    if (!changed) await sleep(evaluateDeps.pollMs, undefined, { signal: state.wake.signal }).catch(whenAborted);
   }
   checkStopped(state);
 }

@@ -19,8 +19,10 @@ const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 export function utf8Text(bytes: Buffer): string {
   try {
     return UTF8.decode(bytes);
-  } catch {
-    throw new OgwError('not UTF-8');
+  } catch (error) {
+    // the fatal decoder throws a `TypeError` for bytes that are not UTF-8
+    if (error instanceof TypeError) throw new OgwError('not UTF-8');
+    throw error;
   }
 }
 
@@ -30,8 +32,9 @@ async function textAt(repo: string, commit: string, path: string, options: GitOp
   if (bytes === null) return null;
   try {
     return utf8Text(bytes);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof OgwError) return undefined;
+    throw error;
   }
 }
 

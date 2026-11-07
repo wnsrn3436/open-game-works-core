@@ -1,10 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expectPositionals, positional, type CommandDef, type Context } from '../../lib/command.ts';
-import { writeFileAtomic } from '../../lib/fsx.ts';
+import { whenNotFound, writeFileAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { commitPaths } from '../../lib/git.ts';
-import { readJob, type JobRecord } from '../../lib/jobs.ts';
+import { JobNotFound, readJob, type JobRecord } from '../../lib/jobs.ts';
 import { changeOpenRun, requireOpenRun, type RunState } from '../../lib/runstate.ts';
 import { startAgentJob } from '../agent/api.ts';
 import { placeholderFailures } from '../check/api.ts';
@@ -22,7 +22,7 @@ const USAGE = 'ogw loop dispatch <game>';
 async function requestFiles(game: GameRepo, run: RunState): Promise<string[]> {
   const place = requestPlace(run);
   const dir = join(game.root, place.dir);
-  const names = await readdir(dir).catch(() => [] as string[]);
+  const names = await readdir(dir).catch(whenNotFound([] as string[]));
   return names
     .filter((n) => isRequestFileName(place, n))
     .sort()
@@ -63,7 +63,7 @@ interface Install {
 /** The methods not installed on this host that some key of the request file needs (`blockingMethods`), in first-seen order. */
 async function heldBy(ctx: Context, game: GameRepo, file: string): Promise<string[]> {
   const methods: string[] = [];
-  for (const key of requestFileKeys(await readFile(file, 'utf8').catch(() => ''))) {
+  for (const key of requestFileKeys(await readFile(file, 'utf8'))) {
     for (const method of await blockingMethods(ctx, game, key)) if (!methods.includes(method)) methods.push(method);
   }
   return methods;
@@ -77,7 +77,11 @@ async function heldBy(ctx: Context, game: GameRepo, file: string): Promise<strin
 async function installOf(ctx: Context, game: GameRepo, method: string): Promise<Install> {
   const recorded = loopData(await requireOpenRun(game)).installs.find((i) => i.method === method);
   if (recorded) {
-    const job = await readJob(recorded.job, ctx.env).catch(() => null);
+    // a recorded job whose record is gone ended
+    const job = await readJob(recorded.job, ctx.env).catch((error: unknown) => {
+      if (error instanceof JobNotFound) return null;
+      throw error;
+    });
     const command = `ogw ${(job?.argv ?? ['generation', 'install', method]).join(' ')}`;
     return { method, job: recorded.job, command, state: job?.status === 'running' ? 'running' : 'failed' };
   }

@@ -2,6 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { escapeRegExp } from '../../../lib/regexp.ts';
 import type { AgentSettings, HarnessSettings, Role } from '../../../lib/settings.ts';
 
@@ -68,11 +69,13 @@ export function withoutJsonOutput(args: readonly string[]): string[] {
   return at < 0 ? [...args] : [...args.slice(0, at), ...args.slice(at + CLAUDE_JSON_OUTPUT.length)];
 }
 
+/** The real path of `path`, or `path` itself when it does not exist. */
 function real(path: string): string {
   try {
     return realpathSync(path);
-  } catch {
-    return path;
+  } catch (error) {
+    if (isNotFound(error)) return path;
+    throw error;
   }
 }
 
@@ -397,11 +400,13 @@ export function defaultConfigFolder(cli: AgentCli, env: NodeJS.ProcessEnv): stri
   return set !== undefined && set !== '' ? set : join(env.HOME ?? homedir(), config.home);
 }
 
+/** The names in `folder`; none when it does not exist. */
 function topLevelNames(folder: string): string[] {
   try {
     return readdirSync(folder);
-  } catch {
-    return [];
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
   }
 }
 
@@ -455,13 +460,23 @@ function unixPath(host: unknown): string | null {
 function contextSockets(dockerConfig: string): string[] {
   const meta = join(dockerConfig, 'contexts', 'meta');
   return topLevelNames(meta).flatMap((id) => {
+    const file = join(meta, id, 'meta.json');
+    let text: string;
     try {
-      const parsed = JSON.parse(readFileSync(join(meta, id, 'meta.json'), 'utf8')) as { Endpoints?: { docker?: { Host?: unknown } } };
-      const path = unixPath(parsed.Endpoints?.docker?.Host);
-      return path === null ? [] : [path];
-    } catch {
-      return [];
+      text = readFileSync(file, 'utf8');
+    } catch (error) {
+      // an entry without a context file (a file such as .DS_Store, a folder without meta.json) is no context
+      if (isNotFound(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return [];
+      throw error;
     }
+    let parsed: { Endpoints?: { docker?: { Host?: unknown } } } | null;
+    try {
+      parsed = JSON.parse(text) as typeof parsed;
+    } catch (error) {
+      throw new OgwError(`${file} is not JSON: ${(error as Error).message}`);
+    }
+    const path = unixPath(parsed?.Endpoints?.docker?.Host);
+    return path === null ? [] : [path];
   });
 }
 

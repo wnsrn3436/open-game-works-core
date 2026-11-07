@@ -28,12 +28,15 @@ import {
 
 /** Check items from the `--json` output of the code check job. */
 export function codeCheckItems(waited: WaitResult): CheckItemState[] {
+  let data: unknown;
   try {
-    const data = JSON.parse(waited.stdout) as { checks?: unknown };
-    if (Array.isArray(data.checks)) return data.checks as CheckItemState[];
-  } catch {
+    data = JSON.parse(waited.stdout);
+  } catch (error) {
     // not JSON: the command failed before it checked
+    if (!(error instanceof SyntaxError)) throw error;
   }
+  const checks = typeof data === 'object' && data !== null ? (data as { checks?: unknown }).checks : undefined;
+  if (Array.isArray(checks)) return checks as CheckItemState[];
   return [{ name: 'code check', result: 'fail', failures: [(waited.stderr || waited.stdout).trim() || `exit code ${String(waited.job.exitCode)}`] }];
 }
 

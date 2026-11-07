@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { testAtHead, withCoreMain } from '../../../src/commands/core/lib/main-checkout.ts';
+import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { fakeAgentCli, runAgent } from './helpers.ts';
 import { coreJob, coreSpec, PASSED } from './merge-core-fixture.ts';
@@ -62,6 +63,17 @@ describe('ogw agent merge: core worktrees', () => {
     const waited = (await ogw(ws, ['agent', 'wait', auth])).stdout.trim();
     expect(waited.startsWith(join(ws.coreImpl, 'records'))).toBe(true);
     expect(existsSync(waited)).toBe(true);
+  });
+
+  it('reports a job whose run log is not JSON with that error, not as a job without a passing core test', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { routing: [] });
+    const routing = await coreJob(ws, 'routing');
+    const runLog = (await readJob(routing, ws.env)).meta.runLog as string;
+    writeFileSync(runLog, '{ not json');
+    const run = await ogw(ws, ['agent', 'merge', routing]);
+    expect(run.code).toBe(1);
+    expect(run.stdout).toContain(`not merged ${routing}: error: invalid JSON in ${runLog}`);
   });
 
   it('reports the jobs of modules on a dependency cycle or in an unreadable file of main, and merges the others', async () => {

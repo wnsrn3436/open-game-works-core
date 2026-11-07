@@ -160,9 +160,16 @@ function startedText(round: RoundState): CommandResult {
   };
 }
 
-/** Stops the jobs of a round that was not written to the review state, and removes its tool review file. */
+/**
+ * Stops the jobs of a round that was not written to the review state, and removes its tool review file. It runs after
+ * the round failed, and that failure stays the result: a kill that failed is said in the log with its error.
+ */
 async function dropRound(ctx: Context, side: Side, jobs: readonly string[]): Promise<void> {
-  for (const job of jobs) await killJob(job, ctx.env).catch(() => undefined);
+  for (const job of jobs) {
+    await killJob(job, ctx.env).catch((error: unknown) => {
+      ctx.log(`killing job ${job} failed: ${(error instanceof Error ? error.message : String(error)).split('\n', 1)[0] as string}`);
+    });
+  }
   if (side === 'tool' && jobs[0] !== undefined) await removeToolReviewFiles(ctx, [{ reviewFile: null, reviewJob: jobs[0] }]);
 }
 

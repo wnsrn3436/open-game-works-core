@@ -67,6 +67,24 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
   listInstances: vi.fn(() => Promise.resolve(fake.instances.filter((i) => !fake.stopped.includes(i.id)))),
 }));
 
+/** Fake agent jobs whose kill fails. */
+const killFails = vi.hoisted(() => new Set<string>());
+
+vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/lib/jobs.ts')>();
+  // a fake agent job has no record: killing it ends nothing
+  const fakeJob = (id: string): boolean => fake.content.some((c) => c.id === id) || fake.judges.some((j) => j.id === id);
+  const kill = (id: string, env?: NodeJS.ProcessEnv): Promise<void> => {
+    if (killFails.has(id)) return Promise.reject(new Error(`cannot kill ${id}\nmore`));
+    return fakeJob(id) ? Promise.resolve() : original.killJob(id, env);
+  };
+  return {
+    ...original,
+    killJob: vi.fn(kill),
+    readJob: vi.fn((id: string, env?: NodeJS.ProcessEnv) => (fakeJob(id) ? Promise.resolve({ id, meta: {} }) : original.readJob(id, env))),
+  };
+});
+
 vi.mock('../../../src/commands/agent/api.ts', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
@@ -364,6 +382,24 @@ describe('ogw loop variants', () => {
       [null, false],
     ]);
     expect((await ogw(all.g.ws, ['loop', 'variants', 'g', '--db', 'mysql'])).stderr).toContain('usage: ogw loop variants <game> [--db postgresql]');
+  });
+
+  it('fails with the start failure of a variant agent after killing the ones it started, and says a kill that failed', async () => {
+    const { g } = await funIteration();
+    const agentApi = await import('../../../src/commands/agent/api.ts');
+    const start = vi.mocked(agentApi.startAgentJob);
+    const base = start.getMockImplementation() as NonNullable<ReturnType<typeof start.getMockImplementation>>;
+    start.mockImplementation((ctx, options) => (options.variant === 2 ? Promise.reject(new Error('no room')) : base(ctx, options)));
+    killFails.add('c1v1');
+    try {
+      const out = await ogw(g.ws, ['loop', 'variants', 'g']);
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain('killing job c1v1 failed: cannot kill c1v1\n');
+      expect(out.stderr).toContain('no room');
+    } finally {
+      start.mockImplementation(base);
+      killFails.clear();
+    }
   });
 
   it('runs no judge without a baseline game and chooses the lowest k with a commit', async () => {

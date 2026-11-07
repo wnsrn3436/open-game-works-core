@@ -99,15 +99,24 @@ function refuse(socket: Socket, reason: string): void {
   socket.end();
 }
 
-function parseRequest(text: string): BrokerRequest | null {
+/** The JSON object of a line a client or a broker worker sent; null for a line that is not one. */
+function jsonObject(text: string): Record<string, unknown> | null {
+  let value: unknown;
   try {
-    const value = JSON.parse(text) as Partial<BrokerRequest>;
-    const argvOk = Array.isArray(value.argv) && value.argv.every((arg) => typeof arg === 'string');
-    if (!argvOk || typeof value.cwd !== 'string' || !isAbsolute(value.cwd) || typeof value.key !== 'string') return null;
-    return { argv: value.argv as string[], cwd: value.cwd, key: value.key };
-  } catch {
-    return null;
+    value = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function parseRequest(text: string): BrokerRequest | null {
+  const value = jsonObject(text) as Partial<BrokerRequest> | null;
+  if (value === null) return null;
+  const argvOk = Array.isArray(value.argv) && value.argv.every((arg) => typeof arg === 'string');
+  if (!argvOk || typeof value.cwd !== 'string' || !isAbsolute(value.cwd) || typeof value.key !== 'string') return null;
+  return { argv: value.argv as string[], cwd: value.cwd, key: value.key };
 }
 
 /** What a call takes from its caller after the request: all of stdin, or stdin chunk by chunk and its end. */
@@ -249,12 +258,8 @@ class BrokerWorker {
       lineReader((text) => {
         const call = this.call;
         if (this.child !== child || call === null) return;
-        let message: BrokerMessage;
-        try {
-          message = JSON.parse(text) as BrokerMessage;
-        } catch {
-          return;
-        }
+        const message = jsonObject(text) as BrokerMessage | null;
+        if (message === null) return;
         if (typeof message.stdout === 'string') send(call.socket, { stdout: message.stdout });
         else if (typeof message.stderr === 'string') send(call.socket, { stderr: message.stderr });
         else if (message.stdin === true && call.asked === null) {
@@ -367,14 +372,15 @@ function serve(socket: Socket, options: BrokerOptions, children: Set<ChildProces
       }
       return;
     }
-    try {
-      const { stdin, chunk, end } = JSON.parse(text) as { stdin?: unknown; chunk?: unknown; end?: unknown };
-      if (typeof stdin === 'string') call.stdin(stdin);
-      else if (typeof chunk === 'string') call.chunk(chunk);
-      else if (end === true) call.end();
-    } catch {
+    const message = jsonObject(text) as { stdin?: unknown; chunk?: unknown; end?: unknown } | null;
+    if (message === null) {
       socket.destroy();
+      return;
     }
+    const { stdin, chunk, end } = message;
+    if (typeof stdin === 'string') call.stdin(stdin);
+    else if (typeof chunk === 'string') call.chunk(chunk);
+    else if (end === true) call.end();
   });
   socket.on('data', (chunk: string) => {
     size += chunk.length;

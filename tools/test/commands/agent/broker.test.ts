@@ -1,7 +1,7 @@
 // The play and judge broker: `ogw` inside the sandbox sends each command to a broker outside it.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { createServer, type Server } from 'node:net';
+import { connect, createServer, type Server } from 'node:net';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BROKER_COMMANDS, brokerCommand, startBroker } from '../../../src/commands/agent/lib/broker.ts';
@@ -230,6 +230,44 @@ describe('broker', () => {
     expect((await call).code).not.toBe(0);
     for (let i = 0; i < 100 && isAlive(pid); i++) await new Promise((resolve) => setTimeout(resolve, 50));
     expect(isAlive(pid)).toBe(false);
+  });
+
+  it('refuses a request line that is no JSON object, and ends a call whose later line is no JSON object', async () => {
+    const ws = jobWorkspace();
+    writeJob(ws.jobs, { id: 'ag1', command: 'agent', supervisorPid: process.pid, meta: { role: 'play', runLog: join(ws.root, 'runs.json') } });
+    const socket = join(await newTempFolder('ogw-broker-'), 'b', 's');
+    const key = 'ag1.nonce';
+    const broker = await startBroker({ socket, key, command: () => ({ cmd: process.execPath, args: READS_STDIN }), env: { ...ws.env, OGW_AGENT_KEY: key } });
+    /** Sends `lines` (each after the broker's previous message), and gives every message until the broker ends the connection. */
+    const talk = (lines: string[]): Promise<string> =>
+      new Promise((resolve) => {
+        const client = connect(socket);
+        let got = '';
+        client.setEncoding('utf8');
+        client.on('connect', () => client.write(`${lines.shift() ?? ''}\n`));
+        client.on('data', (chunk: string) => {
+          got += chunk;
+          const next = lines.shift();
+          if (next !== undefined) client.write(`${next}\n`);
+        });
+        client.on('close', () => {
+          resolve(got);
+        });
+      });
+    try {
+      for (const request of ['null', '[1]', '5', 'not json']) expect(await talk([request])).toContain('the request is not');
+      const request = JSON.stringify({ argv: ['input', 'reads-stdin'], cwd: ws.root, key });
+      for (const later of ['null', '[1]', '"text"', 'not json']) {
+        const got = await talk([request, later]);
+        // the command asked for stdin; the line that answered is no message, so the call ends without an exit code
+        expect(got).toContain('"stdin":true');
+        expect(got).not.toContain('"exit"');
+      }
+      // a later line that is a message gives the command its stdin
+      expect(await talk([request, JSON.stringify({ stdin: 'typed' })])).toContain('got typed');
+    } finally {
+      await broker.close();
+    }
   });
 
   it('refuses every command that is not a broker command without running it or reading its stdin', async () => {

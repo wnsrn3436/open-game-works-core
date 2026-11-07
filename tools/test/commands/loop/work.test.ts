@@ -1,9 +1,9 @@
-import { readdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncDeps, taskInput } from '../../../src/commands/loop/lib/sync.ts';
 import { translationLanguages, unmergedLanguages } from '../../../src/commands/loop/dispatch.ts';
-import { readJob } from '../../../src/lib/jobs.ts';
+import { jobPaths, readJob } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write, type TestGame } from './helpers.ts';
 import { settingsMethod, writeInstall } from '../generation/install-folder.ts';
@@ -403,6 +403,35 @@ describe('ogw loop dispatch', () => {
       stdout: `new2 resource ${file('100.md')}\nnew3 resource ${file('300.md')}\ninstall failed sprite: ogw generation install sprite (job ${sprite}: ogw job status ${sprite})\n`,
     });
     expect(mocks.installMethodJob).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes a recorded install job whose record is gone as ended, and fails on a record that cannot be read', async () => {
+    const { g, file } = await heldGame();
+    await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    await addJob(g.ws, { meta: { role: 'resource', input: file('200.md') } });
+    const { installs } = (await currentRun(g)).data.loop as { installs: { method: string; job: string }[] };
+    await installed(g, 'audio');
+    const sprite = installs.find((i) => i.method === 'sprite')?.job ?? '';
+    const record = (await jobPaths(sprite, g.ws.env)).record;
+    // a record that cannot be read: a folder in its place
+    rmSync(record);
+    mkdirSync(record);
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('EISDIR');
+    rmSync(record, { recursive: true });
+    expect(await ogw(g.ws, ['loop', 'dispatch', 'g'])).toMatchObject({
+      code: 0,
+      stdout: `new2 resource ${file('100.md')}\nnew3 resource ${file('300.md')}\ninstall failed sprite: ogw generation install sprite (job ${sprite}: ogw job status ${sprite})\n`,
+    });
+  });
+
+  it('fails on a request file that cannot be read instead of giving it to a sub-agent', async () => {
+    const { g, file } = await heldGame();
+    mkdirSync(file('400.md'));
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('EISDIR');
   });
 
   it('gives the file to a sub-agent when the install job does not start', async () => {

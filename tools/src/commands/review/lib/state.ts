@@ -2,9 +2,9 @@ import { readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { exists, readJsonIfExists, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { exists, readJsonIfExists, whenNotFound, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { commonDir } from '../../../lib/git.ts';
-import { readJob } from '../../../lib/jobs.ts';
+import { JobNotFound, readJob } from '../../../lib/jobs.ts';
 import { withLock } from '../../../lib/lock.ts';
 import type { Side } from './input.ts';
 
@@ -151,7 +151,7 @@ export async function withTarget<T>(dir: string, fn: () => Promise<T>): Promise<
 
 /** Every target folder with review state: a folder holding `state.json` (a target's lock folder `<target>.lock` holds none). */
 export async function listTargets(root: string): Promise<string[]> {
-  const names = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const names = await readdir(root, { withFileTypes: true }).catch(whenNotFound([]));
   return names.filter((entry) => entry.isDirectory() && exists(join(root, entry.name, 'state.json'))).map((entry) => entry.name).sort();
 }
 
@@ -161,9 +161,16 @@ export async function listTargets(root: string): Promise<string[]> {
  */
 export async function removeToolReviewFiles(ctx: Context, rounds: readonly Pick<RoundState, 'reviewFile' | 'reviewJob'>[]): Promise<void> {
   for (const round of rounds) {
-    const file = round.reviewFile ?? (await readJob(round.reviewJob, ctx.env).catch(() => null))?.meta.output;
+    // a review job whose record is gone names no file
+    const job = round.reviewFile === null ? await readJob(round.reviewJob, ctx.env).catch(notFoundJob) : null;
+    const file = round.reviewFile ?? job?.meta.output;
     if (typeof file === 'string') await removeReviewFile(file);
   }
+}
+
+function notFoundJob(error: unknown): null {
+  if (error instanceof JobNotFound) return null;
+  throw error;
 }
 
 /** Removes a review file: its `ogw-review-file-*` temp folder (ogw.md `## temp folder`), or the file alone when it is elsewhere. */
