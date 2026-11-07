@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { span } from '../../../lib/spans.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import type { RunState } from '../../../lib/runstate.ts';
@@ -31,7 +32,7 @@ export async function makeTelemetryRuns(ctx: Context, game: GameRepo, run: RunSt
       return null;
     }
   };
-  const runs = await pairRuns((side) => once(side === 'commit' ? commit : baseline));
+  const runs = await pairRuns((side) => span(`telemetry run ${side}`, () => once(side === 'commit' ? commit : baseline)));
   const file: CheckTelemetryRuns = { commit, baseline, scenario: shared.sha256, runs };
   await writeJsonAtomic(join(game.root, telemetryRunsRel(run, run.iteration)), file);
 }

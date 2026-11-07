@@ -6,6 +6,8 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { span } from '../../../lib/spans.ts';
+import { jobTimeSection } from '../../time/api.ts';
 import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, git, gitRaw, head, revParse, showFile, tagExists, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
@@ -290,7 +292,7 @@ async function checkBase(ctx: Context, run: RefreshRun, state: string, commit: s
     const checked = await every(
       numbers.map(async (k): Promise<{ k: number; error: string } | { k: number; kept: KeptBaseCheck }> => {
         const out = join(dir, `${state}-base-${String(k)}.json`);
-        const one = await run.pool.check(true, () => sideCheck(ctx, run.self, { game: stateGame(state), commit, out, checks: null, performance: true, proof: null }));
+        const one = await span(`base check ${String(k)}`, () => run.pool.check(true, () => sideCheck(ctx, run.self, { game: stateGame(state), commit, out, checks: null, performance: true, proof: null })));
         if ('error' in one) return { k, error: one.error };
         const kept: KeptBaseCheck = { commit: one.file.commit, harness: run.self.commit, checkInputs: run.inputs, checks: one.file.checks, fixTestProof: one.file.fixTestProof };
         await writeJsonAtomic(out, kept);
@@ -333,18 +335,18 @@ async function refreshState(ctx: Context, run: RefreshRun, state: string, settin
   // the seed-run records of the refresh of this state, for its content agent and its translation sub-agents
   const records = `refresh-${version}-${String(Date.now())}`;
   if (compareVersions(out.from, version) < 0) {
-    const written = await stateSettings(ctx, game, settings, version);
+    const written = await span('settings', () => stateSettings(ctx, game, settings, version));
     out.settings = written.text;
     if (!written.ok) return out;
-    const upgraded = await run.pool.work(() => upgradeCore(ctx, game.name, version));
+    const upgraded = await span('upgrade', () => run.pool.work(() => upgradeCore(ctx, game.name, version)));
     out.upgrade = upgraded.ok ? `to ${version}` : `failed: ${upgraded.text.split('\n')[0] ?? ''}`;
     if (!upgraded.ok) return out;
-    const content = await contentPass(ctx, run, game, out.from, records);
+    const content = await span('content job', () => contentPass(ctx, run, game, out.from, records));
     out.content = content.text;
     if (content.job !== null) out.jobs.push({ id: content.job, role: 'content' });
     if (!content.ok) return out;
   }
-  const translated = await translationPass(ctx, run, game, records);
+  const translated = await span('translation', () => translationPass(ctx, run, game, records));
   out.translation = translated.text;
   out.jobs.push(...translated.jobs.map((id) => ({ id, role: 'translation' as const })));
   if (!translated.ok) return out;
@@ -354,7 +356,7 @@ async function refreshState(ctx: Context, run: RefreshRun, state: string, settin
   out.failures = checked.failures;
   out.baseChecks = checked.files;
   if (checked.files.length === 0) return out;
-  await git(game.root, ['tag', tag, commit], { env: ctx.env });
+  await span('tag', () => git(game.root, ['tag', tag, commit], { env: ctx.env }));
   out.tag = tag;
   out.base = commit;
   return out;
@@ -381,6 +383,7 @@ export async function refreshRecord(ctx: Context, states: readonly StateRefresh[
     ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'translation', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.translation, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
     ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle', 'rebase'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`, rebaseText(s.rebase)]))],
     ['cost', renderCost(costRows(jobs, true))],
+    ['time', await jobTimeSection(ctx)],
   ]);
 }
 
@@ -394,18 +397,19 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
   const states = onlyStates ?? entries.map((s) => s.state);
   const ws = await ctx.workspace();
   const run: RefreshRun = { repo, self, version, inputs: await checkInputs(ctx, ws.harness, self.commit), pool: regressPool((await ctx.settings()).regress.parallel) };
-  const refreshing = new Map(states.map((state) => [state, refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {})]));
-  const admitting = seeds.map(async (seed): Promise<SeedRefresh> => {
+  const refreshing = new Map(states.map((state) => [state, span(`state ${state}`, () => refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {}))]));
+  const admitting = seeds.map((seed) => span(`seed ${seed.id}`, async (): Promise<SeedRefresh> => {
     const state = await refreshing.get(seed.manifest.state);
     if (state === undefined || state.base === null || state.tag === null || state.baseChecks.length === 0) {
       return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : untaggedWhy(state)}`) };
     }
     const input = { run, seed, base: state.base, baseChecks: state.baseChecks };
-    const admission = await admitSeed(ctx, input);
+    const admission = await span('admission', () => admitSeed(ctx, input));
     // `ogw regress seed` and `ogw regress expect` admit as they are; the refresh rebases when its seed's admission ends
     if (onlyStates !== null || !rebasable(admission)) return { seed: seed.id, admission };
-    return { seed: seed.id, ...(await rebaseSeed(ctx, { run, tag: state.tag, admit: () => admitSeed(ctx, input) }, seed, admission)) };
-  });
+    const tag = state.tag;
+    return { seed: seed.id, ...(await span('seed agent', () => rebaseSeed(ctx, { run, tag, admit: () => span('admission', () => admitSeed(ctx, input)) }, seed, admission))) };
+  }));
   const [refreshed, results] = await every([every([...refreshing.values()]), every(admitting)]);
   const paths: string[] = [];
   for (const r of results) {

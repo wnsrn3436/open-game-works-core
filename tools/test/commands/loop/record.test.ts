@@ -953,6 +953,8 @@ describe('ogw loop end-record', () => {
     await openLoopRun(g, { iteration: 2 });
     await addAgentJobs(g);
     expect((await ogw(g.ws, ['loop', 'end-record', 'g', '--stopped-by-human'])).code).toBe(0);
+    // `## time` names the agent jobs of the run on its critical path
+    expect(read(g.root, `${R}/end.md`).split('\n## time\n\n')[1]).toMatch(/^- wall time: .+\n- critical path: .+\n- flags?: .+/);
     expect(read(g.root, `${R}/end.md`).split('## cost\n\n')[1]?.split('\n## run settings\n')[0]).toBe(
       [
         '| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |',
@@ -1013,7 +1015,9 @@ describe('ogw loop end-record', () => {
     });
     const out = await ogw(g.ws, ['loop', 'end-record', 'g', '--human', 'human.txt'], { cwd: g.ws.root });
     expect(out).toMatchObject({ code: 0, stdout: `${R}/end.md\n` });
-    expect(read(g.root, `${R}/end.md`)).toBe(
+    const [body, time] = read(g.root, `${R}/end.md`).split('\n## time\n\n');
+    expect(time).toMatch(/^- wall time: .+\n- critical path: .+\n- flags?: .+/);
+    expect(`${body ?? ''}\n`).toBe(
       [
         '## reason', '', 'plateau', '', '- 1', '- 2', '',
         '## result', '', `- merge commit: ${sha}`, '- vs baseline: better', `- last judge result: ${R}/judge-1-1.md`,
@@ -1022,7 +1026,7 @@ describe('ogw loop end-record', () => {
         '## human', '', '- needs human: speed (decision: d)', '- core proposal: records/core-proposals/9-x.md', '- license unknown: icon/a',
         '- skipped core version: 1.3.0', '- banned word list missing: ko', '- judge calibration: never run (ogw judge calibrate g; labels: 0, added with ogw judge label g)', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
         '## cost', '', 'none', '',
-        '## run settings', '', 'none', '',
+        '## run settings', '', 'none', '', '',
       ].join('\n'),
     );
     expect(git(g.root, 'log', '-1', '--name-only', '--format=')).toBe(`${R}/end.md`);

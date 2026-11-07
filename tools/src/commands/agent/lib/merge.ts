@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { span } from '../../../lib/spans.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { formatJson, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { RunLog } from '../../../lib/agentctx.ts';
@@ -620,7 +621,7 @@ export async function mergeAgents(ctx: Context, ids: readonly string[], options:
     await startBranchChecks(ctx, order.ids, checked);
     for (const id of order.ids) {
       try {
-        await mergeOne(ctx, id, options, checked);
+        await span('merge', () => mergeOne(ctx, id, options, checked));
         result.merged.push(id);
       } catch (error) {
         if (error instanceof MergeStop) result.failed.push({ id, reason: error.reason, detail: error.detail });

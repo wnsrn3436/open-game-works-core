@@ -2,6 +2,7 @@ import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { revParse, showFile } from '../../../lib/git.ts';
@@ -515,7 +516,7 @@ interface PresetExport {
  * environment, the import and the export.
  */
 async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string): Promise<void> {
-  const { godot, iosPlugins } = await prepareWorkspace(ctx, input, platform, root);
+  const { godot, iosPlugins } = await span('prepare workspace', () => prepareWorkspace(ctx, input, platform, root));
   if (input.env !== 'DEV') await stripLogDebug(join(root, 'client'));
   const p: PresetContext = { ctx, root, game: input.game.name, env: input.env, version: input.version, settings: input.settings, iosPrivacy: input.iosPrivacy, iosPlugins };
   const options = await platformOptions(p, platform);
@@ -527,7 +528,7 @@ async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: s
 async function presetExport(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string, run: PresetExport): Promise<void> {
   const { godot, options } = run;
   const buildTools = async (): Promise<readonly BuildTool[]> => (await engineJson(ctx, input.game, 'godot')).buildTools ?? [];
-  const signing = await prepareSigning(ctx, input.game.name, input.settings, input.env, platform, buildTools);
+  const signing = await span('signing values', () => prepareSigning(ctx, input.game.name, input.settings, input.env, platform, buildTools));
   const name = `${platform}-${input.env.toLowerCase()}`;
   const head = { name, platform: PRESET_PLATFORM[platform], runnable: true, export_filter: 'all_resources', include_filter: 'build/data/*,generated/*.json', exclude_filter: run.filter, export_path: exportPath };
   try {
@@ -535,12 +536,12 @@ async function presetExport(ctx: Context, input: PlatformBuildInput, platform: s
     if (Object.keys(signing.credentials).length > 0) {
       await writeFileAtomic(join(root, 'client', '.godot', 'export_credentials.cfg'), presetCfg({ name }, signing.credentials));
     }
-    if (run.importFirst) await godotRun(ctx, godot, root, ['--import'], signing.env);
-    const output = await godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env);
+    if (run.importFirst) await span('import', () => godotRun(ctx, godot, root, ['--import'], signing.env));
+    const output = await span('export', () => godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env));
     // Godot exports without the library and ends with code 0: the app would run without that plugin
     const missing = missingGdextensionLibraries(output);
     if (missing.length > 0) throw new OgwError(`export of ${platform} has a GDExtension without its library:\n${missing.join('\n')}`);
-    await afterExport(ctx, input, platform, root, exportPath, options, signing);
+    await span('after export', () => afterExport(ctx, input, platform, root, exportPath, options, signing));
   } finally {
     await rm(join(root, 'client', '.godot', 'export_credentials.cfg'), { force: true });
     await signing.cleanup();
@@ -550,11 +551,13 @@ async function presetExport(ctx: Context, input: PlatformBuildInput, platform: s
 /** Exports and checks the package; returns the `DEV code` check failures. */
 async function exportIn(ctx: Context, input: PlatformBuildInput, platform: string, root: string, outDir: string): Promise<string[]> {
   await exportPreset(ctx, input, platform, root, join(outDir, outputFile(input.game.name, platform, input.env)));
-  const devCode = await checkPackage(outDir, platform, input.game.name, input.env);
+  const devCode = await span('package check', () => checkPackage(outDir, platform, input.game.name, input.env));
   if (platform === 'windows' && freeSigning(input.settings, input.env, platform) === null) {
-    const files = (await readdir(outDir)).filter((f) => f.endsWith('.exe') || f.endsWith('.dll')).map((f) => join(outDir, f));
-    const signer = await windowsSigner(ctx, (await engineJson(ctx, input.game, 'godot')).buildTools ?? []);
-    await signWindows(ctx, input.game.name, input.settings, files, signer);
+    await span('windows signing', async () => {
+      const files = (await readdir(outDir)).filter((f) => f.endsWith('.exe') || f.endsWith('.dll')).map((f) => join(outDir, f));
+      const signer = await windowsSigner(ctx, (await engineJson(ctx, input.game, 'godot')).buildTools ?? []);
+      await signWindows(ctx, input.game.name, input.settings, files, signer);
+    });
   }
   return devCode;
 }
@@ -571,6 +574,10 @@ export interface CheckPrepared {
  * are made in copies of it (`godotCheckExport`).
  */
 export async function godotCheckPrepare(ctx: Context, input: PlatformBuildInput, platform: 'android' | 'web', root: string): Promise<CheckPrepared> {
+  return span(`check workspace ${platform}`, () => checkPrepare(ctx, input, platform, root));
+}
+
+async function checkPrepare(ctx: Context, input: PlatformBuildInput, platform: 'android' | 'web', root: string): Promise<CheckPrepared> {
   const dev: PlatformBuildInput = { ...input, env: 'DEV' };
   const { godot, iosPlugins } = await prepareWorkspace(ctx, dev, platform, root);
   const p: PresetContext = { ctx, root, game: dev.game.name, env: 'DEV', version: dev.version, settings: dev.settings, iosPrivacy: dev.iosPrivacy, iosPlugins };
@@ -599,13 +606,17 @@ export async function godotCheckExport(
   const exportPath = join(outDir, outputFile(input.game.name, platform, 'DEV'));
   await writeJsonAtomic(join(root, 'client', 'generated', 'launch_values.json'), launchValues);
   const filter = excludeFilter('DEV').replace(',generated/launch_values.json', '');
-  await presetExport(ctx, { ...input, env: 'DEV' }, platform, root, exportPath, { ...prepared, filter, importFirst: false });
+  await span(`check export ${platform}`, () => presetExport(ctx, { ...input, env: 'DEV' }, platform, root, exportPath, { ...prepared, filter, importFirst: false }));
   if (!exists(exportPath)) throw new OgwError(`export of ${platform} made no ${outputFile(input.game.name, platform, 'DEV')}`);
   return exportPath;
 }
 
 /** Exports one platform from a clean checkout of the build branch (ogw.md `### export`). */
 export async function godotBuild(ctx: Context, input: PlatformBuildInput, platform: string): Promise<PlatformBuild> {
+  return span(`build ${platform}`, () => buildIn(ctx, input, platform));
+}
+
+async function buildIn(ctx: Context, input: PlatformBuildInput, platform: string): Promise<PlatformBuild> {
   const outDir = join(input.outDir, platform);
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });

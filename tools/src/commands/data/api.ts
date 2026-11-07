@@ -6,6 +6,7 @@ import { writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { checkoutLock, isCheckout } from '../../lib/git.ts';
 import { withLock } from '../../lib/lock.ts';
+import { span } from '../../lib/spans.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../lib/settings.ts';
 import { coreReleaseOfGame, extractedAsset, publishedRelease, type CoreRelease } from '../core/api.ts';
 import { runGenerate, splitModules } from '../generate/api.ts';
@@ -92,9 +93,10 @@ export async function dataToolArgs(ctx: Context, input: ToolInput): Promise<stri
  */
 async function runTool(ctx: Context, input: ToolInput): Promise<ToolRun> {
   const args = await dataToolArgs(ctx, input);
-  return withLock(await checkoutLock(input.gameDir, 'ogw-generate.lock', { env: ctx.env }), () =>
+  // the data tool reads and issues the ID registry and builds the tables and their code in its own process
+  return span('data tool', async () => withLock(await checkoutLock(input.gameDir, 'ogw-generate.lock', { env: ctx.env }), () =>
     runNodeTool(input.toolDir, DATA_BIN, args, input.gameDir, ctx.env),
-  );
+  ));
 }
 
 /** The published release of the checkout's game settings `coreVersion`. */

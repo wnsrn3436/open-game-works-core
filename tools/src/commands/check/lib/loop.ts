@@ -2,6 +2,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, head } from '../../../lib/git.ts';
@@ -212,7 +213,7 @@ export async function gameChecks(
   // `client/.godot/` (each instance start then fails on its own import); the regression test and the type check report
   // it and do not import again. The static check waits for it too, as the import may write files beside the scripts and
   // assets of `client/`, which the static check lists. An import that throws fails the check once the work started ends.
-  const importing = importClient(ctx, options.godot, game);
+  const importing = span('import', () => importClient(ctx, options.godot, game));
   const settled = importing.then(
     (importFailure): { imported: true } | { importFailure: string } => (importFailure === null ? { imported: true } : { importFailure }),
     (error: unknown) => ({ error }),
@@ -225,9 +226,9 @@ export async function gameChecks(
   const { wants, ...run } = selectionOf(set);
   // every instance of the check other than those of the performance measurements, in this order once the import ended
   const instances: Promise<CheckResult | CheckResult[] | null>[] = [
-    ...(run.bot ? [afterImport(() => botPlaytest(ctx, game.name, scenario, instance))] : []),
-    ...(run.ui ? profiles.map((p) => afterImport(() => uiQualityCheck(ctx, game.name, p, ui))) : []),
-    ...(run.rows ? [afterImport(() => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance))] : []),
+    ...(run.bot ? [afterImport(() => span('bot playtest', () => botPlaytest(ctx, game.name, scenario, instance)))] : []),
+    ...(run.ui ? profiles.map((p) => afterImport(() => span(`UI quality ${p}`, () => uiQualityCheck(ctx, game.name, p, ui)))) : []),
+    ...(run.rows ? [afterImport(() => span('row simulation', () => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)))] : []),
   ];
   const besides = alongside.map((beside) =>
     afterImport(() => beside.work(instance)).catch((error: unknown) => {
@@ -235,11 +236,11 @@ export async function gameChecks(
     }),
   );
   const tasks: Promise<CheckResult | CheckResult[] | null>[] = [
-    ...(wants('regression test') ? [guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))] : []),
-    ...(wants('static check') ? [afterImport((imported) => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })))] : []),
+    ...(wants('regression test') ? [span('regression test', () => guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client)))] : []),
+    ...(wants('static check') ? [afterImport((imported) => span('static check', () => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported }))))] : []),
     ...instances,
-    ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => afterImport(() => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions)))] : []),
-    ...(run.placeholder ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
+    ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => afterImport(() => span('performance', () => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))))] : []),
+    ...(run.placeholder ? [span('no placeholder', () => guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game))))] : []),
   ];
   const [results] = await Promise.all([Promise.all(tasks), ...besides]);
   const done = await settled;
@@ -266,11 +267,11 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const fixed = await fixedRows(game, run);
   // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout. It does not
   // throw (what it could not decide is `unknown` with the reason), so its result is never left out
-  const proof = rowProofs(ctx, game, run, commit, fixed, proofOptions);
+  const proof = span('fix test proof', () => rowProofs(ctx, game, run, commit, fixed, proofOptions));
   // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the
   // performance measurements wait for them and for the fix test proof
   const checks = await gameChecks(ctx, game, settings, { ...options, slots }, evidence, set, [
-    { name: 'shared telemetry runs', work: (instance) => makeTelemetryRuns(ctx, game, run, commit, instance) },
+    { name: 'shared telemetry runs', work: (instance) => span('shared telemetry runs', () => makeTelemetryRuns(ctx, game, run, commit, instance)) },
     {
       name: 'fix test proof',
       work: async () => {
@@ -281,7 +282,9 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const fixTestProof = await proof;
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
-  await writeJsonAtomic(join(game.root, file), { commit, checks, gate, fixTestProof });
-  await commitPaths(game.root, [file], `loop ${run.name}: check ${String(run.iteration)}`, { env: ctx.env });
+  await span('record', async () => {
+    await writeJsonAtomic(join(game.root, file), { commit, checks, gate, fixTestProof });
+    await commitPaths(game.root, [file], `loop ${run.name}: check ${String(run.iteration)}`, { env: ctx.env });
+  });
   return { file, commit, checks, gate, fixTestProof };
 }

@@ -2,6 +2,8 @@
 import { cp, mkdir, readdir, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { span } from '../../../lib/spans.ts';
+import { jobTimeSection } from '../../time/api.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { AgentSettings } from '../../../lib/settings.ts';
@@ -69,7 +71,7 @@ function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], fol
     const path = join(folder, `${state}-base.json`);
     bases.set(
       state,
-      pool.check(true, () => sideCheck(ctx, side, { game: stateGame(state), commit: admission.base as string, out: path, checks: null, performance: true, proof: null })).then((checked): Checked => {
+      span(`${side.name} base check ${state}`, () => pool.check(true, () => sideCheck(ctx, side, { game: stateGame(state), commit: admission.base as string, out: path, checks: null, performance: true, proof: null }))).then((checked): Checked => {
         const result = 'file' in checked ? { file: checked.file, path } : checked;
         out.base.set(state, result);
         return result;
@@ -80,7 +82,7 @@ function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], fol
     const once = async (attempt: number): Promise<CatchResult> => {
       const path = join(folder, attempt === 1 ? `${seed.id}.json` : `${seed.id}-${String(attempt)}.json`);
       const performance = seed.manifest.performance;
-      const checked = await pool.check(performance, () => sideCheck(ctx, side, { game: stateGame(seed.manifest.state), commit: admission.seeded as string, out: path, checks: null, performance, proof: null }));
+      const checked = await span(`${side.name} catch ${seed.id}`, () => pool.check(performance, () => sideCheck(ctx, side, { game: stateGame(seed.manifest.state), commit: admission.seeded as string, out: path, checks: null, performance, proof: null })));
       if (!('file' in checked)) return { catch: 'unknown', reason: checked.error, collateral: [], pipeline: null, matched: null };
       out.seeded.set(seed.id, { file: checked.file, path });
       const base = await bases.get(seed.manifest.state);
@@ -266,7 +268,7 @@ async function fixPhase(ctx: Context, phase: FixPhase, fixable: readonly Admitte
     const { seed } = step.admitted;
     const id = seedRunId(seed.id, step.side, step.repeat);
     try {
-      return await runSeedRun(ctx, {
+      return await span(`seed-run ${id}`, async () => runSeedRun(ctx, {
         runMs: phase.runMs,
         k: step.k,
         seed,
@@ -280,7 +282,7 @@ async function fixPhase(ctx: Context, phase: FixPhase, fixable: readonly Admitte
         cap: settings.loopStop.repeatedDefect,
         diff: join(phase.repo, 'records', 'runs', String(phase.runMs), `${id}.diff`),
         pool: phase.pool,
-      });
+      }));
     } finally {
       // the fix repo of a seed-run goes when it ends: the next seed-run has one of its own
       await removeFixRepo(ctx, step.k);
@@ -353,7 +355,7 @@ export async function regressRun(ctx: Context, repo: string, options: RunOptions
   const runMs = Date.now();
   const settings = await ctx.settings();
   const folder = join(await dataDir(ctx), 'regress', String(runMs));
-  const [before, after] = await every([makeSide(ctx, options.before), makeSide(ctx, options.after)]);
+  const [before, after] = await every([span('side before', () => makeSide(ctx, options.before)), span('side after', () => makeSide(ctx, options.after))]);
   const sides: Record<SideName, Side> = { before, after };
   const data: RunData = { run: runMs, catchOnly: options.catchOnly, sides: [sides.before, sides.after], seeds: [], catches: [], seedRuns: [] };
   try {
@@ -384,7 +386,7 @@ export async function regressRun(ctx: Context, repo: string, options: RunOptions
   await writeJsonAtomic(join(repo, records, 'run.json'), data);
   const { text, difference } = renderReport(data, settings.regress.permutations, settings.regress.level);
   const report = `${records}.md`;
-  await writeFileAtomic(join(repo, report), text);
+  await writeFileAtomic(join(repo, report), `${text.trimEnd()}\n\n## time\n\n${await jobTimeSection(ctx)}\n`);
   await commitRegress(ctx, repo, [records, report], `regress run ${String(runMs)}`);
   const unknownSide = data.sides.some((s) => s.unknown !== null);
   return { report: join(repo, report), difference, exitCode: unknownSide ? 1 : 0 };

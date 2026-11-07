@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { importClientIfMissing } from '../../check/lib/engine.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { exists, readJson, readJsonIfExists, readText, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { gitDir, head, statusLines } from '../../../lib/git.ts';
@@ -37,7 +38,7 @@ export async function generateIfNeeded(ctx: Context, checkout: GameRepo, fresh: 
   }
   if (marker !== null) await rm(marker, { force: true });
   await runGenerate(ctx, checkout);
-  await binaryBuild(ctx, checkout);
+  await span('data', () => binaryBuild(ctx, checkout));
   if (marker !== null && clean) await writeJsonAtomic(marker, { head: commit });
   return true;
 }

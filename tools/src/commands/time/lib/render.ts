@@ -61,6 +61,21 @@ export function renderReport(report: TimeReport): string {
   return lines.join('\n');
 }
 
+/**
+ * The body of the `## time` section of a record (ogw.md `## time`): the wall time, the spans of depth 1 of the critical
+ * path, and one line per flag, or `- flags: none`.
+ */
+export function timeSection(report: TimeReport): string {
+  const wall = lengthOf(report.root);
+  const share = (ms: number): string => (wall === 0 ? '-' : formatShare(ms / wall));
+  const top = report.path.filter((entry) => entry.depth === 1).map(({ span }) => `${label(span)} ${formatMs(lengthOf(span))} ${share(lengthOf(span))}`);
+  return [
+    `- wall time: ${formatMs(wall)}`,
+    `- critical path: ${top.length === 0 ? 'none' : top.join('; ')}`,
+    ...(report.flags.length === 0 ? ['- flags: none'] : report.flags.map((flag) => `- flag: ${flagLine(flag, report)}`)),
+  ].join('\n');
+}
+
 /** A span of the `--json` form: the span with its waits as `{on, ms}` and its child spans, by key. */
 export interface SpanData {
   key: string;

@@ -1,3 +1,5 @@
+import { takeWaits, taking } from '../../../lib/spans.ts';
+
 /**
  * The values of `work`, as `Promise.all` gives them, once every piece of work has ended, also after one of them failed,
  * so that no work of a command runs on after the command failed; then the first failure is thrown.
@@ -13,13 +15,21 @@ export interface Limiter {
   run<T>(work: () => Promise<T>): Promise<T>;
 }
 
-export function limiter(limit: number): Limiter {
+/** The name of a wait for a place of the regress pool (ogw.md `## time`). */
+export const REGRESS_POOL = 'regress pool';
+
+/** At most `limit` at a time; a piece of work that finds no free place waits on `on` (ogw.md `## time`). */
+export function limiter(limit: number, on: string = REGRESS_POOL): Limiter {
   const waiting: (() => void)[] = [];
   let running = 0;
   return {
     async run(work) {
-      if (running >= Math.max(1, limit)) await new Promise<void>((start) => waiting.push(start));
-      else running += 1;
+      if (running >= Math.max(1, limit)) {
+        await taking(on, () => {
+          takeWaits();
+          return new Promise<void>((start) => waiting.push(start));
+        });
+      } else running += 1;
       try {
         return await work();
       } finally {
@@ -56,10 +66,25 @@ export function checkGate(): CheckGate {
   };
   return {
     async run(performance, check) {
-      await new Promise<void>((start) => {
-        waiting.push({ performance, start });
+      const at = { started: false };
+      const starting = new Promise<void>((start) => {
+        waiting.push({
+          performance,
+          start: () => {
+            at.started = true;
+            start();
+          },
+        });
         startNext();
       });
+      // a check that does not start at once waits at the check gate (ogw.md `## time`)
+      if (at.started) await starting;
+      else {
+        await taking('regress check gate', () => {
+          takeWaits();
+          return starting;
+        });
+      }
       try {
         return await check();
       } finally {
@@ -96,7 +121,7 @@ export function regressPool(parallel: number, alone = false): RegressPool {
     merge(game, fn) {
       let one = merges.get(game);
       if (one === undefined) {
-        one = limiter(1);
+        one = limiter(1, `regress merges ${game}`);
         merges.set(game, one);
       }
       // the merge waits for its game before it takes a slot, so that a waiting merge keeps no slot from other work

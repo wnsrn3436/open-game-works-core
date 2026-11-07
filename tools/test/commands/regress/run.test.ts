@@ -433,7 +433,9 @@ describe('ogw regress run', () => {
     const run = await ogw(ws, ['regress', 'run', '--before', head]);
     expect(run.code).toBe(1);
     const report = readFileSync(run.stdout.split('\n')[0]?.replace('report: ', '') ?? '', 'utf8');
-    expect([...report.matchAll(/^## (.+)$/gm)].map((m) => m[1])).toEqual(['sides', 'unknown']);
+    expect([...report.matchAll(/^## (.+)$/gm)].map((m) => m[1])).toEqual(['sides', 'unknown', 'time']);
+    // the command did not run as a job here
+    expect(report).toContain('## time\n\nnone: the command does not run as a job\n');
     expect(report).toContain('- side before: the side tool of x does not run ogw regress side');
     expect(vi.mocked(sideCheck)).not.toHaveBeenCalled();
   });

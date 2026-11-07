@@ -3,6 +3,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { writeJsonAtomic } from '../../lib/fsx.ts';
 import { revParse } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { withCommitCheckout } from './lib/atcommit.ts';
 import { gameSettingsAt, lateChecksFile, requireBuildRun, type BuildCheck, type LateChecksResult } from './lib/buildrun.ts';
 import { withWorkspacesOf, type ClientCheckInput } from './lib/client-check.ts';
@@ -38,8 +39,8 @@ export const late: CommandDef = {
       };
       // the soak test after the repeat test, so that the runs of the repeat test do not change its frame intervals
       return withWorkspacesOf(input, async (shared) => {
-        const repeat = await repeatTest(shared);
-        const soak = await soakTest(shared);
+        const repeat = await span('repeat test', () => repeatTest(shared));
+        const soak = await span('soak test', () => soakTest(shared));
         return [repeat, soak].filter((c): c is BuildCheck => c !== null);
       });
     });

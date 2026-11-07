@@ -1,5 +1,5 @@
 import { open, readFile, type FileHandle } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
@@ -10,6 +10,7 @@ import { newId } from '../../lib/ids.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { withLock } from '../../lib/lock.ts';
 import { writerHoldsOrWaits } from '../../lib/rwlock.ts';
+import { span, spanContext, takeWaits, taking } from '../../lib/spans.ts';
 import { agentContext } from '../../lib/agentctx.ts';
 import { performanceLeaseBase } from '../generation/lib/lease.ts';
 import { readMark } from '../regress/lib/mark.ts';
@@ -185,9 +186,15 @@ async function infoOf(record: InstanceRecord, env: NodeJS.ProcessEnv): Promise<I
  * the lease does not count in `waitMs`: it lasts at most the time limit of a job.
  */
 async function reserveSlot(ctx: Context, record: InstanceRecord, max: number, waitMs: number, signal?: AbortSignal): Promise<void> {
+  const lock = await slotLock(ctx.env);
+  // a reservation that does not take its slot at its first try is a wait on the instance slots (ogw.md `## time`)
+  await taking(join(dirname(lock), 'slots'), () => takeSlot(ctx, record, { lock, max, waitMs }, signal));
+}
+
+async function takeSlot(ctx: Context, record: InstanceRecord, limits: { lock: string; max: number; waitMs: number }, signal?: AbortSignal): Promise<void> {
+  const { lock, max, waitMs } = limits;
   let deadline = Date.now() + waitMs;
   const leaseDeadline = Date.now() + LIMITS.jobMs;
-  const lock = await slotLock(ctx.env);
   const lease = record.leaseHolder === true ? { base: await performanceLeaseBase(ctx), waitMs: 0 } : null;
   for (;;) {
     checkAborted(signal);
@@ -219,6 +226,7 @@ async function reserveSlot(ctx: Context, record: InstanceRecord, max: number, wa
       );
     }
     const paused = Date.now();
+    takeWaits();
     await sleep(taken === 'lease' ? SLOT_POLL_MS : Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())), undefined, { signal }).catch((error: unknown) => {
       // the abort of `signal` ends the wait: the start fails as stopped
       checkAborted(signal);
@@ -238,6 +246,8 @@ export async function leaseHoldersEnd(ctx: Context, deadline: number): Promise<b
   for (;;) {
     const held = await withLock(lock, async () => (await listRecords(ctx.env)).some((r) => r.leaseHolder === true && takesSlot(r)));
     if (!held) return true;
+    // the measurement waits for these holders: part of its wait on the lease (`withWriterWithin`)
+    takeWaits();
     if (Date.now() >= deadline) return false;
     await sleep(Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())));
   }
@@ -338,7 +348,7 @@ async function waitStarted(ctx: Context, id: string): Promise<InstanceRecord> {
  */
 export async function startInstance(ctx: Context, options: InstanceOptions, hooks: StartHooks = {}): Promise<InstanceInfo> {
   try {
-    return await start(ctx, options, hooks);
+    return await span('instance start', () => start(ctx, options, hooks));
   } catch (error) {
     throw asStartFailure(error);
   }
@@ -389,15 +399,16 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
   const made: { worktree: string | null } = { worktree: null };
   try {
     checkAborted(signal);
-    const checkout = await checkoutOf(ctx, game, id, options.commit, (path) => {
+    const checkout = await span('worktree', () => checkoutOf(ctx, game, id, options.commit, (path) => {
       made.worktree = path;
-    });
+    }));
     checkAborted(signal);
     const gameSettings = await loadGameSettings(checkout.root);
     const platform = instancePlatform(gameSettings, options.platform);
+    // its steps `generate` and `data` (ogw.md `## time`)
     await generateIfNeeded(ctx, checkout, made.worktree !== null || options.root !== undefined);
     checkAborted(signal);
-    const plan = await makePlan(ctx, {
+    const plan = await span('plan', () => makePlan(ctx, {
       checkout,
       settings,
       gameSettings,
@@ -405,9 +416,9 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
       client: options.client ?? 'window',
       db: options.db,
       fixture: options.fixture === undefined ? undefined : resolve(ctx.cwd, options.fixture),
-    });
+    }));
     // a fresh `--commit` checkout gets the import of another checkout with the same files (ogw.md `## runner`)
-    await importIfNeeded(ctx, plan, checkout.root, made.worktree === null ? null : { commonDir: game.commonDir, keep: max });
+    await span('import', () => importIfNeeded(ctx, plan, checkout.root, made.worktree === null ? null : { commonDir: game.commonDir, keep: max }));
     checkAborted(signal);
     const commit = exists(join(checkout.root, '.git')) ? await head(checkout.root, { env: ctx.env }) : '';
     await updateRecord(id, (r) => {
@@ -426,8 +437,18 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
       };
     }, ctx.env);
     checkAborted(signal);
-    await launchSupervisor(id, ctx.env);
-    return await infoOf(await waitStarted(ctx, id), ctx.env);
+    // the supervisor writes the spans of its boot in this span (ogw.md `## time`)
+    const booted = await span('boot', async () => {
+      const spans = spanContext();
+      if (spans !== null) {
+        await updateRecord(id, (r) => {
+          r.spans = spans;
+        }, ctx.env);
+      }
+      await launchSupervisor(id, ctx.env);
+      return waitStarted(ctx, id);
+    });
+    return await infoOf(booted, ctx.env);
   } catch (error) {
     const failures = await cleanUpFailedStart(ctx, game, id, made.worktree, hooks);
     throw withCleanupFailures(error, failures);
@@ -486,6 +507,10 @@ function asStartFailure(error: unknown): OgwError {
  * The pids of an instance of an earlier boot of the host are not killed: they may now belong to other processes.
  */
 export async function stopInstance(ctx: Context, id: string): Promise<void> {
+  await span('instance stop', () => stop(ctx, id));
+}
+
+async function stop(ctx: Context, id: string): Promise<void> {
   const record = await readRecord(id, ctx.env);
   await updateRecord(id, (r) => {
     if (r.status !== 'failed') r.status = 'stopping';

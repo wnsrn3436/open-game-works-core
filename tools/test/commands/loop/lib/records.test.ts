@@ -103,7 +103,7 @@ const DATA: IterationRecordData = {
 describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
-    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## fix test proof', '## measurements', '## load', '## temporary resources', '## cost']);
+    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## fix test proof', '## measurements', '## load', '## temporary resources', '## cost', '## time']);
     expect(text).toContain('- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n');
     expect(text).toContain('- status: done\n- agent: claude-code m1 high\n- A: c1\n- B: b0\n- vs reference: pass\n- omitted moments: boss\n');
     expect(text).toContain('- agent: codex m2 medium\n');
@@ -212,7 +212,7 @@ describe('iteration record', () => {
   it('writes none for steps that did not run', () => {
     const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [], cost: [] });
     expect(text).toBe(
-      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## fix test proof\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n\n## cost\n\nnone\n',
+      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## fix test proof\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n\n## cost\n\nnone\n\n## time\n\nnone\n',
     );
     const parsed = parseIterationRecord(text, 2, 'p');
     expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0, vsBaseline: null, vsReference: null });

@@ -51,6 +51,8 @@ export interface IterationRecordData {
   temporary: string[];
   /** `## cost`: the agent jobs of the iteration per role. */
   cost: CostRow[];
+  /** `## time`: the time of the iteration (ogw.md `## time`); absent: `none`. */
+  time?: string;
 }
 
 /** A row of `## variants`. */
@@ -160,7 +162,13 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ['load', load],
     ['temporary resources', data.temporary.length > 0 ? data.temporary.map((k) => `- \`${k}\``).join('\n') : 'none'],
     ['cost', renderCost(data.cost)],
+    ['time', timeBlock(data.time)],
   ]);
+}
+
+/** `## time`: the section of `ogw time` for the iteration, `none` without one. */
+function timeBlock(time: string | undefined): string {
+  return time ?? 'none';
 }
 
 export interface ParsedJudge {

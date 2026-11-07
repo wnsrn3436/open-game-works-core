@@ -5,6 +5,7 @@ import { basename, delimiter, dirname, join, relative, resolve } from 'node:path
 import { addRunLogFields, agentCliEnded, markAgentRunning, newAgentKey } from '../../../lib/agentctx.ts';
 import type { CommandResult, Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { exists, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { BROKER_ENV, BROKER_RUN, BROKER_WORKER } from '../../../lib/broker-client.ts';
 import { commitPaths, commonDir, gitDir, gitIdentity, gitLine, gitRaw, head, withGitConfig, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
@@ -738,7 +739,7 @@ export async function runAgentJob(ctx: Context): Promise<CommandResult> {
   if (id === null) throw new OgwError('agent __run runs only as an ogw agent job');
   let meta = (await readAgentJob(id, ctx.env)).meta;
   try {
-    meta = await makePlace(id, ctx, meta);
+    meta = await span('place', () => makePlace(id, ctx, meta));
     return await runPlacedAgent(id, ctx, meta);
   } catch (error) {
     await removeTempPlace(ctx, meta);
@@ -776,12 +777,13 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   const rounds = await runWithBroker(id, ctx, meta, toRun, { logPath, socket, runLog: meta.runLog, afterEnv }, (runOnce) =>
     runRounds(meta, { agent, toRun, logPath, output, before, limit: settings.resultFixRounds, prompt, keepSession }, runOnce),
   );
-  await recordUsage(id, ctx, rounds.session, agent, await runLogs(logPath, rounds.starts), meta.runLog);
+  const runLog = meta.runLog;
+  await span('usage', async () => recordUsage(id, ctx, rounds.session, agent, await runLogs(logPath, rounds.starts), runLog));
   const written = await wroteOutput(output, before);
   await changeAgentMeta(id, ctx.env, (m) => {
     m.outputWritten = written;
   });
-  const finished = await finish(id, ctx, meta);
+  const finished = await span('finish', () => finish(id, ctx, meta));
   const result = finished.meta.output;
   return jobResult(rounds.cli, written && result !== undefined && exists(result) ? result : null, finished.problem ?? formatProblem(rounds.errors), logPath, agentCli(agent));
 }
@@ -837,14 +839,14 @@ async function runRounds(
   runOnce: RunOnce,
 ): Promise<Rounds> {
   const starts = [0];
-  let cli = await runOnce(job.toRun.command, job.prompt);
+  let cli = await span('cli', () => runOnce(job.toRun.command, job.prompt));
   const session = await jobSession(meta, job.agent, (await runLogs(job.logPath, starts))[0] ?? '', job.keepSession);
   for (let round = 0; ; round++) {
     if (cli.code !== 0 || cli.error !== null || !(await wroteOutput(job.output, job.before))) return { cli, starts, errors: [], session };
     const errors = await resultFormatErrors(meta, job.output).catch((error: unknown) => [`cannot be read: ${error instanceof Error ? error.message : String(error)}`]);
     if (errors.length === 0 || round >= job.limit || session === null || !FIX_ROUND_ROLES.includes(meta.role)) return { cli, starts, errors, session };
     starts.push((await stat(job.logPath)).size);
-    cli = await runOnce(job.toRun.wrap(agentResumeCommand(job.agent, session.id)), fixRoundPrompt(job.output, errors));
+    cli = await span('fix round', () => runOnce(job.toRun.wrap(agentResumeCommand(job.agent, session.id)), fixRoundPrompt(job.output, errors)));
   }
 }
 

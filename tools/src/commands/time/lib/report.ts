@@ -1,5 +1,6 @@
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import type { GameRepo } from '../../../lib/game.ts';
 import { JobNotFound, listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { jobsOfRun, listRuns, type RunState } from '../../../lib/runstate.ts';
 import { criticalPath, flagsOf, largestSelf, waitTotals, type PathEntry, type Sample, type TimeCriteria, type TimeFlag } from './analyze.ts';
@@ -74,12 +75,12 @@ function iterationStart(jobs: readonly JobRecord[], run: RunState, n: number): n
  * The window of a run, or of iteration `n` of it: to the start of the next iteration, else the close of the run, else
  * now (`open`).
  */
-function windowOf(jobs: readonly JobRecord[], run: RunState, n: number | null, now: number): { start: number; end: number; open: boolean } {
+function windowOf(jobs: readonly JobRecord[], run: RunState, n: number | null, now: number): { start: number; end: number; open: boolean } | null {
   const close = run.closedAt ?? now;
   const open = run.closedAt === null;
   if (n === null) return { start: run.startedAt, end: close, open };
   const start = iterationStart(jobs, run, n);
-  if (start === null) throw new OgwError(`iteration ${String(n)} of run ${run.name} has no ogw agent job`);
+  if (start === null) return null;
   const later = jobs
     .filter((job) => job.command === 'agent' && job.meta.run === run.name && typeof job.meta.iteration === 'number' && job.meta.iteration > n)
     .map((job) => job.startedAt);
@@ -94,9 +95,22 @@ export async function runReport(ctx: Context, game: string, runName: string, ite
   const repo = await ctx.game(game);
   const run = (await listRuns(repo)).find((r) => r.name === runName);
   if (run === undefined) throw new OgwError(`no run ${runName} in game ${repo.name}`);
-  const records = await listJobs(ctx.env);
-  const source = timeSource(records, ctx.env);
+  const report = await runStateReport(ctx.env, (await ctx.settings()).time, repo, run, iteration);
+  if (report === null) throw new OgwError(noIteration(run, iteration as number));
+  return report;
+}
+
+/** Why an iteration has no time report: it has no `ogw agent` job, whose start is its start. */
+export function noIteration(run: RunState, iteration: number): string {
+  return `iteration ${String(iteration)} of run ${run.name} has no ogw agent job`;
+}
+
+/** `runReport` of the run state `run` of the game repo `repo`, with the criteria `criteria`; null for an iteration without an `ogw agent` job. */
+export async function runStateReport(env: NodeJS.ProcessEnv, criteria: TimeCriteria, repo: GameRepo, run: RunState, iteration: number | null): Promise<TimeReport | null> {
+  const records = await listJobs(env);
+  const source = timeSource(records, env);
   const window = windowOf(records.filter((job) => job.game === repo.name), run, iteration, source.now);
+  if (window === null) return null;
   const jobs = jobsOfRun(run, records, repo.name).filter((job) => job.startedAt >= window.start && job.startedAt < window.end);
   const ids = new Set(jobs.map((job) => job.id));
   const seen = new Set<string>();
@@ -117,5 +131,5 @@ export async function runReport(ctx: Context, game: string, runName: string, ite
     children,
     waits: [],
   };
-  return reportOf(source, root, (await ctx.settings()).time);
+  return reportOf(source, root, criteria);
 }

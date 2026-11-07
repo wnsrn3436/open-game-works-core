@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { span } from '../../../lib/spans.ts';
 import { isNotFound } from '../../../lib/fsx.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
@@ -255,7 +256,10 @@ export async function rowSimulationCheck(ctx: Context, game: string, root: strin
       const plan = plannedRows(await readTables(root), await simulateCommands(ctx, instance.id), { seeds });
       const rows: RowResult[] = [];
       const runRows = async (id: string, next: () => number | null): Promise<void> => {
-        for (let i = next(); i !== null; i = next()) rows[i] = await simulateRow(ctx, id, plan.units[i] as RowUnit, seeds);
+        for (let i = next(); i !== null; i = next()) {
+          const unit = plan.units[i] as RowUnit;
+          rows[i] = await span(`row ${unit.table.name} ${unit.row.id}`, () => simulateRow(ctx, id, unit, seeds));
+        }
       };
       const shared = shareUnits(
         options.slots,

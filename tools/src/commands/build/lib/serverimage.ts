@@ -3,6 +3,7 @@ import { join, relative, sep } from 'node:path';
 import * as tar from 'tar';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { run, runOk } from '../../../lib/proc.ts';
 import type { GameRepo } from '../../../lib/game.ts';
@@ -120,6 +121,10 @@ export async function warmServerImage(ctx: Context, image: ImageBuild, stopWhen:
  * copy, and pushes it as `<env>-<version>` (ogw.md `## server image`).
  */
 export async function pushServerImage(ctx: Context, image: ImageBuild): Promise<ServerImage> {
+  return span('server image push', () => pushImage(ctx, image));
+}
+
+async function pushImage(ctx: Context, image: ImageBuild): Promise<ServerImage> {
   const { repository } = repositoryOf(image.settings);
   const tag = buildTagName(image.env, image.version);
   await ghcrLogin(ctx);

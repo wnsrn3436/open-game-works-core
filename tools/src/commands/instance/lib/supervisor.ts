@@ -9,7 +9,9 @@ import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
 import { isNotFound } from '../../../lib/fsx.ts';
 import { isPlainObject } from '../../../lib/json.ts';
 import { LIMITS } from '../../../lib/limits.ts';
+import { jobPaths } from '../../../lib/jobs.ts';
 import { killTree, run, spawnTracked } from '../../../lib/proc.ts';
+import { inJob, span } from '../../../lib/spans.ts';
 import { BotGate, commandNames, oneCommand, opponentLoop, roomCapable, roomWatch, socialLoop, type OpponentBot } from './bots.ts';
 import { ClientChannel, type FrameHandler } from './channel.ts';
 import {
@@ -141,7 +143,7 @@ export class Supervisor {
     mkdirSync(this.folder, { recursive: true });
     await this.startControl();
     try {
-      await this.boot();
+      await this.bootInJob();
       await this.writePlayAccess();
       await updateRecord(this.id, (r) => {
         r.status = 'running';
@@ -340,25 +342,34 @@ export class Supervisor {
 
   // ---- start -----------------------------------------------------------------------------------
 
+  /** The boot, in the step span of the start that launched this supervisor when it ran in a job (ogw.md `## time`). */
+  private async bootInJob(): Promise<void> {
+    const spans = this.record.spans;
+    if (spans === undefined) return this.boot();
+    return inJob(spans.job, (await jobPaths(spans.job, this.env)).spans, () => this.boot(), spans.span);
+  }
+
   private async boot(): Promise<void> {
     const deadline = Date.now() + START_LIMIT_MS;
     const left = (): number => Math.max(0, deadline - Date.now());
     const secrets = newLocalSecrets();
-    const db = await this.database(left());
+    const db = await span('database', () => this.database(left()));
     const port = await freePort();
     const serverUrl = `http://127.0.0.1:${String(port)}`;
     const secretFile = join(this.folder, 'server-secrets.json');
     writeSecretFile(secretFile, serverSecretValues(secrets, db));
-    this.spawn('server', serverLaunch({ root: this.record.root, port, db, matchmaker: this.plan.realtime, secretFile }));
-    await updateRecord(this.id, (r) => {
-      r.serverUrl = serverUrl;
-      r.adminSecret = secrets.adminSecret;
-    }, this.env);
-    await this.waitServer(serverUrl, left());
-    if (this.plan.populate) await this.populate(populateLaunch({ root: this.record.root, serverUrl, secretFile }), left());
+    await span('server', async () => {
+      this.spawn('server', serverLaunch({ root: this.record.root, port, db, matchmaker: this.plan.realtime, secretFile }));
+      await updateRecord(this.id, (r) => {
+        r.serverUrl = serverUrl;
+        r.adminSecret = secrets.adminSecret;
+      }, this.env);
+      await this.waitServer(serverUrl, left());
+    });
+    if (this.plan.populate) await span('populate', () => this.populate(populateLaunch({ root: this.record.root, serverUrl, secretFile }), left()));
     await this.startClients(serverUrl, secrets, left());
-    await this.startBots();
-    if (this.plan.fixture) await this.runFixture(left());
+    await span('bots', () => this.startBots());
+    if (this.plan.fixture) await span('fixture', () => this.runFixture(left()));
   }
 
   private async database(timeoutMs: number): Promise<ServerDb> {
@@ -457,7 +468,7 @@ export class Supervisor {
     await Promise.all(clients.map(async (client) => {
       try {
         // a client without a dev account is played by an agent and may wait on the terms popup: only its channel counts
-        await this.waitClient(client.name, client.account !== '', timeoutMs);
+        await span(`client ${client.name}`, () => this.waitClient(client.name, client.account !== '', timeoutMs));
       } catch (error) {
         throw new OgwError(`${client.name}: ${(error as Error).message}`);
       }

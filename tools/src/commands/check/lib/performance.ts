@@ -1,6 +1,7 @@
 import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { withWriterWithin, type RwLock, type WriterWait } from '../../../lib/rwlock.ts';
 import { heavyStepsEnd } from '../../generation/lib/lease.ts';
 import { leaseHoldersEnd } from '../../instance/api.ts';
@@ -496,7 +497,7 @@ const STEPS_BUSY = 'host busy: regress check';
 export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
   const each = async (): Promise<CheckResult[]> => {
     const results: CheckResult[] = [];
-    for (const p of platforms) results.push(await performanceCheck(ctx, game, p, scenario, options));
+    for (const p of platforms) results.push(await span(`performance ${p}`, () => performanceCheck(ctx, game, p, scenario, options)));
     return results;
   };
   // nothing to measure: the items say why without waiting for the lease

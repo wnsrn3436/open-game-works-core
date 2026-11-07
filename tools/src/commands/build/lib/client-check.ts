@@ -6,6 +6,7 @@ import { join, normalize, relative } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { takeWaits, taking } from '../../../lib/spans.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { exists, isNotFound } from '../../../lib/fsx.ts';
 import { revParse } from '../../../lib/git.ts';
@@ -122,15 +123,26 @@ export async function withCheckInstance<T>(
 export interface MeasureGate {
   exported: () => void;
   measure: Promise<string | null>;
+  /** Whether `measure` has resolved; absent: it has. */
+  opened?: () => boolean;
 }
 
 /** The gate of a check run on its own: it measures as soon as its export is made. */
 export const NO_GATE: MeasureGate = { exported: () => undefined, measure: Promise.resolve(null) };
 
-/** Waits at the gate after the export; a reason not to measure ends the check as one that did not run. */
+/** The name of the wait of a check at its measure gate (ogw.md `## time`). */
+export const MEASURE_GATE = 'build measure gate';
+
+/**
+ * Waits at the gate after the export; a reason not to measure ends the check as one that did not run. A gate that is
+ * not open yet is a wait on the measure gate.
+ */
 export async function atGate(gate: MeasureGate): Promise<void> {
   gate.exported();
-  const reason = await gate.measure;
+  const reason = gate.opened?.() === false ? await taking(MEASURE_GATE, () => {
+    takeWaits();
+    return gate.measure;
+  }) : await gate.measure;
   if (reason !== null) throw new OgwError(reason);
 }
 
@@ -143,11 +155,16 @@ export function measureGate(): { gate: MeasureGate; open: (reason: string | null
   const made = new Promise<void>((resolve) => {
     exported = resolve;
   });
-  let open: (reason: string | null) => void = () => undefined;
+  let resolveMeasure: (reason: string | null) => void = () => undefined;
   const measure = new Promise<string | null>((resolve) => {
-    open = resolve;
+    resolveMeasure = resolve;
   });
-  return { gate: { exported, measure }, open, exportedOr: (done) => Promise.race([made, Promise.allSettled([done])]) };
+  let opened = false;
+  const open = (reason: string | null): void => {
+    opened = true;
+    resolveMeasure(reason);
+  };
+  return { gate: { exported, measure, opened: () => opened }, open, exportedOr: (done) => Promise.race([made, Promise.allSettled([done])]) };
 }
 
 /** Launch values of ogw.md `### device performance` 3 and `### web smoke` 2. */

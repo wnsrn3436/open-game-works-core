@@ -2,10 +2,14 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { takeWaits, taking } from '../../../lib/spans.ts';
 import { whenNotFound } from '../../../lib/fsx.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions } from '../../instance/api.ts';
 import { instanceFolder, readRecord } from '../../instance/lib/records.ts';
 import { writeEvidence, type Evidence } from './evidence.ts';
+
+/** The name of a wait for a free instance slot of a check (ogw.md `## time`). */
+export const CHECK_SLOTS = 'check instance slots';
 
 /**
  * At most `size` holders at a time; the rest wait in order. A spare holder (`spare`) takes only a slot that is free
@@ -31,7 +35,10 @@ export class Slots {
     const told = [...this.spares];
     this.spares.clear();
     for (const tell of told) tell();
-    await new Promise<void>((resolve) => this.waiting.push(resolve));
+    await taking(CHECK_SLOTS, () => {
+      takeWaits();
+      return new Promise<void>((resolve) => this.waiting.push(resolve));
+    });
   }
 
   release(): void {

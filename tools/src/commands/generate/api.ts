@@ -7,6 +7,7 @@ import type { GameRepo } from '../../lib/game.ts';
 import { checkoutLock } from '../../lib/git.ts';
 import { isPlainObject, mergeSettings, type JsonObject } from '../../lib/json.ts';
 import { withLock } from '../../lib/lock.ts';
+import { span } from '../../lib/spans.ts';
 import { loadGameSettings, loadSchema, schemaPath, type GameSettings } from '../../lib/settings.ts';
 import { coreReleaseOfGame, extractedAsset, type CoreRelease } from '../core/api.ts';
 import { gutPackage, isCorePlugin, packageDir, pluginsFor } from '../core/lib/engine-packages.ts';
@@ -192,9 +193,10 @@ export async function planGenerate(ctx: Context, game: GameRepo): Promise<Plan> 
 
 /** `ogw generate` on the checkout, holding the generate lock; returns the written and removed files. */
 export async function generateCheckout(ctx: Context, game: GameRepo): Promise<Applied> {
-  return withLock(await checkoutLock(game.root, 'ogw-generate.lock', { env: ctx.env }), async () => {
-    return applyPlan(game.root, await planGenerate(ctx, game));
-  });
+  return span('generate', async () => withLock(await checkoutLock(game.root, 'ogw-generate.lock', { env: ctx.env }), async () => {
+    const plan = await span('generate plan', () => planGenerate(ctx, game));
+    return span('generate write', () => applyPlan(game.root, plan));
+  }));
 }
 
 /**
@@ -203,13 +205,13 @@ export async function generateCheckout(ctx: Context, game: GameRepo): Promise<Ap
  * stay as they are (ogw.md `## check`). Returns the written files.
  */
 export async function installEnginePackages(ctx: Context, game: GameRepo): Promise<Applied> {
-  return withLock(await checkoutLock(game.root, 'ogw-generate.lock', { env: ctx.env }), async () => {
+  return span('engine packages', async () => withLock(await checkoutLock(game.root, 'ogw-generate.lock', { env: ctx.env }), async () => {
     const engine = definedEngine(await loadGameSettings(game.root));
     const release = await coreReleaseOfGame(ctx, game);
     const plan = emptyPlan();
     await enginePackages(ctx, release, engine, await extractedAsset(ctx, release, `client-${engine}.zip`), plan);
     return applyPlan(game.root, plan);
-  });
+  }));
 }
 
 /** `ogw generate` on the checkout `game.root`. */

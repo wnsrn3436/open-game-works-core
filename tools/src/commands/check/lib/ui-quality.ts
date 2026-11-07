@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { decodeRgba, type Rgba } from '../../resource/lib/image.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { automationRequest, restartClient, type AutomationResponse } from '../../instance/automation.ts';
@@ -622,8 +623,8 @@ async function capturesCheck(ctx: Context, game: string, platform: string, optio
       const run = new UiRun(ctx, id, platform, options, count);
       const unit = units[i] as UiUnit;
       try {
-        if (unit === 'gamepad') await gamepadCheck(run, options, screens, commands);
-        else await languageCaptures(run, unit.language, screens, commands, scales, options.quality, touch);
+        if (unit === 'gamepad') await span(`UI gamepad ${platform}`, () => gamepadCheck(run, options, screens, commands));
+        else await span(`UI captures ${platform} ${unit.language}`, () => languageCaptures(run, unit.language, screens, commands, scales, options.quality, touch));
         outcomes[i + 1] = { failures: run.failures, where: run.where, error: null };
       } catch (error) {
         outcomes[i + 1] = { failures: run.failures, where: run.where, error: { value: error } };
@@ -683,6 +684,6 @@ export async function uiQualityCheck(ctx: Context, game: string, platform: strin
   if (missing.length > 0) return checkResult('UI quality', platform, missing.map((path) => failure(unknownSceneWhere(null), `${path}: missing`)), true);
   const screens = measured(screensOfOrientation(options.screens, options.baseResolution));
   const flashOptions = { ...options, screens };
-  const [captures, flash] = await Promise.all([capturesCheck(ctx, game, platform, options), flashCheck(ctx, game, platform, flashOptions)]);
+  const [captures, flash] = await Promise.all([span(`UI captures ${platform}`, () => capturesCheck(ctx, game, platform, options)), span(`flash check ${platform}`, () => flashCheck(ctx, game, platform, flashOptions))]);
   return withFlash(captures, flash);
 }

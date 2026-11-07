@@ -2,6 +2,7 @@ import { agentContext } from '../../lib/agentctx.ts';
 import { backgroundCommandOf, startBackground } from '../../lib/cli.ts';
 import { flag, list, type CommandArgs, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
+import { span } from '../../lib/spans.ts';
 import { waitJob } from '../../lib/jobs.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { mergeAgents, type MergeResult } from './lib/merge.ts';
@@ -53,7 +54,10 @@ async function mergeWhenDone(ctx: Context, args: CommandArgs): Promise<CommandRe
   await checkArgs(ctx, args);
   const ids = args.positionals;
   const thens = list(args, 'then');
-  for (const id of ids) await waitJob(id, Number.POSITIVE_INFINITY, ctx.env);
+  // the jobs it merges are its input, not a lock, slot or ledger: the wait for them is a step (ogw.md `## time`)
+  await span('wait for jobs', async () => {
+    for (const id of ids) await waitJob(id, Number.POSITIVE_INFINITY, ctx.env);
+  });
   const notDone: { id: string; status: string }[] = [];
   for (const id of ids) {
     const { status } = await outcomeOf(id, ctx.env);

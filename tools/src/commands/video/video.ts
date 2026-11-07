@@ -79,7 +79,7 @@ export const video: CommandDef = {
     const temp = await newPrivateTempFolder('ogw-video-', ctx.env);
     try {
       const raw = join(temp, 'raw.avi');
-      const instance = await span('instance start', () => startInstance(ctx, { game: game.name, client: 'window', movie: { file: raw }, ...(commit === undefined ? {} : { commit }) }));
+      const instance = await startInstance(ctx, { game: game.name, client: 'window', movie: { file: raw }, ...(commit === undefined ? {} : { commit }) });
       let stoppedAt: number;
       try {
         await span('scenario', async () => {
@@ -98,7 +98,7 @@ export const video: CommandDef = {
         });
       } finally {
         stoppedAt = Date.now();
-        await span('instance stop', () => stopInstance(ctx, instance.id));
+        await stopInstance(ctx, instance.id);
       }
       const { out, videoMs, wallMs } = await span('encode', async () => {
         const started = (await stat(raw)).birthtimeMs;

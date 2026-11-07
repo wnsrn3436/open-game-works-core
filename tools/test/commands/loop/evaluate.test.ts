@@ -541,6 +541,28 @@ describe('ogw loop evaluate', () => {
     expect(measure.collected).toEqual([]);
   });
 
+  it('records the judging, each play and judge from its first instance start to its entry, and the record, when it runs as a job', async () => {
+    const { g } = await loop({ playInstances: 1 }, ['regression test', 'static check', 'no blocker', 'full flow']);
+    write(g.root, `${R}/request.md`, 'no moments');
+    commit(g.root);
+    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));
+    const jobs = await jobsDir(g.ws.env);
+    mkdirSync(jobs, { recursive: true });
+    writeFileSync(join(jobs, 'ev1.json'), JSON.stringify({ id: 'ev1', argv: [], cwd: '/', command: 'loop evaluate', game: 'g', startedAt: Date.now(), endedAt: null, status: 'running', exitCode: null, supervisorPid: process.pid, pid: null, timeLimitMs: 60_000, agentJob: null, summary: null, meta: {} }));
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g'], { env: { ...g.ws.env, OGW_JOB_ID: 'ev1' } });
+    expect(out.code).toBe(0);
+    const lines = readFileSync(join(jobs, 'ev1.spans.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { id: string; name?: string; parent: string | null; end: number | null; failed?: true });
+    const ended = lines.filter((l) => l.name !== undefined && l.end !== null);
+    const named = (name: string): typeof ended => ended.filter((l) => l.name === name);
+    const [judging] = named('judging');
+    expect(judging?.parent).toBeNull();
+    expect(named('record')).toHaveLength(1);
+    // the play called again on a new instance is one span from its first start to its failed entry
+    expect(named('play').map((l) => [l.parent === judging?.id, l.failed === true])).toEqual([[true, true]]);
+    expect(new Set(lines.filter((l) => l.name === 'play').map((l) => l.id)).size).toBe(1);
+    expect(named('judge main').map((l) => l.parent === judging?.id)).toEqual([true, true]);
+  });
+
   it('fails the run when the job record of a failed agent cannot be read', async () => {
     const { g } = await loop({ playInstances: 1 });
     fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));

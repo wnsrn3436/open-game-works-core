@@ -19,6 +19,7 @@ import {
   type ReportRow,
 } from './defects.ts';
 import { costRows, runAgentJobs } from './cost.ts';
+import { runTimeSection } from '../../time/api.ts';
 import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
 import { iterationRecords, renderIterationRecord, type IterationRecordData, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
@@ -212,6 +213,7 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
     measurements: measure?.targets ?? null,
     temporary: await newTemporary(game, run, check?.commit ?? null),
     cost: costRows(await runAgentJobs(env, game.name, run.name, run.iteration), false),
+    time: await runTimeSection(env, game, run, run.iteration),
   }));
   return rel;
 }

@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { span } from '../../../lib/spans.ts';
 import { isNotFound, whenNotFound } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { LIMITS } from '../../../lib/limits.ts';
@@ -246,8 +247,8 @@ export async function clientRegression(ctx: Context, game: GameRepo, path: strin
 /** `regression test`: client regression test and server regression test of the targets in the checkout `game`. */
 export async function regressionTest(ctx: Context, game: GameRepo, targets: RegressionTargets, options: ClientRunOptions): Promise<CheckResult> {
   const [server, client] = await Promise.all([
-    targets.server === null ? [] : serverRegression(ctx, game, targets.server, options),
-    targets.client === null ? [] : clientRegression(ctx, game, targets.client, options),
+    targets.server === null ? [] : span('server regression test', () => serverRegression(ctx, game, targets.server as string, options)),
+    targets.client === null ? [] : span('client regression test', () => clientRegression(ctx, game, targets.client as string, options)),
   ]);
   return checkResult('regression test', null, [...client, ...server]);
 }

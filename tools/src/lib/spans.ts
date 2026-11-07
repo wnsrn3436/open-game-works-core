@@ -89,19 +89,39 @@ function nextId(): string {
 }
 
 /**
- * Runs the command of job `job`, whose steps and waits go to the spans file `path` (ogw.md `## time`). When a line could
- * not be written, the command fails with that error once `fn` ends; a failure of `fn` itself stays its result.
+ * Runs the command of job `job`, whose steps and waits go to the spans file `path` (ogw.md `## time`), in its step span
+ * `parent` (null: the job span; a process that another process of the job started, such as an instance supervisor, goes
+ * on in the span that started it). When a line could not be written, the command fails with that error once `fn` ends;
+ * a failure of `fn` itself stays its result.
  */
-export async function inJob<T>(job: string, path: string, fn: () => Promise<T>): Promise<T> {
+export async function inJob<T>(job: string, path: string, fn: () => Promise<T>, parent: string | null = null): Promise<T> {
   const file = new SpanFile(path);
   let value: T;
   try {
-    value = await storage.run({ job, file, span: null, take: null }, fn);
+    value = await storage.run({ job, file, span: parent, take: null }, fn);
   } finally {
     file.close();
   }
   if (file.failure !== null) throw new OgwError(`cannot write the spans file ${path}: ${file.failure.message}`);
   return value;
+}
+
+/**
+ * The step span `job start` of the command process of a job: from `startedAt` of its job record, before its supervisor
+ * started it, to the start of its command (ogw.md `## time`).
+ */
+export function jobStart(path: string, startedAt: number): void {
+  const file = new SpanFile(path);
+  const line: StepLine = { id: nextId(), name: 'job start', parent: null, start: startedAt, end: Date.now() };
+  file.write({ ...line, end: null });
+  file.write(line);
+  file.close();
+  if (file.failure !== null) throw new OgwError(`cannot write the spans file ${path}: ${file.failure.message}`);
+}
+
+/** Runs `fn` outside the job of this async context, as the work of another process runs (e.g. an instance supervisor). */
+export function outsideJob<T>(fn: () => T): T {
+  return storage.exit(fn);
 }
 
 /** The job and step span that run in this async context; null outside a job. */
@@ -112,19 +132,44 @@ export function spanContext(): { job: string; span: string | null } | null {
 
 /** Runs `fn` as the step span `name` of the step span or job that runs; outside a job it only runs `fn`. */
 export async function span<T>(name: string, fn: () => Promise<T>): Promise<T> {
-  const store = storage.getStore();
-  if (store === undefined) return fn();
-  const line: StepLine = { id: nextId(), name, parent: store.span, start: Date.now(), end: null };
-  store.file.write(line);
+  const open = openSpan(name);
   let value: T;
   try {
-    value = await storage.run({ ...store, span: line.id, take: null }, fn);
+    value = await open.run(fn);
   } catch (error) {
-    store.file.write({ ...line, end: Date.now(), failed: true });
+    open.end(true);
     throw error;
   }
-  store.file.write({ ...line, end: Date.now() });
+  open.end();
   return value;
+}
+
+/**
+ * A step span whose start and end are not those of one call: a step of work that goes on across polls and tasks (e.g.
+ * a play or judge of `ogw loop evaluate` from its first instance start to its result). `run` runs work in it, so that
+ * the steps, waits and jobs of that work are in it; `end` ends it once, `failed` when the step failed.
+ */
+export interface OpenSpan {
+  run<T>(fn: () => Promise<T>): Promise<T>;
+  end(failed?: boolean): void;
+}
+
+/** Starts the step span `name` in the step span or job that runs; outside a job it records nothing. */
+export function openSpan(name: string): OpenSpan {
+  const store = storage.getStore();
+  if (store === undefined) return { run: (fn) => fn(), end: () => undefined };
+  const line: StepLine = { id: nextId(), name, parent: store.span, start: Date.now(), end: null };
+  store.file.write(line);
+  const inside: Store = { ...store, span: line.id, take: null };
+  let ended = false;
+  return {
+    run: (fn) => storage.run(inside, fn),
+    end: (failed = false) => {
+      if (ended) return;
+      ended = true;
+      store.file.write({ ...line, end: Date.now(), ...(failed ? { failed: true as const } : {}) });
+    },
+  };
 }
 
 /**
@@ -141,6 +186,26 @@ export async function taking<T>(on: string, take: () => Promise<T>): Promise<T> 
   } finally {
     if (current.id !== null) store.file.write({ id: current.id, wait: on, parent: current.parent, start: current.start, end: Date.now() });
   }
+}
+
+/**
+ * Starts a wait on `on` that is not the take of one call (e.g. the groups of `ogw loop evaluate` waiting across polls for
+ * room among the instances of the host), in the step span that runs; `end` ends it once. Outside a job it records
+ * nothing; inside a take it is part of the wait of that take.
+ */
+export function openWait(on: string): { end: () => void } {
+  const store = storage.getStore();
+  if (store === undefined || store.take !== null) return { end: () => undefined };
+  const line: WaitLine = { id: nextId(), wait: on, parent: store.span, start: Date.now(), end: null };
+  store.file.write(line);
+  let ended = false;
+  return {
+    end: () => {
+      if (ended) return;
+      ended = true;
+      store.file.write({ ...line, end: Date.now() });
+    },
+  };
 }
 
 /** The take that runs did not succeed at this try: its wait starts at the start of the take (written once). */

@@ -25,6 +25,7 @@ import {
   protocolChangeBody,
   serverImageBody,
 } from './lib/report-sections.ts';
+import { runTimeSection } from '../time/api.ts';
 
 async function updateFiles(game: GameRepo, open: OpenBuildRun): Promise<string[]> {
   const rel = `builds/${buildDirName(open.env, open.version)}`;
@@ -101,6 +102,7 @@ async function reportBody(ctx: Context, game: GameRepo, open: OpenBuildRun, resu
     ['core schema', coreSchemaBody(buildRun)],
     ['deploy', await deployBody(ctx, game, open, buildRun)],
     ['human', humanBody(buildRun, await needsHuman(game, branch, run.name), await addedCoreProposals(game, run.baseCommit, branch))],
+    ['time', await runTimeSection(ctx.env, game, run, null)],
   ]);
 }
 

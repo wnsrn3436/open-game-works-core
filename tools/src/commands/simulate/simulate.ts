@@ -64,7 +64,7 @@ export const simulate: CommandDef = {
     const given = seedsOption(str(args, 'seeds'));
     const game = await ctx.game(gameName);
     const seeds = given ?? (await defaultSeeds(ctx, game.root));
-    const instance = await span('instance start', () => startInstance(ctx, { game: gameName, client: 'headless' }));
+    const instance = await startInstance(ctx, { game: gameName, client: 'headless' });
     try {
       const table = str(args, 'table');
       const simulation = await span('simulate rows', () => simulateRows(ctx, instance.id, instance.root, { table, rows, seeds }));
@@ -73,7 +73,7 @@ export const simulate: CommandDef = {
       const text = [formatSimulation(simulation), ...notSimulated].filter((l) => l !== '').join('\n');
       return { exitCode: pass ? 0 : 1, text, data: { ...simulation, notSimulated } };
     } finally {
-      await span('instance stop', () => stopInstance(ctx, instance.id));
+      await stopInstance(ctx, instance.id);
     }
   },
 };

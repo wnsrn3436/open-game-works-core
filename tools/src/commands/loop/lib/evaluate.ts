@@ -10,11 +10,13 @@ import { commitPaths, showFile } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
 import { killJob, readJob } from '../../../lib/jobs.ts';
 import type { RunState } from '../../../lib/runstate.ts';
+import { openSpan, openWait, span, type OpenSpan } from '../../../lib/spans.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { agentHitLimit, agentOutcome, startAgentJob, type AgentOutcome, type CalibrationPlace } from '../../agent/api.ts';
 import { clearPlayBudget } from '../../agent/lib/play-budget.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
 import { clearReleases, takeReleases } from '../../instance/lib/releases.ts';
+import { instancesDir } from '../../instance/lib/records.ts';
 import { clearUnstarted, noteUnstarted } from '../../instance/lib/unstarted.ts';
 import { collectMeasure, measureCollected } from '../../measure/api.ts';
 import { telemetrySummary } from '../../telemetry/api.ts';
@@ -193,6 +195,8 @@ interface Holder {
   starting: number;
   /** The slots it keeps while it stops its instances to start new ones (a call again, a fallback). */
   reserved: number;
+  /** The step span of a play or judge, from its first instance start to its entry (ogw.md `## time`). */
+  span?: OpenSpan;
 }
 
 /** An instance to start. A start that fails for another reason than a save fixture step ends `ogw loop evaluate`. */
@@ -314,6 +318,10 @@ interface State {
   lastInputMs: number;
   /** When the first queued group began waiting for room while this run held no instance; null when not waiting. */
   waitingSince: number | null;
+  /** The wait for room among the instances of other runs while `waitingSince` is set (ogw.md `## time`). */
+  roomWait?: { end: () => void };
+  /** The name of that wait: the instance slots of the host (ogw.md `## time`). */
+  slotsName: string;
   /** The signal that stopped this run; null while it runs. */
   stoppedBy: NodeJS.Signals | null;
   /** The first failure of the work in `tasks`, which ends the run; null while none failed. */
@@ -874,15 +882,41 @@ function waitsForTelemetry(state: State, group: Group): boolean {
  */
 function waitForRoom(state: State, size: number): void {
   if (holders(state).some((holder) => holder.live > 0)) {
-    state.waitingSince = null;
+    endRoomWait(state);
     return;
   }
   const now = evaluateDeps.now();
+  if (state.waitingSince === null) state.roomWait = openWait(state.slotsName);
   state.waitingSince ??= now;
   const waitMs = state.plan.settings.instanceWaitTimeoutMs;
   if (now - state.waitingSince >= waitMs) {
     throw new OgwError(`instance start failed: no room for ${String(size)} instances within instanceWaitTimeoutMs (${String(waitMs)} ms)`);
   }
+}
+
+/** The wait for room among the instances of other runs ends: a holder of the run has an instance, or a group started. */
+function endRoomWait(state: State): void {
+  state.waitingSince = null;
+  state.roomWait?.end();
+  state.roomWait = undefined;
+}
+
+/**
+ * Runs `work` of a play or judge in its step span, which starts at its first work and ends once it has its entry, so
+ * that its instance starts and its agent jobs are in it (ogw.md `## time`).
+ */
+function inSlot(slot: Slot, work: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    slot.span ??= openSpan(slot.role === 'play' ? 'play' : `judge ${slot.kind}`);
+    const open = slot.span;
+    try {
+      await open.run(work);
+    } catch (error) {
+      open.end(true);
+      throw error;
+    }
+    if (slot.entry !== null) open.end(slot.entry.status === 'failed');
+  };
 }
 
 /** Throws when a signal stopped the run or work of it failed: the work in flight then makes nothing new. */
@@ -930,7 +964,7 @@ function admitPending(state: State, room: Room): void {
     while (slot.pending.length > 0 && slot.instances.length + slot.starting < slot.budget && room.actual > 0) {
       room.actual--;
       const next = slot.pending.shift() as PendingInstance;
-      spawn(state, () => startPendingOne(state, slot, next));
+      spawn(state, inSlot(slot, () => startPendingOne(state, slot, next)));
     }
   }
 }
@@ -945,7 +979,7 @@ function admitTelemetry(state: State, room: Room): boolean {
     }
     take(room, job.size);
     job.status = 'running';
-    spawn(state, () => makeTelemetry(state, job));
+    spawn(state, () => span('shared telemetry', () => makeTelemetry(state, job)));
   }
   return true;
 }
@@ -972,10 +1006,10 @@ function admitGroups(state: State, room: Room): void {
       waitForRoom(state, group.size);
       return;
     }
-    state.waitingSince = null;
+    endRoomWait(state);
     state.queue.splice(i, 1);
     take(room, group.size);
-    for (const slot of group.slots) spawn(state, () => launch(state, slot));
+    for (const slot of group.slots) spawn(state, inSlot(slot, () => launch(state, slot)));
   }
 }
 
@@ -1185,7 +1219,7 @@ async function poll(state: State, slot: Slot): Promise<void> {
   const outcome = await agentOutcome(state.ctx, job);
   if (outcome.status === 'running') return;
   state.active.splice(state.active.indexOf(slot), 1);
-  spawn(state, () => finish(state, slot, job, outcome));
+  spawn(state, inSlot(slot, () => finish(state, slot, job, outcome)));
 }
 
 /** The work after an agent ended: its result, or a call again or a fallback. */
@@ -1533,6 +1567,7 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     confirmGate: 'pending',
     lastInputMs: 0,
     waitingSince: null,
+    slotsName: join(await instancesDir(ctx.env), 'slots'),
     stoppedBy: null,
     failure: null,
     wake: new AbortController(),
@@ -1555,7 +1590,7 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
   const off = abortOnSignal(state);
   let failure: string | null = null;
   try {
-    await prepareJudges(state, state.all);
+    await span('prepare judges', () => prepareJudges(state, state.all));
     await runSlots(state);
   } catch (error) {
     await abort(state);
@@ -1563,6 +1598,7 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     if (!keep || state.stoppedBy !== null || error instanceof FeedFailure) throw thrown;
     failure = thrown instanceof Error ? thrown.message : String(thrown);
   } finally {
+    endRoomWait(state);
     settle();
     off();
     if (state.guides !== null) await rm(await state.guides, { recursive: true, force: true });
@@ -1571,7 +1607,12 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
 }
 
 async function evaluateWith(ctx: Context, plan: EvaluatePlan): Promise<{ file: EvaluateFile; path: string }> {
-  const slots = await runJudging(ctx, judgingPlanOf(plan), planGroups(plan));
+  const slots = await span('judging', () => runJudging(ctx, judgingPlanOf(plan), planGroups(plan)));
+  return span('record', () => recordEvaluation(ctx, plan, slots));
+}
+
+/** Collects the measure data, writes and commits `evaluate-<n>.json` with the results of the plays and judges. */
+async function recordEvaluation(ctx: Context, plan: EvaluatePlan, slots: readonly Slot[]): Promise<{ file: EvaluateFile; path: string }> {
   const n = String(plan.run.iteration);
   const measureRel = runRel(plan.run, `measure-${n}.json`);
   const hadMeasure = exists(abs(plan.game, measureRel));

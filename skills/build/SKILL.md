@@ -33,7 +33,7 @@ description: Covers the procedure of the `build` command (hardening, hardening r
 
 ## build report
 
-When the build ends or stops after `ogw build start` created the run, the lead agent runs `ogw build report <game> --result <done|stopped> [--reason <file>]`. For `stopped`, it passes a file stating the stopped step and the reason as `--reason`. The tool writes the build report `records/loops/<run>/end.md` and commits it to main when tag `<env>-<version>` exists, otherwise to the build branch. The lead agent reports the summary and path of the build report to the human.
+When the build ends or stops after `ogw build start` created the run, the lead agent runs `ogw build report <game> --result <done|stopped> [--reason <file>]`. For `stopped`, it passes a file stating the stopped step and the reason as `--reason`. The tool writes the build report `records/loops/<run>/end.md` and commits it to main when tag `<env>-<version>` exists, otherwise to the build branch. The lead agent reports the summary and path of the build report to the human, with each `- flag:` line of its `## time`.
 
 late checks: when the build is `done` and `## checks` of the build report has a `pending` check (a DEV web build), the lead agent then waits for the late checks job with `ogw job wait <id>`, runs `ogw build report <game> --late`, which writes their results into `## checks` and commits the build report again, and reports those results to the human. The build command stays open until then, so that no other command of the game loads the host while the soak test measures. A `stopped` build does not wait: `ogw loop end` stops its late checks job.
 

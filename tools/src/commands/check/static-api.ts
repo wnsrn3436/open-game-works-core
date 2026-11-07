@@ -1,4 +1,5 @@
 import type { Context } from '../../lib/command.ts';
+import { span } from '../../lib/spans.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import type { CheckFailure, CheckResult } from './api.ts';
 import * as actionReference from './static/action-reference.ts';
@@ -102,14 +103,14 @@ async function runCheck(check: StaticCheckModule, sc: StaticContext): Promise<Fi
 
 /** static check of the checkout with its absence failures. */
 export async function staticCheckDetail(ctx: Context, game: GameRepo, options?: StaticCheckOptions): Promise<StaticCheckDetail> {
-  const sc = await StaticContext.create(ctx, game, options?.stagedEnv);
+  const sc = await span('static context', () => StaticContext.create(ctx, game, options?.stagedEnv));
   sc.imported = options?.imported === true;
   sc.importFailure = options?.importFailure ?? null;
   const checks: StaticCheckModule[] = [...STATIC_CHECKS];
   if (options?.debugText) checks.push(debugText);
   const jobs: Promise<{ failures: Finding[]; warnings: Finding[] }>[] = [
-    ...checks.map(async (check) => ({ failures: await runCheck(check, sc), warnings: [] })),
-    dataCheck.run(sc),
+    ...checks.map(async (check) => ({ failures: await span(`static ${check.NAME}`, () => runCheck(check, sc)), warnings: [] })),
+    span(`static ${dataCheck.NAME}`, () => dataCheck.run(sc)),
   ];
   const settled = await Promise.allSettled(jobs);
   const rejected = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');

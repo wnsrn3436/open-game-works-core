@@ -7,6 +7,7 @@ import { readJsonIfExists, whenNotFound, writeJsonAtomic } from '../../../lib/fs
 import { LIMITS } from '../../../lib/limits.ts';
 import { withLock, withLockWithin } from '../../../lib/lock.ts';
 import { isAlive } from '../../../lib/proc.ts';
+import { span } from '../../../lib/spans.ts';
 
 /**
  * The import cache of `--commit` checkouts (ogw.md `## runner`): the engine import of a checkout, kept under the SHA-256
@@ -224,17 +225,21 @@ export interface ImportCache {
 export async function importThroughCache(cache: ImportCache, root: string, engine: string, importer: () => Promise<boolean>): Promise<boolean> {
   const dir = join(cache.commonDir, IMPORT_CACHE);
   await mkdir(dir, { recursive: true });
-  const before = await inputFiles(root, true);
-  const key = keyOf(before, engine);
+  const { before, key } = await span('import key', async () => {
+    const files = await inputFiles(root, true);
+    return { before: files, key: keyOf(files, engine) };
+  });
   // an import of a large game takes long: the lock waits as long as a job does
   return withLock(
     join(dir, `${key}.lock`),
     async () => {
-      if (await takeEntry(dir, key, root)) return false;
-      const ran = await importer();
+      if (await span('import copy', () => takeEntry(dir, key, root))) return false;
+      const ran = await span('import run', importer);
       if (!ran) return false;
-      await keepEntry(dir, key, root, before);
-      await removeOld(dir, cache.keep, key);
+      await span('import keep', async () => {
+        await keepEntry(dir, key, root, before);
+        await removeOld(dir, cache.keep, key);
+      });
       return true;
     },
     LIMITS.jobMs,

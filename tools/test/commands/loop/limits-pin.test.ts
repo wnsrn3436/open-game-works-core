@@ -170,7 +170,8 @@ describe('run settings', () => {
     // the loop end record lists the run settings of each pin that changed them
     expect((await ogw(g.ws, ['loop', 'end-record', 'g', '--stopped-by-human'])).stderr).toBe('');
     const end = read(g.root, `records/loops/${run}/end.md`);
-    const section = end.slice(end.indexOf('## run settings'));
+    // `## time` comes after it
+    const section = end.slice(end.indexOf('## run settings'), end.indexOf('\n## time\n'));
     expect(section).toContain('\n- iteration 0:\n  - agents.content.cli: "claude-code"\n');
     expect(section).toContain('\n  - loop.variants: 1\n');
     expect(section).toMatch(/\n- iteration 4:\n {2}- loop\.funIterations: 1\n {2}- loop\.confirmJudge\.cli: "codex"\n {2}- loop\.confirmJudge\.model: "gpt"\n {2}- loop\.confirmJudge\.effort: "high"\n {2}- loop\.variants: 3\n$/);

@@ -1,6 +1,7 @@
 import { readFile, rm } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
+import { openSpan, span, type OpenSpan } from '../../../lib/spans.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, git, head, revParse } from '../../../lib/git.ts';
@@ -95,6 +96,8 @@ interface Started {
   k: number;
   job: string;
   element: string;
+  /** The step span of the variant, from the start of its agent to its end (ogw.md `## time`). */
+  span: OpenSpan;
 }
 
 /**
@@ -231,9 +234,13 @@ async function startVariants(ctx: Context, game: GameRepo, run: RunState, count:
   }
   await commitPaths(game.root, inputs, `loop ${run.name}: variant inputs ${String(n)}`, { env: ctx.env });
   const base = await head(game.root, { env: ctx.env });
-  // the agents start together, each in its own worktree
-  const starts = await Promise.allSettled(inputs.map((input, i) => startAgentJob(ctx, { role: 'content', game: game.name, input: abs(game, input), variant: i + 1 })));
-  const started = starts.flatMap((r, i): Started[] => (r.status === 'fulfilled' ? [{ k: i + 1, job: r.value, element: targetElement(i + 1, n) }] : []));
+  // the agents start together, each in its own worktree, each in the step span of its variant (ogw.md `## time`)
+  const spans = inputs.map((_input, i) => openSpan(`variant ${String(i + 1)}`));
+  const starts = await Promise.allSettled(inputs.map((input, i) => (spans[i] as OpenSpan).run(() => startAgentJob(ctx, { role: 'content', game: game.name, input: abs(game, input), variant: i + 1 }))));
+  const started = starts.flatMap((r, i): Started[] => (r.status === 'fulfilled' ? [{ k: i + 1, job: r.value, element: targetElement(i + 1, n), span: spans[i] as OpenSpan }] : []));
+  starts.forEach((r, i) => {
+    if (r.status === 'rejected') spans[i]?.end(true);
+  });
   const failed = starts.find((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failed !== undefined) {
     await Promise.all(started.map((s) => killJob(s.job, ctx.env).catch(killFailed(ctx, s.job))));
@@ -293,19 +300,20 @@ export async function runVariants(
   const ended = new Map<number, VariantEntry>();
   const reports = new Map<number, string>();
   const end: EndVariant = async (variant, outcome) => {
+    variant.span.end(outcome?.status !== 'done');
     const { entry, report } = await entryOf(ctx, game, base, variant, outcome);
     ended.set(variant.k, entry);
     if (report !== null) reports.set(variant.k, report);
     return entry;
   };
-  const judging = baseline === null ? null : await judgeVariants(ctx, game, run, settings, baseline, started, end, db);
+  const judging = baseline === null ? null : await span('judging', () => judgeVariants(ctx, game, run, settings, baseline, started, end, db));
   // the agents that had not ended when the judging ended: all of them without a baseline game, or after a failure
   const rest = started.filter((s) => !ended.has(s.k));
-  const outcomes = await waitAgents(ctx, rest.map((s) => s.job));
+  const outcomes = await span('wait for variants', () => waitAgents(ctx, rest.map((s) => s.job)));
   for (const variant of rest) await end(variant, outcomes.get(variant.job));
   const entries = started.map((s) => ended.get(s.k) as VariantEntry);
   const file: VariantsFile = { baseline, judging, variants: entries };
-  const { path, chosen } = await mergeChosen(ctx, game, run, file, reports);
-  await removeAgentWorktrees(ctx, game, entries.filter((e) => e !== chosen).map((e) => e.job));
+  const { path, chosen } = await span('merge', () => mergeChosen(ctx, game, run, file, reports));
+  await span('remove worktrees', () => removeAgentWorktrees(ctx, game, entries.filter((e) => e !== chosen).map((e) => e.job)));
   return { file, path, chosen };
 }

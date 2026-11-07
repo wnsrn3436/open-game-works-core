@@ -7,6 +7,7 @@ import type { GameRepo } from '../../lib/game.ts';
 import { currentBranch, revParse, showFile } from '../../lib/git.ts';
 import { startJob } from '../../lib/jobs.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { allSettledOrThrow } from '../../lib/pool.ts';
 import type { GameSettings } from '../../lib/settings.ts';
 import { readScenario } from '../check/lib/bot-playtest.ts';
@@ -126,8 +127,8 @@ async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promis
     const preparing = (await exportPlatforms(input)).map((platform) => workspaces.prepare(platform));
     const deviceGate = measureGate();
     const webGate = measureGate();
-    const device = devicePerformance(input, deviceGate.gate);
-    const web = webSmoke(input, webGate.gate);
+    const device = span('device performance', () => devicePerformance(input, deviceGate.gate));
+    const web = span('web smoke', () => webSmoke(input, webGate.gate));
     // a check workspace or an export that failed fails the check that uses it, not the build run
     const exported = [deviceGate.exportedOr(device), webGate.exportedOr(web)];
     const quiet = Promise.allSettled([...load, ...preparing, ...exported]).then(() => allSettledOrThrow(load));
@@ -141,8 +142,8 @@ async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promis
     }
     // a DEV build runs them after the platform build, in the late checks job (`startLateChecks`)
     const late = lateCheckNames(b).length > 0;
-    const repeat = late ? Promise.resolve(null) : web.then(() => repeatTest(input));
-    const soak = late ? Promise.resolve(null) : Promise.allSettled([repeat, device]).then(() => allSettledOrThrow([repeat, device])).then(() => soakTest(input));
+    const repeat = late ? Promise.resolve(null) : web.then(() => span('repeat test', () => repeatTest(input)));
+    const soak = late ? Promise.resolve(null) : Promise.allSettled([repeat, device]).then(() => allSettledOrThrow([repeat, device])).then(() => span('soak test', () => soakTest(input)));
     await allSettledOrThrow([device, web, repeat, soak]);
     const smoke = await web;
     const checks = [await device, smoke?.check, await repeat, await soak].filter((c): c is BuildCheck => c !== null && c !== undefined);
@@ -184,17 +185,16 @@ async function preBuildChecks(b: Build, data: DataRun, versions: DataVersions | 
   const { ctx, game, open } = b;
   const ws = await ctx.workspace();
   const list = needles(ctx, game.name, b.settings, open.env, ws.root);
-  const input = settingsCheckInput(ctx, game, open.env, b.platforms);
-  const human = input.then(humanChecks);
-  const statics = staticChecks(ctx, game, open.env);
-  const plugins = coreReleaseOfGame(ctx, game).then((release) =>
-    nativePluginProblems(ctx, release, b.settings, open.env, b.platforms, async () => (await input).modules, game.name));
-  const devImage = imageDevCode(b, versions);
-  const secret = scanRepo(game, list);
-  const placeholder = placeholderCheck(ctx, game, open.env);
-  const compat = compatibility(b, data, versions);
+  const input = span('settings check input', () => settingsCheckInput(ctx, game, open.env, b.platforms));
+  const human = input.then((read) => span('human checks', () => humanChecks(read)));
+  const statics = span('static checks', () => staticChecks(ctx, game, open.env));
+  const plugins = span('native plugin', async () => nativePluginProblems(ctx, await coreReleaseOfGame(ctx, game), b.settings, open.env, b.platforms, async () => (await input).modules, game.name));
+  const devImage = span('DEV code of the image', () => imageDevCode(b, versions));
+  const secret = span('secret scan', () => scanRepo(game, list));
+  const placeholder = span('placeholder', () => placeholderCheck(ctx, game, open.env));
+  const compat = span('backward compatibility', () => compatibility(b, data, versions));
   const load = [input, human, statics, plugins, devImage, secret, placeholder, compat];
-  const client = clientChecks(b, load);
+  const client = span('client checks', () => clientChecks(b, load));
   await allSettledOrThrow([...load, client]);
   const checks: CheckWithHuman[] = [...(await statics), ...(await human).checks];
   checks.push(plain('native plugin', open.env, await plugins));
@@ -325,14 +325,14 @@ async function buildArtifacts(b: Build, result: BuildRunResult, withData: boolea
 async function runBuild(b: Build): Promise<{ exitCode: number; text: string; data: BuildRunResult }> {
   const { ctx, game, open } = b;
   const result = emptyResult(b);
-  const { data, versions } = await dataBuild(ctx, game);
-  const pre = await preBuildChecks(b, data, versions);
+  const { data, versions } = await span('data build', () => dataBuild(ctx, game));
+  const pre = await span('build-time checks', () => preBuildChecks(b, data, versions));
   result.checks = pre.checks.map((c) => c.check);
   result.human = pre.checks.flatMap((c) => (c.human ? [c.human] : []));
   result.licenseWarnings = pre.licenseWarnings;
   result.webSmokeLoadingMs = pre.webSmokeLoadingMs;
   if (result.checks.some((c) => blocksBuild(c, open.env)) || versions === null) return finishResult(b, result, true);
-  const privacy = await writePrivacy({ dir: join(b.outDir, 'privacy'), env: open.env, platforms: b.platforms, settings: b.settings, modules: usedSpecModules(pre.input) });
+  const privacy = await span('privacy', () => writePrivacy({ dir: join(b.outDir, 'privacy'), env: open.env, platforms: b.platforms, settings: b.settings, modules: usedSpecModules(pre.input) }));
   const withData = await bundleHasData(b, versions);
   const manifest = privacy.files.includes('PrivacyInfo.xcprivacy') ? join(b.outDir, 'privacy', 'PrivacyInfo.xcprivacy') : null;
   const ws = await ctx.workspace();
@@ -343,9 +343,9 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   // only the push of the server image waits for the artifact checks
   const image: ImageBuild = { game, settings: b.settings, env: open.env, version: open.version, compat: versions.compat };
   const artifactsDone = { failed: false };
-  const artifacts = buildArtifacts(b, result, withData, { privacy: privacy.ios, file: manifest }).then(
+  const artifacts = span('artifacts', () => buildArtifacts(b, result, withData, { privacy: privacy.ios, file: manifest })).then(
     async () => {
-      const leaks = await scanArtifacts(game.root, [...b.platforms.map((p) => join(b.outDir, p)), join(b.outDir, 'patch')], list, allowed);
+      const leaks = await span('artifact secret scan', () => scanArtifacts(game.root, [...b.platforms.map((p) => join(b.outDir, p)), join(b.outDir, 'patch')], list, allowed));
       const secret = result.checks.find((c) => c.name === 'secret');
       if (secret && leaks.length > 0) Object.assign(secret, { result: 'fail', details: [...secret.details, ...leaks] });
       artifactsDone.failed = result.checks.some((c) => blocksBuild(c, open.env));
@@ -357,9 +357,9 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   );
   // a build whose artifacts failed needs no image and no server side facts: the cache build and the app versions stop
   const stop = (): boolean => artifactsDone.failed;
-  const warm = withData && open.env !== 'PROD' ? warmServerImage(ctx, image, stop) : Promise.resolve(false);
-  const facts = withData ? serverFacts(b, versions, stop) : Promise.resolve(null);
-  const prod = prodFacts(b);
+  const warm = withData && open.env !== 'PROD' ? span('server image cache build', () => warmServerImage(ctx, image, stop)) : Promise.resolve(false);
+  const facts = withData ? span('server facts', () => serverFacts(b, versions, stop)) : Promise.resolve(null);
+  const prod = span('PROD facts', () => prodFacts(b));
   await Promise.allSettled([artifacts, warm, facts, prod]);
   await artifacts;
   // a build that the artifact checks block needs none of the work beside them, which ran only after them before
@@ -370,15 +370,15 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
     // only a build that the artifact checks block stops them
     if (server === null) throw new OgwError('the server side facts stopped although the artifact checks passed');
     result.serverDataVersions = { client_data_version: versions.clientForServer, compat_client_data_version: versions.compat };
-    result.serverImage = await serverImage(b, image);
-    await writeUpdate(game.root, b.outDir, versions.client, server.apps);
+    result.serverImage = await span('server image', () => serverImage(b, image));
+    await span('update file', () => writeUpdate(game.root, b.outDir, versions.client, server.apps));
     result.protocolChange = server.protocolChange;
     result.matchWaitMs = server.matchWaitMs;
   }
   Object.assign(result, await prod);
   // the hand-off waits for no late check: they start when this run has nothing else to do
   const late = lateCheckNames(b);
-  if (late.length > 0) result.lateChecks = await startLateChecks(b, late);
+  if (late.length > 0) result.lateChecks = await span('late checks start', () => startLateChecks(b, late));
   return finishResult(b, result, false);
 }
 

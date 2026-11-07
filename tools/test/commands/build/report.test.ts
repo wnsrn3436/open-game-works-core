@@ -152,7 +152,10 @@ describe('build report', () => {
     fakeJob(ws, 'job1', 1, 'failed step: 3. compose up\n');
     const out = await ogw(ws, ['build', 'report', 'g', '--result', 'done']);
     expect(out.code).toBe(0);
-    const text = readFileSync(join(dir, 'records/loops', run.name, 'end.md'), 'utf8');
+    const [text, time] = readFileSync(join(dir, 'records/loops', run.name, 'end.md'), 'utf8').split('\n## time\n\n');
+    // the build run's jobs: the deploy job of the run
+    expect(time).toMatch(/^- wall time: .+\n- critical path: .+\n- flags?: .+/);
+    expect(time).toContain('ogw deploy (job1, failed)');
     expect(text).toBe(`## result
 
 done

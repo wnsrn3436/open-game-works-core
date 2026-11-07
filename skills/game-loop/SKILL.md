@@ -100,7 +100,7 @@ The stop reasons are those of AGENTS.md `## loop`, and their judgement values ar
 3. The lead agent runs `ogw loop end-record <game> [--stopped-by-human] [--human <file>]`. The tool writes and commits the loop end record `records/loops/<run>/end.md`. If the human made the loop stop, the lead agent gives `--stopped-by-human`. If `ogw loop verdict` gave a stop reason last, the tool rejects `--stopped-by-human`. In `<file>`, the lead agent writes the items to pass to the human, one per line: what can be checked only on screen in `## start` 3, and the PROD problem checks the human is to make on STG
 4. If 2 created `merge/<run>`, the lead agent merges it into main with `ogw loop merge <game>`
 5. The lead agent runs `ogw loop end <game>`. The tool stops all instances and running jobs of that run, deletes the remaining worktrees and branches `agent/<id>` that the `ogw agent` of that run created, and closes the run
-6. The lead agent reports the summary and path of the loop end record to the human. The summary includes the `total` row of `## cost` of that record. A placeholder resource, missing translation or stale translation in `## failures` of that record is reported as failure (AGENTS.md `## loop`)
+6. The lead agent reports the summary and path of the loop end record to the human. The summary includes the `total` row of `## cost` of that record and each `- flag:` line of its `## time`. A placeholder resource, missing translation or stale translation in `## failures` of that record is reported as failure (AGENTS.md `## loop`)
 
 ## resume
 

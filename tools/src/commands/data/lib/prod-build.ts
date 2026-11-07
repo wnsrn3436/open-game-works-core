@@ -12,6 +12,7 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { git, listTags, revParse, worktreeRemove } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { withLock } from '../../../lib/lock.ts';
+import { span } from '../../../lib/spans.ts';
 import { withReader, withWriterWithin, type RwLock } from '../../../lib/rwlock.ts';
 import { schemaPath } from '../../../lib/settings.ts';
 import { binaryBuildAt, type CommitBuild, type DataVersions } from './binary-build.ts';
@@ -118,9 +119,9 @@ export async function withProdData<T>(ctx: Context, game: GameRepo, use: (previo
     const kept = await Promise.all([candidate.tag, ...(app === null ? [] : [app])].map((tag) => keptBuildOf(ctx, game, tag)));
     for (const k of kept) used.add(k.dir);
     return reading(kept, async () => {
-      const [built, appBuilt] = await Promise.all(kept.map((k) => finishedBuild(ctx, game, k, () => {
+      const [built, appBuilt] = await Promise.all(kept.map((k) => span('PROD data', () => finishedBuild(ctx, game, k, () => {
         made.now = true;
-      })));
+      }))));
       const prod = built as CommitBuild;
       if (appBuilt === undefined || prod.versions.client !== appBuilt.versions.client || prod.versions.server !== appBuilt.versions.server) return use(prod.dir);
       return step(i + 1);

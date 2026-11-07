@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
+import { span } from '../../../lib/spans.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { git, head } from '../../../lib/git.ts';
 import { waitJob, type JobRecord } from '../../../lib/jobs.ts';
@@ -155,7 +156,7 @@ export async function syncOnce(ctx: Context, game: GameRepo, result: SyncResult,
   }
   for (const { job, outcome } of [...ended.filter((e) => !merges(e.outcome)), ...ended.filter((e) => merges(e.outcome))]) {
     const task = taskOf(loopData(await requireOpenRun(game)), job);
-    const step = await handle(ctx, game, job, task, limit, outcome);
+    const step = await span(`sync ${task.role}`, () => handle(ctx, game, job, task, limit, outcome));
     if (step.unhandled === true) {
       const failure = step.failure ?? '';
       unhandled.add(job.id);
@@ -190,7 +191,7 @@ export async function sync(ctx: Context, game: GameRepo, wait: boolean): Promise
   for (;;) {
     const running = await syncOnce(ctx, game, result, unhandled);
     if (!wait || running.length === 0) return result;
-    await untilOneEnds(ctx, running);
+    await span('wait for agents', () => untilOneEnds(ctx, running));
   }
 }
 

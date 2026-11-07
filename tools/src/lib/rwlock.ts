@@ -78,7 +78,7 @@ export async function withWriterWithin<T>(
     const taken = await withLockWithin(lock.base, async () => {
       await waiting();
       if (!(await taking(lock.base, () => liveEntriesEnd(readersDir(lock), deadline)))) return { ran: false as const, waited: 'readers' as const };
-      if (!(await othersEnd(deadline))) return { ran: false as const, waited: 'others' as const };
+      if (!(await taking(lock.base, () => othersEnd(deadline)))) return { ran: false as const, waited: 'others' as const };
       return { ran: true as const, value: await fn() };
     }, Math.max(0, deadline - Date.now()));
     return taken.ran ? taken.value : { ran: false, waited: 'writer' };
