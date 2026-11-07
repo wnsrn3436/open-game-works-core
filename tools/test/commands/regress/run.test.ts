@@ -67,8 +67,10 @@ async function admitted(ws: TestWorkspace, secondState = false): Promise<void> {
   // the refresh checks with the harness itself, whose side commands run in this process
   const actual = await vi.importActual<typeof import('../../../src/commands/regress/lib/side.ts')>('../../../src/commands/regress/lib/side.ts');
   vi.mocked(sideCheck).mockImplementation(actual.sideCheck);
-  expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
-  expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+  for (const argv of [['regress', 'init'], ['regress', 'refresh']]) {
+    const run = await ogw(ws, argv);
+    expect(run.code, `ogw ${argv.join(' ')}:\n${run.stdout}${run.stderr}`).toBe(0);
+  }
   vi.mocked(sideCheck).mockReset();
 }
 
