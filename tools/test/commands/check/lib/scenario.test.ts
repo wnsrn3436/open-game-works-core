@@ -25,6 +25,36 @@ vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanc
 // the instance record of the fake instance: a checkout without client/generated/core_settings.json (no input gap)
 vi.mock('../../../../src/commands/instance/lib/records.ts', () => ({ readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-scenario-instance' })) }));
 
+/**
+ * While `earlyTimers.on`, a sleep without options (the input gap of an auto step) ends at once on the fake `Date` and
+ * moves it 1 ms short of its end, as a Node timer can end before `Date.now()` reaches it; a sleep of 1 ms moves it 1 ms.
+ * Other sleeps (the step deadline) are real.
+ */
+const earlyTimers = vi.hoisted(() => ({ on: false }));
+vi.mock('node:timers/promises', async (original) => {
+  const real = await original<typeof import('node:timers/promises')>();
+  return {
+    ...real,
+    setTimeout: (ms: number, value?: unknown, options?: object) => {
+      if (!earlyTimers.on || options !== undefined) return real.setTimeout(ms, value, options);
+      vi.setSystemTime(Date.now() + Math.max(1, ms - 1));
+      return Promise.resolve(value);
+    },
+  };
+});
+
+/** Runs `fn` on a fake `Date` that only the early sleeps move. */
+async function onEarlyTimers<T>(fn: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
+  earlyTimers.on = true;
+  try {
+    return await fn();
+  } finally {
+    earlyTimers.on = false;
+    vi.useRealTimers();
+  }
+}
+
 const ctx = fakeContext();
 const calls: string[] = [];
 
@@ -239,9 +269,10 @@ describe('runScenario', () => {
       return ok(null);
     });
     const auto = { kind: 'auto' as const, command: 'f.bot_next_input', args: [], until: goal, timeoutMs: 5000 };
-    expect(await runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 })).toEqual({ stop: null, goal: true });
+    expect(await onEarlyTimers(() => runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 }))).toEqual({ stop: null, goal: true });
     expect(taps).toHaveLength(3);
-    for (let i = 1; i < taps.length; i += 1) expect((taps[i] as number) - (taps[i - 1] as number)).toBeGreaterThanOrEqual(80);
+    // a timer that ends early does not shorten the gap
+    expect(taps.slice(1).map((at, i) => at - (taps[i] as number))).toEqual([80, 80]);
   });
 
   it('picks each auto input after the gap and puts it in at once; no gap without the key', async () => {
@@ -263,11 +294,10 @@ describe('runScenario', () => {
       });
     };
     serveTaps();
-    expect(await runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 })).toEqual({ stop: null, goal: true });
-    for (let i = 0; i + 1 < events.length; i += 2) {
-      expect(events[i]?.[0]).toBe('pick');
-      expect((events[i + 1]?.[1] as number) - (events[i]?.[1] as number)).toBeLessThan(40);
-    }
+    expect(await onEarlyTimers(() => runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 }))).toEqual({ stop: null, goal: true });
+    expect(events.map(([kind]) => kind)).toEqual(['pick', 'tap', 'pick', 'tap', 'pick', 'tap']);
+    // each pick waits for the gap after the tap before it, and its tap goes in at once
+    expect(events.slice(1).map(([, at], i) => at - (events[i]?.[1] as number))).toEqual([0, 80, 0, 80, 0]);
     // a core_settings.json without UICore.buttonClickIntervalMs: no gap
     const bare = mkdtempSync(join(tmpdir(), 'ogw-gap-'));
     mkdirSync(join(bare, 'client', 'generated'), { recursive: true });

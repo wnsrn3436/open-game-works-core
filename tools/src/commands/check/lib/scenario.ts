@@ -108,6 +108,14 @@ function aborted(error: unknown): typeof TIMEOUT {
   throw error;
 }
 
+/**
+ * Sleeps until `Date.now()` reaches `at`. One timer is not enough: it can end before `Date.now()` reaches its end, as
+ * libuv starts it from the time its loop read last.
+ */
+async function sleepUntil(at: number): Promise<void> {
+  for (let wait = at - Date.now(); wait > 0; wait = at - Date.now()) await sleep(wait);
+}
+
 async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | typeof TIMEOUT> {
   const left = deadline - Date.now();
   if (left <= 0) return TIMEOUT;
@@ -269,8 +277,7 @@ class ScenarioRun {
     const telemetry = needsTelemetry(until);
     for (;;) {
       // the gap goes before the bot picks: the input it picks goes in at once, on the state it was picked from
-      const wait = this.lastInputAt + this.inputGapMs - Date.now();
-      if (wait > 0) await sleep(wait);
+      await sleepUntil(this.lastInputAt + this.inputGapMs);
       const { result } = await this.request(step.command ?? '', step.args);
       if (result !== null) {
         if (!isRecord(result) || typeof result.command !== 'string' || !isStringList(result.args)) {
