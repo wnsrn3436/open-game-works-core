@@ -6,6 +6,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { run, runOk } from '../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
+import { span } from '../../lib/spans.ts';
 import { readScenario } from '../check/lib/bot-playtest.ts';
 import { runScenario } from '../check/lib/scenario.ts';
 import { toolProgram } from '../env/api.ts';
@@ -78,33 +79,37 @@ export const video: CommandDef = {
     const temp = await newPrivateTempFolder('ogw-video-', ctx.env);
     try {
       const raw = join(temp, 'raw.avi');
-      const instance = await startInstance(ctx, { game: game.name, client: 'window', movie: { file: raw }, ...(commit === undefined ? {} : { commit }) });
+      const instance = await span('instance start', () => startInstance(ctx, { game: game.name, client: 'window', movie: { file: raw }, ...(commit === undefined ? {} : { commit }) }));
       let stoppedAt: number;
       try {
-        if (language !== null) {
-          await restartClient(ctx, instance.id, 'main', { command: 'set_language', args: [language], timeoutMs: LIMITS.httpMs }).catch((error: unknown) => {
-            throw new OgwError(`set_language ${language} did not reach boot_stage Done: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        }
-        const scenario = await readScenario(instance.root);
-        if (typeof scenario === 'string') throw new OgwError(scenario);
-        const auto = scenario.steps.find((s) => s.kind === 'auto');
-        if (auto?.until == null) throw new OgwError('client/dev/bot/scenario.json has no auto step');
-        const outcome = await runScenario(ctx, instance.id, { steps: [auto], goal: auto.until }, { pollMs: 200 });
-        if (outcome.stop !== null) throw new OgwError(`the bot stopped at step ${String(outcome.stop.step)}: ${outcome.stop.message}`);
-        await sleep(videoTiming.tailMs);
+        await span('scenario', async () => {
+          if (language !== null) {
+            await restartClient(ctx, instance.id, 'main', { command: 'set_language', args: [language], timeoutMs: LIMITS.httpMs }).catch((error: unknown) => {
+              throw new OgwError(`set_language ${language} did not reach boot_stage Done: ${error instanceof Error ? error.message : String(error)}`);
+            });
+          }
+          const scenario = await readScenario(instance.root);
+          if (typeof scenario === 'string') throw new OgwError(scenario);
+          const auto = scenario.steps.find((s) => s.kind === 'auto');
+          if (auto?.until == null) throw new OgwError('client/dev/bot/scenario.json has no auto step');
+          const outcome = await runScenario(ctx, instance.id, { steps: [auto], goal: auto.until }, { pollMs: 200 });
+          if (outcome.stop !== null) throw new OgwError(`the bot stopped at step ${String(outcome.stop.step)}: ${outcome.stop.message}`);
+          await sleep(videoTiming.tailMs);
+        });
       } finally {
         stoppedAt = Date.now();
-        await stopInstance(ctx, instance.id);
+        await span('instance stop', () => stopInstance(ctx, instance.id));
       }
-      const started = (await stat(raw)).birthtimeMs;
-      const frames = await frameCount(ffmpeg, raw, ctx.env);
-      const outDir = join(game.root, 'builds', 'videos');
-      await mkdir(outDir, { recursive: true });
-      const out = join(outDir, `${(instance.commit || 'checkout').slice(0, 7)}-${String(Date.now())}.mp4`);
-      const videoMs = Math.round((frames * 1000) / MOVIE_FPS);
-      const wallMs = Math.round(stoppedAt - started);
-      await runOk(ffmpeg, encodeArgs(raw, out, videoMs, wallMs), { env: ctx.env, timeoutMs: LIMITS.programMs });
+      const { out, videoMs, wallMs } = await span('encode', async () => {
+        const started = (await stat(raw)).birthtimeMs;
+        const frames = await frameCount(ffmpeg, raw, ctx.env);
+        const outDir = join(game.root, 'builds', 'videos');
+        await mkdir(outDir, { recursive: true });
+        const file = join(outDir, `${(instance.commit || 'checkout').slice(0, 7)}-${String(Date.now())}.mp4`);
+        const timing = { out: file, videoMs: Math.round((frames * 1000) / MOVIE_FPS), wallMs: Math.round(stoppedAt - started) };
+        await runOk(ffmpeg, encodeArgs(raw, file, timing.videoMs, timing.wallMs), { env: ctx.env, timeoutMs: LIMITS.programMs });
+        return timing;
+      });
       return { text: out, data: { path: out, commit: instance.commit, videoMs, wallMs } };
     } finally {
       await rm(temp, { recursive: true, force: true });

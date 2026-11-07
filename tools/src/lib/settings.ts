@@ -150,6 +150,8 @@ export interface HarnessSettings {
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };
   regress: { repeats: number; modelRepeats: number; parallel: number; permutations: number; level: number };
+  /** The criteria of the flags of `ogw time` (ogw.md `## time`). */
+  time: { waitShare: number; idleShare: number; outlierRatio: number; history: number };
   paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string; regress: string };
   coreReleaseRepository: string;
   useLocalCore: boolean;

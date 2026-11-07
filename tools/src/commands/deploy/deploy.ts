@@ -6,6 +6,7 @@ import { expectPositionals, parseTokens, positional, type CommandDef, type Conte
 import { OgwError } from '../../lib/errors.ts';
 import { readJsonIfExists, writeJsonAtomic } from '../../lib/fsx.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { adminCall, adminFailureStatus, adminNoFailureAnswer, adminSend, type AdminFailureData } from '../admin/api.ts';
 import { envLower, parseEnv } from '../build/lib/names.ts';
 import { commands as cloneCommands } from '../clone/index.ts';
@@ -34,7 +35,7 @@ class Steps {
       return;
     }
     try {
-      await fn();
+      await span(name, fn);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new OgwError(`${FAILED_STEP}${name}\n${message}`, 1, { failedStep: name, steps: this.log });

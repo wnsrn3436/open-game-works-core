@@ -14,6 +14,7 @@ import { NOT_RECORDED, outcomeOf, rerunHint, type Outcome } from '../../../lib/o
 import { cliEntry } from '../../../lib/paths.ts';
 import { run } from '../../../lib/proc.ts';
 import { withSlot } from '../../../lib/slots.ts';
+import { span } from '../../../lib/spans.ts';
 import { mergeAgents } from '../../agent/lib/merge.ts';
 import type { AgentMeta } from '../../agent/lib/meta.ts';
 import { startAgent } from '../../agent/lib/prepare.ts';
@@ -104,7 +105,8 @@ function counted(drive: Drive, judged: CommandResult): Stop | null {
 
 /** Starts a round (the first with `--restart` when asked) and judges it. Returns a stop, or null to go on. */
 async function round(drive: Drive): Promise<Stop | null> {
-  const judged = await slot(drive, async () => {
+  // one span from the slot to the judgement, so that the review agent and code check jobs are in it (ogw.md `## time`)
+  const judged = await span('review round', () => slot(drive, async () => {
     // `--respec` and `--reopen` are kept in the review state once the last round is judged (`keepPending`)
     const options: NextOptions = { restart: drive.restart, continue: drive.continuing, definitions: [], ...(drive.since === undefined ? {} : { since: drive.since }) };
     const started = await reviewNext(drive.ctx, 'core', drive.target, options);
@@ -113,7 +115,7 @@ async function round(drive: Drive): Promise<Stop | null> {
     // `review next` starts no round when the last result was done, blocked or limit
     if (data.result === 'done' || data.result === 'blocked' || data.result === 'limit') return data.result;
     return judge(drive);
-  });
+  }));
   if (typeof judged === 'string') return { result: judged, detail: [] };
   return counted(drive, judged);
 }
@@ -387,10 +389,12 @@ export async function sortFixRuns(
 async function afterFix(drive: Drive, last: RoundState): Promise<Stop | null> {
   if (drive.tested !== last.round) {
     if (last.fixInput === null) throw new OgwError(`round ${String(last.round)} of ${drive.target} is ${String(last.result)} with no fix input`);
-    const notMerged = await mergedFix(drive, last, last.fixInput);
+    const fixInput = last.fixInput;
+    const notMerged = await span('fix', () => mergedFix(drive, last, fixInput));
     if (notMerged !== null) return notMerged;
-    if (!(await fixOnlyRecords(drive, last, last.fixInput))) {
-      const stop = await fixTestStop(drive, last, await testFix(drive));
+    if (!(await fixOnlyRecords(drive, last, fixInput))) {
+      const runs = await span('fix core tests', () => testFix(drive));
+      const stop = await span('fix core test check', () => fixTestStop(drive, last, runs));
       if (stop !== null) return stop;
     }
     drive.tested = last.round;
@@ -401,7 +405,7 @@ async function afterFix(drive: Drive, last: RoundState): Promise<Stop | null> {
 async function step(drive: Drive): Promise<Stop | null> {
   const state = await readState(drive.dir, 'core', drive.target);
   const last = state.rounds.at(-1);
-  if (last !== undefined && !last.judged) return counted(drive, await slot(drive, () => judge(drive)));
+  if (last !== undefined && !last.judged) return counted(drive, await span('review wait', () => slot(drive, () => judge(drive))));
   if (drive.restart || last === undefined) return round(drive);
   // the fix of a `fix` or `escalate` round is merged and tested before the next round, a `--respec` round too
   if (last.result === 'fix' || last.result === 'escalate') return afterFix(drive, last);

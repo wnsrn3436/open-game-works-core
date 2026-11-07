@@ -93,6 +93,12 @@
     "iouMin": 0.95,
     "colorDiffMax": 8
   },
+  "time": {
+    "waitShare": 0.25,
+    "idleShare": 0.2,
+    "outlierRatio": 3,
+    "history": 20
+  },
   "paths": {
     "coreImpl": "open-game-works-core-impl",
     "coreReleases": "open-game-works-core-releases",

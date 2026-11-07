@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import type { Context } from '../../../lib/command.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
+import { span } from '../../../lib/spans.ts';
 import { dependencyCheck } from './dependency.ts';
 import { fixTestProof } from './proof.ts';
 import { CHECKED_ENGINES, engineLint, engineTypeCheck } from './gdscript.ts';
@@ -19,14 +20,17 @@ export interface CodeCheckItem {
   durationMs?: number;
 }
 
+/** Runs one check as a step span of its name (ogw.md `## time`). */
 async function item(name: CheckName, check: () => Promise<string[]>): Promise<CodeCheckItem> {
-  const startedAt = Date.now();
-  try {
-    const failures = await check();
-    return { name, result: failures.length === 0 ? 'pass' : 'fail', failures, durationMs: Date.now() - startedAt };
-  } catch (error) {
-    return { name, result: 'fail', failures: [error instanceof Error ? error.message : String(error)], durationMs: Date.now() - startedAt };
-  }
+  return span(name, async () => {
+    const startedAt = Date.now();
+    try {
+      const failures = await check();
+      return { name, result: failures.length === 0 ? 'pass' : 'fail', failures, durationMs: Date.now() - startedAt };
+    } catch (error) {
+      return { name, result: 'fail', failures: [error instanceof Error ? error.message : String(error)], durationMs: Date.now() - startedAt };
+    }
+  });
 }
 
 export interface CodeCheckOptions {
@@ -57,11 +61,12 @@ export async function codeCheck(ctx: Context, side: Side, options: CodeCheckOpti
 }
 
 async function checkedItems(ctx: Context, side: Side, options: CodeCheckOptions, settings: Awaited<ReturnType<Context['settings']>>, work: string): Promise<CodeCheckItem[]> {
-  const target = options.commit === undefined
-    ? await checkTarget(ctx, side, work, options.coreRoot)
-    : await commitTarget(ctx, side, options.commit, work, options.coreRoot);
-  const engines = side === 'core' ? await coreEngines(target.root) : [];
-  const tsconfig = await writeTsconfig(target, work);
+  const { target, engines, tsconfig } = await span('checkout', async () => {
+    const checked = options.commit === undefined
+      ? await checkTarget(ctx, side, work, options.coreRoot)
+      : await commitTarget(ctx, side, options.commit, work, options.coreRoot);
+    return { target: checked, engines: side === 'core' ? await coreEngines(checked.root) : [], tsconfig: await writeTsconfig(checked, work) };
+  });
   return Promise.all([
     item('type check', async () => (await typeCheckFailures(ctx, target, tsconfig, engines, work)).failures),
     item('lint', async () => [...(await lintTypeScript(target, tsconfig, settings.codeCheck.maxComplexity)), ...(await engineLint(ctx, target, engines))]),

@@ -5,6 +5,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { writeFileAtomic } from '../../lib/fsx.ts';
 import { commitPaths, currentBranch, git, gitRaw, head, revParse, statusLines, tagExists } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import type { HarnessSettings } from '../../lib/settings.ts';
 import { clearReviews } from '../review/api.ts';
 import { leftLines } from '../review/lib/left.ts';
@@ -173,36 +174,38 @@ export const releaseCommand: CommandDef = {
     const settings = await ctx.settings();
     const implDir = (await ctx.workspace()).coreImpl;
     const tag = releaseTag(version);
-    await requireCleanMain(implDir);
-    if (await tagExists(implDir, tag, { env: ctx.env })) throw new OgwError(`tag ${tag} already exists in open-game-works-core-impl/`);
-    const harness = await harnessForTag(ctx, version);
-    if (await releaseExists(ctx, settings.coreReleaseRepository, tag)) {
-      throw new OgwError(`release ${tag} already exists in ${settings.coreReleaseRepository}`);
-    }
-    await requireRemoteMainContained(ctx, implDir, releaseRemote(settings));
-    const previousHead = await head(implDir, { env: ctx.env });
-    const violations = await releaseViolations(ctx, implDir, previousHead, version, await remoteReleaseVersions(ctx));
-    if (violations.length > 0) {
-      throw new OgwError(`release condition not met; ${version} is not released:\n${violations.join('\n')}`, 1, { violations });
-    }
-    const debt = await reviewDebtCounts(implDir);
+    const { harness, previousHead, debt } = await span('release checks', async () => {
+      await requireCleanMain(implDir);
+      if (await tagExists(implDir, tag, { env: ctx.env })) throw new OgwError(`tag ${tag} already exists in open-game-works-core-impl/`);
+      const checkedHarness = await harnessForTag(ctx, version);
+      if (await releaseExists(ctx, settings.coreReleaseRepository, tag)) {
+        throw new OgwError(`release ${tag} already exists in ${settings.coreReleaseRepository}`);
+      }
+      await requireRemoteMainContained(ctx, implDir, releaseRemote(settings));
+      const checkedHead = await head(implDir, { env: ctx.env });
+      const violations = await releaseViolations(ctx, implDir, checkedHead, version, await remoteReleaseVersions(ctx));
+      if (violations.length > 0) {
+        throw new OgwError(`release condition not met; ${version} is not released:\n${violations.join('\n')}`, 1, { violations });
+      }
+      return { harness: checkedHarness, previousHead: checkedHead, debt: await reviewDebtCounts(implDir) };
+    });
     const out = await newPrivateTempFolder('ogw-core-release-', ctx.env);
     try {
       await requireUnmoved(ctx, implDir, previousHead);
-      const built = await buildAssets(implDir, version, out, { assetUrl: (asset) => assetUrl(settings.coreReleaseRepository, tag, asset), env: ctx.env });
+      const built = await span('build assets', () => buildAssets(implDir, version, out, { assetUrl: (asset) => assetUrl(settings.coreReleaseRepository, tag, asset), env: ctx.env }));
       const files = (await readdir(out)).sort(byteCompare).map((name) => join(out, name));
       // From the last check of main to the tag, main writers (merges, debt list commits) wait: the tagged commit is the
       // checked one plus the engine.json commit
-      const commit = await withCoreMain(implDir, ctx.env, async () => {
+      const commit = await span('publish', () => withCoreMain(implDir, ctx.env, async () => {
         await requireUnmoved(ctx, implDir, previousHead);
         const changed = await writeEngineJson(implDir, built.engineJson);
         const made = (await commitPaths(implDir, changed, `core release ${version}: plugin URLs and SHA-256`, { env: ctx.env })) ?? previousHead;
         await publish(ctx, implDir, settings, { tag, commit: made, previousHead, files, notes });
         return made;
-      });
+      }));
       // the harness commit whose specs this core was made from (`core` command.md `## version and release`)
       await git(harness.root, ['tag', harnessCoreTag(version), harness.head], { env: ctx.env });
-      const left = await clearReviews(ctx, 'core');
+      const left = await span('clear reviews', () => clearReviews(ctx, 'core'));
       const harnessLine = `harness tag ${harnessCoreTag(version)} at ${harness.head}`;
       return {
         text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...debt, ...leftLines(left)].join('\n'),

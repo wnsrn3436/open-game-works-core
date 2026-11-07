@@ -38,6 +38,7 @@ import { TOOLS } from './lib/tools.ts';
 import { engineAssetRules } from './lib/undefined.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import { withShare } from '../../lib/shares.ts';
+import { span } from '../../lib/spans.ts';
 
 export type Target = { kind: 'engine'; engine: string; web: boolean } | { kind: 'server' } | { kind: 'tools' };
 
@@ -362,7 +363,7 @@ async function runModules(
     const toRun = modules.filter((module) => !reused.has(module));
     // each module run holds its CPU share from before its first process starts until its last one ends; the wait for the
     // share comes before its time is taken and before any of its time limits starts
-    const ran = runner === null ? new Map<string, ModuleResult>() : await runModulePool(longestFirst(toRun, last), parallelismOf(target), (module) => withShare(shares, availableParallelism(), moduleShare(target), async () => {
+    const ran = runner === null ? new Map<string, ModuleResult>() : await runModulePool(longestFirst(toRun, last), parallelismOf(target), (module) => span(`module ${module}`, () => withShare(shares, availableParallelism(), moduleShare(target), async () => {
       const startedAt = Date.now();
       const outcome = await runner.run(module).catch((error: unknown): ModuleOutcome => ({ tests: 0, passed: 0, failures: [(error as Error).message], ran: false }));
       outcomes.set(module, { ...outcome, durationMs: Date.now() - startedAt });
@@ -378,7 +379,7 @@ async function runModules(
       // the ledger could not be read or written before the module ran: none of its tests was checked
       outcomes.set(module, { tests: 0, passed: 0, failures: [], ran: false, unknown: message });
       return 'unknown';
-    }), (module, result) => reportResult(ctx, module, result, outcomes.get(module)?.durationMs));
+    })), (module, result) => reportResult(ctx, module, result, outcomes.get(module)?.durationMs));
     const times = Object.fromEntries([...outcomes].flatMap(([m, o]) => (o.durationMs === undefined ? [] : [[m, o.durationMs]])));
     await writeJsonAtomic(file, { ...last, ...times });
     return { results: new Map(modules.map((m) => [m, reused.has(m) ? 'pass' : ran.get(m) ?? 'fail'])), outcomes };
@@ -517,7 +518,7 @@ export const testCommand: CommandDef = {
       try {
         // on the main checkout the generated files the preflight writes are committed (ogw.md `## core spec and core test`),
         // and merges wait for the module tests (ogw.md `## agent merge`)
-        start = await testAtHead(implDir, (await ctx.workspace()).coreImpl, ctx.env, () => preflightAndImport(ctx, implDir, target, work, given.length === 0));
+        start = await span('preflight', async () => testAtHead(implDir, (await ctx.workspace()).coreImpl, ctx.env, () => preflightAndImport(ctx, implDir, target, work, given.length === 0)));
       } catch (error) {
         return stoppedRun(ctx, target, error);
       }
@@ -529,12 +530,14 @@ export const testCommand: CommandDef = {
         const all = await readCoreSpecDir(implDir);
         const modules = targetModules(all, target, given);
         // a passing result of the same key is used, not run again; a dirty checkout and a --file run neither use nor keep one
-        const keys = file === undefined && start.clean ? await moduleKeys(implDir, startHead, target, recordTarget(target), modules, all, ctx.env, (await ctx.settings()).tools) : null;
-        const reused = await keptResults(ctx, keys);
+        const { keys, reused } = await span('kept results', async () => {
+          const found = file === undefined && start.clean ? await moduleKeys(implDir, startHead, target, recordTarget(target), modules, all, ctx.env, (await ctx.settings()).tools) : null;
+          return { keys: found, reused: await keptResults(ctx, found) };
+        });
         let runner: Runner | null = null;
         if (modules.some((module) => !reused.has(module))) {
           try {
-            runner = await makeRunner(ctx, implDir, target, work, file);
+            runner = await span('runner', () => makeRunner(ctx, implDir, target, work, file));
           } catch (error) {
             return stoppedRun(ctx, target, error);
           }
@@ -545,7 +548,7 @@ export const testCommand: CommandDef = {
         const endClean = (await statusLines(implDir, { env: ctx.env })).length === 0;
         // a run of one test file is not a run of its module: it leaves no record
         noRecord = noRecordReason(file !== undefined, start.clean && endClean, (await head(implDir, { env: ctx.env })) === startHead);
-        if (file === undefined && noRecord === null) {
+        if (file === undefined && noRecord === null) await span('record', async () => {
           await takeRenderPasses(ctx, implDir, target, startHead, all, results, outcomes);
           const reasons = unknownReasons(results, outcomes);
           const inherited = inheritedCommits(outcomes);
@@ -558,7 +561,7 @@ export const testCommand: CommandDef = {
             recordedAt: Date.now(),
           });
           await keepPassed(ctx, keys, results, outcomes, recordTarget(target), startHead);
-        }
+        });
       } finally {
         await start.release();
       }

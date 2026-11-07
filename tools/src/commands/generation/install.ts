@@ -1,6 +1,7 @@
 import { expectPositionals, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { withLock } from '../../lib/lock.ts';
 import { updateJob } from '../../lib/jobs.ts';
 import type { GenerationMethod, HarnessSettings } from '../../lib/settings.ts';
@@ -66,8 +67,8 @@ export const installCommand: CommandDef = {
       throw new OgwError(`no method ${only} in harness settings resourceGeneration`);
     }
     // Tools first: a provider method's executable puts tools.ffmpeg on its PATH.
-    const installedTools = only === null ? await installTools(ctx, settings) : null;
-    const methods = await installMethods(ctx, settings, only);
+    const installedTools = only === null ? await span('install tools', () => installTools(ctx, settings)) : null;
+    const methods = await span('install methods', () => installMethods(ctx, settings, only));
     // Another install job may write the result file meanwhile: read, merge and write it under one lock.
     const { result, path } = await withLock(`${await envResultPath(ctx.env, 'generation-install')}.lock`, async () => {
       const previous = only === null ? null : await readEnvResult(ctx, 'generation-install');

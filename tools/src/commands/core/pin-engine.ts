@@ -6,6 +6,7 @@ import { exists, writeJsonAtomic } from '../../lib/fsx.ts';
 import { checkoutLock } from '../../lib/git.ts';
 import { resolveCoreImpl } from '../../lib/game.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { withLock } from '../../lib/lock.ts';
 import { readEngineJson, type EngineDownload, type EngineJson } from './lib/impl.ts';
 
@@ -106,7 +107,7 @@ export const pinEngineCommand: CommandDef = {
     await Promise.all(urls.map(async (url) => {
       try {
         if (url === '') throw new OgwError('no url');
-        hashes.set(url, await downloadSha256(url));
+        hashes.set(url, await span(`download ${url}`, () => downloadSha256(url)));
       } catch (error) {
         reasons.set(url === '' ? '(item without url)' : url, error instanceof Error ? error.message : String(error));
       }
@@ -116,7 +117,7 @@ export const pinEngineCommand: CommandDef = {
       const lines = failed.map((url) => `${url}: ${reasons.get(url) ?? ''}`);
       throw new OgwError(`download failed, engine.json not written:\n${lines.join('\n')}`, 1, { failed });
     }
-    const { pinned, left } = hashes.size > 0 ? await writeHashes(impl, engine, hashes, ctx.env) : { pinned: [], left: [] };
+    const { pinned, left } = hashes.size > 0 ? await span('write hashes', () => writeHashes(impl, engine, hashes, ctx.env)) : { pinned: [], left: [] };
     if (left.length > 0) {
       throw new OgwError(`engine.json changed during the downloads; run ogw core pin-engine ${engine} again to pin:\n${left.join('\n')}`, 1, { pinned, left });
     }

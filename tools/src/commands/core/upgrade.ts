@@ -6,6 +6,7 @@ import { readJson, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { git, listTags } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { changeOpenRun, openRun } from '../../lib/runstate.ts';
 import { gameSettingsPath, withGameSettingsLock, type GameSettings } from '../../lib/settings.ts';
 import { installEngines } from '../env/api.ts';
@@ -223,12 +224,12 @@ export const upgradeCommand: CommandDef = {
     const game = await ctx.game(positional(args, 0, 'game'));
     const from = await gameCoreVersion(game);
     const settings = JSON.parse(await readFile(gameSettingsPath(game.root), 'utf8')) as GameSettings;
-    const choice = await chooseVersion(ctx, game, from, settings);
+    const choice = await span('choose version', () => chooseVersion(ctx, game, from, settings));
     if (approved === undefined) return check(ctx, game, from, choice);
     if (choice.version !== approved) {
       throw new OgwError(`--version ${approved} is not the version ogw core upgrade ${game.name} --check prints now (${choice.version ?? 'none'}); run --check again and ask the human`);
     }
-    const commit = await applyVersion(ctx, game, from, approved);
+    const commit = await span('apply version', () => applyVersion(ctx, game, from, approved));
     const run = await openRun(game);
     if (run?.kind === 'loop') {
       const record: CoreUpgradeRecord = { version: approved, skipped: choice.skipped };
@@ -236,7 +237,7 @@ export const upgradeCommand: CommandDef = {
         open.data[CORE_UPGRADE_KEY] = record;
       });
     }
-    if (commit !== null) await printHookFailures(ctx, game, commit);
+    if (commit !== null) await span('hook failures', () => printHookFailures(ctx, game, commit));
     const lines = [`coreVersion: ${from} -> ${approved}`];
     if (choice.skipped.length > 0) lines.push(`skipped: ${choice.skipped.join(', ')}`);
     return { text: lines.join('\n'), data: { from, version: approved, skipped: choice.skipped, commit } };

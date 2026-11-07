@@ -4,6 +4,7 @@ import { str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { exists } from '../../lib/fsx.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { withLock } from '../../lib/lock.ts';
 import { run } from '../../lib/proc.ts';
 import type { GenerationMethod, HarnessSettings } from '../../lib/settings.ts';
@@ -176,7 +177,7 @@ export const measureCommand: CommandDef = {
     const chosen = settings.resourceGeneration.filter((m) => only.size === 0 || only.has(m.name));
     const order = [...chosen.filter((m) => m.name !== RIG_METHOD), ...chosen.filter((m) => m.name === RIG_METHOD)];
     const measured: Results = {};
-    for (const method of order) measured[method.name] = await measureMethod(ctx, method, allow, { ...kept, ...measured });
+    for (const method of order) measured[method.name] = await span(`measure ${method.name}`, () => measureMethod(ctx, method, allow, { ...kept, ...measured }));
     const methods: Results = Object.fromEntries(chosen.map((m) => [m.name, measured[m.name] as MethodResult]));
     // Another measure job may write the result file meanwhile: read, merge and write it under one lock.
     const { result, path, written } = await withLock(`${await envResultPath(ctx.env, 'generation-measure')}.lock`, async () => {

@@ -78,6 +78,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 - measure
 - generation call
 - static check
+- time
 
 ## update harness tool
 
@@ -1626,3 +1627,24 @@ What a static check reads, where its failure message alone does not say it.
 - The document format check reads the heading tables from `## brief`, `## design doc` and `## play guide` of [`game-design`](../skills/game-design/SKILL.md) of the harness. Its `where` of a missing heading is `<file>:1`, an absence failure
 - The `where` of a UI prefab failure is the line of the value of `core.<key>`. A key that the merged core settings do not have is not checked
 - A failure about a game settings value (option entry, game settings owner, UI prefab) points at the line of `settings.json` where that value starts, found by its path; when the value is absent, at the line where the nearest value that holds its place starts (`settings.json:1` for the whole file). In a `core.<key>` path, `<key>` is the longest core settings key that `core` holds as one key, and the rest of the path is below it
+
+## time
+
+The tool records where the time of each job goes, without a caller asking for it, and `ogw time` reports it.
+
+- job span: the span of a job, from `startedAt` to `endedAt` of its job record, and to the current time while it runs. Its name is `ogw <command>`, and `ogw agent <role>` for an `ogw agent` job. Every job has it, also a job whose command recorded nothing else
+- step span: a step that the command of a job names (`span` of `tools/src/lib/spans.ts`), in the step span that runs when it starts, else in the job span. A step span that ends by throwing is failed. A step that starts a job and waits for its end holds both, so that the job is in the span that waits for it
+- wait: a take of a lock, slot or ledger that does not succeed at its first try, from the start of the take until it takes it or gives up, in the step span that runs, else in the job span. It is on the path that names what it waits for: the lock folder of `withLock` and `withLockWithin` (the git worktree lock and the job record locks among them), the base of a reader/writer lock (the writer lock, the readers a writer waits for, the waiting writers a reader lets go first, and the reader entry of the same process that another reader takes meanwhile), the slot folder of `withSlot`, the ledger folder of `withShare`. A take inside another take (the ledger lock of a share, the writer lock a reader takes) is part of the wait of the outer take
+- spans file: `<id>.spans.jsonl` beside the job record in the jobs folder. The command process of a job appends a JSON line when a step span or wait starts, with `end` null, and again when it ends: `{"id": "<id>", "name": "<name>", "parent": <id or null>, "start": <unix ms>, "end": <unix ms or null>}` for a step span, with `"failed": true` when it threw, and `{"id": "<id>", "wait": "<path>", "parent": <id or null>, "start": <unix ms>, "end": <unix ms or null>}` for a wait. `parent` is the id of the step span it is in, null for the job span. Each line is one write to the file, which the process keeps open, without fsync, so a killed job keeps every line written before; a step span or wait without its end line ends at the end of its job. A line that cannot be written fails the command
+- child job: a job started by the process of another job, or from inside an agent, records in its job record `parentJob`, the job of the process that started it, else its `agentJob`, and `parentSpan`, the step span of that job that ran when it started, null for the job span. Its job span is in that span
+- `ogw time <job id>` reports the tree of the job: its job span with its step spans and waits, and the tree of each child job. `ogw time <game> --run <run> [--iteration <n>]` reports the tree of a run span over the run of the game, from its start to its close or the current time, or over iteration `<n>`, from the start of the first `ogw agent` job of the run with that iteration to the start of the first one with a later iteration, else to the close of the run or the current time. The run span holds the tree of each job of the run (`jobsOfRun` of `tools/src/lib/runstate.ts`) that started in it and that no other of those jobs started. A line of a spans file that is not a step span or wait line, and a line or child job whose parent span the spans file does not hold, fail the command
+- The report prints, with each length its share of the wall time:
+  - wall time: the length of the root span, its start and its end
+  - critical path: the chain of spans whose ends decide the end of the root. It is the root and then, for each span on it, its deciding children, each followed by its own deciding children. The deciding children of a span are found from its end back: the child span (step span or child job span) that ended last at or before the cursor, after which the cursor moves to the start of that child, until no child that is not chosen yet ended at or before the cursor
+  - largest self time: the 10 spans with the largest self time, the length of a span less the time its child spans cover
+  - waits: the total of the waits on each path over the tree, with their count
+  - flags, each of one job of the tree with its own wall time:
+    - `wait`: the waits on one path of the job span and step spans of the job add up to at least harness settings `time.waitShare` of the wall time of the job
+    - `idle`: in a job that has a step span, the wall time less the union of its child spans (step spans and child jobs) and of the waits of its job span is at least `time.idleShare` of the wall time: time in sleeps and polls that measure nothing
+    - `outlier`: a job span or step span that ended lasts more than `time.outlierRatio` times the median of the last `time.history` spans of the same name for the same game on this host (the jobs folder) that ended at or before its start, when there are at least 5 of them. Those spans are the step spans that ended without failing and the job spans of the jobs that ended `done`
+- `--json` gives the same as data: `root` (each span with `key`, `kind`, `job`, `name`, `parent`, `start`, `end`, `open`, `failed`, `waits` and `children`; `key` is `<job id>` for a job span, `<job id>/<span id>` for a step span and `run <run>` for a run span), `wallMs`, `criticalPath`, `selfTime`, `waits`, `flags` and `criteria`

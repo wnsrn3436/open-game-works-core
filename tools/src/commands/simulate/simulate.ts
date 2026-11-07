@@ -1,6 +1,7 @@
 import { expectPositionals, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults } from '../../lib/settings.ts';
 import { simulateRows, type RowSimulation } from '../check/api.ts';
 import { startInstance, stopInstance } from '../instance/api.ts';
@@ -63,16 +64,16 @@ export const simulate: CommandDef = {
     const given = seedsOption(str(args, 'seeds'));
     const game = await ctx.game(gameName);
     const seeds = given ?? (await defaultSeeds(ctx, game.root));
-    const instance = await startInstance(ctx, { game: gameName, client: 'headless' });
+    const instance = await span('instance start', () => startInstance(ctx, { game: gameName, client: 'headless' }));
     try {
       const table = str(args, 'table');
-      const simulation = await simulateRows(ctx, instance.id, instance.root, { table, rows, seeds });
+      const simulation = await span('simulate rows', () => simulateRows(ctx, instance.id, instance.root, { table, rows, seeds }));
       const notSimulated = notSimulatedOf(simulation, table, rows);
       const pass = simulation.rows.every((r) => r.verdict === 'in') && simulation.missing.length === 0 && notSimulated.length === 0;
       const text = [formatSimulation(simulation), ...notSimulated].filter((l) => l !== '').join('\n');
       return { exitCode: pass ? 0 : 1, text, data: { ...simulation, notSimulated } };
     } finally {
-      await stopInstance(ctx, instance.id);
+      await span('instance stop', () => stopInstance(ctx, instance.id));
     }
   },
 };

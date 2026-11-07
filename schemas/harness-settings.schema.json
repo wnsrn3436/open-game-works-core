@@ -26,6 +26,7 @@
     "reviewRounds",
     "codeCheck",
     "rigCheck",
+    "time",
     "tools"
   ],
   "properties": {
@@ -511,6 +512,41 @@
           "type": "number",
           "minimum": 0,
           "maximum": 255
+        }
+      }
+    },
+    "time": {
+      "description": "Criterion values of the flags of `ogw time`. `## time` of `tools/ogw.md` defines their meaning",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "waitShare",
+        "idleShare",
+        "outlierRatio",
+        "history"
+      ],
+      "properties": {
+        "waitShare": {
+          "description": "The share of the wall time of a job at or above which the waits of its own spans on one lock, slot or ledger are flagged `wait`",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "idleShare": {
+          "description": "The share of the wall time of a job that has a step span at or above which its time in none of its child spans and none of the waits of its job span is flagged `idle`",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "outlierRatio": {
+          "description": "A span that lasts more than this many times the median of the earlier spans of its name and game is flagged `outlier`",
+          "type": "number",
+          "exclusiveMinimum": 1
+        },
+        "history": {
+          "description": "The number of the last earlier spans of the same name and game whose median `outlier` compares with",
+          "type": "integer",
+          "minimum": 5
         }
       }
     },

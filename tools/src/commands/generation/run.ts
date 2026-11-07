@@ -4,6 +4,7 @@ import { expectPositionals, list, positional, str, type CommandArgs, type Comman
 import { OgwError } from '../../lib/errors.ts';
 import { exists, readText, whenNotFound } from '../../lib/fsx.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import { withLock } from '../../lib/lock.ts';
 import { isInside } from '../../lib/paths.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
@@ -163,8 +164,10 @@ export const runCommand: CommandDef = {
     const dir = await methodDir(ctx, method);
     for (const item of items) await mkdir(item.out, { recursive: true });
     const batch = str(args, 'batch') !== undefined;
-    const outcome = await withLock(
-      join(await dataDir(ctx), 'generation', 'run.lock'),
+    const runLock = join(await dataDir(ctx), 'generation', 'run.lock');
+    // the waits for the run lock, the performance lease and the method lock are in the call span (ogw.md `## time`)
+    const outcome = await span('call', () => withLock(
+      runLock,
       // The lease keeps the calls off the host while `ogw check` measures performance (ogw.md `### performance lease`).
       // The method lock keeps `generation install` from emptying the folder while the call uses it.
       () => withGenerationLease(ctx, () =>
@@ -202,7 +205,7 @@ export const runCommand: CommandDef = {
           }
         })),
       LIMITS.jobMs,
-    );
+    ));
     const failed = outcome.results.some((r) => r.result !== 'ok');
     const notes = (run: MeasuredRun): string =>
       `${run.blocked.length > 0 ? `\nblocked: ${run.blocked.join(' | ')}` : ''}${run.error === undefined ? '' : `\nstderr:\n${run.error}`}`;

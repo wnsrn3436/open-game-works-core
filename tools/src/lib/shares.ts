@@ -3,6 +3,7 @@ import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isStale, releaseFolder, takeFolder, withLockWithin } from './lock.ts';
+import { takeWaits, taking } from './spans.ts';
 
 const POLL_MS = 500;
 /** The name of a holder folder: its share, then a random id. */
@@ -14,11 +15,11 @@ const HOLDER = /^([1-9][0-9]*)-[0-9a-f]+$/;
  * `<dir>/holders/<share>-<id>` with its owner file inside, as a `withLock` lock; it is made under the ledger lock
  * `<dir>/lock` only when the live holders leave room for the whole share, so a share is taken whole or not at all and
  * partial holders never wait for each other. A holder whose process is gone counts for nothing and is removed. Waits
- * without a time limit.
+ * without a time limit; a take that does not get its share at its first try is a wait on `dir` (ogw.md `## time`).
  */
 export async function withShare<T>(dir: string, total: number, share: number, fn: () => Promise<T>): Promise<T> {
   const units = Math.max(1, total);
-  const holder = await takeShare(dir, units, Math.max(1, Math.min(share, units)));
+  const holder = await taking(dir, () => takeShare(dir, units, Math.max(1, Math.min(share, units))));
   try {
     return await fn();
   } finally {
@@ -39,6 +40,7 @@ async function takeShare(dir: string, total: number, share: number): Promise<str
       }, POLL_MS);
       if (taken.ran && taken.value !== null) return taken.value;
     }
+    takeWaits();
     await sleep(POLL_MS);
   }
 }

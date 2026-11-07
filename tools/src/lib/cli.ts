@@ -10,7 +10,8 @@ import {
   type Context,
 } from './command.ts';
 import { OgwError } from './errors.ts';
-import { startJob, superviseJob, updateJob } from './jobs.ts';
+import { jobPaths, startJob, superviseJob, updateJob } from './jobs.ts';
+import { inJob } from './spans.ts';
 
 export interface CliIo {
   cwd: string;
@@ -237,14 +238,14 @@ async function runCommand(commands: readonly CommandDef[], argv: readonly string
     const args = parseArgs(def, tokens, verbatim);
     agent = await agentContext(io.env);
     if (background) {
-      print(io, json, await startBackground(ctx, def, args, agent));
+      print(io, json, await inJobOf(ctx, () => startBackground(ctx, def, args, agent)));
       return 0;
     }
     if (agent && !ctx.jobId) {
       const command = `ogw ${[...def.name, ...tokens, ...verbatim].join(' ')}`;
       logIndex = await appendRunLog(agent, { command, startedAt: Date.now(), exitCode: null, summary: null });
     }
-    const result = await def.run(ctx, args);
+    const result = await inJobOf(ctx, () => def.run(ctx, args));
     const exitCode = result.exitCode ?? 0;
     print(io, json, result);
     await recordEnd(ctx, agent, logIndex, exitCode, result.summary ?? null);
@@ -257,6 +258,15 @@ async function runCommand(commands: readonly CommandDef[], argv: readonly string
     });
     return exitCode;
   }
+}
+
+/**
+ * Runs `fn` in the job of the process, when it runs in one: its steps and waits go to the spans file of the job, and the
+ * jobs it starts are child jobs of it (ogw.md `## time`).
+ */
+async function inJobOf<T>(ctx: Context, fn: () => Promise<T>): Promise<T> {
+  const job = ctx.jobId;
+  return job === null ? fn() : inJob(job, (await jobPaths(job, ctx.env)).spans, fn);
 }
 
 async function recordEnd(ctx: Context, agent: AgentContext | null, index: number, exitCode: number, summary: unknown): Promise<void> {

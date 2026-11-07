@@ -44,6 +44,7 @@ export const COMMAND_FOLDERS: Readonly<Record<string, Loader>> = {
   video: () => import('./video/index.ts'),
   judge: () => import('./judge/index.ts'),
   regress: () => import('./regress/index.ts'),
+  time: () => import('./time/index.ts'),
 };
 
 /** The commands one argv can run: those of the folder of its first word, or every command when that word names no folder. */

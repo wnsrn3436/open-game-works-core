@@ -10,6 +10,7 @@ import { newId } from './ids.ts';
 import { withLock } from './lock.ts';
 import { cliEntry, harnessRoot } from './paths.ts';
 import { hostBootId, isAlive, killRecordedGroup, killTree, pidNamespace, processStartedAt, recordedGroup, samePidNamespace } from './proc.ts';
+import { spanContext } from './spans.ts';
 
 export type JobStatus = 'running' | 'done' | 'failed';
 
@@ -36,6 +37,10 @@ export interface JobRecord {
   timeLimitMs: number;
   /** The agent job whose agent started this job, when started from inside an agent. */
   agentJob: string | null;
+  /** The job that started this job (ogw.md `## time`): the job of the starting process, else `agentJob`. */
+  parentJob?: string | null;
+  /** The step span of `parentJob` that ran when this job started; null: the job span of `parentJob`. */
+  parentSpan?: string | null;
   /** Value a command reports for the agent run log when it ends. */
   summary: unknown;
   /** Boot id of the host when the job started (`hostBootId`); its pids mean nothing after another boot. */
@@ -52,6 +57,8 @@ export interface JobPaths {
   dir: string;
   record: string;
   lock: string;
+  /** The spans file of the job (ogw.md `## time`). */
+  spans: string;
 }
 
 export interface JobLogPaths {
@@ -75,6 +82,7 @@ export async function jobPaths(id: string, env: NodeJS.ProcessEnv = process.env)
     dir,
     record: join(dir, `${id}.json`),
     lock: join(dir, `${id}.lock`),
+    spans: join(dir, `${id}.spans.jsonl`),
   };
 }
 
@@ -271,6 +279,7 @@ export async function startJob(options: StartJobOptions): Promise<string> {
     await mkdir(index, { recursive: true });
     await writeFile(join(index, id), '');
   }
+  const from = spanContext();
   const record: JobRecord = {
     id,
     argv: options.argv,
@@ -287,6 +296,8 @@ export async function startJob(options: StartJobOptions): Promise<string> {
     pid: null,
     timeLimitMs: options.timeLimitMs,
     agentJob: options.agentJob,
+    parentJob: from?.job ?? options.agentJob,
+    parentSpan: from?.span ?? null,
     summary: null,
     ...(options.logFolder === undefined ? {} : { logFolder: options.logFolder }),
     meta: options.meta ?? {},

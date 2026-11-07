@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { OgwError } from './errors.ts';
 import { whenNotFound } from './fsx.ts';
 import { isStale, ownerText, withLock, withLockWithin } from './lock.ts';
+import { takeWaits, taking } from './spans.ts';
 
 const READERS_POLL_MS = 500;
 
@@ -12,15 +13,25 @@ const READERS_POLL_MS = 500;
  * A reader/writer file lock: the writer lock folder `base`, the folder `<base>-readers` with one entry per reader, and the
  * folder `<base>-writers` with one entry per writer that waits for the writer lock. A writer waits, holding the writer
  * lock, until no live reader is left, so readers that start meanwhile wait for it. Readers and `withWriterLock` that start
- * while a writer waits for the writer lock let it go first, so back-to-back readers do not keep it out.
+ * while a writer waits for the writer lock let it go first, so back-to-back readers do not keep it out. Every wait of a
+ * reader or writer, on the writer lock, on the readers or on the waiting writers, is a wait on `base` (ogw.md `## time`).
  */
 export interface RwLock {
   base: string;
   waitMs: number;
 }
 
-/** The reader entry of each lock this process reads, with the count of its readers; the last one to end removes it. */
-const held = new Map<string, { count: number; entry: Promise<() => Promise<void>> }>();
+/**
+ * The reader entry of each lock this process reads, with the count of its readers; the last one to end removes it.
+ * `ready` once the entry is there.
+ */
+const held = new Map<string, Reading>();
+
+interface Reading {
+  count: number;
+  entry: Promise<() => Promise<void>>;
+  ready: boolean;
+}
 
 function readersDir(lock: RwLock): string {
   return `${lock.base}-readers`;
@@ -66,7 +77,7 @@ export async function withWriterWithin<T>(
   try {
     const taken = await withLockWithin(lock.base, async () => {
       await waiting();
-      if (!(await liveEntriesEnd(readersDir(lock), deadline))) return { ran: false as const, waited: 'readers' as const };
+      if (!(await taking(lock.base, () => liveEntriesEnd(readersDir(lock), deadline)))) return { ran: false as const, waited: 'readers' as const };
       if (!(await othersEnd(deadline))) return { ran: false as const, waited: 'others' as const };
       return { ran: true as const, value: await fn() };
     }, Math.max(0, deadline - Date.now()));
@@ -100,7 +111,7 @@ const LET_WRITER_GO = Symbol('let a waiting writer go');
 async function afterWaitingWriters<T>(lock: RwLock, fn: () => Promise<T>, reads: boolean): Promise<T> {
   const deadline = Date.now() + lock.waitMs;
   for (;;) {
-    if (!reads) await noLiveEntries(writersDir(lock), deadline, `writers waiting for ${lock.base}`);
+    if (!reads) await noLiveEntries(lock, writersDir(lock), deadline, `writers waiting for ${lock.base}`);
     // a writer that came between the wait and the take goes first too
     const ran = await withLock(lock.base, async () => (!reads && (await liveEntries(writersDir(lock))) > 0 ? LET_WRITER_GO : { value: await fn() }), Math.max(0, deadline - Date.now()));
     if (ran !== LET_WRITER_GO) return ran.value;
@@ -116,20 +127,22 @@ async function afterWaitingWriters<T>(lock: RwLock, fn: () => Promise<T>, reads:
  */
 export async function withReader<T>(lock: RwLock, fn: () => Promise<T>): Promise<T> {
   let reading = held.get(lock.base);
+  // a reader that joins an entry still being taken waits for it as the reader that takes it does
+  const joins = reading !== undefined && !reading.ready;
   if (reading === undefined) {
-    // a failed take leaves no entry: the next reader tries again; each reader gets the failure
-    const entry = afterWaitingWriters(lock, () => addReader(lock), false).catch((error: unknown) => {
-      held.delete(lock.base);
-      throw error;
-    });
-    reading = { count: 0, entry };
+    reading = takeReading(lock);
     held.set(lock.base, reading);
   }
   reading.count += 1;
   const shared = reading;
   let release: (() => Promise<void>) | undefined;
   try {
-    release = await shared.entry;
+    release = joins
+      ? await taking(lock.base, () => {
+          takeWaits();
+          return shared.entry;
+        })
+      : await shared.entry;
     return await fn();
   } finally {
     shared.count -= 1;
@@ -139,6 +152,23 @@ export async function withReader<T>(lock: RwLock, fn: () => Promise<T>): Promise
       if (release !== undefined) await release();
     }
   }
+}
+
+/** The reader entry of this process for `lock`, being taken: `ready` once it is there. */
+function takeReading(lock: RwLock): Reading {
+  const reading: Reading = { count: 0, entry: Promise.resolve(() => Promise.resolve()), ready: false };
+  // a failed take leaves no entry: the next reader tries again; each reader gets the failure
+  reading.entry = taking(lock.base, () => afterWaitingWriters(lock, () => addReader(lock), false)).then(
+    (release) => {
+      reading.ready = true;
+      return release;
+    },
+    (error: unknown) => {
+      held.delete(lock.base);
+      throw error;
+    },
+  );
+  return reading;
 }
 
 /** Leaves a reader entry of this process; returns the function that removes it. Call it holding the writer lock. */
@@ -165,13 +195,15 @@ async function liveEntries(dir: string): Promise<number> {
   return live;
 }
 
-async function noLiveEntries(dir: string, deadline: number, what: string): Promise<void> {
-  if (!(await liveEntriesEnd(dir, deadline))) throw new OgwError(`${what} did not end in time`);
+/** Waits, as a wait on `lock`, until `dir` has no live entry; fails when the deadline comes first. */
+async function noLiveEntries(lock: RwLock, dir: string, deadline: number, what: string): Promise<void> {
+  if (!(await taking(lock.base, () => liveEntriesEnd(dir, deadline)))) throw new OgwError(`${what} did not end in time`);
 }
 
-/** Waits until `dir` has no live entry; false when the deadline came first. */
+/** Waits until `dir` has no live entry; false when the deadline came first. The take that runs waits from the first look that finds one. */
 async function liveEntriesEnd(dir: string, deadline: number): Promise<boolean> {
   while ((await liveEntries(dir)) > 0) {
+    takeWaits();
     if (Date.now() >= deadline) return false;
     await sleep(READERS_POLL_MS);
   }
@@ -179,5 +211,5 @@ async function liveEntriesEnd(dir: string, deadline: number): Promise<boolean> {
 }
 
 async function noReaders(lock: RwLock): Promise<void> {
-  await noLiveEntries(readersDir(lock), Date.now() + lock.waitMs, `readers of ${lock.base}`);
+  await noLiveEntries(lock, readersDir(lock), Date.now() + lock.waitMs, `readers of ${lock.base}`);
 }

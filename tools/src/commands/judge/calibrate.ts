@@ -4,6 +4,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { exists, writeFileAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { span } from '../../lib/spans.ts';
 import type { HarnessSettings } from '../../lib/settings.ts';
 import { elementsOf, type JudgeEntry } from '../loop/lib/files.ts';
 import {
@@ -145,12 +146,12 @@ export const judgeCalibrate: CommandDef = {
     const settings = await ctx.settings();
     const tokenMissing = missingLoginToken(ctx, settings);
     if (tokenMissing !== null) throw new OgwError(tokenMissing);
-    const main = await prepareMain(ctx, game);
+    const main = await span('prepare main', () => prepareMain(ctx, game));
     const ms = String(evaluateDeps.now());
-    const pairs = await calibrationPairs(ctx, game, main, settings);
+    const pairs = await span('calibration pairs', () => calibrationPairs(ctx, game, main, settings));
     const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db: undefined, site: calibrationSite(game.root, ms) };
     const { groups, judgePairs } = groupsOf(plan, pairs);
-    const slots = await runJudging(ctx, plan, groups);
+    const slots = await span('judging', () => runJudging(ctx, plan, groups));
     const judged = new Map<CalibrationPair, { k: number; entry: JudgeEntry }[]>();
     for (const slot of slots) {
       const pair = slot.role === 'judge' ? judgePairs.get(slot.pair) : undefined;
@@ -160,9 +161,11 @@ export const judgeCalibrate: CommandDef = {
     const outcomes = outcomesOf(pairs, judged);
     const result = rates(outcomes, ELEMENTS, DEGRADATIONS, pairs.filter((p) => p.kind === 'label').length, settings.calibration.minDecisions);
     const report = `${CALIBRATION_DIR}/${ms}.md`;
-    await writeFileAtomic(join(game.root, report), renderReport(outcomes, ELEMENTS, result, settings.loop.judgeVotes));
-    const results = outcomes.flatMap((o) => o.judges.map((j) => j.entry.result)).filter((r) => r !== '' && exists(join(game.root, r)));
-    await commitOnMain(ctx, game, [report, ...results], `judge calibration ${ms}`);
+    await span('report', async () => {
+      await writeFileAtomic(join(game.root, report), renderReport(outcomes, ELEMENTS, result, settings.loop.judgeVotes));
+      const results = outcomes.flatMap((o) => o.judges.map((j) => j.entry.result)).filter((r) => r !== '' && exists(join(game.root, r)));
+      await commitOnMain(ctx, game, [report, ...results], `judge calibration ${ms}`);
+    });
     const lines = [report, ...rateLines(result), ...recommendations(result, settings.loop.judgeVotes).map((r) => `recommendation: ${r}`)];
     return { text: lines.join('\n'), data: { report, outcomes: outcomes.map((o) => ({ pair: o.pair.name, status: o.status, judgings: o.judgings })), rates: result } };
   },
