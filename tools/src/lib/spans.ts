@@ -35,18 +35,26 @@ export interface WaitLine {
  * The spans file of the job a process runs: opened at the first line, appended to with one write per line. A line that
  * cannot be written is kept as `failure` and no line is written after it, so that the step, lock, slot or share that
  * wrote it goes on as without a job (a take lets go of what it took); `inJob` fails the command with it when it ends.
+ * Once closed, it writes no line: the work a command left running after its end (an event handler of a process it
+ * started) records nothing.
  */
 class SpanFile {
   readonly path: string;
   #fd: number | null = null;
+  #closed = false;
   failure: Error | null = null;
 
   constructor(path: string) {
     this.path = path;
   }
 
+  /** Whether every line so far was written: a span whose start was not written is no parent a child can name. */
+  get written(): boolean {
+    return this.failure === null;
+  }
+
   write(line: SpanLine): void {
-    if (this.failure !== null) return;
+    if (this.failure !== null || this.#closed) return;
     try {
       this.#fd ??= openSync(this.path, 'a');
       writeSync(this.#fd, `${JSON.stringify(line)}\n`);
@@ -56,6 +64,7 @@ class SpanFile {
   }
 
   close(): void {
+    this.#closed = true;
     if (this.#fd === null) return;
     closeSync(this.#fd);
     this.#fd = null;
@@ -88,35 +97,42 @@ function nextId(): string {
   return `${process.pid.toString(36)}.${lastId.toString(36)}`;
 }
 
-/**
- * Runs the command of job `job`, whose steps and waits go to the spans file `path` (ogw.md `## time`), in its step span
- * `parent` (null: the job span; a process that another process of the job started, such as an instance supervisor, goes
- * on in the span that started it). When a line could not be written, the command fails with that error once `fn` ends;
- * a failure of `fn` itself stays its result.
- */
-export async function inJob<T>(job: string, path: string, fn: () => Promise<T>, parent: string | null = null): Promise<T> {
-  const file = new SpanFile(path);
-  let value: T;
-  try {
-    value = await storage.run({ job, file, span: parent, take: null }, fn);
-  } finally {
-    file.close();
-  }
-  if (file.failure !== null) throw new OgwError(`cannot write the spans file ${path}: ${file.failure.message}`);
-  return value;
+/** The name of the step span from the start of a job to the start of its command (ogw.md `## time`). */
+export const JOB_START = 'job start';
+
+/** How `inJob` runs: in which span, with which `job start`, and what a line it cannot write does. */
+export interface InJobOptions {
+  /** The step span it goes on in; null or absent: the job span. A process that another process of the job started goes on in the span that started it. */
+  parent?: string | null;
+  /** `startedAt` of the job record: the command process its supervisor started first writes the step span `job start` from it. */
+  startedAt?: number;
+  /**
+   * `fail`: the command fails with the error once `fn` ends; `leave`: the failure is left to the command of the job,
+   * which writes the same file (an instance supervisor, whose boot goes on).
+   */
+  writeFailure?: 'fail' | 'leave';
 }
 
 /**
- * The step span `job start` of the command process of a job: from `startedAt` of its job record, before its supervisor
- * started it, to the start of its command (ogw.md `## time`).
+ * Runs the command of job `job`, whose steps and waits go to the spans file `path` (ogw.md `## time`). When a line could
+ * not be written, the command fails with that error once `fn` ends, unless `writeFailure` is `leave`; a failure of `fn`
+ * itself stays its result.
  */
-export function jobStart(path: string, startedAt: number): void {
+export async function inJob<T>(job: string, path: string, fn: () => Promise<T>, options: InJobOptions = {}): Promise<T> {
   const file = new SpanFile(path);
-  const line: StepLine = { id: nextId(), name: 'job start', parent: null, start: startedAt, end: Date.now() };
-  file.write({ ...line, end: null });
-  file.write(line);
-  file.close();
-  if (file.failure !== null) throw new OgwError(`cannot write the spans file ${path}: ${file.failure.message}`);
+  if (options.startedAt !== undefined) {
+    const line: StepLine = { id: nextId(), name: JOB_START, parent: null, start: options.startedAt, end: null };
+    file.write(line);
+    file.write({ ...line, end: Date.now() });
+  }
+  let value: T;
+  try {
+    value = await storage.run({ job, file, span: options.parent ?? null, take: null }, fn);
+  } finally {
+    file.close();
+  }
+  if (file.failure !== null && options.writeFailure !== 'leave') throw new OgwError(`cannot write the spans file ${path}: ${file.failure.message}`);
+  return value;
 }
 
 /** Runs `fn` outside the job of this async context, as the work of another process runs (e.g. an instance supervisor). */
@@ -124,10 +140,14 @@ export function outsideJob<T>(fn: () => T): T {
   return storage.exit(fn);
 }
 
-/** The job and step span that run in this async context; null outside a job. */
+/**
+ * The job and step span that run in this async context; null outside a job. After a line could not be written the span
+ * is the job span: the start of a later span may not be in the file.
+ */
 export function spanContext(): { job: string; span: string | null } | null {
   const store = storage.getStore();
-  return store === undefined ? null : { job: store.job, span: store.span };
+  if (store === undefined) return null;
+  return { job: store.job, span: store.file.written ? store.span : null };
 }
 
 /** Runs `fn` as the step span `name` of the step span or job that runs; outside a job it only runs `fn`. */

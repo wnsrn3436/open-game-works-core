@@ -168,6 +168,8 @@ describe('ogw regress settings', () => {
     expect(run.stdout).toContain('seed S01: stale (base fails target: lc missing: uiCheckScreens.1.pixelRatio; none; none; none; none)');
     const record = readFileSync(join(ws.regress, 'records', 'refresh-2.0.0.md'), 'utf8');
     expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | tag |');
+    // the refresh did not run as a job here
+    expect(record).toContain('## time\n\nnone: the command does not run as a job\n');
     expect(record).toContain('| lc | 1.0.0 | missing: uiCheckScreens.1.pixelRatio | none | none | none | none | none | none |');
     // with the value written, the next refresh goes on to the upgrade
     order.length = 0;

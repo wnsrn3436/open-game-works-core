@@ -1,4 +1,5 @@
 import type { HarnessSettings } from '../../../lib/settings.ts';
+import { JOB_START } from '../../../lib/spans.ts';
 import { spansOf, type TimeSpan } from './tree.ts';
 
 export type TimeCriteria = HarnessSettings['time'];
@@ -113,12 +114,12 @@ export function waitFlags(job: TimeSpan, criteria: TimeCriteria): TimeFlag[] {
 }
 
 /**
- * `idle`: the wall time of a job that has a step span, less the union of its child spans (step spans and the jobs it
+ * `idle`: the wall time of a job that has a step span other than `job start`, less the union of its child spans (step spans and the jobs it
  * started) and of the waits of its job span, is at least `idleShare` of its wall time.
  */
 export function idleFlags(job: TimeSpan, criteria: TimeCriteria): TimeFlag[] {
   const wall = lengthOf(job);
-  if (wall === 0 || !job.children.some((child) => child.kind === 'step')) return [];
+  if (wall === 0 || !job.children.some((child) => child.kind === 'step' && child.name !== JOB_START)) return [];
   const idle = wall - unionMs([...job.children, ...job.waits], job.start, job.end);
   if (idle < criteria.idleShare * wall) return [];
   return [{ flag: 'idle', job: job.job, name: job.name, ms: idle, wallMs: wall, share: idle / wall }];

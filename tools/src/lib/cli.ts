@@ -11,7 +11,7 @@ import {
 } from './command.ts';
 import { OgwError } from './errors.ts';
 import { jobPaths, readJobRaw, startJob, superviseJob, updateJob } from './jobs.ts';
-import { inJob, jobStart } from './spans.ts';
+import { inJob } from './spans.ts';
 
 export interface CliIo {
   cwd: string;
@@ -270,8 +270,7 @@ async function inJobOf<T>(ctx: Context, fn: () => Promise<T>): Promise<T> {
   const { spans } = await jobPaths(job, ctx.env);
   // the command process its supervisor started (not a process that it started in turn) has the start of the job
   const record = await readJobRaw(job, ctx.env);
-  if (record.supervisorPid === process.ppid) jobStart(spans, record.startedAt);
-  return inJob(job, spans, fn);
+  return inJob(job, spans, fn, record.supervisorPid === process.ppid ? { startedAt: record.startedAt } : {});
 }
 
 async function recordEnd(ctx: Context, agent: AgentContext | null, index: number, exitCode: number, summary: unknown): Promise<void> {

@@ -173,13 +173,16 @@ describe('ogw time', () => {
       ['a', 'first', null, 0, 30],
       ['b', 'second', null, 50, 80.1],
     ]);
-    // no step span: its steps are not recorded, so it is not judged
+    // no step span: its steps are not recorded, so it is not judged; nor with `job start` alone
     job(ws, 'i4', 0, 100);
+    job(ws, 'i6', 0, 100);
+    spans(ws, 'i6', [['s', 'job start', null, 0, 1]]);
     expect(flagged(await timeOf(ws, ['i1']), 'idle')).toEqual(['i1']);
     const quietish = await timeOf(ws, ['i3']);
     // i3: 100 - 30 - 30.1 = 39.9 s idle is flagged; at 0.4 it would not be
     expect(flagged(quietish, 'idle')).toEqual(['i3']);
     expect(flagged(await timeOf(ws, ['i4']), 'idle')).toEqual([]);
+    expect(flagged(await timeOf(ws, ['i6']), 'idle')).toEqual([]);
     expect((await ogw(ws, ['time', 'i1'])).stdout).toContain('idle: ogw check (i1) spent 30.0s in no step span, started job or wait, 30.0% of its wall time 1m 40s (time.idleShare 0.2)');
   });
 

@@ -33,6 +33,9 @@ describe('the ## time section', () => {
     ].join('\n'));
     const outside = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     expect(await jobTimeSection(outside)).toBe('none: the command does not run as a job');
+    // a parent span the spans file does not hold: the report fails, and the section says why
+    writeFileSync(join(ws.jobs, 'r1.spans.jsonl'), `${JSON.stringify({ id: 'x', name: 'x', parent: 'gone', start: T, end: T + S })}\n`);
+    expect(await jobTimeSection(ctx)).toBe('unknown: job r1: span x is in span gone, which its spans file does not hold');
   });
 
   it('of a run iteration, with no flag', async () => {
@@ -42,5 +45,6 @@ describe('the ## time section', () => {
     writeJob(ws.jobs, { id: 'a1', game: 'g', command: 'agent', meta: { role: 'content', run: 'create-1', iteration: 1 }, startedAt: T + 10 * S, endedAt: T + 90 * S, status: 'done', exitCode: 0 });
     const game = { name: 'g', root, mainRoot: root, commonDir: join(root, '.git'), inWorktree: false };
     expect(await runTimeSection(ws.env, game, run, 1)).toBe(['- wall time: 16m 30s', '- critical path: ogw agent content (a1) 1m 20s 8.1%', '- flags: none'].join('\n'));
+    expect(await runTimeSection(ws.env, game, run, 2)).toBe('none: iteration 2 of run create-1 has no ogw agent job');
   });
 });

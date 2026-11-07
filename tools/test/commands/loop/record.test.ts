@@ -651,6 +651,8 @@ describe('ogw loop record', () => {
     expect(record).toContain('## measurements\n\nnone\n\n## load\n\nnone\n');
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).previous).toBeNull();
     expect(record).toContain('## temporary resources\n\nnone\n\n## cost\n\nnone\n');
+    // no ogw agent job of the iteration: no window of it
+    expect(record).toContain('## time\n\nnone: iteration 2 of run update-1 has no ogw agent job\n');
   });
 
   it('writes no load table when every performance item passed', async () => {
@@ -689,6 +691,8 @@ describe('ogw loop record', () => {
         '',
       ].join('\n'),
     );
+    // the time of iteration 2: from the start of its first agent job, its jobs on the critical path
+    expect(read(g.root, `${R}/iteration-2.md`)).toMatch(/\n## time\n\n- wall time: .+\n- critical path: .*ogw agent (content|play|judge) \(job\w+/);
   });
 
   it('records hardening findings into the defect list only', async () => {

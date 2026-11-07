@@ -1,7 +1,7 @@
 // The waits and step spans of the shared helpers of the commands (ogw.md `## time`): the regress pool, its check gate and
 // its merges, the instance slots of a check, the measure gate of a build, and the step spans whose work goes on across
 // tasks (`openSpan`, `openWait`), and an `inJob` that goes on in the span of another process.
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -113,9 +113,28 @@ describe('step spans across tasks', () => {
     openWait('y').end();
   });
 
+  it('writes `job start` first, writes nothing after the command ended, and leaves a failure when asked', async () => {
+    const path = file();
+    let later: Promise<void> = Promise.resolve();
+    await inJob('s', path, () => {
+      // work the command leaves running after it ended
+      later = sleep(100).then(() => span('late', () => Promise.resolve()));
+      return Promise.resolve();
+    }, { startedAt: Date.now() - 500 });
+    await later;
+    expect(lines(path).map((l) => ('name' in l ? l.name : l.wait))).toEqual(['job start', 'job start']);
+    expect((lines(path)[1] as { start: number; end: number }).end - (lines(path)[1] as { start: number }).start).toBeGreaterThanOrEqual(500);
+    // a folder where the file goes: no line can be written; the context then names the job span, and `leave` does not throw
+    const folder = join(realpathSync(mkdtempSync(join(tmpdir(), 'ogw-waits-'))), 'f.spans.jsonl');
+    mkdirSync(folder);
+    const seen = await inJob('s', folder, () => span('a', () => Promise.resolve(spanContext())), { writeFailure: 'leave' });
+    expect(seen).toEqual({ job: 's', span: null });
+    await expect(inJob('s', folder, () => span('a', () => Promise.resolve(1)))).rejects.toThrow(/cannot write the spans file/);
+  });
+
   it('goes on in the span of another process of the job given as the parent', async () => {
     const path = file();
-    await inJob('s', path, () => span('step', () => Promise.resolve()), 'other.1');
+    await inJob('s', path, () => span('step', () => Promise.resolve()), { parent: 'other.1' });
     expect(lines(path)[0]).toMatchObject({ name: 'step', parent: 'other.1' });
   });
 });

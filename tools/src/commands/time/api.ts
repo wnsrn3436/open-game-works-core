@@ -1,5 +1,6 @@
 // What other commands use of `ogw time` (ogw.md `## time`): the report of a job or run, and its lines.
 import type { Context } from '../../lib/command.ts';
+import { OgwError } from '../../lib/errors.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import type { RunState } from '../../lib/runstate.ts';
 import { loadHarnessSettings } from '../../lib/settings.ts';
@@ -9,9 +10,23 @@ import { timeSection } from './lib/render.ts';
 export { jobReport, runReport, type TimeReport } from './lib/report.ts';
 export { formatMs, renderReport, reportData, timeSection } from './lib/render.ts';
 
+/**
+ * The section when the report cannot be made: `unknown: <reason>` for the failure that `ogw time` gives (a spans line it
+ * cannot read, a parent span the spans file does not hold); any other failure is thrown.
+ */
+async function orUnknown(make: () => Promise<string>): Promise<string> {
+  try {
+    return await make();
+  } catch (error) {
+    if (!(error instanceof OgwError)) throw error;
+    return `unknown: ${error.message}`;
+  }
+}
+
 /** The `## time` section of a record that the command of a job writes: that of its job, `none` outside a job (ogw.md `## time`). */
 export async function jobTimeSection(ctx: Context): Promise<string> {
-  return ctx.jobId === null ? 'none: the command does not run as a job' : timeSection(await jobReport(ctx, ctx.jobId));
+  const job = ctx.jobId;
+  return job === null ? 'none: the command does not run as a job' : orUnknown(async () => timeSection(await jobReport(ctx, job)));
 }
 
 /**
@@ -19,6 +34,9 @@ export async function jobTimeSection(ctx: Context): Promise<string> {
  * `ogw time <game> --run <run> [--iteration <n>]` reports it.
  */
 export async function runTimeSection(env: NodeJS.ProcessEnv, game: GameRepo, run: RunState, iteration: number | null): Promise<string> {
-  const report = await runStateReport(env, (await loadHarnessSettings(env)).time, game, run, iteration);
-  return report === null ? `none: ${noIteration(run, iteration as number)}` : timeSection(report);
+  const criteria = (await loadHarnessSettings(env)).time;
+  return orUnknown(async () => {
+    const report = await runStateReport(env, criteria, game, run, iteration);
+    return report === null ? `none: ${noIteration(run, iteration as number)}` : timeSection(report);
+  });
 }

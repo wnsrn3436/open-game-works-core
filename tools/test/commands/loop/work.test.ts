@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncDeps, taskInput } from '../../../src/commands/loop/lib/sync.ts';
@@ -597,10 +597,15 @@ describe('ogw loop sync', () => {
     let polls = 0;
     mocks.agentOutcome.mockImplementation(() => Promise.resolve(++polls < 3 ? { status: 'running', output: null } : { status: 'done', output: '/o' }));
     mocks.mergeAgentJobs.mockResolvedValue({ merged: [job.id], failed: [] });
-    const out = await ogw(g.ws, ['loop', 'sync', 'g', '--wait']);
+    const record = await jobPaths('syncjob', g.ws.env);
+    mkdirSync(join(record.record, '..'), { recursive: true });
+    writeFileSync(record.record, JSON.stringify({ ...job, id: 'syncjob', command: 'loop sync', meta: {} }));
+    const out = await ogw(g.ws, ['loop', 'sync', 'g', '--wait'], { env: { ...g.ws.env, OGW_JOB_ID: 'syncjob' } });
     expect(out.stdout).toBe(`merged ${job.id}\n`);
     // the pass reads it, the wait reads it until it ended, and the next pass reads it again
     expect(polls).toBe(4);
+    const spans = readFileSync(record.spans, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { name?: string; end: number | null });
+    expect(spans.filter((l) => l.end !== null).map((l) => l.name)).toEqual(['wait for agents', 'sync resource']);
   });
 
   it('with --wait, merges the job it gave again for a conflict in the same call', async () => {

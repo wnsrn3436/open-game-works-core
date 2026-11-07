@@ -1,8 +1,9 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateDeps } from '../../../src/commands/loop/lib/evaluate.ts';
 import { choiceOrder, targetElement, variantDeps, type VariantEntry, type VariantsFile } from '../../../src/commands/loop/lib/variants.ts';
+import { jobPaths } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { commit, git, openLoopRun, read, readJsonFile, setRun, setupGame, write, type TestGame } from './helpers.ts';
 
@@ -254,9 +255,18 @@ describe('ogw loop variants', () => {
     fake.behavior = (k) => (k === 3 ? 'fail' : 'commit');
     // variant 1 wins game feel, variant 2 wins game feel and no friction
     fake.votes = (k): Record<string, Vote> => (k === 1 ? { 'game feel': 'this' } : { 'game feel': 'this', 'no friction': 'this', 'tension and release': null });
-    const out = await ogw(g.ws, ['loop', 'variants', 'g']);
+    const varjob = await jobPaths('varjob', g.ws.env);
+    mkdirSync(join(varjob.record, '..'), { recursive: true });
+    writeFileSync(varjob.record, JSON.stringify({ id: 'varjob', argv: [], cwd: '/', command: 'loop variants', game: 'g', startedAt: Date.now(), endedAt: null, status: 'running', exitCode: null, supervisorPid: null, pid: null, timeLimitMs: 60_000, agentJob: null, summary: null, meta: {} }));
+    const out = await ogw(g.ws, ['loop', 'variants', 'g'], { env: { ...g.ws.env, OGW_JOB_ID: 'varjob' } });
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
+    // a span per variant from the start of its agent to its end (failed for the variant whose agent failed), the judging,
+    // the merge and the removal of the other worktrees (ogw.md `## time`)
+    const spans = readFileSync(varjob.spans, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { name?: string; end: number | null; failed?: true });
+    const ended = spans.filter((l) => l.end !== null && l.name !== undefined);
+    expect(ended.filter((l) => l.name?.startsWith('variant ') === true).map((l) => [l.name, l.failed === true]).sort()).toEqual([['variant 1', false], ['variant 2', false], ['variant 3', true]]);
+    expect(ended.filter((l) => l.name?.startsWith('variant ') !== true).map((l) => l.name)).toEqual(expect.arrayContaining(['judging', 'merge', 'remove worktrees']));
     const [v1, v2, v3] = fake.content.map((c) => c.id) as [string, string, string];
     // the inputs: the content input with `## variant`, committed before the agents start
     expect(fake.content.map((c) => c.input)).toEqual([1, 2, 3].map((k) => join(g.root, `${R}/content-input-2-v${String(k)}.md`)));

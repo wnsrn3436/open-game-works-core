@@ -346,7 +346,8 @@ export class Supervisor {
   private async bootInJob(): Promise<void> {
     const spans = this.record.spans;
     if (spans === undefined) return this.boot();
-    return inJob(spans.job, (await jobPaths(spans.job, this.env)).spans, () => this.boot(), spans.span);
+    // a line it cannot write is left to the command of the job, which writes the same file: the boot goes on
+    return inJob(spans.job, (await jobPaths(spans.job, this.env)).spans, () => this.boot(), { parent: spans.span, writeFailure: 'leave' });
   }
 
   private async boot(): Promise<void> {

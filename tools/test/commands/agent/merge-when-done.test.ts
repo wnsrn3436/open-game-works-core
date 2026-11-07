@@ -1,7 +1,7 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { listJobs, readJob } from '../../../src/lib/jobs.ts';
+import { jobPaths, listJobs, readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeAgentCli } from './helpers.ts';
 
@@ -75,6 +75,11 @@ describe('ogw agent merge --when-done', () => {
     expect(syncJob.argv).toEqual(['loop', 'sync', 'nogame', '--wait']);
     expect(checkJob.startedAt).toBeLessThanOrEqual(syncJob.startedAt);
     expect(sh(ws.coreImpl, 'git', ['log', '--format=%s', '-2']).trim().split('\n').sort()).toEqual([`ogw agent merge ${routing}`, `ogw agent merge ${storage}`].sort());
+    // its spans (ogw.md `## time`): the start of the job, the wait for the jobs as a step, a merge per job; the jobs it
+    // started are in the job span
+    const spans = readFileSync((await jobPaths(merge, ws.env)).spans, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { name?: string; end: number | null });
+    expect(spans.filter((l) => l.end !== null && l.name !== undefined).map((l) => l.name)).toEqual(['job start', 'wait for jobs', 'merge', 'merge']);
+    expect([checkJob.parentJob, checkJob.parentSpan]).toEqual([merge, null]);
   });
 
   it('starts an ogw agent job as a --then command, the agent starting its job itself', async () => {
