@@ -78,6 +78,13 @@
     "degradeNetworkDelayMs": 3000,
     "minDecisions": 15
   },
+  "regress": {
+    "repeats": 3,
+    "modelRepeats": 5,
+    "parallel": 6,
+    "permutations": 10000,
+    "level": 0.1
+  },
   "reviewRounds": 4,
   "codeCheck": {
     "maxComplexity": 15
@@ -90,7 +97,8 @@
     "coreImpl": "open-game-works-core-impl",
     "coreReleases": "open-game-works-core-releases",
     "games": "games",
-    "worktrees": "worktrees.noindex"
+    "worktrees": "worktrees.noindex",
+    "regress": "open-game-works-regress"
   },
   "coreReleaseRepository": "wnsrn3436/open-game-works-core-impl",
   "useLocalCore": false,

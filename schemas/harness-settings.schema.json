@@ -22,6 +22,7 @@
     "loopStop",
     "loop",
     "calibration",
+    "regress",
     "reviewRounds",
     "codeCheck",
     "rigCheck",
@@ -182,7 +183,8 @@
         "coreImpl",
         "coreReleases",
         "games",
-        "worktrees"
+        "worktrees",
+        "regress"
       ],
       "properties": {
         "coreImpl": {
@@ -196,6 +198,10 @@
         },
         "worktrees": {
           "description": "The folder of the game repo and core worktrees that the harness tool creates. Kept outside games",
+          "type": "string"
+        },
+        "regress": {
+          "description": "The regress repo of the regression suite (`## regress` of `tools/ogw.md`). Kept outside games and worktrees, so that the sandbox of the agents that write game code blocks it",
           "type": "string"
         }
       }
@@ -422,6 +428,46 @@
           "description": "The smallest total of a value of a rate that counts",
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "regress": {
+      "description": "Values of the regression suite. `## regress` of `tools/ogw.md` defines their meaning",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repeats",
+        "modelRepeats",
+        "parallel",
+        "permutations",
+        "level"
+      ],
+      "properties": {
+        "repeats": {
+          "description": "The seed-runs per seed and side of `ogw regress run` without `--repeats`",
+          "type": "integer",
+          "minimum": 1
+        },
+        "modelRepeats": {
+          "description": "The `--repeats` of a comparison whose sides differ only in agent models",
+          "type": "integer",
+          "minimum": 1
+        },
+        "parallel": {
+          "description": "The largest number of seeds whose seed-runs run at once",
+          "type": "integer",
+          "minimum": 1
+        },
+        "permutations": {
+          "description": "The number of permutations of the permutation test of a comparison",
+          "type": "integer",
+          "minimum": 1
+        },
+        "level": {
+          "description": "The p below which a difference of a measure is `better` or `worse`",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
         }
       }
     },
