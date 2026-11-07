@@ -17,7 +17,7 @@ import { cpuSharesDir, parallelismOf, recordTarget, runResult, takeRenderPasses,
 import type { ModuleResult } from '../../../src/commands/core/lib/test-records.ts';
 import { toolProgram } from '../../../src/commands/env/api.ts';
 import { newAgentKey } from '../../../src/lib/agentctx.ts';
-import { jobsDir } from '../../../src/lib/jobs.ts';
+import { jobsDir, listJobs } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, sh } from '../../helpers/workspace.ts';
 import { fakeAgentJob } from '../instance/agents.ts';
 import { writeFiles } from './helpers.ts';
@@ -288,6 +288,50 @@ describe('ogw core test godot', () => {
       expect(run.code, argv.join(' ')).toBe(1);
       expect(`${run.stdout}${run.stderr}`).toContain(message);
     }
+  });
+
+  it('takes a --file path relative to the checkout, the module folder or its tests/ folder, or absolute, when it names one test file', async () => {
+    const { ws, env, log } = setup();
+    writeFiles(ws.coreImpl, { 'client/godot/core/ui_core/tests/test_one.gd': 'extends GutTest\n' });
+    commitAll(ws.coreImpl, 'a test file');
+    const forms = ['test_one.gd', 'tests/test_one.gd', 'client/godot/core/ui_core/tests/test_one.gd', join(ws.coreImpl, 'client/godot/core/ui_core/tests/test_one.gd')];
+    for (const file of forms) {
+      expect(await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', file], { env }), file).toMatchObject({ code: 0, stdout: 'UICore pass\n' });
+    }
+    const runs = log().filter((c): c is string[] => Array.isArray(c) && c.includes('-gtest=res://core/ui_core/tests/test_one.gd'));
+    expect(runs).toHaveLength(forms.length);
+    // a file that is not there names the paths tried
+    const missing = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', 'test_two.gd'], { env });
+    expect(missing.stderr).toBe(
+      '--file must be a .gd file in client/godot/core/ui_core/tests/ of UICore: test_two.gd (tried test_two.gd, client/godot/core/ui_core/test_two.gd, client/godot/core/ui_core/tests/test_two.gd)\n',
+    );
+    // a value that names a file of the module folder and another of tests/ names two files
+    writeFiles(ws.coreImpl, { 'client/godot/core/ui_core/tests/tests/test_one.gd': 'extends GutTest\n' });
+    commitAll(ws.coreImpl, 'a nested test file');
+    const two = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', 'tests/test_one.gd'], { env });
+    expect(two.code).toBe(1);
+    expect(two.stderr).toContain('--file names more than one .gd file in client/godot/core/ui_core/tests/ of UICore: tests/test_one.gd');
+  });
+
+  it('reads a module argument that holds whitespace as the modules it holds', async () => {
+    const { ws, env } = setup();
+    const run = await ogw(ws, ['core', 'test', 'godot', 'LogCore  UICore\n'], { env });
+    expect(run.code).toBe(0);
+    expect(run.stdout.split('\n').filter((l) => l.endsWith(' pass')).sort()).toEqual(['LogCore pass', 'UICore pass']);
+  });
+
+  it('refuses the --file arguments before it starts a job, and names the command without --web', async () => {
+    const { ws, env } = setup();
+    writeFiles(ws.coreImpl, { 'client/godot/core/ui_core/tests/test_one.gd': 'extends GutTest\n' });
+    commitAll(ws.coreImpl, 'a test file');
+    const jobs = (await listJobs(env)).length;
+    const web = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--web', '--file', 'test_one.gd', '--background'], { env });
+    expect(web).toEqual({ code: 1, stdout: '', stderr: '--file is for server and a native engine run, not godot --web: ogw core test godot UICore --file test_one.gd runs that file\n' });
+    const missing = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', 'test_two.gd', '--background'], { env });
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain('--file must be a .gd file in client/godot/core/ui_core/tests/ of UICore: test_two.gd');
+    expect((await ogw(ws, ['core', 'test', 'godot', 'UICore', 'LogCore', '--file', 'test_one.gd', '--background'], { env })).stderr).toBe('--file takes exactly one module\n');
+    expect((await listJobs(env)).length).toBe(jobs);
   });
 
   it('records nothing for a checkout with changes, even when every module passes', async () => {

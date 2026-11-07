@@ -1,7 +1,7 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
-import { join } from 'node:path';
-import { flag, str, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
+import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
+import { flag, str, type CommandArgs, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { exists, readJsonIfExists, writeIfChanged, writeJsonAtomic } from '../../lib/fsx.ts';
 import { coreSettingsFile, coreSettingTypesFile } from '../generate/api.ts';
@@ -189,20 +189,61 @@ function makeRunner(ctx: Context, implDir: string, target: Target, work: string,
   return toolsRunner(ctx, implDir);
 }
 
+/** The modules of the `<module>` arguments, each split at whitespace (ogw.md `## core spec and core test`). */
+export function moduleArgs(given: readonly string[]): string[] {
+  return given.flatMap((arg) => arg.split(/\s+/).filter((name) => name !== ''));
+}
+
+async function realOf(path: string): Promise<string> {
+  return realpath(path).catch(() => resolve(path));
+}
+
+/** The command line of a `--file` run of `argv` (the arguments after `ogw core test`) without `--web`. */
+function withoutWeb(argv: readonly string[]): string {
+  return ['ogw', 'core', 'test', ...argv.filter((a) => a !== '--web')].join(' ');
+}
+
 /**
- * `--file`: one test file of the one module given, checkout relative, in that module's `tests/` folder. A server test
- * file is a `*.test.ts`; a Godot one a `.gd` script, run as its `res://` path. Not for `tools` or a browser run.
+ * `--file`: one test file of the one module given, in that module's `tests/` folder, given relative to the checkout, to
+ * the module folder or to the `tests/` folder, or absolute (ogw.md `## core spec and core test`). A server test file is
+ * a `*.test.ts`; a Godot one a `.gd` script, run as its `res://` path. Not for `tools` or a browser run.
  */
-function checkTestFile(implDir: string, target: Target, modules: readonly string[], file: string): string {
-  if (target.kind === 'tools' || (target.kind === 'engine' && target.web)) throw new OgwError(`--file is for server and a native engine run, not ${recordTarget(target)}`);
+async function checkTestFile(implDir: string, target: Target, modules: readonly string[], file: string, argv: readonly string[]): Promise<string> {
+  if (target.kind === 'tools') throw new OgwError('--file is for server and a native engine run, not tools');
+  if (target.kind === 'engine' && target.web) {
+    throw new OgwError(`--file is for server and a native engine run, not ${recordTarget(target)}: ${withoutWeb(argv)} runs that file`);
+  }
   if (modules.length !== 1) throw new OgwError('--file takes exactly one module');
   const module = modules[0] as string;
-  const folder = target.kind === 'server' ? `server/core/${module}/tests/` : `client/${target.engine}/core/${moduleFolder(module)}/tests/`;
+  const moduleDir = target.kind === 'server' ? `server/core/${module}/` : `client/${target.engine}/core/${moduleFolder(module)}/`;
+  const folder = `${moduleDir}tests/`;
   const suffix = target.kind === 'server' ? '.test.ts' : '.gd';
-  if (!file.startsWith(folder) || !file.endsWith(suffix) || file.includes('..') || !exists(join(implDir, file))) {
-    throw new OgwError(`--file must be a ${suffix} file in ${folder} of ${module}: ${file}`);
+  const tried = isAbsolute(file)
+    ? [relative(await realOf(implDir), await realOf(file))]
+    : [file, `${moduleDir}${file}`, `${folder}${file}`].map((path) => normalize(path));
+  const found = [...new Set(tried)].filter((path) => path.startsWith(folder) && path.endsWith(suffix) && exists(join(implDir, path)));
+  if (found.length !== 1) {
+    const what = found.length === 0 ? `--file must be a ${suffix} file in ${folder} of ${module}` : `--file names more than one ${suffix} file in ${folder} of ${module}`;
+    throw new OgwError(`${what}: ${file} (tried ${[...new Set(tried)].join(', ')})`);
   }
-  return target.kind === 'server' ? file : `res://${file.slice(`client/${target.engine}/`.length)}`;
+  const path = found[0] as string;
+  return target.kind === 'server' ? path : `res://${path.slice(`client/${target.engine}/`.length)}`;
+}
+
+/**
+ * What `ogw core test` checks before it starts its job (ogw.md `## core spec and core test`): the core checkout, the
+ * target and the `--file` arguments. Returns the checkout, the target, the modules given and the `--file` test file.
+ */
+async function checkArgs(ctx: Context, args: CommandArgs, usage: string): Promise<{ implDir: string; target: Target; given: string[]; file: string | undefined }> {
+  const [name, ...rest] = args.positionals;
+  if (name === undefined) throw new OgwError(`usage: ${usage}`);
+  const implDir = await resolveCoreImpl(await ctx.workspace(), ctx.cwd, ctx.env);
+  if (!exists(implDir)) throw new OgwError(`not found: ${implDir}`);
+  const target = await parseTarget(implDir, name, flag(args, 'web'));
+  const given = moduleArgs(rest);
+  const fileArg = str(args, 'file');
+  const file = fileArg === undefined ? undefined : await checkTestFile(implDir, target, given, fileArg, args.raw);
+  return { implDir, target, given, file };
 }
 
 async function reportResult(ctx: Context, module: string, result: ModuleResult, durationMs: number | undefined): Promise<void> {
@@ -458,13 +499,14 @@ export const testCommand: CommandDef = {
   name: ['core', 'test'],
   usage: 'ogw core test <engine|server|tools> [<module>...] [--web] [--file <test file>]',
   options: { web: { type: 'boolean' }, file: { type: 'string' } },
-  background: { timeLimitMs: () => LIMITS.jobMs },
+  background: {
+    timeLimitMs: () => LIMITS.jobMs,
+    validate: async (ctx, args) => {
+      await checkArgs(ctx, args, testCommand.usage);
+    },
+  },
   async run(ctx, args) {
-    const [name, ...given] = args.positionals;
-    if (name === undefined) throw new OgwError(`usage: ${this.usage}`);
-    const implDir = await resolveCoreImpl(await ctx.workspace(), ctx.cwd, ctx.env);
-    if (!exists(implDir)) throw new OgwError(`not found: ${implDir}`);
-    const target = await parseTarget(implDir, name, flag(args, 'web'));
+    const { implDir, target, given, file } = await checkArgs(ctx, args, this.usage);
     const work = await newPrivateTempFolder('ogw-core-test-', ctx.env);
     // an idle display that turns off keeps a render pass from running (ogw.md `### Godot core test`)
     const releaseAwake = awakeDeps.hold(ctx.env);
@@ -485,8 +527,6 @@ export const testCommand: CommandDef = {
       try {
         const all = await readCoreSpecDir(implDir);
         const modules = targetModules(all, target, given);
-        const fileArg = str(args, 'file');
-        const file = fileArg === undefined ? undefined : checkTestFile(implDir, target, given, fileArg);
         // a passing result of the same key is used, not run again; a dirty checkout and a --file run neither use nor keep one
         const keys = file === undefined && start.clean ? await moduleKeys(implDir, startHead, target, recordTarget(target), modules, all, ctx.env, (await ctx.settings()).tools) : null;
         const reused = await keptResults(ctx, keys);

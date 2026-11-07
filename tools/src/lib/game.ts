@@ -1,7 +1,8 @@
-import { join } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { OgwError } from './errors.ts';
 import { exists } from './fsx.ts';
-import { commonDir, topLevel } from './git.ts';
+import { commonDir, gitRaw, topLevel } from './git.ts';
 import { segmentsBelow } from './paths.ts';
 import type { Workspace } from './settings.ts';
 
@@ -41,9 +42,43 @@ export async function resolveGame(ws: Workspace, name: string, cwd: string, env:
   return { name, root, mainRoot, commonDir: await commonDir(mainRoot, { env }), inWorktree };
 }
 
-/** When cwd is inside `worktrees/_core/<id>/`, that worktree is `open-game-works-core-impl/`. */
+/** The nearest folder from `cwd` up that is a core tree: it holds `core-spec/` and `settings/core-settings.json`. */
+function coreTreeOf(cwd: string): string | null {
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    if (exists(join(dir, 'core-spec')) && exists(join(dir, 'settings', 'core-settings.json'))) return dir;
+    if (dirname(dir) === dir) return null;
+  }
+}
+
+async function realOf(path: string): Promise<string> {
+  return realpath(path).catch(() => resolve(path));
+}
+
+/** The top of the git worktree of `coreImpl`'s repo that holds `cwd`, or null when `cwd` is in no worktree of that repo. */
+async function coreWorktreeOf(coreImpl: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  if (!exists(join(coreImpl, '.git'))) return null;
+  const here = await gitRaw(cwd, ['rev-parse', '--show-toplevel', '--git-common-dir'], { env }).catch(() => null);
+  if (here === null || here.code !== 0) return null;
+  const [top, common] = here.stdout.trim().split('\n');
+  if (top === undefined || common === undefined) return null;
+  const implCommon = await commonDir(coreImpl, { env }).catch(() => null);
+  if (implCommon === null) return null;
+  return (await realOf(resolve(cwd, common))) === (await realOf(implCommon)) ? top : null;
+}
+
+/**
+ * The core checkout (ogw.md `## core spec and core test`): the git worktree of `open-game-works-core-impl/` that holds
+ * `cwd` (a worktree under `worktrees/_core/<id>/`, or any other), else the main checkout. A core tree that holds `cwd`
+ * and is no such worktree fails, naming the command that makes it one.
+ */
 export async function resolveCoreImpl(ws: Workspace, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const below = segmentsBelow(ws.worktrees, cwd);
   if (below && below.length >= 2 && below[0] === '_core') return topLevel(cwd, { env });
+  const worktree = await coreWorktreeOf(ws.coreImpl, cwd, env);
+  if (worktree !== null) return worktree;
+  const tree = coreTreeOf(cwd);
+  if (tree !== null) {
+    throw new OgwError(`${tree} is a core tree that is not a git worktree of ${ws.coreImpl}; a core command works in a worktree of it: git -C ${ws.coreImpl} worktree add <folder>`);
+  }
   return ws.coreImpl;
 }
