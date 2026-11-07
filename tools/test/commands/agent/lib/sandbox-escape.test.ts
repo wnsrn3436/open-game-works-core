@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeTempName } from '../../../../src/commands/agent/lib/cli-command.ts';
 import { newAgentFolder, newTempFolder, osTempFolder } from '../../../../src/commands/agent/lib/files.ts';
 import { cliToRun } from '../../../../src/commands/agent/lib/launch.ts';
+import { promptRun } from '../../../../src/commands/env/lib/hostcheck.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import { newPrivateTempFolder, privateTempDir } from '../../../../src/lib/secret-files.ts';
 import { OGW_KEYCHAIN_FILE, ogwKeychainFolder, linuxSecretsFolder } from '../../../../src/lib/secrets.ts';
@@ -84,7 +85,7 @@ describe.runIf(process.platform === 'darwin')('play and judge sandbox on macOS',
     }
   }, 60_000);
 
-  it('writes only the agent folder, the temp folders, /dev and the agent CLI login: no git, shell or agent CLI config in home', async () => {
+  it('writes only the agent folder, the temp folders, /dev, the agent CLI login and the Codex installation id: no git, shell or agent CLI config in home', async () => {
     const ws = jobWorkspace();
     const base = await newTempFolder('ogw-writes-');
     // home and TMPDIR of the agent: home is outside every temp folder the sandbox writes
@@ -106,6 +107,11 @@ describe.runIf(process.platform === 'darwin')('play and judge sandbox on macOS',
       join(home, '.claude', 'shell-snapshots', 's.sh'),
       join(home, '.codex', 'config.toml'),
       join(home, '.codex', 'AGENTS.md'),
+      // the PATH aliases of Codex, its shell snapshots and caches
+      join(home, '.codex', 'tmp', 'arg0-macos', 'codex-arg0x', 'git'),
+      join(home, '.codex', 'shell_snapshots', 's.sh'),
+      join(home, '.codex', 'cache', 'codex_apps_tools', 't.json'),
+      join(home, '.codex', 'models_cache.json'),
       join(ws.harness, 'x'),
     ];
     const allowed = [
@@ -113,6 +119,8 @@ describe.runIf(process.platform === 'darwin')('play and judge sandbox on macOS',
       join(temp, 't'),
       join(home, '.claude', '.credentials.json'),
       join(home, '.codex', 'auth.json'),
+      // Codex opens it for writing when it starts
+      join(home, '.codex', 'installation_id'),
       join(home, 'Library', 'Keychains', 'k'),
       '/dev/null',
     ];
@@ -354,6 +362,51 @@ describe.runIf(process.platform === 'darwin')('play and judge sandbox on macOS',
     } finally {
       server.close();
       await rm(cli.profileFolder as string, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('starts Codex in the judge sandbox of the env check prompt run: it opens its installation id for writing, and writes no session store, PATH alias or shell snapshot', async () => {
+    const ws = jobWorkspace();
+    // home and TMPDIR of the agent: home is outside every temp folder the sandbox writes
+    const base = await newTempFolder('ogw-codex-start-');
+    const home = join(base, 'home');
+    const temp = join(base, 'tmp');
+    const codexHome = join(home, '.codex');
+    for (const path of [codexHome, temp]) mkdirSync(path, { recursive: true });
+    for (const name of ['auth.json', 'config.toml', 'thread_history_1.sqlite', 'state_5.sqlite']) writeFileSync(join(codexHome, name), name);
+    // Codex 0.167.0 at its start: its PATH aliases in `tmp/` of its config folder, with a warning when it cannot make
+    // them; its installation id opened for reading and writing (made when missing), without which its in-process app
+    // server does not start; then the session stores of its thread
+    const bin = join(base, 'bin');
+    mkdirSync(bin);
+    const fake = [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const home = process.env.CODEX_HOME || path.join(process.env.HOME, '.codex');",
+      "const write = (rel) => { const p = path.join(home, rel); try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.appendFileSync(p, '+'); return true; } catch { return false; } };",
+      'fs.readFileSync(0);',
+      "if (!write('tmp/arg0-macos/codex-arg0x/apply_patch')) console.error('WARNING: proceeding, even though we could not create PATH aliases');",
+      "try { fs.closeSync(fs.openSync(path.join(home, 'installation_id'), fs.constants.O_RDWR | fs.constants.O_CREAT)); } catch (e) { console.error('Error: failed to initialize in-process app-server client: ' + e.code); process.exit(1); }",
+      "const stores = ['sessions/2026/11/07/rollout-t.jsonl', 'archived_sessions/rollout-t.jsonl', 'thread_history_1.sqlite', 'thread_history_1.sqlite-wal', 'state_5.sqlite', 'history.jsonl', 'shell_snapshots/t.sh'];",
+      "console.log(JSON.stringify({ text: 'ok', written: stores.filter(write) }));",
+      '',
+    ].join('\n');
+    writeFileSync(join(bin, 'codex'), fake);
+    chmodSync(join(bin, 'codex'), 0o755);
+    const env = { ...ws.env, HOME: home, TMPDIR: temp, CLAUDE_CONFIG_DIR: '', CODEX_HOME: '', PATH: `${bin}:${process.env.PATH ?? ''}` };
+    const ctx = createContext({ cwd: ws.root, env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    try {
+      const result = await promptRun(ctx, { cli: 'codex', model: 'm', effort: 'high' }, 'judge');
+      expect(result, result.stderr).toMatchObject({ code: 0, timedOut: false, stdout: `${JSON.stringify({ text: 'ok', written: [] })}\n` });
+      expect(result.stderr).toContain('could not create PATH aliases');
+      expect(existsSync(join(codexHome, 'installation_id'))).toBe(true);
+      for (const name of ['thread_history_1.sqlite', 'state_5.sqlite']) expect(readFileSync(join(codexHome, name), 'utf8')).toBe(name);
+      for (const name of ['sessions', 'archived_sessions', 'thread_history_1.sqlite-wal', 'history.jsonl', 'shell_snapshots', 'tmp']) {
+        expect(existsSync(join(codexHome, name)), name).toBe(false);
+      }
+    } finally {
+      await rm(base, { recursive: true, force: true });
     }
   }, 60_000);
 });

@@ -26,7 +26,7 @@ import {
   agentResumeCommand,
   firstRunCommand,
   agentHomeBlocked,
-  agentLoginWrites,
+  agentHomeWrites,
   agentSettings,
   dockerBlocked,
   localSocketsBlocked,
@@ -249,12 +249,12 @@ async function sharedBlocked(ws: SandboxWorkspace, env: NodeJS.ProcessEnv): Prom
 
 /**
  * Where both sandboxes write: the agent folder, the OS temp folders (`TMPDIR`, else the OS default, and `/tmp`), and
- * the login of the agent CLIs (`agentLoginWrites`). Nothing else in home: not the git, shell and agent CLI config
- * that a process outside the sandbox later reads and runs.
+ * the login of the agent CLIs and the files they need to start (`agentHomeWrites`). Nothing else in home: not the git,
+ * shell and agent CLI config that a process outside the sandbox later reads and runs.
  */
 function allowedWrites(env: NodeJS.ProcessEnv, folder: string | null): NonNullable<Blocked['allowedWrites']> {
-  const login = agentLoginWrites(env);
-  return { folders: [...(folder === null ? [] : [folder]), ...osTemps(env), ...login.folders], files: login.files };
+  const home = agentHomeWrites(env);
+  return { folders: [...(folder === null ? [] : [folder]), ...osTemps(env), ...home.folders], files: home.files };
 }
 
 /** The OS temp folders both sandboxes write: `TMPDIR`, else the OS default, and `/tmp`. */

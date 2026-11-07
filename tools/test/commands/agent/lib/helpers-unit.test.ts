@@ -5,7 +5,7 @@ import { movedCapturePaths } from '../../../../src/commands/agent/lib/launch.ts'
 import {
   agentCliCommand,
   agentHomeBlocked,
-  agentLoginWrites,
+  agentHomeWrites,
   agentSettings,
   claudeTempName,
   defaultConfigFolder,
@@ -347,14 +347,16 @@ describe('agent CLI', () => {
   it('writes only the allowed folders and files: macOS denies every other write first, Linux binds / read-only', async () => {
     const dir = await newTempFolder('ogw-test-writes-');
     for (const name of ['agent', 'tmp', 'games', 'codex', 'claude']) mkdirSync(join(dir, name));
-    for (const name of ['codex/auth.json', 'codex/config.toml', 'claude/.credentials.json']) writeFileSync(join(dir, name), '');
+    for (const name of ['codex/auth.json', 'codex/config.toml', 'codex/installation_id', 'claude/.credentials.json']) writeFileSync(join(dir, name), '');
     const env = { HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'claude'), CODEX_HOME: join(dir, 'codex') };
-    expect(agentLoginWrites(env, 'darwin')).toEqual({
+    // macOS: the logins, and the installation id that Codex opens for writing when it starts
+    expect(agentHomeWrites(env, 'darwin')).toEqual({
       folders: [join(dir, 'Library', 'Keychains')],
-      files: [join(dir, 'claude', '.credentials.json'), join(dir, 'codex', 'auth.json')],
+      files: [join(dir, 'claude', '.credentials.json'), join(dir, 'codex', 'auth.json'), join(dir, 'codex', 'installation_id')],
     });
-    expect(agentLoginWrites(env, 'linux').folders).toEqual([]);
-    const login = agentLoginWrites(env, 'linux');
+    // Linux: only the logins; Codex makes its installation id in the empty folder that hides its config folder
+    expect(agentHomeWrites(env, 'linux')).toEqual({ folders: [], files: [join(dir, 'claude', '.credentials.json'), join(dir, 'codex', 'auth.json')] });
+    const login = agentHomeWrites(env, 'linux');
     const allowedWrites = { folders: [join(dir, 'agent'), join(dir, 'tmp'), join(dir, 'missing')], files: login.files };
     const blocked = { folders: [join(dir, 'games')], files: [], hidden: agentHomeBlocked(env, 'linux').hidden ?? [], allowedWrites };
     const profile = macosProfile(blocked).split('\n');

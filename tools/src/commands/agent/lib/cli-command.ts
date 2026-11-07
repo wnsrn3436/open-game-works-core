@@ -440,13 +440,24 @@ export function agentHomeBlocked(env: NodeJS.ProcessEnv, platform: NodeJS.Platfo
 const LOGIN_FILES: Record<AgentCli, string> = { 'claude-code': '.credentials.json', codex: 'auth.json' };
 
 /**
- * The login of both agent CLIs, the only place in home the play and judge sandbox writes: the login files, and on
- * macOS the Keychain folder (Claude Code keeps its login in the Keychain there).
+ * macOS: the files besides the login that an agent CLI opens for writing in its config folder when it starts, and
+ * without which it does not start. Codex opens `installation_id` for reading and writing (and creates it when it is
+ * missing); denied, its in-process app server fails with `Operation not permitted`. On Linux the Codex config folder is
+ * an empty folder the CLI writes (`SESSION_STORES` `linuxKeep`), so the CLI makes that file there.
  */
-export function agentLoginWrites(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): { folders: string[]; files: string[] } {
-  const files = (Object.keys(CONFIG) as AgentCli[]).map((cli) => join(defaultConfigFolder(cli, env), LOGIN_FILES[cli]));
+const MACOS_START_FILES: Record<AgentCli, readonly string[]> = { 'claude-code': [], codex: ['installation_id'] };
+
+/**
+ * The only places in home the play and judge sandbox writes: the login of both agent CLIs (the login files, and on
+ * macOS the Keychain folder, where Claude Code keeps its login) and, on macOS, the files the agent CLIs need to start
+ * (`MACOS_START_FILES`).
+ */
+export function agentHomeWrites(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): { folders: string[]; files: string[] } {
+  const clis = Object.keys(CONFIG) as AgentCli[];
+  const login = clis.map((cli) => join(defaultConfigFolder(cli, env), LOGIN_FILES[cli]));
+  const start = platform === 'darwin' ? clis.flatMap((cli) => MACOS_START_FILES[cli].map((name) => join(defaultConfigFolder(cli, env), name))) : [];
   const folders = platform === 'darwin' ? [join(env.HOME ?? homedir(), 'Library', 'Keychains')] : [];
-  return { folders, files };
+  return { folders, files: [...login, ...start] };
 }
 
 const UNIX_SCHEME = 'unix://';
