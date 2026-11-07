@@ -26,14 +26,14 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
       "let forged = 'no'; try { fs.writeFileSync(runLog, '{\"runs\": []}'); forged = 'yes'; } catch {}",
       "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png');",
       'const guide = JSON.parse(fs.readFileSync(input, \'utf8\')).playGuide;',
-      "fs.writeFileSync(output, 'blocked ' + blocked + '\\nrun log written ' + forged + '\\nguide ' + fs.readFileSync(guide, 'utf8') + 'capture ' + process.cwd() + '/captures/shot.png\\n| 1 | captures/shot.png\\nscreencaptures/shot.png\\n');",
+      "fs.writeFileSync(output, 'blocked ' + blocked + '\\nrun log written ' + forged + '\\nguide ' + fs.readFileSync(guide, 'utf8') + 'capture ' + process.cwd() + '/captures/shot.png\\n| 1 | captures/shot.png\\nscreencaptures/shot.png\\n' + '\\n## observations\\n\\nnone\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
     const { id, waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
     const final = join(root, 'records/loops/r1/play-1-1.md');
     expect(waited).toMatchObject({ code: 0, stdout: `${final}\n` });
-    expect(readFileSync(final, 'utf8')).toBe(`blocked yes\nrun log written no\nguide # guide\ncapture ${join(evidenceDir, 'play-1-1')}/shot.png\n| 1 | ${join(evidenceDir, 'play-1-1')}/shot.png\nscreencaptures/shot.png\n`);
+    expect(readFileSync(final, 'utf8')).toBe(`blocked yes\nrun log written no\nguide # guide\ncapture ${join(evidenceDir, 'play-1-1')}/shot.png\n| 1 | ${join(evidenceDir, 'play-1-1')}/shot.png\nscreencaptures/shot.png\n\n## observations\n\nnone\n`);
     expect(readFileSync(join(evidenceDir, 'play-1-1', 'shot.png'), 'utf8')).toBe('png');
     const call = fake.calls()[0];
     expect(existsSync(call?.cwd as string)).toBe(false);
@@ -47,6 +47,44 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect((await readJob(id, ws.env)).timeLimitMs).toBe(2_700_000);
     const second = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
     expect(second.waited.stdout).toBe(`${join(root, 'records/loops/r1/play-1-2.md')}\n`);
+  });
+
+  it('fails a judge whose result has no table that its input asks for at once: a judge keeps no session to continue', async () => {
+    const ws = makeWorkspace({ resultFixRounds: 2 });
+    const root = makeGame(ws, 'g', { 'settings.json': {}, 'play-guide.md': '# guide\n' });
+    const fake = fakeAgentCli(ws, "fs.writeFileSync(output, '## vs baseline\\n\\nnone\\n\\n## vs reference\\n\\n| instance | element | result | reason | evidence |\\n|---|---|---|---|---|\\n| A | game feel | good | r | e |\\n');");
+    const input = join(ws.root, 'judge.json');
+    const game = { instance: 'a', playGuide: join(root, 'play-guide.md') };
+    writeFileSync(input, JSON.stringify({ A: game, B: { ...game, instance: 'b' }, fixtures: [], elements: ['game feel'], telemetry: null, reference: { name: 'ref', presentation: 'ref', moments: [] } }));
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const output = join(root, 'records/calibration/6/judge-a-1.md');
+    const id = await startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output, evidence: join(root, 'builds/calibration/6/judge-a-1') } });
+    const waited = await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env });
+    expect(waited.code).toBe(1);
+    expect(waited.stdout).toContain(`failed: result file: \`## vs baseline\` table missing; \`## vs reference\` row A game feel: unknown result good, not one of pass, fail, unknown, n/a\noutput: ${output}\n`);
+    expect(fake.calls()).toHaveLength(1);
+    // nor a Codex judge, whose first run names its thread
+    const codex = fakeAgentCli(ws, `process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 't1' }) + '\\n'); fs.writeFileSync(output, '## vs baseline\\n\\nnone\\n');`);
+    const viaCodex = await startAgentJob(createContext({ cwd: root, env: { ...ws.env, ...codex.env }, stdin: () => Promise.resolve(''), stderr: () => undefined }), {
+      role: 'judge', game: 'g', input, calibration: { output, evidence: join(root, 'builds/calibration/6/judge-a-3') }, agent: { cli: 'codex', model: 'gpt-x', effort: 'low' },
+    });
+    expect((await ogw(ws, ['agent', 'wait', viaCodex, '--timeout', '60000'], { env: codex.env })).stdout).toContain('failed: result file: `## vs baseline` table missing; `## vs reference` table missing\n');
+    expect(codex.calls()).toHaveLength(1);
+    // the input sets what is read: without B and reference, neither table
+    writeFileSync(input, JSON.stringify({ A: game, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
+    const free = await startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output, evidence: join(root, 'builds/calibration/6/judge-a-2') } });
+    expect((await ogw(ws, ['agent', 'wait', free, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
+  });
+
+  it('fails a play agent whose feedback has no observations section at once', async () => {
+    const ws = makeWorkspace();
+    const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n' });
+    const fake = fakeAgentCli(ws, "fs.writeFileSync(output, '## coverage\\n\\nall\\n');");
+    writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
+    const { waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
+    expect(waited.code).toBe(1);
+    expect(waited.stdout).toContain(`failed: result file: \`## observations\` is missing\noutput: ${join(root, 'records/loops/r1/play-1-1.md')}\n`);
+    expect(fake.calls()).toHaveLength(1);
   });
 
   it('runs a judge of ogw judge calibrate without a run, with its result file and captures in the calibration folders', async () => {
@@ -136,7 +174,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const keptPaths = [join(home, '.credentials.json'), join(home, 'settings.json')];
     const behavior = [
       `const seen = [${[...blockedPaths, ...keptPaths].map(readable).join(', ')}];`,
-      "fs.writeFileSync(output, seen.join(' ') + '\\n' + process.env.CLAUDE_CONFIG_DIR + '\\n');",
+      "fs.writeFileSync(output, seen.join(' ') + '\\n' + process.env.CLAUDE_CONFIG_DIR + '\\n' + '\\n## observations\\n\\nnone\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
@@ -160,14 +198,14 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const targets = [join(home, '.gitconfig'), join(home, '.claude', 'settings.json'), join(home, '.codex', 'config.toml'), join(home, '.zshrc')];
     const behavior = [
       `const seen = ${JSON.stringify(targets)}.map((path) => { try { fs.writeFileSync(path, '[core]\\n\\tfsmonitor = /x\\n'); return 'written'; } catch { return 'blocked'; } });`,
-      "fs.writeFileSync(output, seen.join(' ') + '\\n');",
+      "fs.writeFileSync(output, seen.join(' ') + '\\n' + '\\n## observations\\n\\nnone\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const env = { ...fake.env, HOME: home, TMPDIR: ws.root, CLAUDE_CONFIG_DIR: '', CODEX_HOME: '' };
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
     const { waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], env, root);
     expect(waited).toMatchObject({ code: 0 });
-    expect(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8')).toBe('blocked blocked blocked blocked\n');
+    expect(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8')).toBe('blocked blocked blocked blocked\n\n## observations\n\nnone\n');
     for (const path of targets) expect(existsSync(path)).toBe(false);
   });
 
@@ -185,7 +223,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const behavior = [
       `fs.writeFileSync(${JSON.stringify(join(marks, 'started'))}, '');`,
       `for (let i = 0; i < 400 && !fs.existsSync(${JSON.stringify(join(marks, 'go'))}); i++) await new Promise((r) => setTimeout(r, 50));`,
-      `fs.writeFileSync(output, [${late.map(readable).join(', ')}].join(' ') + '\\n');`,
+      `fs.writeFileSync(output, [${late.map(readable).join(', ')}].join(' ') + '\\n' + '\\n## observations\\n\\nnone\\n');`,
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const env = { ...fake.env, CLAUDE_CONFIG_DIR: linkHome };
@@ -201,7 +239,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     writeFileSync(join(marks, 'go'), '');
     const waited = await ogw(ws, ['agent', 'wait', started.stdout.trim(), '--timeout', '60000'], { env });
     expect(waited.code).toBe(0);
-    expect(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8')).toBe('blocked blocked blocked\n');
+    expect(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8')).toBe('blocked blocked blocked\n\n## observations\n\nnone\n');
   });
 
   it('commits and removes after play only what the job set before the agent CLI started, not what its record says then', async () => {
@@ -215,7 +253,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const behavior = [
       `fs.writeFileSync(${JSON.stringify(join(marks, 'started'))}, '');`,
       `for (let i = 0; i < 400 && !fs.existsSync(${JSON.stringify(join(marks, 'go'))}); i++) await new Promise((r) => setTimeout(r, 50));`,
-      "fs.writeFileSync(output, 'result\\n');",
+      "fs.writeFileSync(output, 'result\\n' + '\\n## observations\\n\\nnone\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
@@ -328,7 +366,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
       'let refused = "";',
       `try { execFileSync(process.execPath, [${JSON.stringify(cliEntry())}, 'command', 'inst9', 'ping'], { stdio: 'pipe' }); } catch (e) { refused = String(e.stderr); }`,
       `try { execFileSync(process.execPath, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'pipe' }); } catch {}`,
-      "fs.writeFileSync(output, refused + '\\nkey ' + (process.env.OGW_AGENT_KEY ?? '').split('.')[0] + '\\n');",
+      "fs.writeFileSync(output, refused + '\\nkey ' + (process.env.OGW_AGENT_KEY ?? '').split('.')[0] + '\\n' + '\\n## observations\\n\\nnone\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
@@ -354,7 +392,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     writeFileSync(hook, `import { writeFileSync } from 'node:fs';\nif (process.argv.includes(${JSON.stringify(BROKER_RUN)})) writeFileSync(${JSON.stringify(dump)}, JSON.stringify(process.env));\n`);
     const behavior = [
       `try { execFileSync(process.execPath, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'pipe' }); } catch {}`,
-      "fs.writeFileSync(output, (process.env.OGW_AGENT_KEY ?? '') + '\\n' + process.cwd() + '\\n' + (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '') + '\\n');",
+      "fs.writeFileSync(output, (process.env.OGW_AGENT_KEY ?? '') + '\\n' + process.cwd() + '\\n' + (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '') + '\\n' + '\\n## observations\\n\\nnone\\n');",
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const dropped = {

@@ -17,6 +17,12 @@ export const GAME_ROLES: readonly Role[] = [
   'client-hardening',
 ];
 
+/**
+ * The roles whose result file has fix rounds (ogw.md `### result format` of `## agent`): the roles with a result format
+ * check whose agent CLI keeps a session. Play and judge keep none.
+ */
+export const FIX_ROUND_ROLES: readonly Role[] = ['content', 'server-hardening', 'client-hardening', 'review'];
+
 /** Roles that work in a new worktree of the game repo. */
 export const GAME_WORKTREE_ROLES: readonly Role[] = ['resource', 'translation', 'server-hardening', 'client-hardening'];
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { debtMismatch, outOfScopeItem, parseReviewFile, urgentOutOfScope } from '../../../src/commands/review/lib/review-file.ts';
+import { formatReviewInput, formatSpecReviewInput } from '../../../src/commands/review/lib/input.ts';
+import { debtMismatch, outOfScopeItem, parseReviewFile, readReviewFile, reviewFileAgainst, urgentOutOfScope } from '../../../src/commands/review/lib/review-file.ts';
 
 const DEBT_HEAD = '| id | result | finding | evidence |\n|---|---|---|---|';
 
@@ -125,5 +126,43 @@ describe('out of scope items', () => {
     expect(urgentOutOfScope('x.ts:1: medium y')).toBe(false);
     // an item of an earlier form had critical or high only
     expect(urgentOutOfScope('some old line')).toBe(true);
+  });
+});
+
+describe('reviewFileAgainst', () => {
+  const head = '| id | aspect | severity | location | evidence | fix | spec change | confidence |\n|---|---|---|---|---|---|---|---|';
+  const file = (findings: string, debt = 'none'): string => `## findings\n\n${findings}\n\n## previous\n\nnone\n\n## out of scope\n\nnone\n\n## debt\n\n${debt}\n\n## must fix\n\nnone\n\n## unknown\n\nnone\n`;
+  const low = `${head}\n| R1-1 | spec | low | a.ts:1 | e | f | no | 90 |`;
+  const input = (commitRange: string | null, specChanges: string | null = null, debt: string[] = []): string =>
+    formatReviewInput({ side: 'core', target: 'routing', round: 1, definitions: [], previousReview: null, commitRange, coreReports: [], specChanges, debt });
+
+  it('takes low findings only when the commit range of the input is none, whatever its spec changes', () => {
+    expect(reviewFileAgainst(file(low), input(null)).errors).toEqual([]);
+    expect(reviewFileAgainst(file(low), input(null, '/tmp/spec.diff')).errors).toEqual([]);
+    expect(reviewFileAgainst(file(low), input('a..b')).errors).toEqual(['`## findings` row `R1-1`: severity `low` is not one of `critical`, `high`, `medium`']);
+    // a spec review takes them only without spec changes
+    const spec = (changes: string | null): string => formatSpecReviewInput('routing', [], changes, { debt: [], mustFix: [] });
+    expect(reviewFileAgainst(file(low), spec(null)).errors).toEqual([]);
+    expect(reviewFileAgainst(file(low), spec('/tmp/spec.diff')).errors).toHaveLength(1);
+  });
+
+  it('lists every way the file is not in the form, and then whether its list rows answer the items of the input', () => {
+    expect(readReviewFile('## findings\n\n| id | what |\n|---|---|\n\n## out of scope\n\n- a.ts:1 low x\n').errors).toEqual([
+      '`## findings` is neither `none` nor only a table with the columns `id`, `aspect`, `severity`, `location`, `evidence`, `fix`, `spec change`, `confidence`',
+      '`## previous` is missing',
+      '`## out of scope` item is not `<file:line>: <critical, high or medium> <problem and evidence>`: a.ts:1 low x',
+      '`## debt` is missing',
+      '`## must fix` is missing',
+      '`## unknown` is missing',
+    ]);
+    expect(readReviewFile(file(`${head}\n| X | style | high | a.ts:1 | e | f | maybe | 120 |`)).errors).toEqual([
+      '`## findings` row `X`: the id is not `R<round>-<n>`',
+      '`## findings` row `X`: aspect `style` is not one of `correctness`, `spec`, `test evidence`, `security`, `structure`, `efficiency`',
+      '`## findings` row `X`: spec change `maybe` is not one of `yes`, `no`',
+      '`## findings` row `X`: confidence `120` is not an integer from 0 to 100',
+    ]);
+    expect(reviewFileAgainst(file('none'), input(null, null, ['D1: a.ts:1: medium p'])).errors).toEqual(['## debt rows none do not answer the debt items D1']);
+    const answered = reviewFileAgainst(file('none', `${DEBT_HEAD}\n| D1 | fixed | none | gone |`), input(null, null, ['D1: a.ts:1: medium p']));
+    expect(answered).toMatchObject({ errors: [], file: { debt: [{ id: 'D1', result: 'fixed' }] } });
   });
 });

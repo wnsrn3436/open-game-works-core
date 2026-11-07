@@ -51,6 +51,17 @@ export function agentCliCommand(agent: AgentSettings): CliCommand {
   };
 }
 
+/**
+ * The agent CLI command of `agentCliCommand` that continues the session `session` of the job (ogw.md `### result format`
+ * of `## agent`): Claude Code with `--resume <session>`, Codex `codex exec resume` with the options of `codex exec`, then
+ * the session and `-` (the prompt on stdin).
+ */
+export function agentResumeCommand(agent: AgentSettings, session: string): CliCommand {
+  const command = agentCliCommand(agent);
+  if (agentCli(agent) === 'claude-code') return { cmd: command.cmd, args: [...command.args, '--resume', session] };
+  return { cmd: command.cmd, args: ['exec', 'resume', ...command.args.slice(1, -1), session, '-'] };
+}
+
 /** `args` without the first `--output-format json` of Claude Code (`CLAUDE_JSON_OUTPUT`). */
 export function withoutJsonOutput(args: readonly string[]): string[] {
   const at = args.findIndex((arg, i) => arg === CLAUDE_JSON_OUTPUT[0] && args[i + 1] === CLAUDE_JSON_OUTPUT[1]);

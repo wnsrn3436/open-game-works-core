@@ -14,7 +14,7 @@ import { privateTempDir } from '../../../src/lib/secret-files.ts';
 import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/launch.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
 import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
-import { fakeAgentCli, gameWithRun, noUsage, readRunLog, runAgent, WRITE_OUTPUT } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, noUsage, readRunLog, RESULT, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
 
@@ -97,7 +97,7 @@ describe('ogw agent: content', () => {
     const keep = [
       "const at = process.argv.indexOf('--session-id');",
       "if (at > 0) { const dir = process.env.CLAUDE_CONFIG_DIR + '/projects/-games-g'; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(dir + '/' + process.argv[at + 1] + '.jsonl', '{}\\n'); }",
-      "fs.writeFileSync('client.gd', 'variant'); fs.writeFileSync(output, 'report\\n');",
+      `fs.writeFileSync('client.gd', 'variant'); ${WRITE_OUTPUT}`,
       "if (process.cwd().includes('agent-')) { execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'variant']); }",
     ].join('\n');
     const fake = fakeAgentCli(ws, keep);
@@ -209,12 +209,12 @@ describe('ogw agent: content', () => {
       '  if (entry && entry.exitCode !== null) break;',
       '  await new Promise((r) => setTimeout(r, 100));',
       '}',
-      "fs.writeFileSync(output, job);",
+      `fs.writeFileSync(output, job + '\\n' + ${JSON.stringify(RESULT)});`,
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
     expect(waited.code).toBe(0);
-    const job = readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8');
+    const job = readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8').split('\n')[0];
     expect(await readRunLog(ws, id)).toEqual({ runs: [{ command: 'ogw check nogame', startedAt: expect.any(Number) as number, exitCode: 1, summary: null, job }], usage: noUsage('claude-opus-5-5', 'high') });
   });
 
@@ -357,14 +357,14 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('o
       '  result[name] = { read: open(() => fs.readFileSync(path)), child: open(() => execFileSync(\'/bin/cat\', [path], { stdio: \'ignore\' })) };',
       '  open(() => fs.appendFileSync(path, \'x\'));',
       '}',
-      'fs.writeFileSync(output, JSON.stringify(result));',
+      `fs.writeFileSync(output, JSON.stringify(result) + '\\n' + ${JSON.stringify(RESULT)});`,
     ].join('\n');
     const fake = fakeAgentCli(ws, behavior);
     const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'records/loops/r1/content-input-1.md')], fake.env, root);
     expect(waited.code).toBe(0);
     const all = { read: true, child: true };
     const none = { read: false, child: false };
-    expect(JSON.parse(readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8'))).toEqual({
+    expect(JSON.parse(readFileSync(join(root, 'records/loops/r1/content-1.md'), 'utf8').split('\n')[0] as string)).toEqual({
       own: all,
       ownWorktree: all,
       core: all,
@@ -675,18 +675,18 @@ describe('ogw agent: core and review', () => {
     const { id, waited } = await runAgent(ws, ['review', '--input', input], fake.env);
     const worktree = join(ws.worktrees, '_core', `agent-${id}`);
     expect(waited.stdout).toBe(`${join(worktree, 'records/review/routing-2.md')}\n`);
-    expect(log(worktree, `agent/${id}`, 'records/review/routing-2.md')).toBe('result\n');
+    expect(log(worktree, `agent/${id}`, 'records/review/routing-2.md')).toBe(RESULT);
   });
 
   it('runs a tool review in a temporary harness worktree and writes the review file outside it', async () => {
     const ws = makeWorkspace();
     const input = join(ws.root, 'review-input.md');
     writeFileSync(input, formatReviewInput({ side: 'tool', target: 'agent merge', round: 1, definitions: [], previousReview: null, commitRange: null, coreReports: [] }));
-    const fake = fakeAgentCli(ws, `fs.writeFileSync(output, (fs.existsSync('AGENTS.md') ? 'saw harness ' : 'no harness ') + (fs.statSync('.').mode & 0o777).toString(8));`);
+    const fake = fakeAgentCli(ws, `fs.writeFileSync(output, (fs.existsSync('AGENTS.md') ? 'saw harness ' : 'no harness ') + (fs.statSync('.').mode & 0o777).toString(8) + '\\n' + ${JSON.stringify(RESULT)});`);
     const { id, waited } = await runAgent(ws, ['review', '--input', input], fake.env);
     const output = waited.stdout.trim();
     expect(output.endsWith('/agent-merge-1.md')).toBe(true);
-    expect(readFileSync(output, 'utf8')).toBe('saw harness 700');
+    expect(readFileSync(output, 'utf8')).toBe(`saw harness 700\n${RESULT}`);
     const cwd = fake.calls()[0]?.cwd as string;
     // the worktree and the review file folder are owner-only folders in the temp folder of ogw, which the sandboxes block
     const temp = await privateTempDir(ws.env);

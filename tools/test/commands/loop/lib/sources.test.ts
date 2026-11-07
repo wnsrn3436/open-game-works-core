@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkFindings, hardeningFindings, judgeFindings, measureFindings, playFindings, settleUiFindings, sortOut, uiQualityFields } from '../../../../src/commands/loop/lib/findings.ts';
+import { checkFindings, hardeningFindings, judgeFindings, measureFindings, playFindings, readContentAgentFixes, settleUiFindings, sortOut, uiQualityFields } from '../../../../src/commands/loop/lib/findings.ts';
 import { readMeasureFile, type MeasureFile } from '../../../../src/commands/loop/lib/files.ts';
 import { targetJson, type MeasuredTarget } from '../../../../src/commands/measure/api.ts';
 import { formatJson } from '../../../../src/lib/fsx.ts';
@@ -212,7 +212,10 @@ describe('finding sources', () => {
       { source: 'hardening', severity: null, owner: 'data', where: 'b.ts:2', what: 'bad', why: null, evidence: ['h.md'], id: null, drop: null },
     ]);
     expect(hardeningFindings('## content agent fixes\n\nnone\n', 'h.md')).toEqual([]);
-    expect(hardeningFindings('## unknown\n\nnone\n', 'h.md')).toEqual([]);
+    // not in the form of the hardening record: read by the rule of the result format check of `ogw agent`
+    expect(() => hardeningFindings('## unknown\n\nnone\n', 'h.md')).toThrow('h.md `## content agent fixes` is missing');
+    expect(() => hardeningFindings('## content agent fixes\n\nthe owner of a.ts\n', 'h.md')).toThrow('h.md `## content agent fixes` is neither `none` nor a table with the columns file:line, owner, problem, task');
+    expect(readContentAgentFixes('## content agent fixes\n\nnone. nothing to fix\n')).toEqual({ table: null, errors: [] });
     for (const header of ['| file | owner | problem | task |', '| file:line | who | problem | task |', '| file:line | owner | issue | task |', '| file:line | owner | problem | todo |']) {
       expect(() => hardeningFindings(`## content agent fixes\n\n${header}\n|---|---|---|---|\n| a | b | c | d |\n`, 'h.md'))
         .toThrow('h.md `## content agent fixes` needs the columns file:line, owner, problem, task');

@@ -53,38 +53,55 @@ export function lostMoments(text: string, instanceSide: 'A' | 'B', judgeMoments:
  * the table cannot be read.
  */
 export function votesOf(text: string, instanceSide: 'A' | 'B', elements: readonly string[]): Record<string, Vote> {
+  const read = readVotes(text, instanceSide, elements);
+  if (read.votes === null) throw new Error(read.errors.join('; '));
+  return read.votes;
+}
+
+/** `votesOf`, with each way the `## vs baseline` table cannot be read in `errors` instead of a throw. */
+function readVotes(text: string, instanceSide: 'A' | 'B', elements: readonly string[]): { votes: Record<string, Vote> | null; errors: string[] } {
   const table = tableOf(text, 'vs baseline');
-  if (!table) throw new Error('`## vs baseline` table missing');
+  if (!table) return { votes: null, errors: ['`## vs baseline` table missing'] };
   const elementCol = column(table, 'element');
   const winnerCol = column(table, 'winner');
-  if (elementCol < 0 || winnerCol < 0) throw new Error('`## vs baseline` columns missing');
+  if (elementCol < 0 || winnerCol < 0) return { votes: null, errors: ['`## vs baseline` columns missing: it needs `element` and `winner`'] };
   const votes: Record<string, Vote> = Object.fromEntries(elements.map((e) => [e, null]));
+  const errors: string[] = [];
   for (const row of table.rows) {
     const winner = cell(row, winnerCol);
-    if (!WINNERS.has(winner)) throw new Error(`unknown winner ${winner}`);
     const element = cell(row, elementCol).replace(/`/g, '').trim();
+    if (!WINNERS.has(winner)) errors.push(`\`## vs baseline\` row ${element}: unknown winner ${winner}, not one of ${[...WINNERS].join(', ')}`);
     if (!(element in votes) || (winner !== 'A' && winner !== 'B')) continue;
     votes[element] = winner === instanceSide ? 'this' : 'baseline';
   }
-  return votes;
+  return errors.length > 0 ? { votes: null, errors } : { votes, errors };
 }
 
 /** `vs reference` of the rows of this commit's side. Throws when the table cannot be read. */
 export function vsReferenceOf(text: string, instanceSide: 'A' | 'B'): VsReference {
+  const read = readVsReference(text, instanceSide);
+  if (read.value === null) throw new Error(read.errors.join('; '));
+  return read.value;
+}
+
+/** `vsReferenceOf`, with each way the `## vs reference` table cannot be read in `errors` instead of a throw. */
+function readVsReference(text: string, instanceSide: 'A' | 'B'): { value: VsReference | null; errors: string[] } {
   const table = referenceTable(text);
-  if (!table) throw new Error('`## vs reference` table missing');
+  if (!table) return { value: null, errors: ['`## vs reference` table missing'] };
   const instanceCol = column(table, 'instance');
   const resultCol = column(table, 'result');
-  if (instanceCol < 0 || resultCol < 0 || column(table, 'element') < 0) throw new Error('`## vs reference` columns missing');
+  if (instanceCol < 0 || resultCol < 0 || column(table, 'element') < 0) return { value: null, errors: ['`## vs reference` columns missing: it needs `instance`, `element` and `result`'] };
   const results: string[] = [];
+  const errors: string[] = [];
   for (const row of table.rows) {
     const result = cell(row, resultCol);
-    if (!REFERENCE_RESULTS.has(result)) throw new Error(`unknown result ${result}`);
-    if (cell(row, instanceCol) === instanceSide && result !== 'n/a') results.push(result);
+    if (!REFERENCE_RESULTS.has(result)) errors.push(`\`## vs reference\` row ${cell(row, instanceCol)} ${cell(row, column(table, 'element'))}: unknown result ${result}, not one of ${[...REFERENCE_RESULTS].join(', ')}`);
+    else if (cell(row, instanceCol) === instanceSide && result !== 'n/a') results.push(result);
   }
-  if (results.length > 0 && results.every((r) => r === 'pass')) return 'pass';
-  if (results.includes('fail')) return 'fail';
-  return 'unknown';
+  if (errors.length > 0) return { value: null, errors };
+  if (results.length > 0 && results.every((r) => r === 'pass')) return { value: 'pass', errors };
+  if (results.includes('fail')) return { value: 'fail', errors };
+  return { value: 'unknown', errors };
 }
 
 /**
@@ -102,6 +119,23 @@ export function judgeVerdict(
     lostMoments: options.withBaseline ? lostMoments(text, instanceSide, options.judgeMoments ?? []) : [],
     vsReference: options.withReference ? vsReferenceOf(text, instanceSide) : null,
   };
+}
+
+/** What of a judge result `judgeVerdict` reads, set by the judge input (ogw.md `### result format` of `## agent`). */
+export interface JudgeReading {
+  /** `B` of the input is not `null`: `## vs baseline` is read. */
+  withBaseline: boolean;
+  /** `reference` of the input is not `null`: `## vs reference` is read. */
+  withReference: boolean;
+  elements: readonly string[];
+}
+
+/** The format errors of a judge result: each way `judgeVerdict` cannot read the tables it reads (ogw.md `### result format`). */
+export function judgeResultErrors(text: string, reading: JudgeReading): string[] {
+  return [
+    ...(reading.withBaseline ? readVotes(text, 'A', reading.elements).errors : []),
+    ...(reading.withReference ? readVsReference(text, 'A').errors : []),
+  ];
 }
 
 export interface JudgeDefect {
@@ -174,7 +208,7 @@ export interface Observation {
  */
 export function observations(text: string): Observation[] {
   const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === '## observations');
+  const start = observationsHeading(lines);
   if (start === -1) return [];
   const out: Observation[] = [];
   for (let i = start + 1; i < lines.length; i++) {
@@ -193,6 +227,16 @@ export function observations(text: string): Observation[] {
     out.push({ line: i + 1, elapsed, scene, input, happened, feeling, severity: severity.replace(/^severity:\s*/, ''), capture });
   }
   return out;
+}
+
+/** The index of the `## observations` heading line, which `observations` reads under; -1 when it is missing. */
+function observationsHeading(lines: readonly string[]): number {
+  return lines.findIndex((line) => line.trim() === '## observations');
+}
+
+/** The format errors of a play feedback: without `## observations`, `observations` reads none (ogw.md `### result format`). */
+export function playFeedbackErrors(text: string): string[] {
+  return observationsHeading(text.split(/\r?\n/)) === -1 ? ['`## observations` is missing'] : [];
 }
 
 /** Adds lines at the end of the `## coverage` section; adds the section at the end when it is missing. */

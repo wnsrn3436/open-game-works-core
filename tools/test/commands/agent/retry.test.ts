@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listJobs, readJob, updateJob } from '../../../src/lib/jobs.ts';
 import { ogw, makeWorkspace, sh } from '../../helpers/workspace.ts';
-import { fakeAgentCli, gameWithRun, runAgent, WRITE_OUTPUT } from './helpers.ts';
+import { fakeAgentCli, gameWithRun, RESULT, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 describe('ogw agent retry', () => {
   it('starts the same role and game with the input and the previous attempt, up to the content retry limit', async () => {
@@ -42,7 +42,7 @@ describe('ogw agent retry', () => {
     expect(waited.code).toBe(1);
     expect(waited.stdout).toContain('failed: the agent left no result file\noutput: none');
     expect((await ogw(ws, ['agent', 'status', second])).stdout).toBe('failed\n');
-    expect(readFileSync(output, 'utf8')).toBe('result\n');
+    expect(readFileSync(output, 'utf8')).toBe(RESULT);
     const same = fakeAgentCli(ws, WRITE_OUTPUT);
     const third = await ogw(ws, ['agent', 'retry', second], { env: same.env, cwd: root });
     expect(third).toMatchObject({ code: 0, stdout: `${output}\n` });

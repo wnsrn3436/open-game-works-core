@@ -257,7 +257,7 @@ describe('ogw agent merge: game worktrees', () => {
       const fake = fakeAgentCli(ws, [
         "fs.writeFileSync('server/a.ts', 'hardened\\n');",
         extra,
-        "fs.writeFileSync(output, 'record');",
+        "fs.writeFileSync(output, '## content agent fixes\\n\\nnone\\n');",
         "execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'harden']);",
       ].join('\n'));
       const { id, waited } = await runAgent(ws, ['server-hardening', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);

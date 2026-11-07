@@ -7,7 +7,7 @@ import { buildTagName, parseHardeningRecordName } from '../../build/lib/names.ts
 import { parseKey, readList } from '../../resource/lib/list.ts';
 import { isSeverity, type Defect, type DefectsFile, type Finding, type FindingsFile } from './defects.ts';
 import type { CheckFile, EvaluateFile, MeasureFile } from './files.ts';
-import { cell, column, parseTable, section } from './markdown.ts';
+import { cell, column, parseTable, section, type Table } from './markdown.ts';
 import { judgeDefects, observations, referenceRows } from './results.ts';
 import { abs, confirmOf, iterationResults, readGameText, runRel } from './run.ts';
 import { MEMORABLE_MOMENT } from './setup.ts';
@@ -215,14 +215,29 @@ export async function hardeningRecords(game: GameRepo, run: RunState): Promise<{
 /** Columns of the hardening record `## content agent fixes` table (`build` `## hardening`). */
 export const CONTENT_AGENT_FIX_COLUMNS = ['file:line', 'owner', 'problem', 'task'] as const;
 
+/**
+ * The `## content agent fixes` table of a hardening record: null for `none`, and null with each way the section is not in
+ * the form of `build` `## hardening` in `errors` (ogw.md `### result format` of `## agent`).
+ */
+export function readContentAgentFixes(text: string): { table: Table | null; errors: string[] } {
+  const lines = section(text, 'content agent fixes');
+  if (lines === null) return { table: null, errors: ['`## content agent fixes` is missing'] };
+  const table = parseTable(lines);
+  if (table === null) {
+    const body = lines.map((line) => line.trim()).filter((line) => line !== '');
+    const none = body.length === 1 && /^none\b/.test(body[0] as string);
+    return { table: null, errors: none ? [] : [`\`## content agent fixes\` is neither \`none\` nor a table with the columns ${CONTENT_AGENT_FIX_COLUMNS.join(', ')}`] };
+  }
+  if (CONTENT_AGENT_FIX_COLUMNS.some((name) => column(table, name) < 0)) return { table: null, errors: [`\`## content agent fixes\` needs the columns ${CONTENT_AGENT_FIX_COLUMNS.join(', ')}`] };
+  return { table, errors: [] };
+}
+
 /** Findings from the `## content agent fixes` table of a hardening record; none when the section is `none`. */
 export function hardeningFindings(text: string, recordPath: string): Finding[] {
-  const table = parseTable(section(text, 'content agent fixes') ?? []);
-  if (!table) return [];
-  const [whereCol, ownerCol, whatCol, taskCol] = CONTENT_AGENT_FIX_COLUMNS.map((name) => column(table, name)) as [number, number, number, number];
-  if (whereCol < 0 || ownerCol < 0 || whatCol < 0 || taskCol < 0) {
-    throw new OgwError(`${recordPath} \`## content agent fixes\` needs the columns ${CONTENT_AGENT_FIX_COLUMNS.join(', ')}`);
-  }
+  const { table, errors } = readContentAgentFixes(text);
+  if (errors.length > 0) throw new OgwError(`${recordPath} ${errors.join('; ')}`);
+  if (table === null) return [];
+  const [whereCol, ownerCol, whatCol] = CONTENT_AGENT_FIX_COLUMNS.map((name) => column(table, name)) as [number, number, number, number];
   return table.rows.map((row) => finding({
     source: 'hardening',
     owner: cell(row, ownerCol) === '' ? null : cell(row, ownerCol),

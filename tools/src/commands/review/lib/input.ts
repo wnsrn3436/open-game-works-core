@@ -94,10 +94,17 @@ export function formatSpecReviewInput(
   ].join('\n');
 }
 
-/** Whether a review input reviews the whole target: its `## spec changes` and `## commit range` are `none` or absent. */
-export function inputWhole(text: string): boolean {
-  const none = (name: string): boolean => (markdownSection(text, name) ?? `## ${name}\nnone\n`).split('\n').slice(1).join('\n').trim() === 'none';
-  return none('spec changes') && none('commit range');
+/** Whether the section `name` of a review input is `none` or absent. */
+function noneSection(text: string, name: string): boolean {
+  return (markdownSection(text, name) ?? `## ${name}\nnone\n`).split('\n').slice(1).join('\n').trim() === 'none';
+}
+
+/**
+ * Whether the review file of a review input takes `low` findings (`agents/review.md`): its `## commit range` is `none`,
+ * and for a spec review its `## spec changes`.
+ */
+export function takesLow(text: string): boolean {
+  return noneSection(text, parseReviewInput(text).side === 'spec' ? 'spec changes' : 'commit range');
 }
 
 /** The ids of the review list items of a review input: `## debt` (`D<n>: ...` lines) and `## must fix` (`M<n>: ...`). */

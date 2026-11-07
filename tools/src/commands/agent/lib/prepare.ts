@@ -21,7 +21,7 @@ import { TOOLS } from '../../core/lib/tools.ts';
 import { coreSpecDependencies } from './order.ts';
 import { newAgentFolder } from './files.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
-import { AGENT_LOG_FOLDER, GAME_ROLES, type AgentMeta } from './meta.ts';
+import { AGENT_LOG_FOLDER, FIX_ROUND_ROLES, GAME_ROLES, type AgentMeta } from './meta.ts';
 import { preparePlayInput } from './play-input.ts';
 import { agentCli, agentSettings, type AgentSession } from './cli-command.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
@@ -134,6 +134,10 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
   const jobId = id ?? newId();
   // the record holds the run log from its start: a job without one is no agent to `agentContext` and the index of running agents
   meta.runLog = await runLogPath(jobId, ctx.env);
+  // a fix round continues the session of the job (ogw.md `### result format`): Claude Code finds it by the id it starts with
+  if (meta.session === undefined && FIX_ROUND_ROLES.includes(meta.role) && agentCli(meta.agent ?? agentSettings(await ctx.settings(), meta.role)) === 'claude-code') {
+    meta.session = { id: randomUUID(), resume: false };
+  }
   return startJob({
     argv: ['agent', '__run'],
     cwd: ctx.cwd,

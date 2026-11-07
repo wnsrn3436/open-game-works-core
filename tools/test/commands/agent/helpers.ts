@@ -33,7 +33,10 @@ export function fakeAgentCli(ws: TestWorkspace, behavior: string): { env: NodeJS
       "import { execFileSync } from 'node:child_process';",
       "const prompt = fs.readFileSync(0, 'utf8');",
       "const field = (n) => (new RegExp('^- ' + n + ': (.*)$', 'm').exec(prompt) || [])[1];",
-      "const output = field('output'); const input = field('input');",
+      // a fix round prompt has no `## ogw agent` lines: the paths are those of the job, as the agent knows them
+      `const jobMeta = () => { try { return JSON.parse(fs.readFileSync(${JSON.stringify(join(ws.harness, '.git', 'ogw-jobs'))} + '/' + String(process.env.OGW_AGENT_KEY).split('.')[0] + '.json', 'utf8')).meta; } catch { return {}; } };`,
+      "const output = field('output') ?? jobMeta().output; const input = field('input') ?? jobMeta().agentInput;",
+      "const fixRound = prompt.startsWith('The result file '); void fixRound;",
       `const runLog = ${JSON.stringify(join(ws.harness, '.git', 'ogw-jobs', RUN_LOG_FOLDER))} + '/' + String(process.env.OGW_AGENT_KEY).split('.')[0] + '.json';`,
       `fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), prompt, pid: process.pid }) + '\\n');`,
       'void execFileSync; void runLog;',
@@ -55,8 +58,17 @@ export function fakeAgentCli(ws: TestWorkspace, behavior: string): { env: NodeJS
   };
 }
 
-/** Behavior: write `text` to the output file. */
-export const WRITE_OUTPUT = "fs.writeFileSync(output, 'result\\n');";
+/**
+ * A result file in the format of every role with a result format check whose input asks for no table of it (ogw.md
+ * `### result format` of `## agent`): the sections those checks read, each `none`, and `- moment: none`.
+ */
+export const RESULT = [
+  '## hypothesis', '', '- moment: none', '',
+  ...['defects', 'content agent fixes', 'observations', 'findings', 'previous', 'out of scope', 'debt', 'must fix', 'unknown'].flatMap((heading) => [`## ${heading}`, '', 'none', '']),
+].join('\n');
+
+/** Behavior: write `RESULT` to the output file. */
+export const WRITE_OUTPUT = `fs.writeFileSync(output, ${JSON.stringify(RESULT)});`;
 
 /** A game repo on branch `loop/r1` with an open loop run `r1` at `iteration`. */
 export async function gameWithRun(

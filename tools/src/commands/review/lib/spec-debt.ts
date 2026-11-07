@@ -5,8 +5,8 @@ import { privateTempPath } from '../../../lib/secret-files.ts';
 import { markdownSection } from '../../agent/lib/prompt.ts';
 import { changeAgentMeta, readAgentJob, resultFile } from '../../agent/lib/meta.ts';
 import { changeLists, checkoutLine, specDebtTarget, specDebtTargetOf } from './debt.ts';
-import { inputListIds, inputWhole, parseReviewInput, targetSlug } from './input.ts';
-import { debtMismatch, findingRowId, parseReviewFile, type Finding, type ReviewFile } from './review-file.ts';
+import { inputListIds, parseReviewInput, takesLow, targetSlug } from './input.ts';
+import { debtMismatch, findingRowId, parseReviewFile, readReviewFile, type Finding, type ReviewFile } from './review-file.ts';
 
 /** Folder of `ogw-temp/` that keeps the review file of each module's last spec review; `ogw review clear core` removes it. */
 const LAST_FOLDER = 'ogw-review-spec-last';
@@ -83,9 +83,19 @@ function asOutOfScope(f: Finding): string {
   return `${f.location}: ${f.severity} ${f.evidence}`;
 }
 
-/** Why a spec review file cannot be taken, or null: its form, its list answers, or its `## previous` ids. */
-async function reviewMismatch(file: ReviewFile | null, input: string): Promise<string | null> {
-  if (file === null) return 'not in the review file format';
+/**
+ * Reads a spec review file against its review input `input` (ogw.md `### result format` of `## agent`): in the review
+ * file form, with `## debt` and `## must fix` rows that answer the input's items and `## previous` ids that are the
+ * finding ids of its previous review; else null, with the format errors.
+ */
+export async function specReviewAgainst(text: string, input: string): Promise<{ file: ReviewFile | null; errors: string[] }> {
+  const read = readReviewFile(text, { low: takesLow(input) });
+  const mismatch = read.file === null ? null : await reviewMismatch(read.file, input);
+  return mismatch === null ? read : { file: null, errors: [mismatch] };
+}
+
+/** Why a spec review file in the review file form cannot be taken, or null: its list answers or its `## previous` ids. */
+async function reviewMismatch(file: ReviewFile, input: string): Promise<string | null> {
   const listMismatch = debtMismatch(file, inputListIds(input));
   if (listMismatch !== null) return listMismatch;
   const expected = await previousIds(input);
@@ -114,9 +124,9 @@ export async function recordSpecDebt(ctx: Context, id: string): Promise<{ lines:
   if (Array.isArray(meta.debtLines)) return { lines: meta.debtLines, error: false };
   const output = resultFile(meta);
   const input = await readText(meta.input);
-  const file = output !== null && exists(output) ? parseReviewFile(await readText(output), { low: inputWhole(input) }) : null;
-  const mismatch = await reviewMismatch(file, input);
-  if (output === null || file === null || mismatch !== null) return { lines: [`review file ${output ?? 'none'}: ${mismatch ?? ''}`], error: true };
+  const read = output !== null && exists(output) ? await specReviewAgainst(await readText(output), input) : null;
+  const file = read?.file ?? null;
+  if (output === null || file === null) return { lines: [`review file ${output ?? 'none'}: ${read === null ? 'missing' : read.errors.join('; ')}`], error: true };
   const module = meta.review.target;
   // a location in the review agent's worktree is kept as a harness path
   const harness = (await ctx.workspace()).harness;

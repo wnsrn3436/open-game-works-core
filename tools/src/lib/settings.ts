@@ -130,6 +130,8 @@ export interface HarnessSettings {
   reviewRunConcurrency: number;
   imageMethod: string;
   backgroundRetryLimit: number;
+  /** The most fix rounds of one `ogw agent` job (ogw.md `### result format` of `## agent`). */
+  resultFixRounds: number;
   webSmokeCpuThrottleRate: number;
   webSmokeBootTimeoutMs: number;
   loopStop: { repeatedDefect: number; oscillation: number; plateau: number; successJudges: number };

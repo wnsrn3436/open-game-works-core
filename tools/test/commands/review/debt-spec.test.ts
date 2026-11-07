@@ -160,13 +160,14 @@ describe('ogw review spec: scope and lists', () => {
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim();
     const broken = await specReview(ws, ['--full'], env);
     expect(broken.waited.code).toBe(1);
-    expect(broken.waited.stdout).toContain(': not in the review file format');
+    // the job fails on its result file after its fix round, and the wait edits no list
+    expect(broken.waited.stdout).toContain('failed: result file: `## previous` is missing; `## out of scope` is missing; `## debt` is missing; `## must fix` is missing; `## unknown` is missing\n');
     const spec = join(ws.harness, 'skills', 'server-core', 'modules', 'routing.md');
     const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
     writeFileSync(spec, `${readFileSync(spec, 'utf8')}\n- changed rule\n`);
     const since = await specReview(ws, ['--since', head], env);
     expect(since.waited.code).toBe(1);
-    expect(since.waited.stdout).toContain(': not in the review file format');
+    expect(since.waited.stdout).toContain('failed: result file: `## findings` row `R1-1`: severity `low` is not one of `critical`, `high`, `medium`\n');
     expect(sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim()).toBe(before);
     // a review of the whole spec takes it
     const full = await specReview(ws, ['--full'], env);

@@ -80,10 +80,15 @@ export async function readJudgeMoments(game: GameRepo, requestRel: string): Prom
 export async function hypothesisMoments(game: GameRepo, requestRel: string, reportRel: string): Promise<Moment[]> {
   const path = join(game.root, reportRel);
   if (!exists(path)) return [];
-  const lines = section(await readFile(path, 'utf8'), 'hypothesis') ?? [];
-  const name = lines.map((line) => /^- moment: `?([^`]+?)`?\s*$/.exec(line.trim())?.[1]).find((n) => n !== undefined);
-  if (name === undefined) return [];
+  const name = hypothesisMomentName(await readFile(path, 'utf8'));
+  if (name === null) return [];
   return (await readJudgeMoments(game, requestRel)).filter((m) => m.name === name);
+}
+
+/** The `<name>` of the first `- moment: <name>` line of `## hypothesis` of a content agent report; null without one. */
+export function hypothesisMomentName(report: string): string | null {
+  const lines = section(report, 'hypothesis') ?? [];
+  return lines.map((line) => /^- moment: `?([^`]+?)`?\s*$/.exec(line.trim())?.[1]).find((n) => n !== undefined) ?? null;
 }
 
 export interface ReferenceMoment {

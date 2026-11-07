@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { claudeUsage, codexUsage, jobUsage, printedUsage, sessionUsageOf, withResultText } from '../../../../src/commands/agent/lib/usage.ts';
+import { claudeUsage, codexThreadId, codexUsage, jobUsage, printedUsage, runsUsage, sessionUsageOf, withResultText } from '../../../../src/commands/agent/lib/usage.ts';
 
 /**
  * Real output of the two agent CLIs on this host: `claude -p --output-format json` (Claude Code 2.1.296) and
@@ -77,5 +77,22 @@ describe('agent usage: Codex', () => {
   it('reads each CLI only by its own output', () => {
     expect(printedUsage('claude-code', fixture('codex.jsonl'))).toBeNull();
     expect(printedUsage('codex', fixture('claude-result.json'))).toBeNull();
+  });
+
+  it('reads the thread a fix round continues from the thread.started event', () => {
+    expect(codexThreadId(fixture('codex-command.jsonl'))).toBe('01a1b10a-4e30-7ec1-b0cc-8edbc88619e9');
+    expect(codexThreadId(fixture('claude-result.json'))).toBeNull();
+    expect(codexThreadId('{"type":"thread.started","thread_id":""}')).toBeNull();
+  });
+});
+
+describe('agent usage: the runs of a job', () => {
+  it('takes the session totals of the last run and sums the turns of the runs', () => {
+    const runs = [fixture('claude-session-new.json'), fixture('claude-session-resumed.json')];
+    expect(runsUsage('claude-code', runs)).toEqual({ ...claudeUsage(runs[1] as string), turns: 2 });
+    // a run without a result object: no turn count, and no usage when it is the last run
+    expect(runsUsage('claude-code', ['stopped', runs[1] as string])).toEqual({ ...claudeUsage(runs[1] as string), turns: null });
+    expect(runsUsage('claude-code', [runs[0] as string, 'stopped'])).toBeNull();
+    expect(runsUsage('codex', [fixture('codex.jsonl'), fixture('codex-command.jsonl')])).toEqual(codexUsage(fixture('codex-command.jsonl')));
   });
 });

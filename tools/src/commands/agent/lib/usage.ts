@@ -102,11 +102,30 @@ export function codexUsage(log: string): PrintedUsage | null {
   };
 }
 
+/** Codex: the `thread_id` of the `thread.started` event, the session `codex exec resume` continues; null without one. */
+export function codexThreadId(log: string): string | null {
+  const id = lastObject(log, (object) => object.type === 'thread.started' && typeof object.thread_id === 'string')?.thread_id;
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
 export function printedUsage(cli: AgentCli, log: string): PrintedUsage | null {
   return cli === 'claude-code' ? claudeUsage(log) : codexUsage(log);
 }
 
-const NONE: PrintedUsage = { inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null };
+/**
+ * What the runs of a job printed, `logs` holding the output of each run in order (ogw.md `### usage` of `## agent`): the
+ * counts and cost the last run printed, the totals of the session, and the sum of the turns of the runs, null when a
+ * run printed none; null when the last run printed none.
+ */
+export function runsUsage(cli: AgentCli, logs: readonly string[]): PrintedUsage | null {
+  const printed = logs.map((log) => printedUsage(cli, log));
+  const last = printed.at(-1) ?? null;
+  if (last === null) return null;
+  const turns = printed.reduce<number | null>((sum, run) => (sum === null || run?.turns === null || run?.turns === undefined ? null : sum + run.turns), 0);
+  return { ...last, turns };
+}
+
+const NONE: PrintedUsage ={ inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null };
 
 export function sessionUsageOf(printed: PrintedUsage): SessionUsage {
   return { inputTokens: printed.inputTokens, cachedTokens: printed.cachedTokens, outputTokens: printed.outputTokens, costUsd: printed.costUsd };

@@ -29,14 +29,35 @@ import { harnessHead, harnessLine } from './harness-pin.ts';
 
 /** `## defects` rows (`id`, `result`, `note`) of the content agent report `content-<n>.md`. */
 export function reportRows(report: string): Map<string, ReportRow> {
+  return readReportRows(report).rows;
+}
+
+/** The `result` cells of `## defects` of the content agent report (`agents/content.md` `## report`). */
+const REPORT_RESULTS = ['fixed', 'refused', 'not reproduced', 'not done'];
+const REPORT_COLUMNS = ['id', 'result', 'note'];
+
+/**
+ * `reportRows`, with each way `## defects` is not in the form of `agents/content.md` `## report` in `errors` (ogw.md
+ * `### result format` of `## agent`): missing, neither `none` nor a table with its columns, or a `result` it does not have.
+ */
+export function readReportRows(report: string): { rows: Map<string, ReportRow>; errors: string[] } {
   const rows = new Map<string, ReportRow>();
-  const table = parseTable(section(report, 'defects') ?? []);
-  if (!table) return rows;
-  const idCol = column(table, 'id');
-  const resultCol = column(table, 'result');
-  const noteCol = column(table, 'note');
-  for (const row of table.rows) rows.set(cell(row, idCol), { result: cell(row, resultCol), note: cell(row, noteCol) });
-  return rows;
+  const lines = section(report, 'defects');
+  if (lines === null) return { rows, errors: ['`## defects` is missing'] };
+  const table = parseTable(lines);
+  if (!table) {
+    const body = lines.map((line) => line.trim()).filter((line) => line !== '');
+    const none = body.length === 1 && /^none\b/.test(body[0] as string);
+    return { rows, errors: none ? [] : [`\`## defects\` is neither \`none\` nor a table with the columns ${REPORT_COLUMNS.join(', ')}`] };
+  }
+  const [idCol, resultCol, noteCol] = REPORT_COLUMNS.map((name) => column(table, name)) as [number, number, number];
+  const errors = idCol < 0 || resultCol < 0 || noteCol < 0 ? [`\`## defects\` columns missing: it needs ${REPORT_COLUMNS.join(', ')}`] : [];
+  for (const row of table.rows) {
+    const result = cell(row, resultCol);
+    if (resultCol >= 0 && !REPORT_RESULTS.includes(result)) errors.push(`\`## defects\` row ${cell(row, idCol)}: result \`${result}\` is not one of ${REPORT_RESULTS.join(', ')}`);
+    rows.set(cell(row, idCol), { result, note: cell(row, noteCol) });
+  }
+  return { rows, errors };
 }
 
 interface Label {

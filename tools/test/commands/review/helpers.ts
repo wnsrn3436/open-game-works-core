@@ -49,7 +49,7 @@ export function agents(ws: TestWorkspace, files: Record<number, string>, fix: st
 
 /**
  * Like `agents`, but the review agent writes `files[n]` on its n-th call (from 1), whatever the round, and runs
- * `review[n]` when given.
+ * `review[n]` when given. A fix round of a call (ogw.md `### result format`) is that call again: it writes the same file.
  */
 export function agentsByCall(ws: TestWorkspace, files: Record<number, string>, fix: string, review: Record<number, string> = {}): ReturnType<typeof fakeAgentCli> {
   const counter = join(ws.root, 'review-calls');
@@ -60,7 +60,7 @@ export function agentsByCall(ws: TestWorkspace, files: Record<number, string>, f
     '} else {',
     `  const files = ${JSON.stringify(files)};`,
     `  const review = ${JSON.stringify(review)};`,
-    `  const n = (fs.existsSync(${JSON.stringify(counter)}) ? Number(fs.readFileSync(${JSON.stringify(counter)}, 'utf8')) : 0) + 1;`,
+    `  const n = (fs.existsSync(${JSON.stringify(counter)}) ? Number(fs.readFileSync(${JSON.stringify(counter)}, 'utf8')) : 0) + (fixRound ? 0 : 1);`,
     `  fs.writeFileSync(${JSON.stringify(counter)}, String(n));`,
     '  if (review[n] !== undefined) eval(review[n]);',
     '  if (files[n] !== undefined) fs.writeFileSync(output, files[n]);',

@@ -99,8 +99,8 @@ describe('ogw review: tool lists', () => {
     const start = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
     expect(inputSection(ws.harness, 'agent merge', 1, 'commit range')).toBe(`${start}..${start}`);
     expect(inputSection(ws.harness, 'agent merge', 1, 'debt')).toBe('- D1: src/b.ts:9: medium a slow loop');
-    // a review file without a row for the given item is not judged
-    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: invalid\nround: 1\nreview file lists: ## debt rows none do not answer the debt items D1\n');
+    // a review file without a row for the given item is not judged: its job failed on it after its fix round
+    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: invalid\nround: 1\n');
     await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], env);
     expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toContain('review debt added: agent merge D2: src/d.ts:4: medium an odd name\n');
     commitAll(ws.harness, 'fix');

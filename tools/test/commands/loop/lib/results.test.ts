@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   appendCoverage,
   judgeDefects,
+  judgeResultErrors,
   judgeSectionText,
   judgeVerdict,
   lostMoments,
   observations,
+  playFeedbackErrors,
   referenceRows,
   votesOf,
   vsReferenceOf,
@@ -163,5 +165,26 @@ describe('play feedback', () => {
     expect(appendCoverage('## observations\n', ['t'])).toBe('## observations\n\n## coverage\n\nt\n');
     expect(appendCoverage('', ['t'])).toBe('## coverage\n\nt\n');
     expect(appendCoverage('## observations', ['t'])).toBe('## observations\n\n## coverage\n\nt\n');
+  });
+});
+
+describe('result format of play and judge', () => {
+  it('lists each table a judge result lacks or cannot be read by, as its input sets them', () => {
+    const reading = { withBaseline: true, withReference: true, elements: ELEMENTS };
+    expect(judgeResultErrors(judge(['| game feel | A | clear | r | e |'], ['| A | game feel | pass | r | e |']), reading)).toEqual([]);
+    expect(judgeResultErrors(judge(['| game feel | C | clear | r | e |', '| progression | D | clear | r | e |'], ['| B | game feel | maybe | r | e |']), reading)).toEqual([
+      '`## vs baseline` row game feel: unknown winner C, not one of A, B, indistinguishable, n/a',
+      '`## vs baseline` row progression: unknown winner D, not one of A, B, indistinguishable, n/a',
+      '`## vs reference` row B game feel: unknown result maybe, not one of pass, fail, unknown, n/a',
+    ]);
+    expect(judgeResultErrors('## vs baseline\n\nnone\n', reading)).toEqual(['`## vs baseline` table missing', '`## vs reference` table missing']);
+    // without B, `## vs baseline` is not read; without reference, `## vs reference` is not
+    expect(judgeResultErrors('## vs baseline\n\nnone\n', { ...reading, withBaseline: false, withReference: false })).toEqual([]);
+    expect(judgeResultErrors('## vs reference\n\n| instance | result |\n|---|---|\n', { ...reading, withBaseline: false })).toEqual(['`## vs reference` columns missing: it needs `instance`, `element` and `result`']);
+  });
+
+  it('needs the observations section of play feedback, under which observations are read', () => {
+    expect(playFeedbackErrors('## coverage\n\nall\n\n## observations\n\nnone\n')).toEqual([]);
+    expect(playFeedbackErrors('## coverage\n\nall\n\n### observations\n\n1 | a | b | c | d | major | e\n')).toEqual(['`## observations` is missing']);
   });
 });

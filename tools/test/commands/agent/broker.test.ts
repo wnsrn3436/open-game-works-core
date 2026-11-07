@@ -386,7 +386,7 @@ results.ipv6 = await connect({ host: '::1', port: ${String(local.port)} });
 results.unix = await connect({ path: ${JSON.stringify(local.unix)} });
 // TEST-NET-1: never routed, so no packet reaches a real host; the profile does not deny it
 results.remote = await connect({ host: '192.0.2.1', port: 9 });
-fs.writeFileSync(output, JSON.stringify(results));
+fs.writeFileSync(output, JSON.stringify(results) + '\\n\\n## observations\\n\\nnone\\n');
 `;
     const fake = fakeAgentCli(ws, behavior);
     writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null }));
@@ -401,7 +401,7 @@ fs.writeFileSync(output, JSON.stringify(results));
       local.close();
       await rm(probe, { force: true });
     }
-    const results = JSON.parse(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8')) as Record<string, unknown>;
+    const results = JSON.parse(readFileSync(join(root, 'records/loops/r1/play-1-1.md'), 'utf8').split('\n')[0] as string) as Record<string, unknown>;
     expect(results.writes).toEqual(Object.fromEntries(Object.keys(writes).map((name) => [name, 'EPERM'])));
     expect(results.help).toEqual({ code: 0, out: outside.stdout, err: '' });
     expect(results.jobStatus).toEqual({ code: 0, out: 'running\n', err: '' });

@@ -23,6 +23,7 @@ import { startBroker, type Broker } from './broker.ts';
 import {
   agentCli,
   agentCliCommand,
+  agentResumeCommand,
   agentHomeBlocked,
   agentLoginWrites,
   agentSettings,
@@ -43,13 +44,14 @@ import {
   type CliCommand,
 } from './cli-command.ts';
 import { AGENT_TEMP_FOLDER, agentFolderPrefix, move, osTempFolder } from './files.ts';
-import { AGENT_LOG_FOLDER, agentCliLog, changeAgentMeta, jobAgentSettings, readAgentJob, type AgentMeta } from './meta.ts';
+import { AGENT_LOG_FOLDER, agentCliLog, changeAgentMeta, FIX_ROUND_ROLES, jobAgentSettings, readAgentJob, type AgentMeta } from './meta.ts';
 import { buildPrompt } from './prompt.ts';
 import { instancesDir } from '../../instance/lib/records.ts';
 import { stopInstancesOfAgent } from '../../instance/api.ts';
 import { readTranslationFiles } from './translation-files.ts';
 import { translationCounts } from './rowmerge.ts';
-import { jobUsage, printedUsage, sessionUsageOf, withResultText, type SessionUsage } from './usage.ts';
+import { codexThreadId, jobUsage, runsUsage, sessionUsageOf, withResultText, type SessionUsage } from './usage.ts';
+import { fixRoundPrompt, resultFormatErrors } from './result-format.ts';
 
 /** The pre-commit hook command core worktrees need. */
 export const PRE_COMMIT_COMMAND = 'meta sync core --staged';
@@ -352,6 +354,8 @@ export const SANDBOXED_ROLES: readonly string[] = ['play', 'judge'];
 
 export interface CliToRun {
   command: CliCommand;
+  /** An agent CLI command (`agentCliCommand`, `agentResumeCommand`) in the sandbox `command` runs in. */
+  wrap: (cli: CliCommand) => CliCommand;
   /** The environment the command runs with. */
   env: NodeJS.ProcessEnv;
   /** A sandboxed role, or a role with other games to block: folder with the sandbox profiles in the temp folder of ogw; the caller removes it. */
@@ -384,13 +388,15 @@ export async function cliToRun(
     const env = { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) };
     const blocksOthers = game !== null && OTHER_GAMES_BLOCKED_ROLES.includes(role) && SANDBOX_PLATFORMS.includes(process.platform);
     const others = blocksOthers ? await otherGameFolders(ws, game) : [];
-    if (others.length === 0) return { command, env, profileFolder: null, brokerCommand: null, brokerWorker: null };
+    if (others.length === 0) return { command, wrap: (cli) => cli, env, profileFolder: null, brokerCommand: null, brokerWorker: null };
     const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
     try {
       const profileFile = join(profileFolder, 'sandbox.sb');
       await writeFile(profileFile, macosFoldersProfile(others));
+      const wrap = (cli: CliCommand): CliCommand => sandboxed(cli, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false });
       return {
-        command: sandboxed(command, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false }),
+        command: wrap(command),
+        wrap,
         env,
         profileFolder,
         brokerCommand: null,
@@ -424,8 +430,10 @@ export async function cliToRun(
       brokerCommand = (argv) => inBroker([BROKER_RUN, ...argv]);
       brokerWorker = inBroker([BROKER_WORKER]);
     }
+    const wrap = (cli: CliCommand): CliCommand => sandboxed(withoutSessionFiles(agentCli(agent), cli), blocked, { macosProfileFile: profileFile });
     return {
-      command: sandboxed(withoutSessionFiles(agentCli(agent), command), blocked, { macosProfileFile: profileFile }),
+      command: wrap(command),
+      wrap,
       env: { ...withOgwOnPath(agentEnv(ctx.env, folder)), ...loginTokenEnv(ctx, agent), ...(socket === null ? {} : { [BROKER_ENV]: socket }) },
       profileFolder,
       brokerCommand,
@@ -437,16 +445,17 @@ export async function cliToRun(
   }
 }
 
+/** Runs agent CLI `command` with `cli.env` once, its output appended to `logPath`. */
 async function runCli(
   id: string,
   ctx: Context,
   meta: AgentMeta,
   cli: CliToRun,
+  command: CliCommand,
   prompt: string,
   logPath: string,
   key: string,
 ): Promise<CliRun> {
-  const { command } = cli;
   const log = openSync(logPath, 'a');
   const child = spawnTracked(command.cmd, command.args, {
     cwd: meta.folder ?? undefined,
@@ -613,18 +622,22 @@ async function afterCliEnv(env: NodeJS.ProcessEnv, meta: AgentMeta): Promise<Nod
   ]);
 }
 
+/** Runs one agent CLI command with its prompt, as a run of the job (`runWithBroker`). */
+type RunOnce = (command: CliCommand, prompt: string) => Promise<CliRun>;
+
 /**
- * Runs the agent CLI with a new agent key. For play and judge the broker serves the CLI's `ogw` calls while it
- * runs; when it ends, the broker closes and the jobs the agent started end with it. From then on `ctx.env` is
- * `run.afterEnv`, for every later git call of this job process.
+ * Runs the runs of the agent CLI that `work` makes with one new agent key. For play and judge the broker serves the
+ * CLI's `ogw` calls while they run; when they end, the broker closes and the jobs the agent started end with it. From
+ * then on `ctx.env` is `run.afterEnv`, for every later git call of this job process.
  */
-async function runWithBroker(
+async function runWithBroker<T>(
   id: string,
   ctx: Context,
   meta: AgentMeta,
   toRun: CliToRun,
-  run: { prompt: string; logPath: string; socket: string | null; runLog: string; afterEnv: NodeJS.ProcessEnv },
-): Promise<CliRun> {
+  run: { logPath: string; socket: string | null; runLog: string; afterEnv: NodeJS.ProcessEnv },
+  work: (runOnce: RunOnce) => Promise<T>,
+): Promise<T> {
   const key = newAgentKey(id);
   await changeAgentMeta(id, ctx.env, (m) => {
     m.keyHash = key.hash;
@@ -636,7 +649,7 @@ async function runWithBroker(
       // the forwarded commands run as this agent: its environment outside the sandbox, with its key
       broker = await startBroker({ socket: run.socket, key: key.value, command: toRun.brokerCommand, worker: toRun.brokerWorker ?? undefined, env: childEnv(agentEnv(ctx.env, meta.folder), key.value) });
     }
-    return await runCli(id, ctx, meta, toRun, run.prompt, run.logPath, key.value);
+    return await work((command, prompt) => runCli(id, ctx, meta, toRun, command, prompt, run.logPath, key.value));
   } finally {
     ctx.env = run.afterEnv;
     await agentCliEnded(id, ctx.env, run.runLog);
@@ -684,15 +697,66 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   const agent = jobAgentSettings(meta, () => agentSettings(settings, meta.role));
   const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder, meta.game);
   if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = withSession(agentCli(agent), toRun.command, meta.session ?? null);
-  const cli = await runWithBroker(id, ctx, meta, toRun, { prompt, logPath, socket, runLog: meta.runLog, afterEnv });
-  await recordUsage(id, ctx, meta, agent, logPath, meta.runLog);
-  const written = await wroteOutput(meta.output, before);
+  const output = meta.output;
+  const rounds = await runWithBroker(id, ctx, meta, toRun, { logPath, socket, runLog: meta.runLog, afterEnv }, (runOnce) =>
+    runRounds(meta, { agent, toRun, logPath, output, before, limit: settings.resultFixRounds, prompt }, runOnce),
+  );
+  await recordUsage(id, ctx, meta, agent, await runLogs(logPath, rounds.starts), meta.runLog);
+  const written = await wroteOutput(output, before);
   await changeAgentMeta(id, ctx.env, (m) => {
     m.outputWritten = written;
   });
   const finished = await finish(id, ctx, meta);
-  const output = finished.meta.output;
-  return jobResult(cli, written && output !== undefined && exists(output) ? output : null, finished.problem, logPath, agentCli(agent));
+  const result = finished.meta.output;
+  return jobResult(rounds.cli, written && result !== undefined && exists(result) ? result : null, finished.problem ?? formatProblem(rounds.errors), logPath, agentCli(agent));
+}
+
+/** What the runs of the agent CLI of a job ended with: the last run, where each run's output starts in the CLI log, and the format errors left. */
+interface Rounds {
+  cli: CliRun;
+  /** The byte offset in `<id>.cli.log` where the output of each run starts, in run order. */
+  starts: number[];
+  errors: string[];
+}
+
+/** The reason a job fails for the format errors left in its result file (ogw.md `### result format`), or null for none. */
+function formatProblem(errors: readonly string[]): string | null {
+  return errors.length === 0 ? null : `result file: ${errors.join('; ')}`;
+}
+
+/** The session a fix round continues: Claude Code the session of the job, Codex the thread its first run printed; null without one. */
+async function fixSession(meta: AgentMeta, agent: AgentSettings, logPath: string, starts: readonly number[]): Promise<string | null> {
+  if (!FIX_ROUND_ROLES.includes(meta.role)) return null;
+  if (agentCli(agent) === 'claude-code') return meta.session?.id ?? null;
+  return codexThreadId((await runLogs(logPath, starts))[0] ?? '');
+}
+
+/**
+ * The first run of the agent CLI, then the fix rounds of its result file (ogw.md `### result format` of `## agent`):
+ * while a run ends with exit code 0 and a result file the agent wrote that has format errors, at most `limit` rounds
+ * continue the session with the prompt that lists them.
+ */
+async function runRounds(
+  meta: AgentMeta,
+  job: { agent: AgentSettings; toRun: CliToRun; logPath: string; output: string; before: string | null; limit: number; prompt: string },
+  runOnce: RunOnce,
+): Promise<Rounds> {
+  const starts = [0];
+  let cli = await runOnce(job.toRun.command, job.prompt);
+  for (let round = 0; ; round++) {
+    if (cli.code !== 0 || cli.error !== null || !(await wroteOutput(job.output, job.before))) return { cli, starts, errors: [] };
+    const errors = await resultFormatErrors(meta, job.output).catch((error: unknown) => [`cannot be read: ${error instanceof Error ? error.message : String(error)}`]);
+    const session = errors.length === 0 || round >= job.limit ? null : await fixSession(meta, job.agent, job.logPath, starts);
+    if (session === null) return { cli, starts, errors };
+    starts.push((await stat(job.logPath)).size);
+    cli = await runOnce(job.toRun.wrap(agentResumeCommand(job.agent, session)), fixRoundPrompt(job.output, errors));
+  }
+}
+
+/** The output of each run in the CLI log, the runs starting at the byte offsets `starts`. */
+async function runLogs(logPath: string, starts: readonly number[]): Promise<string[]> {
+  const log = await readFile(logPath).catch(() => Buffer.alloc(0));
+  return starts.map((start, i) => log.subarray(start, starts[i + 1] ?? log.length).toString('utf8'));
 }
 
 /** The `sessionUsage` of the job of Claude Code session `session` that started last before job `id`; null without one. */
@@ -707,12 +771,13 @@ async function earlierSessionUsage(id: string, session: string, env: NodeJS.Proc
 }
 
 /**
- * Reads the usage the agent CLI printed in its log and writes it as `usage` in the job record and the run log
- * (ogw.md `### usage` of `## agent`). A CLI that printed none leaves the values null; the job does not fail for it.
+ * Reads the usage the runs of the agent CLI printed, `logs` holding the output of each run, and writes it as `usage` in
+ * the job record and the run log (ogw.md `### usage` of `## agent`). A last run that printed none leaves the values
+ * null; the job does not fail for it.
  */
-async function recordUsage(id: string, ctx: Context, meta: AgentMeta, agent: AgentSettings, logPath: string, runLog: string): Promise<void> {
+async function recordUsage(id: string, ctx: Context, meta: AgentMeta, agent: AgentSettings, logs: readonly string[], runLog: string): Promise<void> {
   const cli = agentCli(agent);
-  const printed = printedUsage(cli, await readFile(logPath, 'utf8').catch(() => ''));
+  const printed = runsUsage(cli, logs);
   const session = cli === 'claude-code' ? (meta.session ?? null) : null;
   const before = session?.resume === true ? await earlierSessionUsage(id, session.id, ctx.env) : null;
   const usage = jobUsage(agent, printed, session?.resume === true, before);

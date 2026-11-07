@@ -16,6 +16,7 @@
     "minCoreVersion",
     "resourceGeneration",
     "backgroundRetryLimit",
+    "resultFixRounds",
     "webSmokeCpuThrottleRate",
     "webSmokeBootTimeoutMs",
     "loopStop",
@@ -165,6 +166,11 @@
     },
     "backgroundRetryLimit": {
       "description": "The maximum number of times one failed resource work item or translation work item is given again to a new sub-agent. It is also the maximum number of times `ogw loop evaluate` calls one failed play agent or judge agent again, and the maximum number of times `ogw agent retry` calls a failed content agent again",
+      "type": "integer",
+      "minimum": 0
+    },
+    "resultFixRounds": {
+      "description": "The maximum number of fix rounds of one `ogw agent` job, in which the agent fixes the format errors of its result file in the same session. `### result format` of `## agent` of [ogw](../tools/ogw.md) defines the fix round",
       "type": "integer",
       "minimum": 0
     },

@@ -51,6 +51,7 @@
   "performanceLeaseWaitTimeoutMs": 1800000,
   "jobWaitTimeoutMs": 300000,
   "backgroundRetryLimit": 2,
+  "resultFixRounds": 1,
   "webSmokeCpuThrottleRate": 4,
   "loopStop": {
     "repeatedDefect": 3,
