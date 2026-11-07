@@ -423,7 +423,7 @@ describe('ogw core upgrade', () => {
     vi.mocked(staticCheckDetail).mockRejectedValueOnce(new Error('godot 4.5.1.stable is not installed'));
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
-    expect(run.stderr).toContain('static check of the upgraded checkout could not run: godot 4.5.1.stable is not installed\n');
+    expect(run.stderr).toContain('static check after the commit could not run: godot 4.5.1.stable is not installed\n');
     expect(sh(dir, 'git', ['log', '-1', '--format=%s']).trim()).toBe('core upgrade: 1.0.0 -> 1.1.0');
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.1.0', engine: 'godot' });
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');

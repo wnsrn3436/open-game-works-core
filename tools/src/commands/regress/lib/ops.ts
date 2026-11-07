@@ -2,9 +2,9 @@
 import type { Context } from '../../../lib/command.ts';
 import { parseTokens } from '../../../lib/command.ts';
 import type { GameRepo } from '../../../lib/game.ts';
-import { commitPaths } from '../../../lib/git.ts';
 import { runData } from '../../data/api.ts';
 import { upgradeCommand } from '../../core/upgrade.ts';
+import { commitWithoutHook } from '../../game/lib/commit-without-hook.ts';
 import { list } from '../../settings/list.ts';
 import { set } from '../../settings/set.ts';
 
@@ -20,9 +20,10 @@ export async function upgradeCore(ctx: Context, game: string, version: string): 
 
 /**
  * The first part of `### regress refresh` 1: the `settings` values of the state written to the game settings of its
- * checkout with `ogw settings set` (as the lead agent) and committed without the pre-commit hook, then the paths that
- * `ogw settings list --missing` still gives whose `x-owner` is not `content`. `ok` is false when the write fails or such
- * a path is missing; `text` is the `settings` column of the record.
+ * checkout with `ogw settings set` (as the lead agent) and committed as a commit without the hook (ogw.md
+ * `## pre-commit hook`; no static check runs after it), then the paths that `ogw settings list --missing` still gives
+ * whose `x-owner` is not `content`. `ok` is false when the write fails or such a path is missing; `text` is the
+ * `settings` column of the record.
  */
 export async function stateSettings(ctx: Context, game: GameRepo, values: Readonly<Record<string, unknown>>, version: string): Promise<{ ok: boolean; text: string }> {
   const pairs = Object.entries(values).flatMap(([path, value]) => [path, JSON.stringify(value)]);
@@ -33,7 +34,7 @@ export async function stateSettings(ctx: Context, game: GameRepo, values: Readon
     } catch (error) {
       return { ok: false, text: `failed: ${(error as Error).message.split('\n')[0] ?? ''}` };
     }
-    changed = (await commitPaths(game.root, ['settings.json'], `regress refresh ${version}: state settings`, { env: ctx.env, noVerify: true })) !== null;
+    changed = (await commitWithoutHook(ctx, game, ['settings.json'], `regress refresh ${version}: state settings`)) !== null;
   }
   const listed = await list.run(ctx, parseTokens(['game', game.name, '--missing'], list.options ?? {}));
   const missing = (listed.data as { paths: { path: string; xOwner: string | null }[] }).paths.filter((row) => row.xOwner !== 'content').map((row) => row.path);

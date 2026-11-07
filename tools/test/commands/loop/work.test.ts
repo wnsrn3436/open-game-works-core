@@ -177,6 +177,30 @@ describe('ogw loop input', () => {
     expect(read(b.root, 'records/loops/build-stg-0.2.0/content-input-1.md')).toMatch(/^## kind\n\ncompleteness\n\n## request\n\nnone\n/);
   });
 
+  it('gives the content agent of iteration 1, and only of it, the failure lines that ogw settings commit kept in the run', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 1 });
+    await setRun(g, (run) => {
+      run.data['core upgrade'] = { version: '1.0.0', skipped: [] };
+      run.data['settings commit'] = ['settings.json:4: option entry: no `UICore.open_language_select` call in client content code', 'client/features:1: absent'];
+    });
+    expect((await ogw(g.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
+    expect(read(g.root, 'records/loops/update-1/content-input-1.md')).toContain(
+      [
+        '- core version raised to `1.0.0`',
+        '- static check failure of the game settings commit: settings.json:4: option entry: no `UICore.open_language_select` call in client content code',
+        '- static check failure of the game settings commit: client/features:1: absent',
+        '',
+        '## previous record',
+      ].join('\n'),
+    );
+    await setRun(g, (run) => {
+      run.iteration = 2;
+    });
+    expect((await ogw(g.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
+    expect(read(g.root, 'records/loops/update-1/content-input-2.md')).not.toContain('static check failure');
+  });
+
   it('fails before the first iteration and without the content word', async () => {
     const g = setupGame();
     await openLoopRun(g);

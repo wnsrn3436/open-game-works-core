@@ -108,6 +108,18 @@ export interface CoreUpgradeData {
 
 export const CORE_UPGRADE_KEY = 'core upgrade';
 
+/**
+ * `run.data` key of the failure lines `ogw settings commit` printed before iteration 1 (ogw.md `## settings commit`),
+ * which the content input of iteration 1 gives to the content agent.
+ */
+export const SETTINGS_COMMIT_KEY = 'settings commit';
+
+/** The failure lines `ogw settings commit` kept in the run, in the order printed. */
+export function settingsCommitFailures(run: RunState): string[] {
+  const value = run.data[SETTINGS_COMMIT_KEY];
+  return Array.isArray(value) ? value.filter((line): line is string => typeof line === 'string') : [];
+}
+
 /** `run.data` key that `ogw loop input` sets to true when it asked for the judge moment `memorable_moment`. */
 export const MEMORABLE_MOMENT_KEY = 'memorable moment';
 

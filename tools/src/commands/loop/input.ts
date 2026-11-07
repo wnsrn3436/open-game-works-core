@@ -9,7 +9,7 @@ import { releasedProposals } from '../core/api.ts';
 import { DEFECT_COLUMNS, defectRow, type DefectsFile, type DefectStatus } from './lib/defects.ts';
 import { document, renderTable } from './lib/markdown.ts';
 import type { IterationKind } from './lib/files.ts';
-import { abs, confirmOf, coreUpgrade, iterationKind, MEMORABLE_MOMENT_KEY, openTarget, readRunJson, runFileExists, runRel } from './lib/run.ts';
+import { abs, confirmOf, coreUpgrade, iterationKind, MEMORABLE_MOMENT_KEY, openTarget, readRunJson, runFileExists, runRel, settingsCommitFailures } from './lib/run.ts';
 import { ART_DIRECTION_FILE, MEMORABLE_MOMENT, NAME_FILE, readJudgeMoments } from './lib/setup.ts';
 
 const USAGE = 'ogw loop input <game> content [--brief]';
@@ -62,6 +62,7 @@ async function firstIterationItems(game: GameRepo, run: RunState, brief: boolean
       items.push(`- released core proposal \`${path}\``);
     }
   }
+  for (const line of settingsCommitFailures(run)) items.push(`- static check failure of the game settings commit: ${line}`);
   return items;
 }
 
