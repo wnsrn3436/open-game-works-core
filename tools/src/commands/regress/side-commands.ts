@@ -7,7 +7,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createContext, expectPositionals, flag, list, positional, str, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { writeJsonAtomic } from '../../lib/fsx.ts';
+import { whenNotFound, writeJsonAtomic } from '../../lib/fsx.ts';
 import { head, worktreeAdd, worktreeRemove } from '../../lib/git.ts';
 import { newId } from '../../lib/ids.ts';
 import { harnessRoot, isInside, withoutExtension } from '../../lib/paths.ts';
@@ -31,7 +31,7 @@ export async function promptBytes(harness: string, role: Role): Promise<number> 
   const prompt = await buildPrompt(harness, role, { input: '', output: '', run: null, iteration: null });
   let bytes = Buffer.byteLength(prompt, 'utf8');
   for (const file of linkedFiles(prompt, harness)) {
-    const info = await stat(file).catch(() => null);
+    const info = await stat(file).catch(whenNotFound(null));
     if (info?.isFile() === true) bytes += info.size;
   }
   return bytes;

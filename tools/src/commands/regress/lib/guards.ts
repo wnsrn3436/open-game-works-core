@@ -49,12 +49,7 @@ function headerRows(path: string): number {
 function tableCells(path: string, text: string | null): Map<string, Map<string, string>> {
   const out = new Map<string, Map<string, string>>();
   if (text === null) return out;
-  let rows: string[][];
-  try {
-    rows = parseCsv(text, path).map((record) => record.fields);
-  } catch {
-    return out;
-  }
+  const rows = parseCsv(text, path).map((record) => record.fields);
   const names = rows[headerRows(path) - 1] ?? [];
   for (const row of rows.slice(headerRows(path))) out.set(row[0] ?? '', new Map(names.map((name, i) => [name, row[i] ?? ''])));
   return out;

@@ -94,7 +94,8 @@ export async function sideJson(ctx: Context, side: Side, argv: readonly string[]
   let data: unknown;
   try {
     data = JSON.parse(out.stdout);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
     return { error: `ogw ${argv.slice(0, 2).join(' ')} exit ${String(out.code)}: ${lastLine(out.stderr) || lastLine(out.stdout)}` };
   }
   const message = (data as { error?: unknown } | null)?.error;

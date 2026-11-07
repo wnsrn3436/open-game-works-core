@@ -367,7 +367,10 @@ export async function runSeedRun(ctx: Context, input: SeedRunInput): Promise<See
   } catch (error) {
     result.reason = `the seed-run stopped: ${(error as Error).message.split('\n')[0] as string}`;
     tally.ended = false;
-    return await finish(ctx, input, result, tally).catch(() => result);
+    return await finish(ctx, input, result, tally).catch((finishError: unknown) => {
+      result.reason = `${result.reason ?? 'the seed-run stopped'}; finishing it failed: ${(finishError as Error).message.split('\n')[0] as string}`;
+      return result;
+    });
   }
 }
 

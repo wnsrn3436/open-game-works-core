@@ -155,7 +155,8 @@ function regex(value: unknown, field: string, problems: string[]): string {
   const source = text(value, field, problems);
   try {
     new RegExp(source);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
     problems.push(`${field} is not a regular expression`);
   }
   return source;
