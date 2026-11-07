@@ -250,7 +250,7 @@ export function recommendations(r: Rates, judgeVotes: number): string[] {
   for (const v of r.sensitivity) if (below(v.rate, AGREEMENT_RATE_MIN)) panel.push(`sensitivity ${v.name} ${formatRate(v.rate, min)}`);
   for (const { element, rate } of r.agreement) if (below(rate, HUMAN_AGREEMENT_MIN)) panel.push(`human agreement ${element} ${formatRate(rate, min)}`);
   if (panel.length > 0) {
-    lines.push(`set loop.judgePanel to judges that mix Claude Code models and efforts; add Codex judges only when the Codex CLI is logged in (${panel.join(', ')})`);
+    lines.push(`set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (${panel.join(', ')})`);
   }
   return lines;
 }

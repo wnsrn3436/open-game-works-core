@@ -49,10 +49,14 @@ describe('agent usage: Claude Code', () => {
     expect(own).toMatchObject({ cli: 'claude-code', model: 'claude-haiku-4-5', effort: 'low', inputTokens: 32077, cachedTokens: 31219, outputTokens: 49, turns: 1 });
     expect(own.costUsd).toBeCloseTo(0.0050739, 10);
     // a new session: the printed values
-    expect(jobUsage(CLAUDE, first, false, null)).toEqual({ ...CLAUDE, ...first });
-    // no earlier session usage, or a negative difference: unknown
-    expect(jobUsage(CLAUDE, second, true, null)).toMatchObject({ inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: 1 });
-    expect(jobUsage(CLAUDE, first, true, sessionUsageOf(second))).toMatchObject({ inputTokens: null, outputTokens: null, costUsd: null });
+    expect(jobUsage(CLAUDE, first, false, null)).toEqual({ ...CLAUDE, ...first, costUnknown: null });
+    expect(own.costUnknown).toBeNull();
+    // no earlier session usage, or a negative difference: unknown, and the cost says why
+    expect(jobUsage(CLAUDE, second, true, null)).toMatchObject({ inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, costUnknown: 'session before the job unknown', turns: 1 });
+    expect(jobUsage(CLAUDE, first, true, sessionUsageOf(second))).toMatchObject({ inputTokens: null, outputTokens: null, costUsd: null, costUnknown: 'session before the job unknown' });
+    // no usage line, or one without a cost
+    expect(jobUsage(CLAUDE, null, false, null)).toMatchObject({ costUsd: null, costUnknown: 'no usage line' });
+    expect(jobUsage(CLAUDE, { ...first, costUsd: null }, false, null)).toMatchObject({ inputTokens: first.inputTokens, costUsd: null, costUnknown: 'no usage line' });
   });
 
   it('shows the result object of a failure tail as its result text', () => {
@@ -71,7 +75,15 @@ describe('agent usage: Codex', () => {
 
   it('gives no usage for a turn that failed before it completed', () => {
     expect(codexUsage(fixture('codex-failed.jsonl'))).toBeNull();
-    expect(jobUsage(CODEX, null, false, null)).toEqual({ ...CODEX, inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null });
+    expect(jobUsage(CODEX, null, false, null)).toEqual({ ...CODEX, inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, costUnknown: 'codex prints no money cost', turns: null });
+  });
+
+  it('records the tokens of a job and its cost as unknown, with the reason', () => {
+    const printed = codexUsage(fixture('codex.jsonl'));
+    expect(jobUsage(CODEX, printed, false, null)).toEqual({ ...CODEX, inputTokens: 16552, cachedTokens: 13312, outputTokens: 5, costUsd: null, costUnknown: 'codex prints no money cost', turns: null });
+    // a continued session: the tokens are the difference, as for Claude Code
+    const before = { inputTokens: 16000, cachedTokens: 13000, outputTokens: 2, costUsd: null };
+    expect(jobUsage(CODEX, printed, true, before)).toMatchObject({ inputTokens: 552, cachedTokens: 312, outputTokens: 3, costUsd: null, costUnknown: 'codex prints no money cost' });
   });
 
   it('reads each CLI only by its own output', () => {

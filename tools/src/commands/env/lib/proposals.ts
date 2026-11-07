@@ -734,6 +734,12 @@ function checkNotices(check: Inputs['check']): Notice[] {
   for (const cli of check.agentClis.filter((a) => a.run?.ok !== true)) {
     notices.push({ id: 'agent-cli', detail: `${agentCliLabel(cli)} ${agentCliUsers(cli)} did not finish in an empty folder: ${cli.run?.output ?? ''}` });
   }
+  for (const v of (check.cliVersions ?? []).filter((c) => c.behind === true)) {
+    notices.push({
+      id: 'agent-cli-version',
+      detail: `${v.cli} ${v.installed ?? ''} is behind ${v.latest ?? ''}, the latest version of ${v.source ?? ''}, so its model list may lack the newest models. Update it with ${v.update ?? ''}`,
+    });
+  }
   notices.push(...check.providerClis.flatMap(providerCliNotice));
   notices.push(...loginTokenNotice(check));
   for (const s of (check.pinSecrets ?? []).filter((p) => !p.stored)) {

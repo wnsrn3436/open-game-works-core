@@ -4,12 +4,24 @@ import type { HarnessSettings } from '../../lib/settings.ts';
 import { toolProgram } from './api.ts';
 import { engineSources, installedEngine, type EngineSource, type EngineSourceFailure } from './lib/engines.ts';
 import { hostPlatform } from './lib/host.ts';
+import { baseCli, cliModelChecks, cliVersionChecks } from './lib/agent-clis.ts';
 import { agentCliChecks, buildToolChecks, cliStates, deviceChecks, hostInfo, programChecks, providerCliChecks, tokenCheckRun } from './lib/hostcheck.ts';
 import { ghStatus } from './lib/probe.ts';
 import { harnessSecretService } from '../../lib/secrets.ts';
 import { bearerValueProblem, loginTokenAgent, storedLoginToken } from '../secret/lib/login-token.ts';
 import { AGENT_LOGIN_TOKEN_SECRET } from '../secret/lib/names.ts';
-import { agentCliLabel, agentCliUsers, loginTokenError, loginTokenState, writeEnvResult, type EnvCheckResult, type PinSecretCheck } from './lib/results.ts';
+import {
+  agentCliLabel,
+  agentCliUsers,
+  loginTokenError,
+  loginTokenState,
+  writeEnvResult,
+  type CliModel,
+  type CliModelsCheck,
+  type CliVersionCheck,
+  type EnvCheckResult,
+  type PinSecretCheck,
+} from './lib/results.ts';
 import { postgresPresent, TOOL_NAMES } from './lib/tools.ts';
 
 type ForCommand = 'create-server-core' | 'create-client-core' | 'update-core';
@@ -84,13 +96,15 @@ export async function hostCheck(ctx: Context): Promise<EnvCheckResult> {
   const checkedAt = Date.now();
   // a CLI that is both an agent CLI and a provider CLI is checked once
   const states = cliStates(ctx.env);
-  const [host, programs, gh, engineResult, tools, agentClis, providerClis, testDevices, agentLoginToken] = await Promise.all([
+  const [host, programs, gh, engineResult, tools, agentClis, cliModels, cliVersions, providerClis, testDevices, agentLoginToken] = await Promise.all([
     hostInfo(ctx, platform),
     programChecks(ctx.env),
     ghStatus(ctx.env),
     engineChecks(ctx).then(async (e) => ({ ...e, buildTools: await buildToolChecks(ctx, e.sources, platform) })),
     toolChecks(ctx, settings),
     agentCliChecks(ctx, settings, states),
+    cliModelChecks(ctx, states),
+    cliVersionChecks(ctx.env),
     providerCliChecks(ctx, settings, states),
     deviceChecks(ctx, settings),
     agentLoginTokenCheck(ctx, settings),
@@ -105,6 +119,9 @@ export async function hostCheck(ctx: Context): Promise<EnvCheckResult> {
     tools,
     buildTools: engineResult.buildTools,
     agentClis,
+    baseCli: baseCli(ctx.env),
+    cliModels,
+    cliVersions,
     providerClis,
     testDevices,
     pinSecrets: pinSecretChecks(ctx, settings),
@@ -122,6 +139,23 @@ function yesNo(value: boolean | null): string {
   return value === null ? 'unknown' : value ? 'yes' : 'no';
 }
 
+/** One model of the list: `<id>` with its alias, efforts and description when it has them. */
+function modelText(model: CliModel): string {
+  const parts = [model.alias === null ? null : `alias ${model.alias}`, model.efforts === null ? null : `efforts ${model.efforts.join(' ')}`, model.description];
+  const detail = parts.filter((part): part is string => part !== null && part !== '').join('; ');
+  return detail === '' ? model.id : `${model.id} (${detail})`;
+}
+
+function modelsText(list: CliModelsCheck): string {
+  const models = list.models.length === 0 ? 'none' : list.models.map(modelText).join(', ');
+  return `models of ${list.cli}: ${models}${list.unknown.length === 0 ? '' : `; unknown: ${list.unknown.join('; ')}`}`;
+}
+
+function versionText(v: CliVersionCheck): string {
+  const state = v.behind === null ? `unknown (${v.reason ?? ''})` : v.behind ? `behind, update with ${v.update ?? ''}` : 'latest';
+  return `version of ${v.cli}: ${v.installed ?? 'unknown'}, latest ${v.latest ?? 'unknown'}${v.source === null ? '' : ` (${v.source})`}: ${state}`;
+}
+
 export function checkText(r: EnvCheckResult): string {
   const lines = [
     `host: ${r.host.platform ?? 'unsupported'} ${r.host.os}, ${String(r.host.cpu.count)} CPU ${r.host.cpu.model}, memory ${String(r.host.memoryBytes)} bytes, free disk ${String(r.host.freeDiskBytes ?? 'unknown')} bytes`,
@@ -135,6 +169,9 @@ export function checkText(r: EnvCheckResult): string {
       return `build tool ${t.name} ${t.version} for ${t.platform} (${t.from}): ${state}`;
     }),
     ...r.agentClis.map((a) => `agent CLI ${agentCliLabel(a)} ${agentCliUsers(a)}: installed ${yesNo(a.installed)}, login ${yesNo(a.loggedIn)}, prompt run ${a.run?.ok ? 'ok' : `failed: ${a.run?.output ?? ''}`}`),
+    ...(r.baseCli === undefined ? [] : [`base CLI: ${r.baseCli.cli ?? `unknown (${r.baseCli.reason ?? ''})`}`]),
+    ...(r.cliModels ?? []).map(modelsText),
+    ...(r.cliVersions ?? []).map(versionText),
     ...r.providerClis.map(
       (p) => `provider CLI ${p.provider} (${p.methods.join(', ')}): installed ${yesNo(p.installed)}, login ${yesNo(p.loggedIn)}, billing ${p.billing ?? 'unknown'}${p.detail ? ` (${p.detail})` : ''}`,
     ),

@@ -12,6 +12,7 @@ import { startAgentJob } from '../../../src/commands/agent/api.ts';
 import { cliEntry } from '../../../src/lib/paths.ts';
 import { privateTempDir } from '../../../src/lib/secret-files.ts';
 import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/launch.ts';
+import { agentCliCommand, agentResumeCommand } from '../../../src/commands/agent/lib/cli-command.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
 import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, noUsage, readRunLog, RESULT, runAgent, WRITE_OUTPUT } from './helpers.ts';
@@ -244,7 +245,7 @@ describe('ogw agent: content', () => {
     const fake = fakeAgentCli(ws, `process.stdout.write(fs.readFileSync(${JSON.stringify(usageFixture('claude-result.json'))}, 'utf8')); ${WRITE_OUTPUT}`);
     const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
     expect(waited.code).toBe(0);
-    const usage = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, turns: 1 };
+    const usage = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, costUnknown: null, turns: 1 };
     const { meta } = await readJob(id, ws.env);
     expect(meta.usage).toEqual(usage);
     // a new session: the session totals are those of the job
@@ -265,16 +266,16 @@ describe('ogw agent: content', () => {
     expect(await readRunLog(ws, id)).toEqual({ runs: [], usage: noUsage('claude-opus-5-5', 'high') });
   });
 
-  it('records the tokens that Codex printed, with no cost and no turn count', async () => {
+  it('records the tokens that Codex printed, its cost as unknown with the reason and no turn count, and keeps its thread as the session', async () => {
     const ws = makeWorkspace();
     const { root } = await gameWithRun(ws, { 'in.md': 'x' });
     const fake = fakeAgentCli(ws, `process.stderr.write('Reading additional input from stdin...\\n'); process.stdout.write(fs.readFileSync(${JSON.stringify(usageFixture('codex-command.jsonl'))}, 'utf8')); ${WRITE_OUTPUT}`);
     const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const id = await startAgentJob(ctx, { role: 'content', game: 'g', input: join(root, 'in.md'), agent: { cli: 'codex', model: 'gpt-x', effort: 'low' } });
     expect((await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
-    const usage = { cli: 'codex', model: 'gpt-x', effort: 'low', inputTokens: 33201, cachedTokens: 23552, outputTokens: 51, costUsd: null, turns: null };
-    expect((await readJob(id, ws.env)).meta).toMatchObject({ usage, session: null });
-    expect((await readJob(id, ws.env)).meta.sessionUsage).toBeUndefined();
+    const usage = { cli: 'codex', model: 'gpt-x', effort: 'low', inputTokens: 33201, cachedTokens: 23552, outputTokens: 51, costUsd: null, costUnknown: 'codex prints no money cost', turns: null };
+    expect((await readJob(id, ws.env)).meta).toMatchObject({ usage, session: { id: '01a1b10a-4e30-7ec1-b0cc-8edbc88619e9', resume: false } });
+    expect((await readJob(id, ws.env)).meta.sessionUsage).toEqual({ inputTokens: 33201, cachedTokens: 23552, outputTokens: 51, costUsd: null });
     expect(await readRunLog(ws, id)).toEqual({ runs: [], usage });
   });
 
@@ -307,6 +308,44 @@ describe('ogw agent: content', () => {
     expect(meta.usage).toMatchObject({ inputTokens: 63305 - 31228, cachedTokens: 57939 - 26720, outputTokens: 112 - 63, turns: 1 });
     expect((meta.usage as { costUsd: number }).costUsd).toBeCloseTo(0.0170679 - 0.011994, 10);
     expect(meta.sessionUsage).toEqual({ inputTokens: 63305, cachedTokens: 57939, outputTokens: 112, costUsd: 0.0170679 });
+  });
+
+  it('continues the Codex session of the content agent of the previous fun iteration with codex exec resume, when Codex keeps its file', async () => {
+    const ws = makeWorkspace();
+    const inputs = Object.fromEntries([1, 2, 3].map((n) => [`records/loops/r1/content-input-${String(n)}.md`, '## kind\nfun\n']));
+    const { root, game } = await gameWithRun(ws, inputs, { data: { loop: { kinds: [1, 2, 3].map((iteration) => ({ iteration, kind: 'fun' })) } } });
+    const thread = '01a1b10a-4e30-7ec1-b0cc-8edbc88619e9';
+    // the fake Codex keeps the session file of the thread its new session prints, unless FAKE_NO_SESSION_FILE is set
+    const behavior = [
+      "const resumed = process.argv[3] === 'resume';",
+      `if (!resumed && !process.env.FAKE_NO_SESSION_FILE) { const dir = process.env.CODEX_HOME + '/sessions/2026/11/07'; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(dir + '/rollout-2026-11-07T10-00-00-${thread}.jsonl', '{}\\n'); }`,
+      "const usage = resumed ? { input_tokens: 50000, cached_input_tokens: 40000, output_tokens: 90 } : { input_tokens: 33201, cached_input_tokens: 23552, output_tokens: 51 };",
+      `process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: '${thread}' }) + '\\n' + JSON.stringify({ type: 'turn.completed', usage }) + '\\n');`,
+      WRITE_OUTPUT,
+    ].join('\n');
+    const fake = fakeAgentCli(ws, behavior);
+    const agent = { cli: 'codex' as const, model: 'gpt-x', effort: 'low' };
+    const iterate = async (n: number, env: NodeJS.ProcessEnv = {}): Promise<string> => {
+      await changeRuns(game, (runs) => {
+        (runs[0] as { iteration: number }).iteration = n;
+      });
+      const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env, ...env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+      const id = await startAgentJob(ctx, { role: 'content', game: 'g', input: join(root, `records/loops/r1/content-input-${String(n)}.md`), agent });
+      expect((await ogw(ws, ['agent', 'wait', id, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
+      return id;
+    };
+    await iterate(1);
+    const second = await iterate(2);
+    expect(fake.calls().map((call) => call.argv)).toEqual([agentCliCommand(agent).args, agentResumeCommand(agent, thread).args]);
+    const { meta } = await readJob(second, ws.env);
+    expect(meta.session).toEqual({ id: thread, resume: true });
+    // the usage of the continued session is its totals minus those of the job before, as for Claude Code
+    expect(meta.usage).toMatchObject({ inputTokens: 50000 - 33201, cachedTokens: 40000 - 23552, outputTokens: 90 - 51, costUsd: null, costUnknown: 'codex prints no money cost' });
+    // without the session file Codex cannot continue it: a new session
+    rmSync(join(ws.env.CODEX_HOME as string, 'sessions'), { recursive: true, force: true });
+    const third = await iterate(3, { FAKE_NO_SESSION_FILE: '1' });
+    expect(fake.calls().at(-1)?.argv).toEqual(agentCliCommand(agent).args);
+    expect((await readJob(third, ws.env)).meta.session).toEqual({ id: thread, resume: false });
   });
 
   it('shows the result object of Claude Code as its result text in the failure content', async () => {

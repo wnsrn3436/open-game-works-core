@@ -189,7 +189,7 @@ describe('ogw judge calibrate', () => {
         '',
         '## recommendations',
         '',
-        '- set loop.judgePanel to judges that mix Claude Code models and efforts; add Codex judges only when the Codex CLI is logged in (human agreement tension and release 0.00 (0 of 2), human agreement no friction 0.50 (1 of 2))',
+        '- set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (human agreement tension and release 0.00 (0 of 2), human agreement no friction 0.50 (1 of 2))',
       ].join('\n'),
     );
     expect(report).toContain(`| null-1 | ${main} | ${main} | counted | indistinguishable (0/0) | indistinguishable (0/0) | indistinguishable (0/0) |`);
@@ -312,7 +312,7 @@ describe('ogw judge calibrate', () => {
       ].join('\n'),
     );
     expect(report).toContain(
-      '- set loop.judgePanel to judges that mix Claude Code models and efforts; add Codex judges only when the Codex CLI is logged in (order consistency all 0.00 (0 of 3), order consistency all kappa 0.00, sensitivity all 0.00 (0 of 3))',
+      '- set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (order consistency all 0.00 (0 of 3), order consistency all kappa 0.00, sensitivity all 0.00 (0 of 3))',
     );
     expect(report).toContain('| degraded-network-1 | ');
     expect(report).toContain(' | not counted |  |  |  |');

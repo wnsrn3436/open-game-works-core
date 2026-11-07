@@ -11,8 +11,17 @@ export interface AgentUsage {
   cachedTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
+  /** Why `costUsd` is null (`COST_UNKNOWN`); null when it is a number. */
+  costUnknown: string | null;
   turns: number | null;
 }
+
+/** The reasons a job has no cost (ogw.md `### usage` of `## agent`). `ogw` has no price table to price tokens. */
+export const COST_UNKNOWN = {
+  codex: 'codex prints no money cost',
+  noUsageLine: 'no usage line',
+  session: 'session before the job unknown',
+} as const;
 
 /** The token counts and cost a CLI printed: for a Claude Code job that continues a session, those of the whole session. */
 export interface SessionUsage {
@@ -89,6 +98,13 @@ export function claudeUsage(log: string): PrintedUsage | null {
   };
 }
 
+/** Claude Code: the models that `modelUsage` of the last result object names (its keys); null without a result object. */
+export function claudeResultModels(log: string): string[] | null {
+  const result = lastObject(log, (object) => object.type === 'result');
+  if (result === null) return null;
+  return isPlainObject(result.modelUsage) ? Object.keys(result.modelUsage) : [];
+}
+
 /** Codex: the `usage` of the last `turn.completed` event. Codex prints no money cost and no turn count. */
 export function codexUsage(log: string): PrintedUsage | null {
   const usage = lastObject(log, (object) => object.type === 'turn.completed' && isPlainObject(object.usage))?.usage;
@@ -134,7 +150,7 @@ export function sessionUsageOf(printed: PrintedUsage): SessionUsage {
 /**
  * The usage of the job: what the CLI printed, or for a continued session the printed totals minus `before`, the
  * `sessionUsage` of the job of that session that started last before it (null: none). A value is null when either
- * side lacks it or the difference is negative.
+ * side lacks it or the difference is negative, and `costUnknown` says why the cost is null.
  */
 export function jobUsage(agent: AgentSettings, printed: PrintedUsage | null, resumed: boolean, before: SessionUsage | null): AgentUsage {
   const own: PrintedUsage = { ...(printed ?? NONE) };
@@ -146,7 +162,26 @@ export function jobUsage(agent: AgentSettings, printed: PrintedUsage | null, res
       own[field] = difference === null || difference < 0 ? null : difference;
     }
   }
-  return { cli: agentCli(agent), model: agent.model, effort: agent.effort, ...own };
+  const cli = agentCli(agent);
+  const { turns, ...counts } = own;
+  return { cli, model: agent.model, effort: agent.effort, ...counts, costUnknown: costUnknownReason(cli, printed, own.costUsd), turns };
+}
+
+/** Why a job has no cost: Codex prints none, the last run printed no usage line with a cost, or the session difference failed. */
+function costUnknownReason(cli: AgentCli, printed: PrintedUsage | null, cost: number | null): string | null {
+  if (cost !== null) return null;
+  if (cli === 'codex') return COST_UNKNOWN.codex;
+  return printed === null || printed.costUsd === null ? COST_UNKNOWN.noUsageLine : COST_UNKNOWN.session;
+}
+
+/**
+ * Why the job of `usage` has no cost: its `costUnknown`, for a usage that an older `ogw` wrote without it the reason
+ * the current one gives, and `no usage` without usage. null when it has a cost.
+ */
+export function costUnknownOf(usage: AgentUsage | null): string | null {
+  if (usage === null) return 'no usage';
+  if (usage.costUsd !== null) return null;
+  return usage.costUnknown ?? (usage.cli === 'codex' ? COST_UNKNOWN.codex : COST_UNKNOWN.noUsageLine);
 }
 
 /**

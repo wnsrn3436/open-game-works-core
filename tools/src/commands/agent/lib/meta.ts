@@ -97,13 +97,13 @@ export interface AgentMeta {
   agent?: AgentSettings | null;
   /** content: the k of a variant agent of `ogw loop variants` (ogw.md `## loop variants`); absent or null otherwise. */
   variant?: number | null;
-  /** content with Claude Code: the session the agent CLI starts or continues. */
+  /** A role with fix rounds: the session of the job (ogw.md `## agent`), which a new Codex session gets from its first run. */
   session?: AgentSession | null;
   /** spec review: the lines of what `ogw agent wait` wrote to the spec debt lists, once (`recordSpecDebt`). */
   debtLines?: string[];
   /** Set when the agent CLI ended: the usage of the job (ogw.md `### usage` of `## agent`). */
   usage?: AgentUsage;
-  /** Claude Code with a session: the token counts and cost of the session that its result object printed. */
+  /** A job with a session: the token counts and cost of the session that the usage line of its last run printed. */
   sessionUsage?: SessionUsage;
   [key: string]: unknown;
 }

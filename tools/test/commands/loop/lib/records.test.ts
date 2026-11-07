@@ -95,8 +95,8 @@ const DATA: IterationRecordData = {
   load: [{ platform: 'web', result: 'unknown (host CPU 99%)', hostLoad: { cpuMaxPercent: 99 } }],
   temporary: ['icon/a', 'image/b'],
   cost: [
-    { role: 'content', jobs: 1, inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, withoutUsage: 0, withoutCost: 0 },
-    { role: 'judge', jobs: 2, inputTokens: 16552, cachedTokens: 13312, outputTokens: 5, costUsd: null, withoutUsage: 1, withoutCost: 2 },
+    { role: 'content', jobs: 1, inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, withoutUsage: 0, withoutCost: 0, costUnknown: [] },
+    { role: 'judge', jobs: 2, inputTokens: 16552, cachedTokens: 13312, outputTokens: 5, costUsd: null, withoutUsage: 1, withoutCost: 2, costUnknown: [{ reason: 'codex prints no money cost', jobs: 1 }, { reason: 'no usage', jobs: 1 }] },
   ],
 };
 
@@ -117,7 +117,7 @@ describe('iteration record', () => {
     expect(text).toContain('| web | unknown (host CPU 99%) | {"cpuMaxPercent":99} |');
     expect(text).toContain('#### loser better\n\nnone');
     expect(text).toContain(
-      '## cost\n\n| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |\n|---|---|---|---|---|---|---|---|\n| content | 1 | 31898 | 22611 | 63 | 0.02 | 0 | 0 |\n| judge | 2 | 16552 | 13312 | 5 | none | 1 | 2 |\n',
+      '## cost\n\n| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |\n|---|---|---|---|---|---|---|---|\n| content | 1 | 31898 | 22611 | 63 | 0.02 | 0 | 0 |\n| judge | 2 | 16552 | 13312 | 5 | none | 1 | 2 (codex prints no money cost: 1, no usage: 1) |\n',
     );
     const parsed = parseIterationRecord(text, 1, 'p1');
     expect(parsed.commit).toBe('c1');

@@ -214,29 +214,38 @@ describe('agent CLI', () => {
     });
     const dir = await newTempFolder('ogw-test-config-');
     mkdirSync(join(dir, 'codex'));
-    for (const name of ['auth.json', 'config.toml', 'state_5.sqlite', 'state_5.sqlite-wal', 'memories_1.sqlite', 'logs_2.sqlite-shm', 'goals_1.sqlite']) {
+    const kept = ['auth.json', 'config.toml', 'models_cache.json', 'installation_id'];
+    for (const name of [...kept, 'state_5.sqlite', 'state_5.sqlite-wal', 'memories_1.sqlite', 'logs_2.sqlite-shm', 'thread_history_1.sqlite', 'goals_1.sqlite', 'queue_1.sqlite-wal']) {
       writeFileSync(join(dir, 'codex', name), '');
     }
     const blocked = agentHomeBlocked({ HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'claude'), CODEX_HOME: join(dir, 'codex') });
     expect(blocked.folders).toContain(join(dir, 'claude', 'projects'));
     expect(blocked.files.filter((f) => f.startsWith(join(dir, 'codex'))).sort()).toEqual(
       [
+        'goals_1.sqlite',
+        'goals_1.sqlite-shm',
+        'goals_1.sqlite-wal',
         'history.jsonl',
         'logs_2.sqlite-shm',
         // a DB file present at launch blocks its `-wal` and `-shm` files even when they do not exist yet
         'memories_1.sqlite',
         'memories_1.sqlite-shm',
         'memories_1.sqlite-wal',
+        'queue_1.sqlite-wal',
         'state_5.sqlite',
         'state_5.sqlite-shm',
         'state_5.sqlite-wal',
+        // the conversations of the threads of Codex 0.164.0
+        'thread_history_1.sqlite',
+        'thread_history_1.sqlite-shm',
+        'thread_history_1.sqlite-wal',
       ].map((n) => join(dir, 'codex', n)),
     );
     expect(new Set(blocked.files).size).toBe(blocked.files.length);
     // the login and the settings stay readable: the agent CLI keeps the user's login
     const all = [...blocked.folders, ...blocked.files];
-    for (const kept of [join(dir, 'codex', 'auth.json'), join(dir, 'claude', '.credentials.json'), join(dir, '.claude.json'), join(dir, 'claude')]) {
-      expect(all.some((path) => kept === path || kept.startsWith(`${path}/`))).toBe(false);
+    for (const name of [...kept.map((n) => join(dir, 'codex', n)), join(dir, 'claude', '.credentials.json'), join(dir, '.claude.json'), join(dir, 'claude')]) {
+      expect(all.some((path) => name === path || name.startsWith(`${path}/`))).toBe(false);
     }
   });
 
@@ -480,10 +489,11 @@ describe('agent CLI', () => {
     for (const name of ['DBUS_SESSION_BUS_ADDRESS', 'XDG_RUNTIME_DIR']) expect(SANDBOX_DROPPED_ENV).toContain(name);
   });
 
-  it('runs Claude Code without session files for play and judge', () => {
+  it('runs the agent CLI without session files for play and judge: Codex --ephemeral before the stdin prompt', () => {
     const command = { cmd: 'claude', args: ['-p'] };
     expect(withoutSessionFiles('claude-code', command)).toEqual({ cmd: 'claude', args: ['-p', '--no-session-persistence'] });
-    expect(withoutSessionFiles('codex', command)).toEqual(command);
+    const codex = agentCliCommand({ cli: 'codex', model: 'gpt-x', effort: 'low' });
+    expect(withoutSessionFiles('codex', codex)).toEqual({ cmd: 'codex', args: [...codex.args.slice(0, -1), '--ephemeral', '-'] });
   });
 });
 

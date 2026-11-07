@@ -24,6 +24,7 @@ import {
   agentCli,
   agentCliCommand,
   agentResumeCommand,
+  firstRunCommand,
   agentHomeBlocked,
   agentLoginWrites,
   agentSettings,
@@ -36,7 +37,6 @@ import {
   SANDBOX_DROPPED_ENV,
   userServicesBlocked,
   withoutSessionFiles,
-  withSession,
   macosFoldersProfile,
   type AgentCli,
   type AgentSession,
@@ -696,12 +696,17 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   // `runWithBroker` removes the sandbox profile folder this makes
   const agent = jobAgentSettings(meta, () => agentSettings(settings, meta.role));
   const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder, meta.game);
-  if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = withSession(agentCli(agent), toRun.command, meta.session ?? null);
+  if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = toRun.wrap(firstRunCommand(agent, meta.session ?? null));
   const output = meta.output;
+  const keepSession = async (session: AgentSession): Promise<void> => {
+    await changeAgentMeta(id, ctx.env, (m) => {
+      m.session = session;
+    });
+  };
   const rounds = await runWithBroker(id, ctx, meta, toRun, { logPath, socket, runLog: meta.runLog, afterEnv }, (runOnce) =>
-    runRounds(meta, { agent, toRun, logPath, output, before, limit: settings.resultFixRounds, prompt }, runOnce),
+    runRounds(meta, { agent, toRun, logPath, output, before, limit: settings.resultFixRounds, prompt, keepSession }, runOnce),
   );
-  await recordUsage(id, ctx, meta, agent, await runLogs(logPath, rounds.starts), meta.runLog);
+  await recordUsage(id, ctx, rounds.session, agent, await runLogs(logPath, rounds.starts), meta.runLog);
   const written = await wroteOutput(output, before);
   await changeAgentMeta(id, ctx.env, (m) => {
     m.outputWritten = written;
@@ -711,12 +716,16 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   return jobResult(rounds.cli, written && result !== undefined && exists(result) ? result : null, finished.problem ?? formatProblem(rounds.errors), logPath, agentCli(agent));
 }
 
-/** What the runs of the agent CLI of a job ended with: the last run, where each run's output starts in the CLI log, and the format errors left. */
+/**
+ * What the runs of the agent CLI of a job ended with: the last run, where each run's output starts in the CLI log, the
+ * format errors left, and the session of the job.
+ */
 interface Rounds {
   cli: CliRun;
   /** The byte offset in `<id>.cli.log` where the output of each run starts, in run order. */
   starts: number[];
   errors: string[];
+  session: AgentSession | null;
 }
 
 /** The reason a job fails for the format errors left in its result file (ogw.md `### result format`), or null for none. */
@@ -724,32 +733,48 @@ function formatProblem(errors: readonly string[]): string | null {
   return errors.length === 0 ? null : `result file: ${errors.join('; ')}`;
 }
 
-/** The session a fix round continues: Claude Code the session of the job, Codex the thread its first run printed; null without one. */
-async function fixSession(meta: AgentMeta, agent: AgentSettings, logPath: string, starts: readonly number[]): Promise<string | null> {
-  if (!FIX_ROUND_ROLES.includes(meta.role)) return null;
-  if (agentCli(agent) === 'claude-code') return meta.session?.id ?? null;
-  return codexThreadId((await runLogs(logPath, starts))[0] ?? '');
+/**
+ * The session of the job once its first run has ended (ogw.md `## agent`): the one it started with, or for a new Codex
+ * session of a role with fix rounds the `thread_id` its first run printed, kept in the job record. null without one.
+ */
+async function jobSession(meta: AgentMeta, agent: AgentSettings, firstRun: string, keep: (session: AgentSession) => Promise<void>): Promise<AgentSession | null> {
+  const started = meta.session ?? null;
+  if (started !== null || !FIX_ROUND_ROLES.includes(meta.role) || agentCli(agent) !== 'codex') return started;
+  const thread = codexThreadId(firstRun);
+  if (thread === null) return null;
+  const session = { id: thread, resume: false };
+  await keep(session);
+  return session;
 }
 
 /**
  * The first run of the agent CLI, then the fix rounds of its result file (ogw.md `### result format` of `## agent`):
  * while a run ends with exit code 0 and a result file the agent wrote that has format errors, at most `limit` rounds
- * continue the session with the prompt that lists them.
+ * continue the session of the job with the prompt that lists them.
  */
 async function runRounds(
   meta: AgentMeta,
-  job: { agent: AgentSettings; toRun: CliToRun; logPath: string; output: string; before: string | null; limit: number; prompt: string },
+  job: {
+    agent: AgentSettings;
+    toRun: CliToRun;
+    logPath: string;
+    output: string;
+    before: string | null;
+    limit: number;
+    prompt: string;
+    keepSession: (session: AgentSession) => Promise<void>;
+  },
   runOnce: RunOnce,
 ): Promise<Rounds> {
   const starts = [0];
   let cli = await runOnce(job.toRun.command, job.prompt);
+  const session = await jobSession(meta, job.agent, (await runLogs(job.logPath, starts))[0] ?? '', job.keepSession);
   for (let round = 0; ; round++) {
-    if (cli.code !== 0 || cli.error !== null || !(await wroteOutput(job.output, job.before))) return { cli, starts, errors: [] };
+    if (cli.code !== 0 || cli.error !== null || !(await wroteOutput(job.output, job.before))) return { cli, starts, errors: [], session };
     const errors = await resultFormatErrors(meta, job.output).catch((error: unknown) => [`cannot be read: ${error instanceof Error ? error.message : String(error)}`]);
-    const session = errors.length === 0 || round >= job.limit ? null : await fixSession(meta, job.agent, job.logPath, starts);
-    if (session === null) return { cli, starts, errors };
+    if (errors.length === 0 || round >= job.limit || session === null || !FIX_ROUND_ROLES.includes(meta.role)) return { cli, starts, errors, session };
     starts.push((await stat(job.logPath)).size);
-    cli = await runOnce(job.toRun.wrap(agentResumeCommand(job.agent, session)), fixRoundPrompt(job.output, errors));
+    cli = await runOnce(job.toRun.wrap(agentResumeCommand(job.agent, session.id)), fixRoundPrompt(job.output, errors));
   }
 }
 
@@ -759,7 +784,7 @@ async function runLogs(logPath: string, starts: readonly number[]): Promise<stri
   return starts.map((start, i) => log.subarray(start, starts[i + 1] ?? log.length).toString('utf8'));
 }
 
-/** The `sessionUsage` of the job of Claude Code session `session` that started last before job `id`; null without one. */
+/** The `sessionUsage` of the job of session `session` that started last before job `id`; null without one. */
 async function earlierSessionUsage(id: string, session: string, env: NodeJS.ProcessEnv): Promise<SessionUsage | null> {
   const jobs = (await listJobs(env)).filter((job) => job.command === 'agent');
   const startedAt = jobs.find((job) => job.id === id)?.startedAt ?? Number.POSITIVE_INFINITY;
@@ -772,13 +797,12 @@ async function earlierSessionUsage(id: string, session: string, env: NodeJS.Proc
 
 /**
  * Reads the usage the runs of the agent CLI printed, `logs` holding the output of each run, and writes it as `usage` in
- * the job record and the run log (ogw.md `### usage` of `## agent`). A last run that printed none leaves the values
- * null; the job does not fail for it.
+ * the job record and the run log (ogw.md `### usage` of `## agent`), with the usage line of the session of the job as
+ * `sessionUsage`. A last run that printed none leaves the values null; the job does not fail for it.
  */
-async function recordUsage(id: string, ctx: Context, meta: AgentMeta, agent: AgentSettings, logs: readonly string[], runLog: string): Promise<void> {
+async function recordUsage(id: string, ctx: Context, session: AgentSession | null, agent: AgentSettings, logs: readonly string[], runLog: string): Promise<void> {
   const cli = agentCli(agent);
   const printed = runsUsage(cli, logs);
-  const session = cli === 'claude-code' ? (meta.session ?? null) : null;
   const before = session?.resume === true ? await earlierSessionUsage(id, session.id, ctx.env) : null;
   const usage = jobUsage(agent, printed, session?.resume === true, before);
   await changeAgentMeta(id, ctx.env, (m) => {

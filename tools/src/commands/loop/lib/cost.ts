@@ -1,6 +1,6 @@
 import { listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { GAME_ROLES } from '../../agent/lib/meta.ts';
-import type { AgentUsage } from '../../agent/lib/usage.ts';
+import { costUnknownOf, type AgentUsage } from '../../agent/lib/usage.ts';
 import { renderTable } from './markdown.ts';
 
 /** `## cost` of the loop iteration record and the loop end record (ogw.md `## loop record`, `## loop end-record`). */
@@ -20,6 +20,8 @@ export interface CostRow {
   withoutUsage: number;
   /** Jobs without `usage` or with a `costUsd` of null. */
   withoutCost: number;
+  /** The count of the jobs without cost per reason (`costUnknownOf`), in the order of the reason text. */
+  costUnknown: { reason: string; jobs: number }[];
 }
 
 const TOKEN_FIELDS = ['inputTokens', 'cachedTokens', 'outputTokens'] as const;
@@ -46,7 +48,20 @@ function rowOf(role: string, jobs: readonly JobRecord[]): CostRow {
     costUsd: value('costUsd'),
     withoutUsage: usages.filter((u) => u === null || TOKEN_FIELDS.some((field) => u[field] === null)).length,
     withoutCost: usages.filter((u) => u === null || u.costUsd === null).length,
+    costUnknown: reasonCounts(usages.map(costUnknownOf).filter((reason): reason is string => reason !== null)),
   };
+}
+
+function reasonCounts(reasons: readonly string[]): CostRow['costUnknown'] {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  return [...counts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([reason, jobs]) => ({ reason, jobs }));
+}
+
+/** The `without cost` cell: the count, and when it is not 0 the count per reason. */
+function withoutCostCell(row: CostRow): string {
+  if (row.withoutCost === 0) return '0';
+  return `${String(row.withoutCost)} (${row.costUnknown.map((r) => `${r.reason}: ${String(r.jobs)}`).join(', ')})`;
 }
 
 /**
@@ -75,7 +90,7 @@ export function renderCost(rows: readonly CostRow[]): string {
       cell(row.outputTokens, false),
       cell(row.costUsd, true),
       String(row.withoutUsage),
-      String(row.withoutCost),
+      withoutCostCell(row),
     ]),
   );
 }

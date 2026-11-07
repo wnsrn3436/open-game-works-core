@@ -382,7 +382,7 @@ const SESSION_STORES: Record<
   codex: {
     folders: ['sessions', 'archived_sessions', 'log'],
     files: ['history.jsonl'],
-    patterns: [/^(state|logs|memories)_[0-9]+\.sqlite(-wal|-shm)?$/],
+    patterns: [/^(state|logs|memories|thread_history|goals|queue)_[0-9]+\.sqlite(-wal|-shm)?$/],
     companions: ['-wal', '-shm'],
     linuxKeep: ['auth.json', 'config.toml'],
   },
@@ -547,19 +547,32 @@ export const SANDBOX_DROPPED_ENV: readonly string[] = [
   'XDG_RUNTIME_DIR',
 ];
 
-/** play, judge: the agent CLI command that keeps no session file of its own (Claude Code `--no-session-persistence`). */
-/** A Claude Code session of an agent: a new one with this id, or the earlier one of this id continued. */
+/**
+ * The session of a job (ogw.md `## agent`): a new one with this id, or the earlier one of this id continued. A new Codex
+ * session has its id only once the first run printed its `thread.started` line.
+ */
 export interface AgentSession {
   id: string;
   resume: boolean;
 }
 
-/** Claude Code with `--session-id <id>` for a new session, or `--resume <id>` to continue that session. */
-export function withSession(cli: AgentCli, command: CliCommand, session: AgentSession | null): CliCommand {
-  if (cli !== 'claude-code' || session === null) return command;
-  return { cmd: command.cmd, args: [...command.args, session.resume ? '--resume' : '--session-id', session.id] };
+/**
+ * The agent CLI command of the first run of a job with `session`: a continued session as `agentResumeCommand`, a new
+ * Claude Code session with `--session-id <id>`, and otherwise `agentCliCommand`.
+ */
+export function firstRunCommand(agent: AgentSettings, session: AgentSession | null): CliCommand {
+  if (session?.resume === true) return agentResumeCommand(agent, session.id);
+  const command = agentCliCommand(agent);
+  if (session === null || agentCli(agent) !== 'claude-code') return command;
+  return { cmd: command.cmd, args: [...command.args, '--session-id', session.id] };
 }
 
+/**
+ * play, judge: the agent CLI command that keeps no session file of its own: Claude Code `--no-session-persistence`,
+ * Codex `--ephemeral` before the `-` that reads the prompt from stdin.
+ */
 export function withoutSessionFiles(cli: AgentCli, command: CliCommand): CliCommand {
-  return cli === 'claude-code' ? { cmd: command.cmd, args: [...command.args, '--no-session-persistence'] } : command;
+  if (cli === 'claude-code') return { cmd: command.cmd, args: [...command.args, '--no-session-persistence'] };
+  const stdin = command.args.at(-1) === '-' ? command.args.length - 1 : command.args.length;
+  return { cmd: command.cmd, args: [...command.args.slice(0, stdin), '--ephemeral', ...command.args.slice(stdin)] };
 }

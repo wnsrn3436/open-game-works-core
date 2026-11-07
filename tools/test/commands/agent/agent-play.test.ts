@@ -70,6 +70,10 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     });
     expect((await ogw(ws, ['agent', 'wait', viaCodex, '--timeout', '60000'], { env: codex.env })).stdout).toContain('failed: result file: `## vs baseline` table missing; `## vs reference` table missing\n');
     expect(codex.calls()).toHaveLength(1);
+    // a judge keeps no session: Codex runs ephemeral, and its thread is not the session of the job
+    expect(codex.calls()[0]?.argv.slice(-2)).toEqual(['--ephemeral', '-']);
+    expect((await readJob(viaCodex, ws.env)).meta.session ?? null).toBeNull();
+    expect((await readJob(viaCodex, ws.env)).meta.sessionUsage).toBeUndefined();
     // the input sets what is read: without B and reference, neither table
     writeFileSync(input, JSON.stringify({ A: game, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
     const free = await startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output, evidence: join(root, 'builds/calibration/6/judge-a-2') } });

@@ -51,7 +51,7 @@ describe('ogw agent: result format', () => {
     expect(fix.prompt).toBe(fixPrompt(output, ['`## defects` row d1: result `done` is not one of fixed, refused, not reproduced, not done']));
     // the result object of the last run has the totals of the session: the usage of both runs; the turns of both runs
     const { meta } = await readJob(id, ws.env);
-    expect(meta.usage).toEqual({ cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: 63305, cachedTokens: 57939, outputTokens: 112, costUsd: 0.0170679, turns: 2 });
+    expect(meta.usage).toEqual({ cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: 63305, cachedTokens: 57939, outputTokens: 112, costUsd: 0.0170679, costUnknown: null, turns: 2 });
     expect(meta.sessionUsage).toEqual({ inputTokens: 63305, cachedTokens: 57939, outputTokens: 112, costUsd: 0.0170679 });
   });
 
@@ -119,7 +119,9 @@ describe('ogw agent: result format', () => {
       resume,
       resume,
     ]);
-    expect((await readJob(id, ws.env)).meta.usage).toEqual({ cli: 'codex', model: 'gpt-x', effort: 'low', inputTokens: 400, cachedTokens: 200, outputTokens: 14, costUsd: null, turns: null });
+    expect((await readJob(id, ws.env)).meta.usage).toEqual({ cli: 'codex', model: 'gpt-x', effort: 'low', inputTokens: 400, cachedTokens: 200, outputTokens: 14, costUsd: null, costUnknown: 'codex prints no money cost', turns: null });
+    // the session of the job is the thread of its first run
+    expect((await readJob(id, ws.env)).meta.session).toEqual({ id: thread, resume: false });
   });
 
   it('has no fix round for a Codex job whose first run printed no thread', async () => {

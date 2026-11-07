@@ -91,7 +91,7 @@ async function loginState(env: NodeJS.ProcessEnv, def: CliDef): Promise<Pick<Cli
   return { loggedIn: result !== null && result.code === 0, loginOutput: result === null ? '' : `${result.stdout}\n${result.stderr}` };
 }
 
-interface PromptRun {
+export interface PromptRun {
   code: number | null;
   timedOut: boolean;
   stdout: string;
@@ -104,7 +104,7 @@ interface PromptRun {
  * variables, and with `output` the command leaves out the `--output-format json` of Claude Code and has `output`
  * added at the end.
  */
-async function promptRun(ctx: Context, agent: AgentSettings, role: string, extra: { output: readonly string[] | null; env: NodeJS.ProcessEnv } = { output: null, env: {} }): Promise<PromptRun> {
+export async function promptRun(ctx: Context, agent: AgentSettings, role: string, extra: { output: readonly string[] | null; env: NodeJS.ProcessEnv } = { output: null, env: {} }): Promise<PromptRun> {
   // a sandboxed CLI starts in an agent folder like play and judge; a CLI outside the sandbox starts in the temp folder
   // of ogw, where no sandboxed agent plants config
   const sandboxed = SANDBOXED_ROLES.includes(role);

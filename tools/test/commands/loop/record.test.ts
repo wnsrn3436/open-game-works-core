@@ -77,7 +77,7 @@ function together(fields: Record<string, unknown> = {}): Record<string, unknown>
 
 /** The `usage` of an agent job (ogw.md `### usage` of `## agent`). */
 function usage(fields: Record<string, unknown>): Record<string, unknown> {
-  return { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null, ...fields };
+  return { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high', inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, costUnknown: 'no usage line', turns: null, ...fields };
 }
 
 /**
@@ -86,12 +86,12 @@ function usage(fields: Record<string, unknown>): Record<string, unknown> {
  */
 async function addAgentJobs(g: TestGame): Promise<void> {
   const of = (role: string, iteration: number, fields: Record<string, unknown> = {}): Record<string, unknown> => ({ role, game: 'g', run: 'update-1', iteration, ...fields });
-  const claude = usage({ inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, turns: 1 });
+  const claude = usage({ inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, costUnknown: null, turns: 1 });
   await addJob(g.ws, { status: 'done', meta: of('content', 2, { usage: claude }) });
   await addJob(g.ws, { status: 'running', meta: of('content', 2) });
   await addJob(g.ws, { status: 'done', meta: of('play', 2, { usage: usage({ model: 'claude-sonnet-5-5', effort: 'medium' }) }) });
-  await addJob(g.ws, { status: 'done', meta: of('judge', 2, { usage: usage({ cli: 'codex', model: 'gpt-x', inputTokens: 16552, cachedTokens: 13312, outputTokens: 5 }) }) });
-  await addJob(g.ws, { status: 'done', meta: of('resource', 1, { usage: usage({ inputTokens: 1000, cachedTokens: 0, outputTokens: 100, costUsd: 2.5, turns: 4 }) }) });
+  await addJob(g.ws, { status: 'done', meta: of('judge', 2, { usage: usage({ cli: 'codex', model: 'gpt-x', inputTokens: 16552, cachedTokens: 13312, outputTokens: 5, costUnknown: 'codex prints no money cost' }) }) });
+  await addJob(g.ws, { status: 'done', meta: of('resource', 1, { usage: usage({ inputTokens: 1000, cachedTokens: 0, outputTokens: 100, costUsd: 2.5, costUnknown: null, turns: 4 }) }) });
   await addJob(g.ws, { status: 'done', meta: of('content', 2, { run: 'update-0', usage: claude }) });
   await addJob(g.ws, { status: 'done', game: 'other', meta: of('content', 2, { game: 'other', usage: claude }) });
 }
@@ -615,9 +615,9 @@ describe('ogw loop record', () => {
         '',
         '| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |',
         '|---|---|---|---|---|---|---|---|',
-        '| content | 2 | 31898 | 22611 | 63 | 0.02 | 1 | 1 |',
-        '| play | 1 | none | none | none | none | 1 | 1 |',
-        '| judge | 1 | 16552 | 13312 | 5 | none | 0 | 1 |',
+        '| content | 2 | 31898 | 22611 | 63 | 0.02 | 1 | 1 (no usage: 1) |',
+        '| play | 1 | none | none | none | none | 1 | 1 (no usage line: 1) |',
+        '| judge | 1 | 16552 | 13312 | 5 | none | 0 | 1 (codex prints no money cost: 1) |',
         '',
       ].join('\n'),
     );
@@ -889,11 +889,11 @@ describe('ogw loop end-record', () => {
       [
         '| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |',
         '|---|---|---|---|---|---|---|---|',
-        '| content | 2 | 31898 | 22611 | 63 | 0.02 | 1 | 1 |',
+        '| content | 2 | 31898 | 22611 | 63 | 0.02 | 1 | 1 (no usage: 1) |',
         '| resource | 1 | 1000 | 0 | 100 | 2.50 | 0 | 0 |',
-        '| play | 1 | none | none | none | none | 1 | 1 |',
-        '| judge | 1 | 16552 | 13312 | 5 | none | 0 | 1 |',
-        '| total | 5 | 49450 | 35923 | 168 | 2.52 | 2 | 3 |',
+        '| play | 1 | none | none | none | none | 1 | 1 (no usage line: 1) |',
+        '| judge | 1 | 16552 | 13312 | 5 | none | 0 | 1 (codex prints no money cost: 1) |',
+        '| total | 5 | 49450 | 35923 | 168 | 2.52 | 2 | 3 (codex prints no money cost: 1, no usage: 1, no usage line: 1) |',
         '',
       ].join('\n'),
     );

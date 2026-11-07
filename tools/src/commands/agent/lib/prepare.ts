@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { readdir, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { agentContext, markAgentRunning, runLogPath } from '../../../lib/agentctx.ts';
 import type { Context } from '../../../lib/command.ts';
@@ -23,7 +22,7 @@ import { newAgentFolder } from './files.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { AGENT_LOG_FOLDER, FIX_ROUND_ROLES, GAME_ROLES, type AgentMeta } from './meta.ts';
 import { preparePlayInput } from './play-input.ts';
-import { agentCli, agentSettings, type AgentSession } from './cli-command.ts';
+import { agentCli, agentSettings, defaultConfigFolder, type AgentCli, type AgentSession } from './cli-command.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
 
 export interface AgentRequest {
@@ -134,7 +133,8 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
   const jobId = id ?? newId();
   // the record holds the run log from its start: a job without one is no agent to `agentContext` and the index of running agents
   meta.runLog = await runLogPath(jobId, ctx.env);
-  // a fix round continues the session of the job (ogw.md `### result format`): Claude Code finds it by the id it starts with
+  // a fix round continues the session of the job (ogw.md `## agent`): a new Claude Code session starts with its id; a new
+  // Codex session gets its id from the first run
   if (meta.session === undefined && FIX_ROUND_ROLES.includes(meta.role) && agentCli(meta.agent ?? agentSettings(await ctx.settings(), meta.role)) === 'claude-code') {
     meta.session = { id: randomUUID(), resume: false };
   }
@@ -292,17 +292,22 @@ export async function nextOrder(ctx: Context, game: GameRepo, role: 'play' | 'ju
   });
 }
 
-/** The default config folder of Claude Code: `CLAUDE_CONFIG_DIR` when set, else `~/.claude`. */
-function claudeConfigDir(env: NodeJS.ProcessEnv): string {
-  const set = env.CLAUDE_CONFIG_DIR;
-  return set !== undefined && set !== '' ? set : join(env.HOME ?? homedir(), '.claude');
-}
-
 /** Whether Claude Code keeps the session file of `id`: `projects/<project folder>/<id>.jsonl` of its config folder. */
-export async function claudeSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
-  const projects = join(claudeConfigDir(env), 'projects');
+async function claudeSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
+  const projects = join(defaultConfigFolder('claude-code', env), 'projects');
   const folders = await readdir(projects).catch(() => [] as string[]);
   return folders.some((folder) => exists(join(projects, folder, `${id}.jsonl`)));
+}
+
+/** Whether Codex keeps the session file of `id`: a file under `sessions/` of its config folder named `rollout-...<id>...`. */
+async function codexSessionKept(env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
+  const entries = await readdir(join(defaultConfigFolder('codex', env), 'sessions'), { recursive: true, withFileTypes: true }).catch(() => []);
+  return entries.some((entry) => entry.isFile() && entry.name.startsWith('rollout-') && entry.name.includes(id));
+}
+
+/** Whether the agent CLI `cli` keeps the session file of session id `id` in its default config folder (ogw.md `## agent`). */
+export async function sessionKept(cli: AgentCli, env: NodeJS.ProcessEnv, id: string): Promise<boolean> {
+  return cli === 'claude-code' ? claudeSessionKept(env, id) : codexSessionKept(env, id);
 }
 
 /** The session of the content agent of iteration `n - 1` of the run that is not a variant agent: its last job's, when it kept one. */
@@ -324,16 +329,16 @@ async function previousContentSession(ctx: Context, game: GameRepo, run: RunStat
 }
 
 /**
- * The Claude Code session of a content agent (ogw.md `## agent`): in a fun iteration whose previous iteration
- * is a fun iteration of the run, the session of the previous content agent continued, when its file is kept; else a
- * new session. null when the content agent CLI is not Claude Code.
+ * The session of a content agent (ogw.md `## agent`): in a fun iteration whose previous iteration is a fun iteration of
+ * the run, the session of the previous content agent continued, when its agent CLI keeps its file; else a new session,
+ * which for Codex has no id until its first run prints it (null).
  */
 async function contentSession(ctx: Context, game: GameRepo, run: RunState, meta: AgentMeta, settings: HarnessSettings): Promise<AgentSession | null> {
-  if (agentCli(meta.agent ?? agentSettings(settings, 'content')) !== 'claude-code') return null;
+  const cli = agentCli(meta.agent ?? agentSettings(settings, 'content'));
   const continues = meta.retryNumber === 0 && (meta.variant ?? null) === null && run.iteration > 1 && iterationKind(run, run.iteration) === 'fun' && iterationKind(run, run.iteration - 1) === 'fun';
   const previous = continues ? await previousContentSession(ctx, game, run) : null;
-  if (previous !== null && (await claudeSessionKept(ctx.env, previous))) return { id: previous, resume: true };
-  return { id: randomUUID(), resume: false };
+  if (previous !== null && (await sessionKept(cli, ctx.env, previous))) return { id: previous, resume: true };
+  return cli === 'claude-code' ? { id: randomUUID(), resume: false } : null;
 }
 
 async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request: AgentRequest): Promise<string> {

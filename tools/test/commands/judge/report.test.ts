@@ -174,7 +174,7 @@ describe('judge calibration rates', () => {
   it('recommends only from the values that count', () => {
     expect(recommendations(quiet(30), 2)).toEqual([]);
     const panel = (conditions: string): string =>
-      `set loop.judgePanel to judges that mix Claude Code models and efforts; add Codex judges only when the Codex CLI is logged in (${conditions})`;
+      `set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (${conditions})`;
     // below the thresholds, but under the minimum: nothing
     const few = { count: 1, total: 29 };
     expect(recommendations({ ...quiet(30), falseWin: few, order: [{ name: 'all', rate: few, kappa: 0 }], sensitivity: [{ name: 'all', rate: few }] }, 2)).toEqual([]);

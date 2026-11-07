@@ -33,6 +33,44 @@ export function agentCliUsers(check: AgentCliCheck): string {
   return `for ${check.roles.join(', ')}`;
 }
 
+/** The base CLI (ogw.md `## env check`): the agent CLI that ran `ogw env check`, or null (`unknown`) with the reason. */
+export interface BaseCliCheck {
+  cli: 'claude-code' | 'codex' | null;
+  reason: string | null;
+}
+
+/** One model of the model list of an agent CLI. */
+export interface CliModel {
+  /** The model id that harness settings hold: the resolved id, never an alias. */
+  id: string;
+  /** Claude Code: the alias that resolved to it. */
+  alias: string | null;
+  /** The efforts of the model; null when they cannot be read. */
+  efforts: string[] | null;
+  /** Codex: the description of the catalog. */
+  description: string | null;
+}
+
+/** The model list of an installed and logged-in agent CLI, and why a part of it is unknown (empty: complete). */
+export interface CliModelsCheck {
+  cli: 'claude-code' | 'codex';
+  models: CliModel[];
+  unknown: string[];
+}
+
+/** The installed version of an agent CLI against the latest version its install source publishes. */
+export interface CliVersionCheck {
+  cli: 'claude-code' | 'codex';
+  installed: string | null;
+  /** `Homebrew cask <cask>`, `Homebrew formula <formula>`, `npm package <package>` or `Claude Code installer`. */
+  source: string | null;
+  latest: string | null;
+  /** The installed version is lower than the latest one; null (`unknown`) with `reason`. */
+  behind: boolean | null;
+  update: string | null;
+  reason: string | null;
+}
+
 /** How the provider calls of a method are paid: the subscription of the provider login, or per call. */
 export type ProviderBilling = 'subscription' | 'per-call';
 
@@ -117,6 +155,10 @@ export interface EnvCheckResult {
   tools: Record<string, { pinned: boolean; installed: boolean }>;
   buildTools: BuildToolCheck[];
   agentClis: AgentCliCheck[];
+  /** Missing in results of an older ogw, as are `cliModels` and `cliVersions`. */
+  baseCli?: BaseCliCheck;
+  cliModels?: CliModelsCheck[];
+  cliVersions?: CliVersionCheck[];
   providerClis: ProviderCliCheck[];
   testDevices: { serial: string; connected: boolean; udp: boolean | null }[];
   /** The `secret` of hf pins and whether the host secret store has it. Missing in results of an older ogw. */

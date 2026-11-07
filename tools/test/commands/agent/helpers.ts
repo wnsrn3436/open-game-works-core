@@ -106,5 +106,6 @@ export async function readRunLog(ws: TestWorkspace, id: string): Promise<unknown
 
 /** The `usage` of a job whose agent CLI printed no usage (ogw.md `### usage` of `## agent`). */
 export function noUsage(model: string, effort: string, cli: 'claude-code' | 'codex' = 'claude-code'): object {
-  return { cli, model, effort, inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, turns: null };
+  const costUnknown = cli === 'codex' ? 'codex prints no money cost' : 'no usage line';
+  return { cli, model, effort, inputTokens: null, cachedTokens: null, outputTokens: null, costUsd: null, costUnknown, turns: null };
 }
