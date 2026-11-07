@@ -60,7 +60,7 @@ Handles, for a game where several users play together in one match: matching, ro
 | `MatchEndReason` | `Ended`, `Left`, `BackgroundTimeout` |
 | `PeerLeaveReason` | `Ended`, `Left`, `Timeout` |
 
-- `MatchInfo`: match ID (string), match mode ID value, own participant index, participant user ID list (index order), team list (index order), party list (index order), match seed (`int64`), match start time (Unix ms), lockstep flag. These are `match_id`, `mode_id`, `my_index`, the `user_id`, `team`, `party` of `players`, `seed`, `start_at`, `lockstep` of server `MATCH_FOUND`. An empty `MatchInfo` has an empty string as match ID and 0 participants
+- `MatchInfo`: match ID (string), match mode ID value, own participant index, participant user ID list (index order), team list (index order), party list (index order), match random seed (`int64`), match start time (Unix ms), lockstep flag. These are `match_id`, `mode_id`, `my_index`, the `user_id`, `team`, `party` of `players`, `seed`, `start_at`, `lockstep` of server `MATCH_FOUND`. An empty `MatchInfo` has an empty string as match ID and 0 participants
 - `RoomInfo`: room code, match mode ID value, member user ID list (join order. The first user is the host), `RoomStatus`. These are the values of server `ROOM_STATE`. An empty `RoomInfo` has an empty string as room code and 0 members
 - `MatchFailReason`, `RoomStatus`: enums of the base proto. `matchmaker` defines their meaning
 
@@ -152,7 +152,7 @@ Uses the `MatchmakerFrame` of server `matchmaker` and `p2p-signaling`. Receives 
 - match found received outside `Matching` is discarded with a warn log, and in `None` the module also calls transport `close`, so that the server gets `MATCH_LEAVE`. A `Connecting` that discards it fails at the connect time limit, and `MatchInfo` does not change. match found that a non-host member of a room receives in `None` is not discarded
 - `MatchInfo` does not change until the match ends. `match_info` returns `MatchInfo` in `Connecting` and `Playing`, and an empty `MatchInfo` without log in other states
 - In `Connecting` and `Playing`, `peer_state` returns `Connected` without log for own index, and that participant's state for another participant's index
-- Content code uses the match seed as the base of `UtilCore.make_purpose_seed`. RealtimeCore does not make random instances
+- Content code uses the match random seed as the base of `UtilCore.make_purpose_seed`. RealtimeCore does not make random instances
 
 ### rejoin_match
 
@@ -345,13 +345,13 @@ match mode ID value is `id` of the `match_mode` table of server core `matchmaker
 | `user` | `RealtimeCore.teams` | `array<int64>` | team list. Index order |
 | `user` | `RealtimeCore.parties` | `array<int64>` | party list. Index order |
 | `user` | `RealtimeCore.lockstep` | `bool` | lockstep flag |
-| `user` | `RealtimeCore.seed` | `int64` | match seed |
+| `user` | `RealtimeCore.seed` | `int64` | match random seed |
 | `user` | `RealtimeCore.start_at` | `int64` | match start time (Unix ms) |
 
 ## DEV
 
 - network simulation transport: puts a delay of `RealtimeCore.simLatencyMs` + [0, `RealtimeCore.simJitterMs`] on each packet sent to the wrapped transport. `Reliable` keeps the send order and loses nothing. `Unreliable` can change order and is discarded with probability `RealtimeCore.simLossPermille`. It is used only in dev run, and the DEV code of `BootstrapCore` passes it
-- The random of the network simulation transport is made with `UtilCore.make_purpose_seed`(`realtime_sim`, match seed). When all three values are 0, there is no delay and no loss
+- The random of the network simulation transport is made with `UtilCore.make_purpose_seed`(`realtime_sim`, match random seed). When all three values are 0, there is no delay and no loss
 - STG and PROD builds do not have the network simulation transport
 
 | operation | input | output | failure value | caller |
@@ -452,7 +452,7 @@ Every test other than the P2P transport tests passes the fake realtime transport
 - In the P2P transport in in-match rejoin in `Playing`, when itself at index 0 is connected with index 1 by a connection with `attempt` 1 and one `poll` reads `MATCH_REJOINED` with `ok` `true` and finds that connection disconnected, that `poll` raises peer lost of index 1 once, and the transport sends one offer `PEER_SIGNAL` to index 1 after that, whose `attempt` is 2
 - In the P2P transport, when `connect_peer`(1) of itself at index 0 fails in making its offer and the next `poll` reads `PEER_REJOINED` of index 1, that `poll` raises no peer lost of index 1 and leaves no warn log, and the transport sends one offer `PEER_SIGNAL` to index 1
 - In the P2P transport, a `MATCH_REQUEST` sent before `HELLO_ACK` whose matchmaker connection is lost before `HELLO_ACK` is not sent on the next matchmaker connection and leaves no log
-- network simulation transport: with loss 1000, all `Unreliable` packets are discarded and all `Reliable` ones arrive in order. With latency d and jitter 0, arrival is d later on the test clock. With the same match seed, the same packets are discarded
+- network simulation transport: with loss 1000, all `Unreliable` packets are discarded and all `Reliable` ones arrive in order. With latency d and jitter 0, arrival is d later on the test clock. With the same match random seed, the same packets are discarded
 - In `Playing`, `force_peer_lost` calls transport `force_close_peer` for that participant once, and peer lost in the next `poll` gives `PeerDisconnectedEvent` and `connect_peer`. `force_matchmaker_lost` calls transport `force_close_matchmaker` once, and the next `poll` gives a warn log and one `rejoin`. When not `Playing` or the target is not `Connected`, both give a warn log and `false` without a transport operation
 - `create_room` calls transport `open_room` once, is `ok` after room updated, `room_info` is that `RoomInfo`, and `RoomChangedEvent`(`Updated`) comes once. When room failed of `Open` is received first, `ok` is `false` with that error code
 - `create_room`, `join_room` when in a room or not `None` give a warn log and `ok` `false` without a transport operation

@@ -210,13 +210,13 @@ none
 - Ticket use subtracts n `ticket_item`. Ticket use on a banner without `ticket_item` and `MULTI` on a banner without `multi_count` are `INVALID_REQUEST`
 - A `DrawGacha` whose `GachaDrawMode` is not `SINGLE` or `MULTI` is `INVALID_REQUEST`, and nothing changes
 - Before `start_at`, from `end_at` on, and when the linked live event is not active, the result is `GACHA_BANNER_UNAVAILABLE`
-- With a fixed seed, the round after `pity_count` − 1 rounds that do not reach P is `PITY` and rolls `pity_table`. On reaching P, the count is 0
+- With a fixed random seed, the round after `pity_count` − 1 rounds that do not reach P is `PITY` and rolls `pity_table`. On reaching P, the count is 0
 - On a `rate_up_guarantee` banner, after a pity tier hit that missed the rate-up, the next pity tier hit is `rate_up_table`, and after it g is `false`
 - In `MULTI`, when the earlier rounds do not reach G, the last round is `MULTI_GUARANTEE`; when they did, it is `NORMAL`
 - Two banners with the same `pity_banner` share the pity state
 - The sections of `GetGachaRates` equal `loot-table.get_rates` called with the same data
-- With a fixed seed, when the `loot_table` of a banner without pity is rolled N = 100000 times through the roll path of a draw (`loot-table.roll` with count 1 that `DrawGacha` calls in `SINGLE`, and its substitution list), the difference between the count per path and the `NORMAL` section rate × N is at most 2√N
-- With a fixed seed, the item order produced by 1000 `SINGLE` `DrawGacha` on a banner without pity equals the order of rolling that banner's `loot_table` 1000 times through the same roll path with the same seed
+- With a fixed random seed, when the `loot_table` of a banner without pity is rolled N = 100000 times through the roll path of a draw (`loot-table.roll` with count 1 that `DrawGacha` calls in `SINGLE`, and its substitution list), the difference between the count per path and the `NORMAL` section rate × N is at most 2√N
+- With a fixed random seed, the item order produced by 1000 `SINGLE` `DrawGacha` on a banner without pity equals the order of rolling that banner's `loot_table` 1000 times through the same roll path with the same random seed
 - When the grant is `LIMIT_EXCEEDED`, the same list goes as a `[gacha_grant_mail]` mail and the cost is subtracted
 - The output of `grant_gacha_result` is granted, and the draw records and `GachaDrawResult` are the drawn result
 - A `DrawGacha` sent again with the same request ID is applied only once

@@ -76,7 +76,7 @@ The order of rolling one table T. `roll` rolls the first table the given count o
 3. When there are entries whose `kind` is `Weighted`, lays out their `weight` in ascending order of `order` and calls `storage.random_weighted` once to draw one entry
 4. For each drawn entry, in draw order: adds it to `entries`, adds its `items` to the result, and when `table` is not `null`, rolls that table by this order. The next entry is handled after that table is fully rolled
 
-- Random is used only in step 3. The same seed, the same data and the same input give the same result
+- Random is used only in step 3. The same random seed, the same data and the same input give the same result
 - An entry whose `items` and `table` are both empty is a "nothing" result
 - On failure, no result is returned. Random numbers used before the failure are not given back
 - Sums of amounts in `items` and `sum_items` are calculated as `bigint`
@@ -167,11 +167,11 @@ none
 
 ## test
 
-- The `roll` results of two requests given the same seed through `testing.send` are equal. The result with a fixed seed and fixed data equals the expected value calculated by hand with the random test vector of `UtilCore`
+- The `roll` results of two requests given the same random seed through `testing.send` are equal. The result with a fixed random seed and fixed data equals the expected value calculated by hand with the random test vector of `UtilCore`
 - `Guaranteed` entries are drawn in every roll, and only one `Weighted` entry is drawn per roll
 - A nested `table` is rolled, and the order of `tables` and `entries` matches the roll order
 - The to table is rolled instead of the from table of the substitution list, and `tables` has the to table. Substitution is not applied again to the to table
-- For N = 100000 rolls with a fixed seed, the difference between each path's count and the `get_rates` probability × N is at most 2√N
+- For N = 100000 rolls with a fixed random seed, the difference between each path's count and the `get_rates` probability × N is at most 2√N
 - With data in which no table has a `Guaranteed` entry, the sum of the probabilities of the `get_rates` paths that end at an entry without `table` is 1. `get_rates` given a substitution list gives the probabilities calculated with the to table
 - `sum_items` merges the same items and is in ascending order of item ID value. When the sum of a big item is more than 2^53−1 and at most that item's amount limit, the result is that sum; when the sum is more than that item's amount limit, `AMOUNT_OVERFLOW`. When the sum of an item that is not a big item is more than 2^53−1, `AMOUNT_OVERFLOW`. The same for a sum within one `LootResult` of `roll`
 - An unknown table, an out-of-range count, a duplicate in the substitution list, and a substitution list under whose to table a path returns to the from table give a failure element of `LootRollResult` and an `error` log, and use no random

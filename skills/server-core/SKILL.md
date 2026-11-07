@@ -123,7 +123,7 @@ server/core/
 - The user ID is taken only from the access token. A user ID in the request body is not used
 - Data values such as price, reward and probability are not taken from the request. The server reads them from data
 - The handler checks again even the conditions that the client already checked
-- The only random used for judgement is the ctx random. Core makes the seed per request and keeps it in the log
+- The only random used for judgement is the ctx random. Core makes the random seed per request and keeps it in the log
 - A core module calls content hooks inside the `storage` operation `with_hook_change_source`. The source and ref are the values that `## hook` of that spec sets. When it sets none, they are the values of the change source that the module passes to `item-ledger` or `mailbox` in the same handling, and when it passes none either, `with_hook_change_source` is not used. Items that content changed inside the hook are recorded with this change source
 - A core module judges the output of a content hook whose output is `pass` or `GameError` with `storage.check_hook_output`
 - The handler function of a content admin operation is included in the spec caller `content handler`

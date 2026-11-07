@@ -114,7 +114,7 @@
       "default": 3000
     },
     "rowSimulationSeeds": {
-      "description": "The number of seeds that row simulation runs per row",
+      "description": "The number of random seeds that row simulation runs per row",
       "type": "integer",
       "minimum": 1,
       "default": 20

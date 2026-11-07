@@ -39,8 +39,8 @@ none. It does not call `LogCore` either.
 | `big_mul` | `a`, `b`: text | `a × b` | empty string when an input is not a big integer | all code |
 | `big_floor_div` | `a`, `b`: text | quotient of `a ÷ b` rounded toward negative infinity | empty string when an input is not a big integer or `b` ≤ 0 | all code |
 | `big_apply_permille` | value: text, permille: int64 | `big_floor_div(value × permille, 1000)` | empty string when value is not a big integer | all code |
-| `create_random` | seed: int64 | random instance | none | all code |
-| `make_purpose_seed` | purpose name: string, base: int64 | seed: int64 | none | all code |
+| `create_random` | random seed: int64 | random instance | none | all code |
+| `make_purpose_seed` | purpose name: string, base: int64 | random seed: int64 | none | all code |
 | `next_uint32` | random instance | integer of at least 0 and less than 2^32 | none | all code |
 | `range_int` | random instance, min, max: int64 | integer of at least min and at most max | min when min > max or when min or max is outside int32 | all code |
 | `next_float` | random instance | real number of at least 0 and less than 1 | none | all code |
@@ -74,15 +74,15 @@ none. It does not call `LogCore` either.
 
 ### random
 
-- A random instance is a sequence generator created from one seed. No operation creates one without a seed
+- A random instance is a sequence generator created from one random seed. No operation creates one without a random seed
 - A failed operation does not advance the sequence
 - Core and content code do not use the engine's built-in random functions. The list of those functions is in the engine-specific implementation rules
 - A purpose name is a snake_case string constant that names the use of one random instance. e.g. `battle_effect`, `drop_preview`
 - Each purpose gets its own random instance. Several purposes do not share one random instance
-- Code that creates a random instance leaves the purpose name and the seed in a `debug` log of `LogCore`
+- Code that creates a random instance leaves the purpose name and the random seed in a `debug` log of `LogCore`
 - Random whose result becomes saved state as it is (rewards, draws) is drawn by the server. The client does not draw it
-- The seed of a purpose that needs reproduction is made with `make_purpose_seed` from the match seed or a seed that DEV code received as the base. For a purpose that needs no reproduction, the base is the device time of `TimeCore`
-- The random and `make_purpose_seed` of server core `storage` are the same algorithm as these. The same seed and the same operation order give the same result on every engine and on the server. For `range_int` this holds when min and max are inside int32: outside it `range_int` returns the failure value, and `storage.random_int` draws unless max − min is 2^32 or more, which throws. A purpose name for which server core recreates the same sequence is defined by that server core spec. e.g. `match_simulation` in `matchmaker`
+- The random seed of a purpose that needs reproduction is made with `make_purpose_seed` from the match random seed or a random seed that DEV code received as the base. For a purpose that needs no reproduction, the base is the device time of `TimeCore`
+- The random and `make_purpose_seed` of server core `storage` are the same algorithm as these. The same random seed and the same operation order give the same result on every engine and on the server. For `range_int` this holds when min and max are inside int32: outside it `range_int` returns the failure value, and `storage.random_int` draws unless max − min is 2^32 or more, which throws. A purpose name for which server core recreates the same sequence is defined by that server core spec. e.g. `match_simulation` in `matchmaker`
 
 ### PCG32 algorithm
 
@@ -165,9 +165,9 @@ none
 
 ## test
 
-- For each row of the test vector table, the result equals the table. A row with a seed starts from a newly created random instance
+- For each row of the test vector table, the result equals the table. A row with a random seed starts from a newly created random instance
 
-| seed | operation | result |
+| random seed | operation | result |
 |---|---|---|
 | `42` | `next_uint32` 6 times | `565663470`, `3244226384`, `2504567229`, `903561869`, `4026996297`, `2722332799` |
 | `-42` | `next_uint32` 6 times | `2135434507`, `1425494533`, `1059454827`, `1281541498`, `243802185`, `3332889050` |

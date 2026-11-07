@@ -262,7 +262,7 @@ none
 
 - For each request for which `routing` writes a `request` log, there is one `request` log line with all common fields
 - The `request` log level of a successful request and of a request that ended with `GameError` is `info`, and that of a request that ended with `INTERNAL` is `error`. The `request` log of a successful request that gave minimum level `warn` and fields with `annotate_request_log` has level `warn` and holds those fields. An `annotate_request_log` that violates the rules is `INTERNAL`
-- The `request` log `seed` of a request given a seed through `testing.send` is the decimal string of that seed
+- The `request` log `seed` of a request given a random seed through `testing.send` is the decimal string of that random seed
 - For each unhandled exception, there is an `error` log with `stack_trace`
 - In the STG environment, `debug` logs, `request_body`, tokens and signatures are not in the logs
 - In the DEV environment, the `request` log of `core/Login` and `core/VerifyPurchase`, which are `(ogw.sensitive)`, has no `request_body`, and the `request` log of a request without `(ogw.sensitive)` has it

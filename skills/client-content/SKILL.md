@@ -100,7 +100,7 @@ The folders below are logical folders. A logical folder and a path under it that
 
 - Its code goes in `client/features/<feature>/sim/` and `client/common/sim/` and keeps the rules below. The engine-specific implementation rules set the code it can call. Static check `determinism` blocks violations
   - Integers only. Division and remainder use `UtilCore.floor_div` and `UtilCore.floor_mod`, and scaling uses `UtilCore.apply_permille`
-  - Random is one random instance made with `UtilCore.create_random`(`UtilCore.make_purpose_seed`(purpose name, base)). The confirmed state of a tick simulation uses purpose name `match_simulation` and the match seed, and the simulation of `play-session` uses `play_session_simulation` and the simulation seed held in `loadout`
+  - Random is one random instance made with `UtilCore.create_random`(`UtilCore.make_purpose_seed`(purpose name, base)). The confirmed state of a tick simulation uses purpose name `match_simulation` and the match random seed, and the simulation of `play-session` uses `play_session_simulation` and the simulation random seed held in `loadout`
   - A simulation that uses time advances in fixed-length ticks, and the time is tick number × tick length. The tick length goes in a content table. `TimeCore` and frame elapsed time are not used
 - Only simulation code changes the simulation state. The screen is drawn from the simulation state. Results of engine physics, animation and object transforms are not used as simulation state
 - In the simulation of `play-session`, the function that runs one round to the end with `loadout`, `options` of `StartPlaySession`, `options` of the continues and the input record of the round, and returns the result values, is shared formula `<feature>.sim_play`. The server's `verify_play_session` recalculates the result with the same function
@@ -116,7 +116,7 @@ Content code runs a realtime match in which all participants run the same simula
 - An input whose fields all have default values is an empty input. A received input that fails the external input check is treated as an empty input. All participants treat the inputs of a participant who left as empty inputs from the same tick
 - Only the tick function changes the simulation state. A tick run under the conditions above is a confirmed tick, and the simulation state changed only by confirmed ticks is the confirmed state. The screen is drawn from the confirmed state or the predicted display copy
 - predicted display copy: the state made by running ahead, on a copy of the confirmed state, the ticks not run yet with the same tick function and predicted inputs. The ticks it runs go up to the last tick t for which `RealtimeCore.match_time_ms` is t × tick length or more. The predicted input is, for its own input, the input sent, and for an input of another participant not received yet, the last input received from that participant. When no input was received, it is an empty input. When a confirmed tick runs, the predicted display copy is discarded and made again from the confirmed state
-- The random of the predicted display copy is one random instance made with `UtilCore.create_random`(`UtilCore.make_purpose_seed`(`match_prediction`, match seed)), and it does not use the random of the confirmed state
+- The random of the predicted display copy is one random instance made with `UtilCore.create_random`(`UtilCore.make_purpose_seed`(`match_prediction`, match random seed)), and it does not use the random of the confirmed state
 - The confirmed state, `MatchInputLog`, the match result and `ReportMatchResult` are decided only by confirmed ticks. Values of the predicted display copy are not written to the confirmed state
 - When `result_rule` of the match mode is `ServerReplay`, the tick function is shared formula `<feature>.sim_tick`. `MatchInputLog` holds the last tick run; for each input that is not an empty input, its tick, participant index and input (in tick order, and in participant index order within the same tick); and for each participant, the tick from which their input was treated as an empty input after leaving (0 when they did not leave). All participants report the same bytes. Server `replay_match` runs the same tick function from tick 0 to that last tick with the same inputs
 - At match end, when the tick in which the simulation reaches the end condition runs, the `matchmaker` request `ReportMatchResult` is sent. For `ServerReplay`, `input_log` holds `MatchInputLog`. `RealtimeCore.end_match` is called after the other participants have received all of this client's inputs up to that tick
@@ -258,21 +258,21 @@ Bot playtests and the play agent's instance control use the automation channel o
 
 ## row simulation
 
-Each table used as `level_id` in the `play-session` request `StartPlaySession` (e.g. level, stage) has a row simulation. A row simulation is an automated check that runs the round of one row to the end with a bot per seed without a screen, and measures whether it can be solved and its difficulty metrics.
+Each table used as `level_id` in the `play-session` request `StartPlaySession` (e.g. level, stage) has a row simulation. A row simulation is an automated check that runs the round of one row to the end with a bot per random seed without a screen, and measures whether it can be solved and its difficulty metrics.
 
-- Content command `<feature>.simulate_<table>` is registered in `client/dev/`. `<table>` is the name of that table, and the first column of that table is `id(key)`. Its arguments are the ID name of the row and the seed (a decimal integer of 1 or more)
-- The command runs one round of that row to the end without changing the screen and without sending server requests. The simulation random is made with the `UtilCore` operation `create_random`(`make_purpose_seed`(`play_session_simulation`, seed)), and the bot that content wrote in `client/dev/` picks the inputs. Choices before the round starts and continues are not used
+- Content command `<feature>.simulate_<table>` is registered in `client/dev/`. `<table>` is the name of that table, and the first column of that table is `id(key)`. Its arguments are the ID name of the row and the random seed (a decimal integer of 1 or more)
+- The command runs one round of that row to the end without changing the screen and without sending server requests. The simulation random is made with the `UtilCore` operation `create_random`(`make_purpose_seed`(`play_session_simulation`, random seed)), and the bot that content wrote in `client/dev/` picks the inputs. Choices before the round starts and continues are not used
 - `result` is `{"solved": <bool>, "metrics": {"<metric>": <integer>, ...}}`. `solved` is whether the round was cleared. `<metric>` is snake_case and is not `solve_permille`. e.g. `moves_left`, `moves_used`
 - target column: the table has `sim_<metric>_min` and `sim_<metric>_max` as a pair. Their type is `int?` and their build target is `None`. `null` means there is no bound on that side. `<metric>` is a metric of the command or `solve_permille`
-- Row values come from calling the command once for each seed from seed 1 to the seed count
-  - `solve_permille`: the number of seeds whose `solved` is `true` × 1000 ÷ seed count. The remainder is dropped
-  - A metric of the command: the median of the values of all seeds. With an even number of values, the smaller of the two middle values
+- Row values come from calling the command once for each random seed from random seed 1 to the random seed count
+  - `solve_permille`: the number of random seeds whose `solved` is `true` × 1000 ÷ random seed count. The remainder is dropped
+  - A metric of the command: the median of the values of all random seeds. With an even number of values, the smaller of the two middle values
 - The row judgement is the first of the below that matches
   - `error`: the command returned `ok` = `false`, did not end within `QACore.commandTimeoutMs`, `result` has a wrong format, or `metrics` lacks a metric that has a target column in that table
   - `unsolvable`: `solve_permille` is 0
   - `out`: a value is less than `sim_<metric>_min` or more than `sim_<metric>_max`
   - `in`: otherwise
-- `row simulation` of `ogw check <game> --loop` uses game settings `rowSimulationSeeds` as the seed count, and is `pass` when every row is `in`, otherwise `fail`. A table that has `sim_` target columns but no command is also `fail`
+- `row simulation` of `ogw check <game> --loop` uses game settings `rowSimulationSeeds` as the random seed count, and is `pass` when every row is `in`, otherwise `fail`. A table that has `sim_` target columns but no command is also `fail`
 
 ## regression test
 
@@ -280,7 +280,7 @@ When a feature is made, its regression test is written with it. Conventions and 
 
 - Expected values are calculated from `design.md`, the contract and data. Values are not compared with a range unless the contract gives a range
 - Time, random and save are set with the test operations of core. Core internal state is not changed
-- For deterministic simulation, the test checks that two runs with the same seed and input give the same result and the same simulation state
+- For deterministic simulation, the test checks that two runs with the same random seed and input give the same result and the same simulation state
 - It is forbidden to make a test pass by running it several times, to lengthen sleeps and timeouts, to weaken asserts, and to skip. Static check `test skip` blocks the skips that the engine-specific implementation rules name
 - A test checks that a request blocked by an advance check was not sent
 - For each tutorial reward step, when `release` and `init` happen after the success response of the reward `rpc` and before the response of `SaveTutorialProgress`, that step starts again, and with the success response of the reward `rpc` sent again, the step ends and moves to the next step

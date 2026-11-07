@@ -79,8 +79,8 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 | `random_int` | ctx or random instance, min, max | integer at least min and at most max | an input violation throws | content handler, hook, core module |
 | `random_weighted` | ctx or random instance, list of weights | picked index | an input violation throws | content handler, hook, core module |
 | `random_shuffle` | ctx or random instance, count n | permutation of 0 to n−1 | an input violation throws | content handler, hook, core module |
-| `create_random` | seed(`int64`) | random instance | none | `matchmaker`, hook |
-| `make_purpose_seed` | purpose name, base(`int64`) | seed(`int64`) | none | `matchmaker`, hook |
+| `create_random` | random seed(`int64`) | random instance | none | `matchmaker`, hook |
+| `make_purpose_seed` | purpose name, base(`int64`) | random seed(`int64`) | none | `matchmaker`, hook |
 | `canonical_json` | JSON value | canonical JSON string | a non-finite number and a value with no JSON format throw | core module |
 
 - The failure value column does not list what a failure of a statement that the operation runs gives. `## behavior` sets that, also for an operation whose cell is `none`
@@ -92,7 +92,7 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 - The value that a misuse and `replace_user_rows` and `replace_game_rows` throw is an instance of class `StorageMisuse` that the entry file exports
 - A content handler and a hook pass table name `game_state` and key value `(game state kind, key)` to `lock_game_row`. Exceeding the wait in that call throws, and the request is `INTERNAL`. A core module passes a table that it registered with scope `game` by `register_table`, and exceeding the wait in that call is `FAILED`
 - Input violations of `random_int`: min > max, max − min is 2^32 or more. Input violations of `random_weighted`: an empty list, a negative or non-integer weight, a sum of 0, a sum more than 2^32. Input violations of `random_shuffle`: n is less than 0 or more than `storage.maxShuffleCount`. `random_int`, `random_weighted` and `random_shuffle` draw with the same algorithm (`bounded`) as `UtilCore.range_int`, `pick_weighted` and `shuffle_indices` respectively
-- random instance: a PCG32 sequence that `create_random` makes from a seed. When it is passed to `random_u32`, `random_int`, `random_weighted` or `random_shuffle` instead of ctx, they draw from that sequence instead of the ctx random. `create_random` and `make_purpose_seed` use the same algorithm as the operations of the same name in `UtilCore`
+- random instance: a PCG32 sequence that `create_random` makes from a random seed. When it is passed to `random_u32`, `random_int`, `random_weighted` or `random_shuffle` instead of ctx, they draw from that sequence instead of the ctx random. `create_random` and `make_purpose_seed` use the same algorithm as the operations of the same name in `UtilCore`
 - The change function of `run_user_transaction` receives an out-of-request ctx and returns `pass` or a failure code (`GameError` or `CoreError`). On a failure code, rolls back, and the result is `REJECTED`. When the change function throws, rolls back and throws
 - `run_rollback_transaction` opens the same user transaction as `run_user_transaction`, calls the function with an out-of-request ctx, and always rolls back regardless of the result. It makes no delta and no pending delta. When the function throws, throws
 - game tx: the handle of one game transaction, as ctx is of one user transaction. The function of `run_game_transaction` receives a game tx. When the function returns a failure code (`GameError` or `CoreError`), rolls back and returns that value. For any other result, commits and returns that result. So when the result to commit is a number, the function returns the number wrapped in an object. When the function throws, rolls back and throws
@@ -128,11 +128,11 @@ ctx is the handling scope of one user transaction. One request or one out-of-req
 | `data_version` | data version of the server build data. The format is `<protocol hash>-<data hash>` |
 | `user_deleted` | `true` when `delete_user` was called in that transaction, otherwise `false` |
 | `hook_change_source` | `(source, ref)` passed while the function of `with_hook_change_source` runs. When nested, the inner value. Otherwise none |
-| `seed` | seed of the ctx random of that transaction. A 64-bit value |
+| `seed` | random seed of the ctx random of that transaction. A 64-bit value |
 
 - ctx is invalid after the transaction ends. Handlers and hooks do not keep ctx outside the transaction
 - The TypeScript type of ctx is interface `RequestCtx` that `server/core/storage/request_ctx.ts` exports. Its fields are the fields of the table of `### ctx`. A request ctx and an out-of-request ctx have the same type
-- random: the algorithm is PCG32, and it produces the same sequence as the random of `UtilCore`. The seed is a 64-bit value made with secure random per transaction and is `seed` of the ctx. `routing` records the seed of a request in `seed` of the `request` log as a decimal string
+- random: the algorithm is PCG32, and it produces the same sequence as the random of `UtilCore`. The random seed is a 64-bit value made with secure random per transaction and is `seed` of the ctx. `routing` records the random seed of a request in `seed` of the `request` log as a decimal string
 
 ### transaction
 
@@ -385,11 +385,11 @@ none
 
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
-| `set_seed_provider` | function (request ID → seed or none) | none | a call after server start has begun throws | `testing` |
+| `set_seed_provider` | function (request ID → random seed or none) | none | a call after server start has begun throws | `testing` |
 | `wait_after_commit` | none | async operation. none | none | `testing` |
 | `open_pg_session` | PostgreSQL connection string | async operation. session: backend pid, `query` that receives SQL and parameters and runs them on that connection, `close` that closes the connection | a connection failure throws | `testing` |
 
-- A request for which the provider returned a seed makes its random from that seed. When none, secure random
+- A request for which the provider returned a random seed makes its random from that random seed. When none, secure random
 - `wait_after_commit` waits until all `after_commit` functions and user change applications started so far end
 - `open_pg_session` opens one new connection with the same wire protocol implementation as the PostgreSQL adapter of storage. It is unrelated to the connection pool of the server instance and has no lock wait limit. Code outside storage does not connect to PostgreSQL through internal files of storage and uses this operation
 
@@ -456,8 +456,8 @@ none
 - `export_user_rows` returns, from the `user` and `game` scope tables given a personal data user column, only the rows in which that column is that user, and has no rows of tables not given the column
 - Reading a row of a lower version saves the converted value and the current contract version, and with a delete result the item is deleted. With `FAILED`, the row does not change
 - When one transaction locks a `game_state` row of a lower version with `lock_game_row` and writes a new value, and before it commits another transaction reads that row with `get_game_state` without locking, after both transactions end the row has the value that the locking transaction wrote and the current contract version
-- Random operations with the same seed produce the same sequence, equal to the test vector of `UtilCore`. A random input violation throws
-- 6 calls of `random_u32` on a random instance made with `create_random`(42) equal the seed `42` `next_uint32` row of the `UtilCore` test vector, `random_shuffle`(10) of a newly made `create_random`(42) equals the seed `42` `shuffle_indices(10)` row of the test vector, and `make_purpose_seed` equals the two `make_purpose_seed` rows of the test vector
+- Random operations with the same random seed produce the same sequence, equal to the test vector of `UtilCore`. A random input violation throws
+- 6 calls of `random_u32` on a random instance made with `create_random`(42) equal the random seed `42` `next_uint32` row of the `UtilCore` test vector, `random_shuffle`(10) of a newly made `create_random`(42) equals the random seed `42` `shuffle_indices(10)` row of the test vector, and `make_purpose_seed` equals the two `make_purpose_seed` rows of the test vector
 - ctx `hook_change_source` inside `with_hook_change_source` is the passed value, the outer value when the inner range ends, and none when all end
 - An operation called with the ctx of an ended transaction throws, and the saved state does not change
 - A row whose expiry column has passed is deleted by the cleanup

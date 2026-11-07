@@ -177,7 +177,7 @@ none
 
 | operation | input | output | caller |
 |---|---|---|---|
-| `set_shake_seed` | seed | none. Sets the random seed of the shake noise. The same seed and the same input give the same offset | core test |
+| `set_shake_seed` | random seed | none. Sets the random seed of the shake noise. The same random seed and the same input give the same offset | core test |
 | `set_shake_skip` | whether skipped | none | `QACore`, core test |
 
 - shake skip: off at `init`, changed by `set_shake_skip`, and turned off by `release`. Attaching and detaching a camera leave it as it is. While it is on, a `shake` that passes the checks of `## error` adds no trauma, leaves no log and publishes no `CameraShakeStartedEvent`. It does not change the trauma that is there or the shake scale
@@ -188,7 +188,7 @@ none
 - Attaching a new camera after `attach_camera` deletes the follow, bounds and shake of the previous camera, and the `move_to` in progress ends with `Cancelled`
 - Destroying the attached camera object leaves no attached camera, without a log, and a `shake` after that leaves one error log
 - While no camera is attached, `has_camera` is `false` without a log; after `attach_camera` it is `true`, and after the attached object is destroyed it is `false`
-- While no camera is attached, `move_by_preset` is `Failed` and `get_zoom` is 1, with one error log each. `set_shake_scale`(500) in that time leaves no log, and on a camera attached after that, the offset of the same seed and the same `shake` is half that at 1000
+- While no camera is attached, `move_by_preset` is `Failed` and `get_zoom` is 1, with one error log each. `set_shake_scale`(500) in that time leaves no log, and on a camera attached after that, the offset of the same random seed and the same `shake` is half that at 1000
 - A follow with smooth time 0 reaches the goal position in the same frame, and for a follow with smooth time T, the remaining distance after game time T is e^-1 of the first distance (tolerance 1%)
 - When the target moves inside the dead zone, the base position stays as it is; when it goes outside, the camera follows so that the target is on the dead zone edge
 - During a game time pause, the base position stays as it is even when the follow target moves
@@ -214,7 +214,7 @@ none
 - For both a 2D camera and a 3D camera, `get_view_center` is the base position after bounds fitting and does not add the shake offset even during a shake. For a 3D camera it equals the camera position
 - Two `shake(0.5)` calls publish `CameraShakeStartedEvent` twice and make trauma 1, and without `shake` it is 0 after 1 / `CameraCore.shakeDecayPerSecond` seconds. When trauma is 0, offset and rotation are 0
 - In every frame, the absolute value of each axis of the shake offset is at most `CameraCore.shakeMaxOffset` × t², where t is the trauma after the reduction of that frame
-- With the same seed and the same `shake`, the offset with `set_shake_scale`(500) is half that at 1000, and at 0 the offset is 0 and `CameraShakeStartedEvent` is still published
+- With the same random seed and the same `shake`, the offset with `set_shake_scale`(500) is half that at 1000, and at 0 the offset is 0 and `CameraShakeStartedEvent` is still published
 - With the same `set_shake_seed` and the same order of `shake` calls, the offset of each frame is the same
 - For a 2D camera, `screen_to_world(world_to_screen(p))` equals p (tolerance 0.01 world units). It is the same during zoom and shake. For a 3D camera, the same holds for a point p at height 0
 - For a 3D camera, `world_to_screen` of a world position behind the camera and of a world position between the camera and the near plane is the origin, with one error log each
