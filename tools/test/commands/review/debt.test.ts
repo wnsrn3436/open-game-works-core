@@ -156,7 +156,7 @@ describe('ogw review: tool lists', () => {
   it('takes no --full for a tool target', async () => {
     const ws = makeWorkspace();
     const refused = await next(ws, ['tool', 'agent', 'merge', '--full', '--definition', join(ws.harness, 'tools', 'ogw.md')], ws.env);
-    expect(refused.stderr).toContain('usage: ogw review next core <target> [--since <commit>|--full|--debt]');
+    expect(refused.stderr).toContain('--full is for a core target\nusage: ogw review next core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]');
   });
 });
 

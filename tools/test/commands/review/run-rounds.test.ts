@@ -237,6 +237,20 @@ describe('ogw review run', () => {
     expect((await ogw(ws, ['review', 'status', 'tool'])).stdout).toBe('agent merge round 1 done spec change: none job: none\n');
   });
 
+  it('refuses options that exclude each other before it starts a job, naming them', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { routing: spec('routing', 'server') });
+    const usage = 'usage: ogw review run core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]\n';
+    const jobs = (await listJobs(ws.env)).length;
+    expect(await ogw(ws, ['review', 'run', 'core', 'routing', '--debt', '--respec', '--background'])).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: `--respec and --debt exclude each other: give one of --restart, --respec, --continue, --reopen, --full, --debt\n${usage}`,
+    });
+    expect((await ogw(ws, ['review', 'run', 'core', 'routing', '--full', '--since', 'HEAD', '--background'])).stderr).toBe(`--since and --full exclude each other\n${usage}`);
+    expect((await listJobs(ws.env)).length).toBe(jobs);
+  });
+
   it('fails at once while a run of the same target holds its lock, and checks the arguments', async () => {
     const ws = makeWorkspace();
     const lock = join(ws.coreImpl, '.git', 'ogw-review', 'routing.run.lock');
@@ -245,7 +259,7 @@ describe('ogw review run', () => {
     const refused = await ogw(ws, ['review', 'run', 'core', 'routing']);
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain('an ogw review run job of routing is running');
-    expect((await ogw(ws, ['review', 'run', 'tool', 'agent', 'merge'])).stderr).toContain('usage: ogw review run core <target> [--since <commit>|--full|--debt] [--restart|--respec|--continue|--reopen]');
+    expect((await ogw(ws, ['review', 'run', 'tool', 'agent', 'merge'])).stderr).toContain('usage: ogw review run core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]');
     expect((await ogw(ws, ['review', 'status', 'x'])).stderr).toContain('usage: ogw review status <core|tool>');
     rmSync(lock, { recursive: true, force: true });
     coreSpec(ws, { routing: spec('routing', 'server') });

@@ -76,7 +76,7 @@ export async function coreDefinitions(ctx: Context, target: string, dependencies
 }
 
 /** The usage of `ogw review next tool`, a part of the usage of `ogw review next`. */
-export const NEXT_TOOL_USAGE = 'ogw review next tool <target> --definition <file>... [--since <commit>|--debt] [--restart|--respec|--continue|--reopen]';
+export const NEXT_TOOL_USAGE = 'ogw review next tool <target> --definition <file>... [--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]';
 
 /** Definition documents of a `ogw` command target: the `--definition` files, which a tool target needs. */
 export function toolDefinitions(ctx: Context, target: string, given: readonly string[]): string[] {

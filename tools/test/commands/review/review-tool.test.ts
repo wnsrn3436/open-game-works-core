@@ -71,7 +71,7 @@ describe('ogw review: tool', () => {
     const refused = await next(ws, ['tool', 'review', 'wait'], reviewer(ws, { 1: reviewFile([]) }));
     expect(refused).toMatchObject({ code: 1 });
     expect(refused.stderr).toContain('give the documents that define review wait with --definition');
-    expect(refused.stderr).toContain('usage: ogw review next tool <target> --definition <file>... [--since <commit>|--debt] [--restart|--respec|--continue|--reopen]\n');
+    expect(refused.stderr).toContain('usage: ogw review next tool <target> --definition <file>... [--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]\n');
     expect(existsSync(join(ws.harness, '.git', 'ogw-review', 'review wait', 'round-1-input.md'))).toBe(false);
   });
 

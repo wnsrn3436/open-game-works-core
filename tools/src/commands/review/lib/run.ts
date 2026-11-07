@@ -491,7 +491,7 @@ function takeCarry(env: NodeJS.ProcessEnv): Carry {
   return { invalid: carry.invalid, invalidLines: carry.invalidLines, preexisting: carry.preexisting, tested: carry.tested };
 }
 
-/** `ogw review run core <target> [--since <commit>|--full|--debt] [--restart|--respec|--continue|--reopen]`. */
+/** `ogw review run core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]`. */
 export async function reviewRun(ctx: Context, target: string, first: Omit<NextOptions, 'definitions'>): Promise<CommandResult> {
   const dir = await targetDir(ctx, 'core', target);
   const drive: Drive = {

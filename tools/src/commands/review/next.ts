@@ -17,15 +17,19 @@ export function sideAndTarget(args: CommandArgs, usage: string): { side: Side; t
  */
 export function restartOrContinue(args: CommandArgs, usage: string, side: Side): { restart: boolean; continue: boolean; respec: boolean; reopen: boolean; full: boolean; debt: boolean } {
   const options = { restart: flag(args, 'restart'), continue: flag(args, 'continue'), respec: flag(args, 'respec'), reopen: flag(args, 'reopen'), full: flag(args, 'full'), debt: flag(args, 'debt') };
-  if (Object.values(options).filter(Boolean).length > 1) throw new OgwError(`usage: ${usage}`);
-  if ((options.full || options.debt) && str(args, 'since') !== undefined) throw new OgwError(`usage: ${usage}`);
-  if (options.full && side !== 'core') throw new OgwError(`usage: ${usage}`);
+  const given = Object.entries(options).flatMap(([name, on]) => (on ? [`--${name}`] : []));
+  const refuse = (why: string): never => {
+    throw new OgwError(`${why}\nusage: ${usage}`);
+  };
+  if (given.length > 1) refuse(`${given.join(' and ')} exclude each other: give one of --restart, --respec, --continue, --reopen, --full, --debt`);
+  if ((options.full || options.debt) && str(args, 'since') !== undefined) refuse(`--since and ${options.full ? '--full' : '--debt'} exclude each other`);
+  if (options.full && side !== 'core') refuse('--full is for a core target');
   return options;
 }
 
 export const next: CommandDef = {
   name: ['review', 'next'],
-  usage: `ogw review next core <target> [--since <commit>|--full|--debt] [--restart|--respec|--continue|--reopen] | ${NEXT_TOOL_USAGE}`,
+  usage: `ogw review next core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]] | ${NEXT_TOOL_USAGE}`,
   options: { restart: { type: 'boolean' }, respec: { type: 'boolean' }, continue: { type: 'boolean' }, reopen: { type: 'boolean' }, full: { type: 'boolean' }, debt: { type: 'boolean' }, since: { type: 'string' }, definition: { type: 'string', multiple: true } },
   async run(ctx, args) {
     const { side, target } = sideAndTarget(args, this.usage);
