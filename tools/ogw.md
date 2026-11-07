@@ -45,6 +45,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 - generation measure
 - env propose
 - build start
+- build run
 - build report
 - store privacy disclosure
 - server image
@@ -994,6 +995,17 @@ How `ogw build start` checks and prepares a build, before anything is made.
   - PROD: the commit the build branch is created from is, with `--version`, the commit of main tagged `stg-<that value>`, and without it, the most recent commit of main that has an `stg-<version>` tag. The version is that tag's version. When there is no such commit, when the `prod-<version>` tag already exists, or when it is not a bundle patch and the version is not higher than the version of the last PROD build, stops and reports to the human. When main has no `records/loops/build-stg-<version>/end.md` or its `## compatibility base` differs from the tag of the current last PROD build (`none` when there is no PROD tag), stops and reports to the human that a new STG build is needed. Unless it is a bundle patch without data, the tool also checks with this host's GitHub CLI login that game settings `serverImage.repository` has the server image with image tag `stg-<version>`. When it does not, stops and reports to the human
   - When a PROD tag exists and the contract version of the commit the branch was created from is greater than the contract version of the last PROD build, the tool also checks that the secret of operator `ogw` in PROD `adminOperators` is in this host's secret store and that admin operation `sample_user_ids` (`count` 1) on PROD `serverUrl` succeeds with that operator. Otherwise, stops and tells the human
 
+## build run
+
+The order of the work of `ogw build run` after its data check and binary build.
+
+- The build-time checks before the platform build read no result of each other and start together: the settings checks and the human checks, the static check, `native plugin`, the STG server image build of `DEV code`, the repository scan of `secret`, `placeholder`, `backward compatibility`, the preparation of the check workspaces and check `repeat test` (`### client checks`). The contract tool of `backward compatibility` runs in its own worktree of the build branch HEAD, because it and the `ogw generate` before it write generation targets, which the other checks and the check instances read in the build checkout
+- The performance measurements start when all of those have ended: checks `device performance` and `web smoke` together, then check `soak test` when both have ended. The run starts no other work while they run
+- When no check blocks the build, the platform build runs together with the server image build into the build cache (`## server image`), the app versions of `update/update.json` (`## deploy` of [`build`](../skills/build/SKILL.md)), the data versions of the last PROD build and the match wait duration, and the PROD values of `## converters` and `## core schema` of `## build report`. The push of the server image, `update/` and these values in the result wait until the artifact checks (the artifact scan of `secret`, the made packages of `DEV code`, `bundle`) have passed
+- The app versions of `update/update.json` are checked together, each with its own worktree and data build, at most as many at a time as this host has CPUs
+- The match wait duration reads the data and game settings `core` of the last PROD build from git, and the core settings of the release of its core version
+- The artifact scan of `secret` reads the files ahead while it scans the files before them, at most 256 MiB of files read and not yet scanned at a time, and a larger file alone
+
 ## build report
 
 The build report has the headings below in this order. A heading is `none` when it has no contents or the build did not reach the step that produces them.
@@ -1079,6 +1091,7 @@ How `ogw build run` makes the server image of a DEV or STG build.
 - For STG, `generated/core_settings.json` and `generated/server_modules.json` of that copy are rewritten with the STG prepared modules (`## module` of the `core` skill)
 - For DEV and STG, the items whose path contains an environment name other than this build's are removed from `generated/core_settings.json` of that copy
 - The Dockerfile is `core/Dockerfile` of that copy
+- Every `docker buildx build` of the image of a build has the same arguments but its output, so that a later one takes every step from the build cache of an earlier one: the STG build of check `DEV code` into a tar of the image file system (`--output type=tar`), the build into the build cache beside the platform build (`--output type=cacheonly`), and the push (`--push`), which waits for the checks of the artifacts (`## build run`). The build into the build cache stops when those checks fail
 - The registry login uses this host's GitHub CLI login
 
 ## save schema check
@@ -1220,7 +1233,8 @@ A key name below is a key of the signing key table.
 Checks `device performance`, `web smoke` and `soak test` start a check instance and make a check export, and check `repeat test` does so once per run.
 
 - check instance: an instance started with the runner, without clients other than bot clients. The DB is SQLite. The runner starts the bot client of that instance on the host
-- check export: an export in the build workspace with the DEV preset of the platform (`android-dev`, `web-dev`) without `generated/build_info.json`. The export version is the build's version, and for a bundle patch build, the target app version. Before the export, writes into `generated/launch_values.json` `OGW_SERVER_URL` (`http://127.0.0.1:<instance server port>`), `OGW_INSTANCE_ID` (the instance ID of the check instance), `OGW_AUTOMATION_PORT` and `OGW_AUTOMATION_TOKEN` set by the runner, `OGW_PLATFORM` (the platform), `OGW_DEV_ACCESS` with the dev access value the runner gave the instance server of the check instance, and `OGW_DEV_ACCOUNT` with the dev account the runner set. It is not an artifact. When the check ends, on success or failure, deletes it and `generated/launch_values.json`. The check exports of the runs of check `repeat test` are made one at a time in one build workspace, and each is deleted when its run ends
+- check workspace: per platform, one build workspace of the build branch HEAD in which `ogw build run` does, once for all check exports of that platform, `### export` 1, the DEV preset options of `#### export preset`, `application/config/version` of the export version and `### export` 6. It is deleted when the client checks end
+- check export: an export with the DEV preset of the platform (`android-dev`, `web-dev`) without `generated/build_info.json`, made by `### export` 4, 5, 7 and 8 in its own copy of `client/` and `resource/` of the check workspace. The copy is a clone where the file system has one (APFS, Btrfs, XFS) and a copy elsewhere, and keeps the modification times of the files, so that the export imports nothing again. The copy is made before the check instance starts. The export version is the build's version, and for a bundle patch build, the target app version. Before the export, writes into `generated/launch_values.json` of the copy `OGW_SERVER_URL` (`http://127.0.0.1:<instance server port>`), `OGW_INSTANCE_ID` (the instance ID of the check instance), `OGW_AUTOMATION_PORT` and `OGW_AUTOMATION_TOKEN` set by the runner, `OGW_PLATFORM` (the platform), `OGW_DEV_ACCESS` with the dev access value the runner gave the instance server of the check instance, and `OGW_DEV_ACCOUNT` with the dev account the runner set. It is not an artifact. When the check ends, on success or failure, deletes the copy and the export. The runs of check `repeat test` make their check exports together, each in its own copy
 
 ### device performance
 
@@ -1244,16 +1258,16 @@ Checks `device performance`, `web smoke` and `soak test` start a check instance 
 
 ### repeat test
 
-`ogw build run` does check `repeat test` of a DEV or STG web build in the order below, after check `web smoke` has ended. Each run plays the bot playtest scenario as a new user, and 36 runs without a failed run show at 95% confidence that fewer than 8% of runs fail (0.92^36 < 0.05). 36 is a fixed value of the check, not a setting.
+`ogw build run` does check `repeat test` of a DEV or STG web build in the order below, beside the build-time checks that measure no performance (`## build run`). Each run plays the bot playtest scenario as a new user, and 36 runs without a failed run show at 95% confidence that fewer than 8% of runs fail (0.92^36 < 0.05). 36 is a fixed value of the check, not a setting.
 
-1. Starts 36 runs, at most harness settings `maxConcurrentInstances` at a time. A run starts its own check instance, makes its own check export, and does `### web smoke` 3 to 5 with them. The DB of the check instance and the browser profile of the page are new, so the run starts as a new user with a new save. The server makes the random seed of each request with secure random and writes it to the `request` log, so each run has other seeds and its server log holds them
+1. Starts 36 runs, at most harness settings `maxConcurrentInstances` at a time. A run makes its own copy of the web check workspace, starts its own check instance, makes its own check export in that copy, and does `### web smoke` 3 to 5 with them. The DB of the check instance and the browser profile of the page are new, so the run starts as a new user with a new save. The server makes the random seed of each request with secure random and writes it to the `request` log, so each run has other seeds and its server log holds them
 2. A run is `fail` when its no blocker or full flow is `fail`, `unknown` when neither is `fail` and one is `unknown` or when the run could not run to the end (e.g. its instance, export or browser did not start), and `pass` otherwise
 3. The kind of a failed run is the first of the following that its first failure matches: `crash` (the page, the browser or the server process ended), `softlock` (`state.softlock` is not `null`, or a step or the boot did not end within its time limit), `error log` (an error level line in the browser console or the server log), `failed goal` (full flow is `fail` and no blocker is not: the goal is not `true` after the last step, or a `save` step failed), `other` (any other no blocker failure)
 4. The check is `fail` when a run failed, `unknown` when no run failed and a run is `unknown`, and `pass` otherwise. Its first line is `<failed runs> of 36 runs failed: crash <n>, softlock <n>, error log <n>, failed goal <n>, other <n>`, followed by one line per run that is not `pass`: `run <n>: ` and the first line that check `web smoke` would give for that run, or `did not run: <reason>` for a run that an instance, export or browser error stopped. The browser console and the server log of each run that is not `pass` go in `builds/<env>-<version>/repeat-test/run-<n>/`
 
 ### soak test
 
-`ogw build run` does check `soak test` of a DEV or STG web build in the order below, after check `repeat test` has ended, so that the runs of other checks do not change its frame intervals. One session plays the bot playtest scenario and then 45 minutes of cycles of bot play and idle, and the tool watches it for blockers, memory growth and frame degradation. The counts, times and limits of this section are fixed values of the check, not settings.
+`ogw build run` does check `soak test` of a DEV or STG web build in the order below, after checks `device performance` and `web smoke` have ended (`## build run`), so that the runs of other checks do not change its frame intervals. One session plays the bot playtest scenario and then 45 minutes of cycles of bot play and idle, and the tool watches it for blockers, memory growth and frame degradation. The counts, times and limits of this section are fixed values of the check, not settings.
 
 1. Does `### web smoke` 1 to 4. When its no blocker or full flow is not `pass`, the result is that of `web smoke`, and 2 and 3 are not done
 2. Reads a tick (`get_state`, then `get_stats`, as `## performance` does) every 1000 ms, 2700 ticks (45 minutes), counted from 0. Each 150 ticks are a cycle: at tick 0 of a cycle the tool sends `clear_telemetry`, during ticks 0 to 119 of the cycle the bot plays, and during ticks 120 to 149 no input goes in. The bot is the command of the last `auto` step of the scenario, called with its arguments, and the input command it returns is put in as an `auto` step does, with the same gap between inputs. When the scenario has no `auto` step, no input goes in

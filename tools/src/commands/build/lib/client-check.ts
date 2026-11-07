@@ -1,12 +1,13 @@
+import { constants } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFile, rm } from 'node:fs/promises';
+import { cp, readFile, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { join, normalize, relative } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
-import { isNotFound } from '../../../lib/fsx.ts';
+import { exists, isNotFound } from '../../../lib/fsx.ts';
 import { revParse } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { isInside } from '../../../lib/paths.ts';
@@ -17,9 +18,10 @@ import { contentTypeOf } from '../../deploy/lib/s3.ts';
 import { startInstance, stopInstance, type ExternalClient, type InstanceInfo } from '../../instance/api.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import { START_LIMIT_MS } from '../../instance/lib/supervisor.ts';
-import { withCommitCheckout } from './atcommit.ts';
+import { addCommitCheckout, removeCommitCheckout } from './atcommit.ts';
 import type { BuildCheck } from './buildrun.ts';
-import { godotCheckExport, type LaunchValues } from './godot.ts';
+import { godotCheckExport, godotCheckPrepare, type CheckPrepared, type LaunchValues } from './godot.ts';
+import type { PlatformBuildInput } from './platform.ts';
 import { buildDirName, type Env } from './names.ts';
 import { outcome } from './settingschecks.ts';
 
@@ -37,6 +39,8 @@ export interface ClientCheckInput {
   exportVersion: string;
   settings: GameSettings;
   platforms: string[];
+  /** The check workspaces the checks of one build run share; a check without them makes its own. */
+  workspaces?: CheckWorkspaces;
 }
 
 /**
@@ -108,53 +112,111 @@ export function launchValuesOf(instance: InstanceInfo, external: ExternalClient,
   };
 }
 
-/**
- * Makes a check export with these launch values into `.ogw-check/<name>/` of the build workspace and returns its output
- * file. Exports run one at a time: a call waits for the export before it.
- */
-export type CheckExporter = (platform: 'android' | 'web', values: LaunchValues, name: string) => Promise<string>;
+/** The platforms of the check exports. */
+export type CheckPlatform = 'android' | 'web';
+
+/** Makes the check export of a copy with the launch values of its check instance and returns its output file. */
+export type CheckExporter = (values: LaunchValues) => Promise<string>;
+
+/** A check workspace: its build workspace and what its copies export with. */
+interface PreparedWorkspace {
+  root: string;
+  prepared: CheckPrepared;
+}
+
+/** The parts of a check workspace that a copy holds: the engine project and the folder its `client/resource` links to. */
+const COPIED = ['client', 'resource'];
 
 /**
- * One build workspace of the build branch HEAD for the check exports of `use` (ogw.md `### client checks`). The exports
- * and `generated/launch_values.json` are deleted when `use` ends, whatever its result.
+ * The check workspaces of one build run (ogw.md `### client checks`): per platform one build workspace of the build
+ * branch HEAD, prepared and imported once when a check first asks for it, whose copies the check exports are made in.
+ * `close` removes them.
  */
-export async function withCheckWorkspace<T>(input: ClientCheckInput, use: (exportFor: CheckExporter) => Promise<T>): Promise<T> {
-  const { ctx, game } = input;
-  const engine = input.settings.engine ?? 'godot';
-  if (engine !== 'godot') throw new OgwError(`not defined: the check export of engine ${engine}`);
-  const head = await revParse(game.root, 'HEAD');
-  if (head === null) throw new OgwError('the build branch has no commit');
-  return withCommitCheckout(ctx, game, head, async (repo) => {
-    let last: Promise<unknown> = Promise.resolve();
-    const exportFor: CheckExporter = (platform, values, name) => {
-      const dir = join(repo.root, '.ogw-check', name);
-      const build = { game, env: 'DEV' as const, version: input.exportVersion, platforms: [platform], settings: input.settings, outDir: dir, iosPrivacy: [], privacyManifest: null };
-      // the exports share the checkout and its `generated/launch_values.json`: one after the other
-      const made = last.then(() => godotCheckExport(ctx, build, platform, repo.root, dir, values));
-      // the next export waits until this one settled; its failure goes to its own caller
-      last = Promise.allSettled([made]);
-      return made;
-    };
-    try {
-      return await use(exportFor);
-    } finally {
-      await rm(join(repo.root, '.ogw-check'), { recursive: true, force: true });
-      await rm(join(repo.root, 'client', 'generated', 'launch_values.json'), { force: true });
+export class CheckWorkspaces {
+  private readonly made = new Map<CheckPlatform, Promise<PreparedWorkspace>>();
+  private readonly roots: string[] = [];
+  private readonly input: ClientCheckInput;
+
+  constructor(input: ClientCheckInput) {
+    this.input = input;
+  }
+
+  /** The check workspace of `platform`, made on the first call; its failure goes to every check that uses it. */
+  prepare(platform: CheckPlatform): Promise<PreparedWorkspace> {
+    let workspace = this.made.get(platform);
+    if (workspace === undefined) {
+      workspace = this.make(platform);
+      this.made.set(platform, workspace);
     }
-  });
+    return workspace;
+  }
+
+  private async make(platform: CheckPlatform): Promise<PreparedWorkspace> {
+    const { ctx, game } = this.input;
+    const engine = this.input.settings.engine ?? 'godot';
+    if (engine !== 'godot') throw new OgwError(`not defined: the check export of engine ${engine}`);
+    const head = await revParse(game.root, 'HEAD');
+    if (head === null) throw new OgwError('the build branch has no commit');
+    const repo = await addCommitCheckout(ctx, game, head, (path) => this.roots.push(path));
+    return { root: repo.root, prepared: await godotCheckPrepare(ctx, this.build(platform, repo.root), platform, repo.root) };
+  }
+
+  private build(platform: CheckPlatform, outDir: string): PlatformBuildInput {
+    const { game, settings } = this.input;
+    return { game, env: 'DEV', version: this.input.exportVersion, platforms: [platform], settings, outDir, iosPrivacy: [], privacyManifest: null };
+  }
+
+  /**
+   * Runs `use` with the exporter of a new copy `.ogw-copy/<name>/` of the check workspace of `platform`, whose export goes
+   * to `.ogw-check/<name>/`. The copy is a clone where the file system has one (APFS, Btrfs, XFS) and a copy elsewhere,
+   * with the times of the files kept, so that the engine finds nothing to import again. The copy and its export are
+   * deleted when `use` ends, whatever its result.
+   */
+  async withCopy<T>(platform: CheckPlatform, name: string, use: (exportWith: CheckExporter) => Promise<T>): Promise<T> {
+    const { root, prepared } = await this.prepare(platform);
+    const copy = join(root, '.ogw-copy', name);
+    const out = join(root, '.ogw-check', name);
+    try {
+      for (const part of COPIED.filter((p) => exists(join(root, p)))) {
+        await cp(join(root, part), join(copy, part), { recursive: true, mode: constants.COPYFILE_FICLONE, preserveTimestamps: true, verbatimSymlinks: true });
+      }
+      return await use((values) => godotCheckExport(this.input.ctx, this.build(platform, out), platform, copy, out, values, prepared));
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+      await rm(out, { recursive: true, force: true });
+    }
+  }
+
+  /** Waits for the preparations, then removes the build workspaces. */
+  async close(): Promise<void> {
+    await Promise.allSettled(this.made.values());
+    for (const root of this.roots) await removeCommitCheckout(this.input.ctx, this.input.game, root);
+  }
+}
+
+/** Runs `use` with new check workspaces, removed when `use` ends whatever its result. */
+export async function withCheckWorkspaces<T>(input: ClientCheckInput, use: (workspaces: CheckWorkspaces) => Promise<T>): Promise<T> {
+  const workspaces = new CheckWorkspaces(input);
+  try {
+    return await use(workspaces);
+  } finally {
+    await workspaces.close();
+  }
+}
+
+/** Runs `use` with an input that has check workspaces: those of `input`, or new ones for this call. */
+export async function withWorkspacesOf<T>(input: ClientCheckInput, use: (input: ClientCheckInput & { workspaces: CheckWorkspaces }) => Promise<T>): Promise<T> {
+  const { workspaces } = input;
+  if (workspaces !== undefined) return use({ ...input, workspaces });
+  return withCheckWorkspaces(input, (made) => use({ ...input, workspaces: made }));
 }
 
 /**
- * The DEV export of the build branch HEAD in a build workspace, then `use` on the output file. The export
- * and `generated/launch_values.json` are deleted when `use` ends, whatever its result.
+ * Runs `use` with the exporter of a new copy of the check workspace of `platform` (ogw.md `### client checks`): the copy
+ * is made before `use` starts the check instance, and the export is made with its launch values.
  */
-export async function withCheckExport<T>(
-  input: ClientCheckInput,
-  platform: 'android' | 'web',
-  values: LaunchValues,
-  use: (file: string) => Promise<T>,
-): Promise<T> {
-  return withCheckWorkspace(input, async (exportFor) => use(await exportFor(platform, values, platform)));
+export async function withCheckCopy<T>(input: ClientCheckInput, platform: CheckPlatform, name: string, use: (exportWith: CheckExporter) => Promise<T>): Promise<T> {
+  return withWorkspacesOf(input, (own) => own.workspaces.withCopy(platform, name, use));
 }
 
 export type BootOutcome = { kind: 'done'; at: number } | { kind: 'blocker'; message: string } | { kind: 'timeout'; message: string };

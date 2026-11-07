@@ -368,8 +368,11 @@ describe('web smoke', () => {
     expect((await webSmoke(s.input))?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: no instance slot'] });
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('not defined: how the runner starts the server process'));
     await expect(webSmoke(s.input)).rejects.toThrow('not defined: how the runner starts the server process');
+    const instances = vi.mocked(startInstance).mock.calls.length;
     await expect(webSmoke({ ...s.input, settings: { ...s.input.settings, engine: 'unity' } })).rejects.toThrow('not defined: the check export of engine unity');
-    expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(3);
+    // the copy of the check workspace comes before the check instance: an engine without a check export starts none
+    expect(vi.mocked(startInstance).mock.calls.length).toBe(instances);
+    expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(2);
   });
 
   it('is not run without web, fails without a scenario, and is unknown when the export makes no output', async () => {

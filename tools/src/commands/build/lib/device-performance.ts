@@ -19,7 +19,7 @@ import {
   evidenceOf,
   launchValuesOf,
   waitClientBoot,
-  withCheckExport,
+  withCheckCopy,
   withCheckInstance,
   type ClientCheckInput,
 } from './client-check.ts';
@@ -119,14 +119,15 @@ export async function devicePerformance(input: ClientCheckInput): Promise<BuildC
   if (typeof appId !== 'string' || appId === '') throw new OgwError('game settings appId is not set');
   try {
     const realtime = (await gameModules(ctx, input.game)).client.includes('RealtimeCore');
-    return await withCheckInstance(ctx, input.game, 'android', async (instance, external) => {
-      const udp = realtime ? await udpReachesHost(ctx, device.serial) : true;
-      // UDP that does not reach and a device that cannot be asked are both `unknown`, each with its reason
-      if (udp === null) return didNotRun(NAME, `the UDP check from test device ${device.serial} could not run`);
-      if (!udp) return unknown(`UDP from test device ${device.serial} does not reach this host`);
-      const d: DeviceRun = { input, serial: device.serial, appId, scenario, instance, external };
-      return withCheckExport(input, 'android', launchValuesOf(instance, external, 'android'), (apk) => onDevice(d, apk));
-    });
+    return await withCheckCopy(input, 'android', 'android', (exportWith) =>
+      withCheckInstance(ctx, input.game, 'android', async (instance, external) => {
+        const udp = realtime ? await udpReachesHost(ctx, device.serial) : true;
+        // UDP that does not reach and a device that cannot be asked are both `unknown`, each with its reason
+        if (udp === null) return didNotRun(NAME, `the UDP check from test device ${device.serial} could not run`);
+        if (!udp) return unknown(`UDP from test device ${device.serial} does not reach this host`);
+        const d: DeviceRun = { input, serial: device.serial, appId, scenario, instance, external };
+        return onDevice(d, await exportWith(launchValuesOf(instance, external, 'android')));
+      }));
   } catch (error) {
     return didNotRun(NAME, error);
   }

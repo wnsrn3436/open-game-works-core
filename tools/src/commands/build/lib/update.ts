@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
+import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
+import { pooled } from '../../../lib/pool.ts';
 import type { FileEntry, UpdateJson } from '../../deploy/lib/deploylist.ts';
 import { dataVersionsAt, protocolHash, type DataVersions } from './atcommit.ts';
 import { dataBundleFailures, dataResourceKeys, resourceKeysAt } from './bundle-data.ts';
@@ -42,20 +44,23 @@ export function latestBundleTag(tags: readonly BuildTag[], env: Env, appVersion:
  * `resources.csv` at its tag commit and at its latest bundle's tag commit.
  */
 export async function compatibleApps(ctx: Context, game: GameRepo, env: Env, tags: readonly BuildTag[], build: DataVersions): Promise<string[]> {
-  const apps: string[] = [];
   const own = tags.filter((t) => t.env === env && t.bundle === null).sort((a, b) => compareVersions(requireVersion(a.version), requireVersion(b.version)));
   const dataKeys = await dataResourceKeys(game.root);
-  for (const tag of own) {
+  // each app version is its own worktree and data build: they run together, at most one per CPU of this host
+  const fits = await pooled(own, appCheckLimit.count(), async (tag) => {
     const commit = await tagCommit(game.root, tag.tag);
     const app = await dataVersionsAt(ctx, game, commit);
-    if (protocolHash(app.client) !== protocolHash(build.client)) continue;
+    if (protocolHash(app.client) !== protocolHash(build.client)) return false;
     const appKeys = await resourceKeysAt(game.root, commit);
     const bundle = latestBundleTag(tags, env, tag.version);
     if (bundle) for (const key of await resourceKeysAt(game.root, await tagCommit(game.root, bundle.tag))) appKeys.add(key);
-    if (dataBundleFailures({ appVersion: tag.version, app, build, dataKeys, appKeys }).length === 0) apps.push(tag.version);
-  }
-  return apps;
+    return dataBundleFailures({ appVersion: tag.version, app, build, dataKeys, appKeys }).length === 0;
+  });
+  return own.filter((_, i) => fits[i] === true).map((tag) => tag.version);
 }
+
+/** How many app versions `compatibleApps` checks at a time: the CPUs of this host. Tests change it. */
+export const appCheckLimit = { count: (): number => availableParallelism() };
 
 /** Writes `builds/<env>-<version>/update/`: the client data files and `update.json`. */
 export async function writeUpdate(root: string, outDir: string, dataVersion: string, apps: string[]): Promise<UpdateJson> {

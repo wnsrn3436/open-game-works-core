@@ -11,7 +11,7 @@ import { isRecord } from '../../check/lib/scenario-form.ts';
 import { automationRequest, type AutomationResponse } from '../../instance/automation.ts';
 import type { BuildCheck } from './buildrun.ts';
 import type { HeadlessPage } from './chromium.ts';
-import { buildCheckOf, clientCheckTiming, didNotRun, evidenceOf, launchValuesOf, ranToEnd, withCheckExport, withCheckInstance, type ClientCheckInput } from './client-check.ts';
+import { buildCheckOf, clientCheckTiming, didNotRun, evidenceOf, launchValuesOf, ranToEnd, withCheckCopy, withCheckInstance, type ClientCheckInput } from './client-check.ts';
 import { outcome } from './settingschecks.ts';
 import { pageBlocker, webRunSettings, webScenario, withWebPage } from './web-smoke.ts';
 
@@ -380,9 +380,9 @@ export async function soakTest(input: ClientCheckInput): Promise<BuildCheck | nu
   try {
     const run = await webRunSettings(ctx);
     if (typeof run === 'string') return didNotRun(NAME, run);
-    return await withCheckInstance(ctx, input.game, 'web', (instance, external) =>
-      withCheckExport(input, 'web', launchValuesOf(instance, external, 'web'), (file) =>
-        withWebPage(ctx, run, file, async (page) => {
+    return await withCheckCopy(input, 'web', 'web-soak', (exportWith) =>
+      withCheckInstance(ctx, input.game, 'web', async (instance, external) =>
+        withWebPage(ctx, run, await exportWith(launchValuesOf(instance, external, 'web')), async (page) => {
           const evidence = evidenceOf(input, 'soak-test');
           const { results } = await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence);
           const smoke = ranToEnd(NAME, buildCheckOf(NAME, input.env, results));

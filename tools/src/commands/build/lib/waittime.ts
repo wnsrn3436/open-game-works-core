@@ -2,8 +2,8 @@ import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { showFile } from '../../../lib/git.ts';
-import { mergedCoreSettings } from '../../generate/api.ts';
-import { withCommitCheckout } from './atcommit.ts';
+import { coreRelease, gameCoreVersionAt } from '../../core/api.ts';
+import { mergeReleaseSettings } from '../../generate/api.ts';
 import { dataRows, parseDuration } from './csv.ts';
 
 /** A core settings value by `<module>.<key>`, whether the settings are flat or nested by module. */
@@ -31,14 +31,25 @@ function durations(text: string | null, columns: string[], table: string): numbe
 }
 
 /**
+ * The merged core settings of a commit, read from git: the `core-settings.json` of the release of its game settings
+ * `coreVersion`, overlaid with its game settings `core`.
+ */
+async function coreSettingsAt(ctx: Context, game: GameRepo, commit: string): Promise<Record<string, unknown>> {
+  // it fails on a commit without settings.json or with one that is not JSON
+  const release = await coreRelease(ctx, await gameCoreVersionAt(game, commit));
+  const bytes = (await showFile(game.root, commit, 'settings.json', { env: ctx.env })) ?? Buffer.from('{}');
+  return mergeReleaseSettings(release.dir, (JSON.parse(bytes.toString('utf8')) as { core?: unknown }).core);
+}
+
+/**
  * Match wait ms of `build` `## deploy` PROD 3, from the data and the merged core settings of the last PROD build
- * commit. Null when the server uses neither `play-session` nor `matchmaker`.
+ * commit, both read from git. Null when the server uses neither `play-session` nor `matchmaker`.
  */
 export async function matchWaitMs(ctx: Context, game: GameRepo, lastProdCommit: string, serverModules: readonly string[]): Promise<number | null> {
   const play = serverModules.includes('play-session');
   const match = serverModules.includes('matchmaker');
   if (!play && !match) return null;
-  const core = await withCommitCheckout(ctx, game, lastProdCommit, (repo) => mergedCoreSettings(ctx, repo));
+  const core = await coreSettingsAt(ctx, game, lastProdCommit);
   const read = async (table: string): Promise<string | null> => (await showFile(game.root, lastProdCommit, `data/tables/${table}.csv`, { env: ctx.env }))?.toString('utf8') ?? null;
   const values: number[] = [];
   if (play) values.push(...durations(await read('play_session_mode'), ['max_duration'], 'play_session_mode'));

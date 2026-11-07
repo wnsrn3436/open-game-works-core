@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { relative } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import type { GameRepo } from '../../../lib/game.ts';
@@ -114,19 +114,61 @@ export async function scanRepo(game: GameRepo, list: readonly Needle[]): Promise
   return scanFiles(game.root, files, list, { lines: false });
 }
 
+/** The bytes of artifact files that `scanArtifacts` holds read and not yet scanned; a larger file is read alone. Tests change it. */
+export const scanReadBudget = { bytes: 256 * 1024 * 1024 };
+
+/** Byte units taken in call order: a take waits until the units held leave room for it, or none are held. */
+class ByteBudget {
+  private held = 0;
+  private readonly waiting: { bytes: number; go: () => void }[] = [];
+  private readonly total: number;
+
+  constructor(total: number) {
+    this.total = total;
+  }
+
+  take(bytes: number): Promise<void> {
+    if (this.waiting.length === 0 && this.fits(bytes)) {
+      this.held += bytes;
+      return Promise.resolve();
+    }
+    return new Promise((go) => this.waiting.push({ bytes, go }));
+  }
+
+  give(bytes: number): void {
+    this.held -= bytes;
+    for (let next = this.waiting[0]; next !== undefined && this.fits(next.bytes); next = this.waiting[0]) {
+      this.waiting.shift();
+      this.held += next.bytes;
+      next.go();
+    }
+  }
+
+  private fits(bytes: number): boolean {
+    return this.held === 0 || this.held + bytes <= this.total;
+  }
+}
+
 /**
- * Artifact files and the entries of zip archives among them that hold a needle. A needle labelled in
+ * Artifact files and the entries of zip archives among them that hold a needle, in file order. The files are read
+ * ahead together, as many as `scanReadBudget` holds, while the ones before them are scanned. A needle labelled in
  * `allowedInBuildInfo` is not a hit inside the package's build info file (`build` `## build-time check` `secret`: the
  * DEV build's `dev_access`).
  */
 export async function scanArtifacts(root: string, dirs: readonly string[], list: readonly Needle[], allowedInBuildInfo: readonly string[] = []): Promise<string[]> {
-  const found: string[] = [];
   const allowed = new Set(allowedInBuildInfo);
-  for (const dir of dirs) {
-    for (const path of await filesBelow(dir)) {
-      const rel = relative(root, path);
-      found.push(...fileHits(rel, relative(dir, path), await readFile(path), list, allowed));
-    }
+  const files = (await Promise.all(dirs.map(async (dir) => (await filesBelow(dir)).map((path) => ({ dir, path }))))).flat();
+  const sizes = await Promise.all(files.map(async (f) => (await stat(f.path)).size));
+  const budget = new ByteBudget(scanReadBudget.bytes);
+  // a read that fails is thrown when the scan reaches its file, so that no rejection is left without a handler
+  const reads = files.map((f, i) =>
+    budget.take(sizes[i] ?? 0).then(() => readFile(f.path)).then((bytes) => ({ bytes, error: null }), (error: unknown) => ({ bytes: null, error })));
+  const found: string[] = [];
+  for (const [i, f] of files.entries()) {
+    const read = await (reads[i] as (typeof reads)[number]);
+    if (read.bytes === null) throw read.error;
+    found.push(...fileHits(relative(root, f.path), relative(f.dir, f.path), read.bytes, list, allowed));
+    budget.give(sizes[i] ?? 0);
   }
   return found;
 }

@@ -6,6 +6,7 @@ import type { BuildRunResult } from '../../../src/commands/build/lib/buildrun.ts
 import { devicePerformance } from '../../../src/commands/build/lib/device-performance.ts';
 import { buildBundle, buildPlatforms } from '../../../src/commands/build/lib/platform.ts';
 import { saveSchemaCheck } from '../../../src/commands/build/lib/saveschema.ts';
+import { appCheckLimit } from '../../../src/commands/build/lib/update.ts';
 import { repeatTest } from '../../../src/commands/build/lib/repeat-test.ts';
 import { soakTest } from '../../../src/commands/build/lib/soak-test.ts';
 import { webSmoke } from '../../../src/commands/build/lib/web-smoke.ts';
@@ -14,7 +15,7 @@ import { staticCheck } from '../../../src/commands/check/static-api.ts';
 import { runContract } from '../../../src/commands/contract/api.ts';
 import { coreRelease, coreReleaseOfGame, extractedAsset } from '../../../src/commands/core/api.ts';
 import { runData } from '../../../src/commands/data/api.ts';
-import { gameModules, mergedCoreSettings, moduleFilesWithoutDev } from '../../../src/commands/generate/api.ts';
+import { gameModules, mergeReleaseSettings, moduleFilesWithoutDev } from '../../../src/commands/generate/api.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { ogw, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 import { commit, fakeBin, gameSettings, git, openBuildRun, setSecrets, setupGame, write } from './helpers.ts';
@@ -23,7 +24,7 @@ vi.mock('../../../src/commands/check/static-api.ts', () => ({ staticCheck: vi.fn
 vi.mock('../../../src/commands/check/api.ts', async (orig) => ({ ...(await orig<object>()), placeholderFailures: vi.fn() }));
 vi.mock('../../../src/commands/contract/api.ts', async (orig) => ({ ...(await orig<object>()), runContract: vi.fn() }));
 vi.mock('../../../src/commands/data/api.ts', async (orig) => ({ ...(await orig<object>()), runData: vi.fn() }));
-vi.mock('../../../src/commands/generate/api.ts', async (orig) => ({ ...(await orig<object>()), gameModules: vi.fn(), mergedCoreSettings: vi.fn(), moduleFilesWithoutDev: vi.fn() }));
+vi.mock('../../../src/commands/generate/api.ts', async (orig) => ({ ...(await orig<object>()), gameModules: vi.fn(), mergeReleaseSettings: vi.fn(), moduleFilesWithoutDev: vi.fn() }));
 vi.mock('../../../src/commands/core/api.ts', async (orig) => ({ ...(await orig<object>()), coreRelease: vi.fn(), coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
 vi.mock('../../../src/commands/build/lib/platform.ts', () => ({ buildPlatforms: vi.fn(), buildBundle: vi.fn() }));
 vi.mock('../../../src/commands/build/lib/web-smoke.ts', async (orig) => {
@@ -43,7 +44,7 @@ vi.mock('../../../src/commands/build/lib/saveschema.ts', async (orig) => {
 
 const DOCKER = `case "$1 $2" in
   "login ghcr.io") cat > /dev/null;;
-  "buildx build") case "$*" in *type=tar,dest=*) for a; do case "$a" in type=tar,dest=*) cp "$FAKE_IMAGE_TAR" "\${a#type=tar,dest=}";; esac; done; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/tar_core_settings.json"; cp "$last/generated/server_modules.json" "$FAKE_DIR/tar_server_modules.json"; exit 0;; esac; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/server_core_settings.json"; ls "$last" > "$FAKE_DIR/server_ls"; echo "$last" > "$FAKE_DIR/server_context";;
+  "buildx build") case "$*" in *type=cacheonly*) touch "$FAKE_DIR/warmed"; [ -n "$FAKE_WARM_FAIL" ] && { echo "cache build failed" >&2; exit 1; }; exit 0;; *type=tar,dest=*) for a; do case "$a" in type=tar,dest=*) cp "$FAKE_IMAGE_TAR" "\${a#type=tar,dest=}";; esac; done; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/tar_core_settings.json"; cp "$last/generated/server_modules.json" "$FAKE_DIR/tar_server_modules.json"; exit 0;; esac; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/server_core_settings.json"; ls "$last" > "$FAKE_DIR/server_ls"; echo "$last" > "$FAKE_DIR/server_context";;
   "buildx imagetools") case "$*" in *Manifest*) echo '{"digest":"sha256:pushed"}';; *) echo '{"config":{"Labels":{"ogw.compat_client_data_version":"'"$FAKE_LABEL"'"}}}';; esac;;
 esac`;
 const GH = `case "$1 $2" in "auth token") echo tok;; "api user") echo me;; esac`;
@@ -73,7 +74,7 @@ beforeEach(() => {
   vi.mocked(placeholderFailures).mockResolvedValue([]);
   vi.mocked(runContract).mockResolvedValue({ exitCode: 0, violations: [], stderr: '' });
   vi.mocked(gameModules).mockResolvedValue({ client: [], server: [] });
-  vi.mocked(mergedCoreSettings).mockResolvedValue({ 'admin-api.switchCacheMs': 1000, 'matchmaker.reportMarginMs': 500 });
+  vi.mocked(mergeReleaseSettings).mockResolvedValue({ 'admin-api.switchCacheMs': 1000, 'matchmaker.reportMarginMs': 500 });
   vi.mocked(moduleFilesWithoutDev).mockReset();
   vi.mocked(moduleFilesWithoutDev).mockResolvedValue({ coreSettings: '{"b": 2, "environments.STG.serverUrl": "s", "environments.PROD.serverUrl": "p"}\n', serverModules: '["routing"]\n' });
   vi.mocked(coreReleaseOfGame).mockImplementation(() => Promise.resolve({ version: '1.0.0', dir: release, local: false }));
@@ -166,6 +167,62 @@ describe('build run', () => {
     expect(readFileSync(log, 'utf8')).toContain(`docker buildx build --platform linux/amd64 --file ${join(context, 'core/Dockerfile')} --build-arg OGW_ENV=STG --label ogw.compat_client_data_version= --tag ghcr.io/example/game-server:stg-0.2.0 --push ${context}`);
   });
 
+  it('builds the server image into the build cache beside the platform build, and pushes it with the same arguments after the artifact checks', async () => {
+    const ws = makeWorkspace();
+    const { dir, env, log } = prepare(ws);
+    await openBuildRun(ws, dir, { platforms: ['linux'] });
+    const warmed = join(ws.root, 'fake-bin', 'warmed');
+    let warmedDuringExport = false;
+    vi.mocked(buildPlatforms).mockImplementation(async (_ctx, input) => {
+      // the platform build ends when the image has been built beside it (or after 5 s): built after it, it would not be
+      for (let i = 0; i < 250 && !existsSync(warmed); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      warmedDuringExport = existsSync(warmed);
+      write(join(input.outDir, 'linux'), 'g.x86_64', 'binary');
+      return { artifacts: [{ platform: 'linux', path: 'builds/dev-0.1.0/linux' }], devCode: [] };
+    });
+    const out = await ogw(ws, ['build', 'run', 'g'], { env });
+    expect([out.code, out.stderr]).toEqual([0, '']);
+    expect(warmedDuringExport).toBe(true);
+    const builds = readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('docker buildx build')).map((l) => l.replace(/\S*\/ogw-server-image-[^/\s]+/g, '<context>'));
+    const args = 'docker buildx build --platform linux/amd64 --file <context>/server/core/Dockerfile --build-arg OGW_ENV=DEV --label ogw.compat_client_data_version= --tag ghcr.io/example/game-server:dev-0.1.0';
+    expect(builds).toEqual([`${args} --output type=cacheonly <context>/server`, `${args} --push <context>/server`]);
+    expect(result(dir, 'dev-0.1.0').serverImage).toEqual({ name: 'ghcr.io/example/game-server', tag: 'dev-0.1.0', digest: 'sha256:pushed' });
+  });
+
+  it('checks the earlier app versions of the environment for update.json together, at most one per CPU of this host', async () => {
+    const ws = makeWorkspace();
+    const { dir, env } = prepare(ws);
+    for (const version of ['0.1.0', '0.1.1', '0.1.2']) {
+      write(dir, 'notes.txt', version);
+      commit(dir, version);
+      git(dir, 'tag', `dev-${version}`);
+    }
+    await openBuildRun(ws, dir, { version: '0.2.0', platforms: ['linux'] });
+    const real = vi.mocked(runData).getMockImplementation() as typeof runData;
+    let building = 0;
+    let mostBuilding = 0;
+    vi.mocked(runData).mockImplementation(async (ctx, repo, options) => {
+      // the data build of an app version runs in its own worktree
+      if (!repo.inWorktree) return real(ctx, repo, options);
+      building += 1;
+      mostBuilding = Math.max(mostBuilding, building);
+      // longer than a git worktree add, which the worktree lock of the repo runs one at a time
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      building -= 1;
+      return real(ctx, repo, options);
+    });
+    const cpus = appCheckLimit.count;
+    appCheckLimit.count = () => 2;
+    try {
+      expect((await ogw(ws, ['build', 'run', 'g'], { env })).stderr).toBe('');
+    } finally {
+      appCheckLimit.count = cpus;
+    }
+    expect(mostBuilding).toBe(2);
+    const update = JSON.parse(readFileSync(join(dir, 'builds/dev-0.2.0/update/update.json'), 'utf8')) as { apps: string[] };
+    expect(update.apps).toEqual(['0.2.0', '0.1.0', '0.1.1', '0.1.2']);
+  });
+
   it('stops before building when a check fails, and records human checks', async () => {
     const ws = makeWorkspace();
     const settings = gameSettings();
@@ -184,9 +241,9 @@ describe('build run', () => {
     expect(out.stdout).toContain('human check adapter: environments.STG.adapters.cdn');
   });
 
-  it('fails the secret check on a leaking artifact', async () => {
+  it('fails the secret check on a leaking artifact, and pushes no server image', async () => {
     const ws = makeWorkspace();
-    const { dir, env } = prepare(ws);
+    const { dir, env, log } = prepare(ws);
     await openBuildRun(ws, dir, { platforms: ['linux'] });
     vi.mocked(buildPlatforms).mockImplementation((_c, input) => {
       write(join(input.outDir, 'linux'), 'g.pck', 'has DB-CONNECTION and DEV-ACCESS-VALUE');
@@ -199,6 +256,20 @@ describe('build run', () => {
       name: 'secret', result: 'fail', details: ['builds/dev-0.1.0/linux/g.pck: secret db', 'builds/dev-0.1.0/linux/g.pck: secret devAccess'],
     });
     expect(result(dir, 'dev-0.1.0').serverImage).toBeNull();
+    // the image build into the cache stops with the failed artifacts; nothing is pushed
+    expect(existsSync(log) ? readFileSync(log, 'utf8') : '').not.toContain('--push');
+    expect(existsSync(join(dir, 'builds/dev-0.1.0/update'))).toBe(false);
+    // a cache build that failed beside the blocked artifacts is no error of the run: the blocked build needs no image
+    const warmed = join(ws.root, 'fake-bin', 'warmed');
+    vi.mocked(buildPlatforms).mockImplementation(async (_c, input) => {
+      for (let i = 0; i < 250 && !existsSync(warmed); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      write(join(input.outDir, 'linux'), 'g.pck', 'has DB-CONNECTION');
+      return { artifacts: [{ platform: 'linux', path: 'builds/dev-0.1.0/linux' }], devCode: [] };
+    });
+    const failed = await ogw(ws, ['build', 'run', 'g'], { env: { ...env, FAKE_WARM_FAIL: '1' } });
+    expect(existsSync(warmed)).toBe(true);
+    expect([failed.code, failed.stderr]).toEqual([1, '']);
+    expect(result(dir, 'dev-0.1.0').checks.find((c) => c.name === 'secret')?.details).toEqual(['builds/dev-0.1.0/linux/g.pck: secret db']);
   });
 
   it('records web smoke with its first loading ms; a DEV warning does not block, a STG failure does', async () => {
@@ -236,28 +307,51 @@ describe('build run', () => {
     expect(buildPlatforms).not.toHaveBeenCalled();
   });
 
-  it('runs web smoke, repeat test and soak test one after the other; their DEV warning and unknown do not block, a STG failure does', async () => {
+  it('runs the build-time checks together and the measurements after them: device performance and web smoke together, then soak test; DEV warning and unknown do not block, a STG failure does', async () => {
     const ws = makeWorkspace();
     const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
     (environments.DEV as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
-    const { dir, env } = prepare(ws, { buildPlatforms: ['web'], environments });
-    await openBuildRun(ws, dir, { platforms: ['web'] });
+    const { dir, env } = prepare(ws, { buildPlatforms: ['web', 'android'], environments });
+    // a PROD tag: the backward compatibility check runs the contract tool
+    git(dir, 'tag', 'prod-0.0.9');
+    await openBuildRun(ws, dir, { platforms: ['web', 'android'] });
     const order: string[] = [];
-    // each check gives the event loop a turn between its start and its end: a check started beside it would start in that turn
+    const load = ['static check', 'placeholder', 'contract', 'repeat test'];
+    const started = new Set<string>();
+    // a check that measures nothing ends only when every other one has started (or after 5 s): run one after another, they would not
+    const allStarted = async (): Promise<void> => {
+      for (let i = 0; i < 250 && !load.every((name) => started.has(name)); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    };
     const traced = <T>(name: string, value: T) => async (): Promise<T> => {
       order.push(`${name} start`);
-      await new Promise((resolve) => setImmediate(resolve));
+      started.add(name);
+      if (load.includes(name)) await allStarted();
+      // the repeat test ends last: the measurements wait for it too
+      await new Promise((resolve) => setTimeout(resolve, name === 'repeat test' ? 300 : 20));
       order.push(`${name} end`);
       return value;
     };
-    vi.mocked(webSmoke).mockImplementationOnce(traced('web smoke', { check: { name: 'web smoke', result: 'pass', details: [] }, loadingMs: 10 }));
-    vi.mocked(repeatTest).mockImplementationOnce(traced('repeat test', { name: 'repeat test', result: 'warn', details: ['1 of 36 runs failed: crash 1, softlock 0, error log 0, failed goal 0, other 0'] }));
-    vi.mocked(soakTest).mockImplementationOnce(traced('soak test', { name: 'soak test', result: 'unknown', details: ['window 3: no static_memory_bytes reading'] }));
+    vi.mocked(staticCheck).mockImplementationOnce(traced('static check', { name: 'static check', platform: null, result: 'pass' as const, failures: [], warnings: [] }));
+    vi.mocked(placeholderFailures).mockImplementationOnce(traced('placeholder', []));
+    vi.mocked(runContract).mockImplementationOnce(traced('contract', { exitCode: 0, violations: [], stderr: '' }));
+    vi.mocked(devicePerformance).mockImplementationOnce(traced('device performance', { name: 'device performance', result: 'pass' as const, details: [] }));
+    vi.mocked(webSmoke).mockImplementationOnce(traced('web smoke', { check: { name: 'web smoke', result: 'pass' as const, details: [] }, loadingMs: 10 }));
+    vi.mocked(repeatTest).mockImplementationOnce(traced('repeat test', { name: 'repeat test', result: 'warn' as const, details: ['1 of 36 runs failed: crash 1, softlock 0, error log 0, failed goal 0, other 0'] }));
+    vi.mocked(soakTest).mockImplementationOnce(traced('soak test', { name: 'soak test', result: 'unknown' as const, details: ['window 3: no static_memory_bytes reading'] }));
     const out = await ogw(ws, ['build', 'run', 'g'], { env });
     expect([out.code, out.stderr]).toEqual([0, '']);
-    expect(order).toEqual(['web smoke start', 'web smoke end', 'repeat test start', 'repeat test end', 'soak test start', 'soak test end']);
-    expect(result(dir, 'dev-0.1.0').checks.slice(-2).map((c) => `${c.name}:${c.result}`)).toEqual(['repeat test:warn', 'soak test:unknown']);
-    expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'DEV', version: '0.1.0', exportVersion: '0.1.0', platforms: ['web'] });
+    const at = (event: string): number => order.indexOf(event);
+    const loadEnd = Math.min(...load.map((name) => at(`${name} end`)));
+    const lastLoadEnd = Math.max(...load.map((name) => at(`${name} end`)));
+    // the checks that measure nothing start before any of them ends
+    for (const name of load) expect(at(`${name} start`)).toBeLessThan(loadEnd);
+    // the measurements start after every other check ended; device performance and web smoke overlap as before; soak test comes last
+    for (const name of ['device performance', 'web smoke']) expect(at(`${name} start`)).toBeGreaterThan(lastLoadEnd);
+    expect(Math.max(at('device performance start'), at('web smoke start'))).toBeLessThan(Math.min(at('device performance end'), at('web smoke end')));
+    expect(at('soak test start')).toBeGreaterThan(Math.max(at('device performance end'), at('web smoke end')));
+    const checks = result(dir, 'dev-0.1.0').checks.map((c) => `${c.name}:${c.result}`);
+    expect(checks.slice(-6)).toEqual(['placeholder:pass', 'device performance:pass', 'web smoke:pass', 'repeat test:warn', 'soak test:unknown', 'backward compatibility:pass']);
+    expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'DEV', version: '0.1.0', exportVersion: '0.1.0', platforms: ['web', 'android'] });
 
     vi.mocked(buildPlatforms).mockClear();
     const stg = makeWorkspace();
@@ -354,6 +448,10 @@ describe('build run', () => {
     expect(r.compatibilityBase).toBe('prod-0.1.0');
     expect(r.protocolChange).toEqual({ client_data_version: 'p2-d2', compat_client_data_version: 'p1-d1' });
     expect(r.matchWaitMs).toBe(300_000 + 1000);
+    // the contract tool writes generation targets: it runs in its own worktree of the build branch HEAD, not in the checkout the other checks read
+    const contractRepo = vi.mocked(runContract).mock.calls.at(-1)?.[1];
+    expect(contractRepo?.inWorktree).toBe(true);
+    expect(contractRepo?.root.startsWith(join(ws.worktrees, 'g'))).toBe(true);
     const update = JSON.parse(readFileSync(join(dir, 'builds/dev-0.2.0/update/update.json'), 'utf8')) as { apps: string[] };
     expect(update.apps).toEqual(['0.2.0', '0.1.5']);
   });
@@ -450,7 +548,10 @@ describe('build run', () => {
     expect(out.code).toBe(1);
     expect(result(dir, 'stg-0.2.0').checks.find((c) => c.name === 'DEV code')).toEqual({ name: 'DEV code', result: 'fail', details: ['server image holds DEV code: server/dev/cheat.ts'] });
     expect(buildPlatforms).not.toHaveBeenCalled();
-    expect(readFileSync(join(ws.root, 'fake-bin', 'calls.log'), 'utf8')).toMatch(/docker buildx build --platform linux\/amd64 --file \S+\/core\/Dockerfile --build-arg OGW_ENV=STG --output type=tar,dest=\S+\/image\.tar \S+\/server\n/);
+    // the arguments of the image that the build pushes: that build takes every step from the cache of this one
+    expect(readFileSync(join(ws.root, 'fake-bin', 'calls.log'), 'utf8')).toMatch(
+      /docker buildx build --platform linux\/amd64 --file \S+\/core\/Dockerfile --build-arg OGW_ENV=STG --label ogw\.compat_client_data_version= --tag ghcr\.io\/example\/game-server:stg-0\.2\.0 --output type=tar,dest=\S+\/image\.tar \S+\/server\n/,
+    );
     // the STG build context has the core settings file and server module list of the used modules, without DEV modules
     expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_core_settings.json'), 'utf8'))).toEqual({ b: 2, 'environments.STG.serverUrl': 's' });
     expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_server_modules.json'), 'utf8'))).toEqual(['routing']);

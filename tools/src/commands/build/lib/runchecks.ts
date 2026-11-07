@@ -1,13 +1,15 @@
 import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
+import { revParse } from '../../../lib/git.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { placeholderFailures } from '../../check/api.ts';
 import { NAME as DEBUG_TEXT } from '../../check/static/debug-text.ts';
 import { NAME as DEV_REFERENCE } from '../../check/static/dev-reference.ts';
 import { staticCheck } from '../../check/static-api.ts';
-import { runContract } from '../../contract/api.ts';
+import { runContract, type ContractRun } from '../../contract/api.ts';
 import type { DataRun } from '../../data/api.ts';
-import { contractVersionAt } from './atcommit.ts';
+import { contractVersionAt, withCommitCheckout } from './atcommit.ts';
 import { saveSchemaCheck } from './saveschema.ts';
 import { gameSettingsAt, type BuildCheck } from './buildrun.ts';
 import { tagCommit, type BuildTag, type Env } from './names.ts';
@@ -59,10 +61,21 @@ async function settingsCompat(input: CompatInput): Promise<string[]> {
   return details;
 }
 
+/**
+ * The contract tool of the backward compatibility check on a worktree of the build branch HEAD: it and the
+ * `ogw generate` before it write their generation targets, which the other build-time checks and the check instances
+ * read in the build checkout at the same time.
+ */
+async function contractOfHead(ctx: Context, game: GameRepo): Promise<ContractRun> {
+  const head = await revParse(game.root, 'HEAD', { env: ctx.env });
+  if (head === null) throw new OgwError('the build branch has no commit');
+  return withCommitCheckout(ctx, game, head, (repo) => runContract(ctx, repo));
+}
+
 /** `backward compatibility` (`build` `## backward compatibility`), when a PROD tag exists. */
 export async function compatibilityCheck(input: CompatInput): Promise<CheckWithHuman> {
   const details: string[] = [];
-  const contract = await runContract(input.ctx, input.game);
+  const contract = await contractOfHead(input.ctx, input.game);
   details.push(...contract.violations.map((v) => `contract: ${v}`));
   if (contract.exitCode !== 0 && contract.violations.length === 0) details.push(`contract: contract tool failed: ${contract.stderr.trim()}`);
   const dataCodes = new Set(['protocol_change', 'prod_change']);

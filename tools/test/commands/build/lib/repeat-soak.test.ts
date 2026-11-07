@@ -1,9 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clientCheckTiming, withCheckWorkspace, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
-import { godotCheckExport } from '../../../../src/commands/build/lib/godot.ts';
+import { clientCheckTiming, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
+import { godotCheckExport, godotCheckPrepare } from '../../../../src/commands/build/lib/godot.ts';
 import { blockerKind, repeatPlan, repeatTest, repeatVerdict, runOf, type RepeatRun } from '../../../../src/commands/build/lib/repeat-test.ts';
 import {
   inversionCounts,
@@ -38,7 +38,7 @@ vi.mock('../../../../src/commands/data/api.ts', async (orig) => ({ ...(await ori
 vi.mock('../../../../src/commands/generate/api.ts', async (orig) => ({ ...(await orig<object>()), gameModules: vi.fn() }));
 vi.mock('../../../../src/commands/build/lib/godot.ts', async (orig) => {
   const real = await orig<typeof import('../../../../src/commands/build/lib/godot.ts')>();
-  return { ...real, godotCheckExport: vi.fn(real.godotCheckExport) };
+  return { ...real, godotCheckExport: vi.fn(real.godotCheckExport), godotCheckPrepare: vi.fn(real.godotCheckPrepare) };
 });
 vi.mock('../../../../src/commands/instance/api.ts', () => ({
   startInstance: vi.fn(),
@@ -64,9 +64,10 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
 const fakes = join(dirname(fileURLToPath(import.meta.url)), '..', 'fakes');
 const GOAL = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
 const SCENARIO = { steps: [{ kind: 'auto', command: 'f.bot_next_input', args: [], until: GOAL, timeoutMs: 3000 }], goal: GOAL };
-/** Fake Godot: the check export copies `generated/launch_values.json` to the output file. */
+/** Fake Godot: the check export copies `generated/launch_values.json` to the output file; the import leaves a marker in `.godot/`. */
 const GODOT = `case "$*" in
   *--export-*) for last; do :; done; cp "$3/generated/launch_values.json" "$last"; printf 'const CACHE_VERSION = "v1";\\n' > "$(dirname "$last")/index.service.worker.js";;
+  *--import*) mkdir -p "$3/.godot" && touch "$3/.godot/imported-once";;
 esac`;
 const MIB = 1024 * 1024;
 const TAP = { ok: true, result: { command: 'tap', args: ['1', '2'] } };
@@ -131,7 +132,9 @@ beforeEach(() => {
   running = 0;
   mostRunning = 0;
   started = 0;
-  vi.mocked(godotCheckExport).mockClear();
+  // back to the real export and preparation that `vi.fn` wraps
+  vi.mocked(godotCheckExport).mockReset();
+  vi.mocked(godotCheckPrepare).mockReset();
   vi.mocked(runData).mockResolvedValue({ exitCode: 0, lines: [], stderr: '' });
   vi.mocked(gameModules).mockResolvedValue({ client: [], server: [] });
   vi.mocked(startInstance).mockReset();
@@ -221,23 +224,23 @@ describe('repeat test', () => {
     // the client of instance i2 reports a softlock: that run fails, the others pass
     s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] }, stateByInstance: { i2: { softlock: { kind: 'NoResponse', elapsed_ms: 9000 } } } });
     const check = await repeatTest(s.input);
-    expect(check).toEqual({
-      name: 'repeat test', result: 'fail',
-      details: ['1 of 3 runs failed: crash 0, softlock 1, error log 0, failed goal 0, other 0', 'run 2: no blocker: step 1: softlock {"kind":"NoResponse","elapsed_ms":9000}'],
-    });
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual(Array(3).fill({ game: 'g', client: 'none', externalClient: true, platform: 'web' }));
-    expect(started).toBe(3);
-    expect(mostRunning).toBeLessThanOrEqual(2);
-    expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(3);
     // one export per run, each with the launch values of its own instance, into its own folder
     const exports = vi.mocked(godotCheckExport).mock.calls.map((c) => ({ platform: c[2], id: c[5].OGW_INSTANCE_ID, dir: c[4].split('/').at(-1) }));
     expect(exports.map((e) => e.platform)).toEqual(['web', 'web', 'web']);
     expect(new Set(exports.map((e) => e.id))).toEqual(new Set(['i1', 'i2', 'i3']));
     expect(new Set(exports.map((e) => e.dir))).toEqual(new Set(['web-run-1', 'web-run-2', 'web-run-3']));
-    expect(exports.find((e) => e.id === 'i2')?.dir).toBe('web-run-2');
-    expect(readFileSync(join(s.dir, 'builds/stg-0.2.0/repeat-test/run-2/server.log'), 'utf8')).toContain('"up"');
-    expect(existsSync(join(s.dir, 'builds/stg-0.2.0/repeat-test/run-1'))).toBe(false);
-    expect(existsSync(join(s.dir, 'builds/stg-0.2.0/repeat-test/run-3'))).toBe(false);
+    // the run whose copy was ready second got instance i2
+    const failed = Number(/^web-run-(\d)$/.exec(exports.find((e) => e.id === 'i2')?.dir ?? '')?.[1]);
+    expect(check).toEqual({
+      name: 'repeat test', result: 'fail',
+      details: ['1 of 3 runs failed: crash 0, softlock 1, error log 0, failed goal 0, other 0', `run ${String(failed)}: no blocker: step 1: softlock {"kind":"NoResponse","elapsed_ms":9000}`],
+    });
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual(Array(3).fill({ game: 'g', client: 'none', externalClient: true, platform: 'web' }));
+    expect(started).toBe(3);
+    expect(mostRunning).toBeLessThanOrEqual(2);
+    expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(3);
+    expect(readFileSync(join(s.dir, `builds/stg-0.2.0/repeat-test/run-${String(failed)}/server.log`), 'utf8')).toContain('"up"');
+    for (const run of [1, 2, 3].filter((n) => n !== failed)) expect(existsSync(join(s.dir, `builds/stg-0.2.0/repeat-test/run-${String(run)}`))).toBe(false);
     started = 0;
     expect((await repeatTest({ ...s.input, env: 'DEV' }))?.result).toBe('warn');
   });
@@ -248,10 +251,13 @@ describe('repeat test', () => {
     s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
     expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'pass', details: [] });
     expect(['run-1', 'run-2'].map((run) => existsSync(join(s.dir, 'builds/stg-0.2.0/repeat-test', run)))).toEqual([false, false]);
+    // the run whose copy is ready first starts the first instance
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('no instance slot'));
-    expect(await repeatTest(s.input)).toEqual({
-      name: 'repeat test', result: 'unknown', details: ['0 of 2 runs failed: crash 0, softlock 0, error log 0, failed goal 0, other 0', 'run 1: did not run: no instance slot'],
-    });
+    const unknown = await repeatTest(s.input);
+    expect(unknown).toMatchObject({ name: 'repeat test', result: 'unknown' });
+    expect(unknown?.details).toHaveLength(2);
+    expect(unknown?.details[0]).toBe('0 of 2 runs failed: crash 0, softlock 0, error log 0, failed goal 0, other 0');
+    expect(unknown?.details[1]).toMatch(/^run [12]: did not run: no instance slot$/);
     expect(await repeatTest({ ...s.input, platforms: ['android'] })).toBeNull();
     expect(await repeatTest({ ...s.input, env: 'PROD' })).toBeNull();
     vi.mocked(toolProgram).mockResolvedValue(null);
@@ -266,28 +272,48 @@ describe('repeat test', () => {
     expect(vi.mocked(startInstance)).not.toHaveBeenCalled();
   });
 
-  it('makes the check exports of one workspace one at a time', async () => {
+  it('prepares and imports the web check workspace once, then makes the exports of the runs together, each in its own copy', async () => {
     const s = await setup();
-    const gates: (() => void)[] = [];
-    const gated = (_ctx: unknown, _build: unknown, _platform: unknown, _root: unknown, dir: string): Promise<string> =>
-      new Promise((resolve) => gates.push(() => {
-        resolve(join(dir, 'index.html'));
-      }));
-    vi.mocked(godotCheckExport).mockImplementationOnce(gated).mockImplementationOnce(gated);
-    const values = { OGW_SERVER_URL: '', OGW_INSTANCE_ID: '', OGW_AUTOMATION_PORT: '', OGW_AUTOMATION_TOKEN: '', OGW_PLATFORM: 'web', OGW_DEV_ACCESS: '', OGW_DEV_ACCOUNT: '' };
-    await withCheckWorkspace(s.input, async (exportFor) => {
-      const first = exportFor('web', values, 'a');
-      const second = exportFor('web', values, 'b');
-      await new Promise((resolve) => setImmediate(resolve));
-      // the second export waits for the first
-      expect(gates).toHaveLength(1);
-      gates[0]?.();
-      expect(await first).toMatch(/\/\.ogw-check\/a\/index\.html$/);
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(gates).toHaveLength(2);
-      gates[1]?.();
-      expect(await second).toMatch(/\/\.ogw-check\/b\/index\.html$/);
+    repeatPlan.runs = 3;
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
+    const real = await vi.importActual<typeof import('../../../../src/commands/build/lib/godot.ts')>('../../../../src/commands/build/lib/godot.ts');
+    const events: string[] = [];
+    vi.mocked(godotCheckPrepare).mockImplementation(async (...args) => {
+      events.push('prepare start');
+      const prepared = await real.godotCheckPrepare(...args);
+      events.push('prepare end');
+      return prepared;
     });
+    const instanceStart = vi.mocked(startInstance).getMockImplementation();
+    vi.mocked(startInstance).mockImplementation(async (...args) => {
+      events.push('instance start');
+      return (instanceStart as typeof startInstance)(...args);
+    });
+    // each export records its start and end around a delay: an export started beside it starts in that delay
+    let exporting = 0;
+    let mostExporting = 0;
+    const copies: string[] = [];
+    vi.mocked(godotCheckExport).mockImplementation(async (...args) => {
+      exporting += 1;
+      mostExporting = Math.max(mostExporting, exporting);
+      copies.push(args[3]);
+      // the copy holds the imported workspace: the fake import's marker came along
+      expect(existsSync(join(args[3], 'client', '.godot', 'imported-once'))).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      exporting -= 1;
+      return real.godotCheckExport(...args);
+    });
+    const check = await repeatTest(s.input);
+    expect(check).toEqual({ name: 'repeat test', result: 'pass', details: [] });
+    // one preparation and one import for the three runs, before any check instance starts
+    expect(vi.mocked(godotCheckPrepare)).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(s.bin, 'calls.log'), 'utf8').match(/--import/g)).toHaveLength(1);
+    expect(events.slice(0, 2)).toEqual(['prepare start', 'prepare end']);
+    expect(events.filter((e) => e === 'instance start')).toHaveLength(3);
+    // two runs at a time (maxConcurrentInstances 2): their exports overlap
+    expect(mostExporting).toBe(2);
+    expect(copies.map((c) => c.split('/').slice(-2).join('/')).sort()).toEqual(['.ogw-copy/web-run-1', '.ogw-copy/web-run-2', '.ogw-copy/web-run-3']);
+    expect(readdirSync(join(s.ws.worktrees, 'g'))).toEqual([]);
   });
 });
 

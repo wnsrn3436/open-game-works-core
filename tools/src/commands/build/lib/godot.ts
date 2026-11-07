@@ -501,32 +501,41 @@ async function afterExport(ctx: Context, input: PlatformBuildInput, platform: st
   }
 }
 
+/** What a preset export needs besides the build input: the engine, the preset options and `exclude_filter`. */
+interface PresetExport {
+  godot: string;
+  options: Record<string, unknown>;
+  filter: string;
+  /** Runs `godot --import` first (ogw.md `### export` 6); a check export copies a workspace that was imported. */
+  importFirst: boolean;
+}
+
 /**
- * ogw.md `### export` 2–7 in the build workspace. With `launchValues` it is the DEV export of a build-time check:
- * `generated/launch_values.json` instead of `generated/build_info.json`, and `generated/launch_values.json`
- * taken out of `exclude_filter`.
+ * ogw.md `### export` 1–7 in the build workspace of a platform build: `generated/build_info.json`, the preset of the
+ * environment, the import and the export.
  */
-async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string, launchValues: LaunchValues | null): Promise<void> {
+async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string): Promise<void> {
   const { godot, iosPlugins } = await prepareWorkspace(ctx, input, platform, root);
   if (input.env !== 'DEV') await stripLogDebug(join(root, 'client'));
   const p: PresetContext = { ctx, root, game: input.game.name, env: input.env, version: input.version, settings: input.settings, iosPrivacy: input.iosPrivacy, iosPlugins };
   const options = await platformOptions(p, platform);
-  if (launchValues === null) await writeBuildInfo(ctx, p, platform);
-  else {
-    await writeProjectVersion(root, input.version);
-    await writeJsonAtomic(join(root, 'client', 'generated', 'launch_values.json'), launchValues);
-  }
+  await writeBuildInfo(ctx, p, platform);
+  await presetExport(ctx, input, platform, root, exportPath, { godot, options, filter: excludeFilter(input.env), importFirst: true });
+}
+
+/** ogw.md `### export` 4–7: the preset, the signing values, the import when asked, the export and what follows it. */
+async function presetExport(ctx: Context, input: PlatformBuildInput, platform: string, root: string, exportPath: string, run: PresetExport): Promise<void> {
+  const { godot, options } = run;
   const buildTools = async (): Promise<readonly BuildTool[]> => (await engineJson(ctx, input.game, 'godot')).buildTools ?? [];
   const signing = await prepareSigning(ctx, input.game.name, input.settings, input.env, platform, buildTools);
   const name = `${platform}-${input.env.toLowerCase()}`;
-  const filter = launchValues === null ? excludeFilter(input.env) : excludeFilter(input.env).replace(',generated/launch_values.json', '');
-  const head = { name, platform: PRESET_PLATFORM[platform], runnable: true, export_filter: 'all_resources', include_filter: 'build/data/*,generated/*.json', exclude_filter: filter, export_path: exportPath };
+  const head = { name, platform: PRESET_PLATFORM[platform], runnable: true, export_filter: 'all_resources', include_filter: 'build/data/*,generated/*.json', exclude_filter: run.filter, export_path: exportPath };
   try {
     await writeFileAtomic(join(root, 'client', 'export_presets.cfg'), presetCfg(head, { ...options, ...signing.options }));
     if (Object.keys(signing.credentials).length > 0) {
       await writeFileAtomic(join(root, 'client', '.godot', 'export_credentials.cfg'), presetCfg({ name }, signing.credentials));
     }
-    await godotRun(ctx, godot, root, ['--import'], signing.env);
+    if (run.importFirst) await godotRun(ctx, godot, root, ['--import'], signing.env);
     const output = await godotRun(ctx, godot, root, [input.env === 'DEV' ? '--export-debug' : '--export-release', name, exportPath], signing.env);
     // Godot exports without the library and ends with code 0: the app would run without that plugin
     const missing = missingGdextensionLibraries(output);
@@ -540,7 +549,7 @@ async function exportPreset(ctx: Context, input: PlatformBuildInput, platform: s
 
 /** Exports and checks the package; returns the `DEV code` check failures. */
 async function exportIn(ctx: Context, input: PlatformBuildInput, platform: string, root: string, outDir: string): Promise<string[]> {
-  await exportPreset(ctx, input, platform, root, join(outDir, outputFile(input.game.name, platform, input.env)), null);
+  await exportPreset(ctx, input, platform, root, join(outDir, outputFile(input.game.name, platform, input.env)));
   const devCode = await checkPackage(outDir, platform, input.game.name, input.env);
   if (platform === 'windows' && freeSigning(input.settings, input.env, platform) === null) {
     const files = (await readdir(outDir)).filter((f) => f.endsWith('.exe') || f.endsWith('.dll')).map((f) => join(outDir, f));
@@ -550,15 +559,47 @@ async function exportIn(ctx: Context, input: PlatformBuildInput, platform: strin
   return devCode;
 }
 
+/** A check workspace of ogw.md `### client checks`, prepared once: the engine and the DEV preset options of its platform. */
+export interface CheckPrepared {
+  godot: string;
+  options: Record<string, unknown>;
+}
+
 /**
- * The DEV export (`android-dev` apk, `web-dev` web export) of check `device performance` or `web smoke`
- * into `outDir` of the build workspace `root`, with `generated/launch_values.json`. Returns the output file.
- * The caller deletes the export and `generated/launch_values.json` when the check ends.
+ * The check workspace of a platform in the build workspace `root` (ogw.md `### client checks`): `### export` 1 and the
+ * DEV preset options, `application/config/version` of the export version, then `godot --import` once. The check exports
+ * are made in copies of it (`godotCheckExport`).
  */
-export async function godotCheckExport(ctx: Context, input: PlatformBuildInput, platform: 'android' | 'web', root: string, outDir: string, launchValues: LaunchValues): Promise<string> {
+export async function godotCheckPrepare(ctx: Context, input: PlatformBuildInput, platform: 'android' | 'web', root: string): Promise<CheckPrepared> {
+  const dev: PlatformBuildInput = { ...input, env: 'DEV' };
+  const { godot, iosPlugins } = await prepareWorkspace(ctx, dev, platform, root);
+  const p: PresetContext = { ctx, root, game: dev.game.name, env: 'DEV', version: dev.version, settings: dev.settings, iosPrivacy: dev.iosPrivacy, iosPlugins };
+  const options = await platformOptions(p, platform);
+  await writeProjectVersion(root, dev.version);
+  await godotRun(ctx, godot, root, ['--import'], {});
+  return { godot, options };
+}
+
+/**
+ * The DEV export (`android-dev` apk, `web-dev` web export) of a build-time check into `outDir`, made in `root`, a copy of
+ * the check workspace that `prepared` describes: `generated/launch_values.json` instead of `generated/build_info.json`,
+ * and `generated/launch_values.json` taken out of `exclude_filter`. Returns the output file. The caller deletes the copy
+ * and the export when the check ends.
+ */
+export async function godotCheckExport(
+  ctx: Context,
+  input: PlatformBuildInput,
+  platform: 'android' | 'web',
+  root: string,
+  outDir: string,
+  launchValues: LaunchValues,
+  prepared: CheckPrepared,
+): Promise<string> {
   await mkdir(outDir, { recursive: true });
   const exportPath = join(outDir, outputFile(input.game.name, platform, 'DEV'));
-  await exportPreset(ctx, { ...input, env: 'DEV' }, platform, root, exportPath, launchValues);
+  await writeJsonAtomic(join(root, 'client', 'generated', 'launch_values.json'), launchValues);
+  const filter = excludeFilter('DEV').replace(',generated/launch_values.json', '');
+  await presetExport(ctx, { ...input, env: 'DEV' }, platform, root, exportPath, { ...prepared, filter, importFirst: false });
   if (!exists(exportPath)) throw new OgwError(`export of ${platform} made no ${outputFile(input.game.name, platform, 'DEV')}`);
   return exportPath;
 }

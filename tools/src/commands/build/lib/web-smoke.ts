@@ -19,7 +19,7 @@ import {
   launchValuesOf,
   serveFolder,
   waitClientBoot,
-  withCheckExport,
+  withCheckCopy,
   withCheckInstance,
   type ClientCheckInput,
 } from './client-check.ts';
@@ -114,9 +114,9 @@ export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult 
   try {
     const run = await webRunSettings(ctx);
     if (typeof run === 'string') return { check: didNotRun(NAME, run), loadingMs: null };
-    return await withCheckInstance(ctx, input.game, 'web', (instance, external) =>
-      withCheckExport(input, 'web', launchValuesOf(instance, external, 'web'), (file) =>
-        withWebPage(ctx, run, file, async (page) => {
+    return await withCheckCopy(input, 'web', 'web', (exportWith) =>
+      withCheckInstance(ctx, input.game, 'web', async (instance, external) =>
+        withWebPage(ctx, run, await exportWith(launchValuesOf(instance, external, 'web')), async (page) => {
           const { results, loadingMs } = await webScenario(input, instance, page, scenario, run.bootLimitMs, evidenceOf(input, 'web-smoke'));
           return { check: ranToEnd(NAME, buildCheckOf(NAME, input.env, results)), loadingMs };
         }),

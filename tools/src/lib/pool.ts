@@ -55,3 +55,13 @@ export async function inOrder<T, R>(items: readonly T[], ahead: number, work: (i
     await Promise.all(started.values());
   }
 }
+
+/**
+ * Waits until every promise has settled, then throws the reason of the first one in list order that rejected, so that
+ * no work is left running when the caller fails.
+ */
+export async function allSettledOrThrow(promises: readonly Promise<unknown>[]): Promise<void> {
+  const settled = await Promise.allSettled(promises);
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  if (failed !== undefined) throw failed.reason;
+}

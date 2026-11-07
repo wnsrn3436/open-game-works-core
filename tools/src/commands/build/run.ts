@@ -6,7 +6,9 @@ import { readJson, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { currentBranch, showFile } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { allSettledOrThrow } from '../../lib/pool.ts';
 import type { GameSettings } from '../../lib/settings.ts';
+import { readScenario } from '../check/lib/bot-playtest.ts';
 import { coreRelease, coreReleaseOfGame } from '../core/api.ts';
 import { runData, type DataRun } from '../data/api.ts';
 import { gameModules } from '../generate/api.ts';
@@ -14,9 +16,9 @@ import { dataVersionsAt, protocolHash, readDataVersions, type DataVersions } fro
 import { addedConverters, convertersAt, convertersOf } from './lib/converters.ts';
 import { buildDir, buildRunFile, gameSettingsWithDefaults, requireBuildRun, type BuildCheck, type BuildRunResult, type OpenBuildRun } from './lib/buildrun.ts';
 import { settingsCheckInput } from './lib/inputs.ts';
-import { type ClientCheckInput } from './lib/client-check.ts';
+import { withCheckWorkspaces, type CheckPlatform, type ClientCheckInput } from './lib/client-check.ts';
 import { devicePerformance } from './lib/device-performance.ts';
-import { webSmoke } from './lib/web-smoke.ts';
+import { webRunSettings, webSmoke } from './lib/web-smoke.ts';
 import { repeatTest } from './lib/repeat-test.ts';
 import { soakTest } from './lib/soak-test.ts';
 import { buildTagName, buildTags, lastProdTag, tagCommit, type BuildTag } from './lib/names.ts';
@@ -25,7 +27,7 @@ import { buildBundle, buildPlatforms, type Artifact } from './lib/platform.ts';
 import { writePrivacy } from './lib/privacy.ts';
 import { compatibilityCheck, placeholderCheck, plain, staticChecks } from './lib/runchecks.ts';
 import { DEV_ACCESS, needles, scanArtifacts, scanRepo } from './lib/secretscan.ts';
-import { buildServerImage, serverImageDevCode, stgServerImage, type ServerImage } from './lib/serverimage.ts';
+import { pushServerImage, serverImageDevCode, stgServerImage, warmServerImage, type ImageBuild, type ServerImage } from './lib/serverimage.ts';
 import { blocksBuild, humanChecks, outcome, usedSpecModules, type CheckWithHuman, type SettingsCheckInput } from './lib/settingschecks.ts';
 import { compatibleApps, writeUpdate } from './lib/update.ts';
 import { matchWaitMs } from './lib/waittime.ts';
@@ -71,27 +73,38 @@ async function bundleHasData(b: Build, versions: DataVersions | null): Promise<b
   return app.client !== versions.client || app.server !== versions.server;
 }
 
-/**
- * Checks `web smoke`, `repeat test` and `soak test` one after the other, so that the runs of one do not load the host
- * of the next (ogw.md `### repeat test`, `### soak test`).
- */
-async function webChecks(input: ClientCheckInput): Promise<{ checks: BuildCheck[]; loadingMs: number | null }> {
-  const web = await webSmoke(input);
-  const repeat = await repeatTest(input);
-  const soak = await soakTest(input);
-  return { checks: [web?.check, repeat, soak].filter((c): c is BuildCheck => c !== null && c !== undefined), loadingMs: web?.loadingMs ?? null };
+/** The check workspaces the client checks of this build export from: those of a platform whose checks make an export. */
+async function exportPlatforms(input: ClientCheckInput): Promise<CheckPlatform[]> {
+  if (typeof (await readScenario(input.game.root)) === 'string') return [];
+  const platforms: CheckPlatform[] = [];
+  if (input.platforms.includes('android') && ((await input.ctx.settings()).testDevices ?? []).length > 0) platforms.push('android');
+  if (input.platforms.includes('web') && typeof (await webRunSettings(input.ctx)) !== 'string') platforms.push('web');
+  return platforms;
 }
 
-/** Check `device performance` beside the web checks. */
-async function clientChecks(b: Build): Promise<{ checks: CheckWithHuman[]; loadingMs: number | null }> {
-  const input: ClientCheckInput = {
+/**
+ * The client checks (ogw.md `## build run`). The check workspaces and check `repeat test`, which measure nothing, run
+ * beside the other build-time checks (`load`). The performance measurements `device performance` and `web smoke` start
+ * when all of them have ended, and `soak test` when those two have ended, so that no other work of this build loads the
+ * host while they measure.
+ */
+async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promise<{ checks: CheckWithHuman[]; loadingMs: number | null }> {
+  const base: ClientCheckInput = {
     ctx: b.ctx, game: b.game, env: b.open.env, version: b.open.version, exportVersion: b.open.run.bundleFor ?? b.open.version, settings: b.settings, platforms: b.platforms,
   };
-  const [device, web] = await Promise.all([devicePerformance(input), webChecks(input)]);
-  const checks: CheckWithHuman[] = [];
-  if (device) checks.push({ check: device, human: null });
-  for (const check of web.checks) checks.push({ check, human: null });
-  return { checks, loadingMs: web.loadingMs };
+  return withCheckWorkspaces(base, async (workspaces) => {
+    const input: ClientCheckInput = { ...base, workspaces };
+    const preparing = (await exportPlatforms(input)).map((platform) => workspaces.prepare(platform));
+    const repeat = repeatTest(input);
+    // a check workspace that failed fails the checks that export from it, not the build run
+    const quiet = Promise.allSettled([...load, repeat, ...preparing]).then(() => allSettledOrThrow([...load, repeat]));
+    const measured = quiet.then(() => Promise.all([devicePerformance(input), webSmoke(input)]));
+    const soak = measured.then(() => soakTest(input));
+    await allSettledOrThrow([repeat, measured, soak]);
+    const [device, web] = await measured;
+    const checks = [device, web?.check, await repeat, await soak].filter((c): c is BuildCheck => c !== null && c !== undefined);
+    return { checks: checks.map((check) => ({ check, human: null })), loadingMs: web?.loadingMs ?? null };
+  });
 }
 
 interface PreBuild {
@@ -101,33 +114,54 @@ interface PreBuild {
   input: SettingsCheckInput;
 }
 
+/** Check `backward compatibility` when a PROD tag exists. */
+async function compatibility(b: Build, data: DataRun, versions: DataVersions | null): Promise<CheckWithHuman | null> {
+  if (!b.lastProd) return null;
+  const { ctx, game, open } = b;
+  const withImage = open.env === 'PROD' && (await bundleHasData(b, versions));
+  const repository = (b.settings.serverImage as { repository: string }).repository;
+  return compatibilityCheck({
+    ctx, game, env: open.env, settings: b.settings, lastProd: b.lastProd, data,
+    stgImage: withImage ? `${repository}:stg-${open.version}` : null,
+    compat: versions?.compat ?? '',
+  });
+}
+
+/** STG: the `DEV code` failures of the server image; PROD uses the server image of the STG build, which this check covered. */
+async function imageDevCode(b: Build, versions: DataVersions | null): Promise<string[]> {
+  if (b.open.env !== 'STG' || versions === null || !(await bundleHasData(b, versions))) return [];
+  return serverImageDevCode(b.ctx, { game: b.game, settings: b.settings, env: b.open.env, version: b.open.version, compat: versions.compat });
+}
+
+/**
+ * The build-time checks before the platform build. None reads the result of another, so they run together (ogw.md
+ * `## build run`); the client checks keep their measurements off the others.
+ */
 async function preBuildChecks(b: Build, data: DataRun, versions: DataVersions | null): Promise<PreBuild> {
   const { ctx, game, open } = b;
-  const input = await settingsCheckInput(ctx, game, open.env, b.platforms);
-  const human = await humanChecks(input);
   const ws = await ctx.workspace();
   const list = needles(ctx, game.name, b.settings, open.env, ws.root);
-  const checks: CheckWithHuman[] = [...(await staticChecks(ctx, game, open.env)), ...human.checks];
-  const plugins = await nativePluginProblems(ctx, await coreReleaseOfGame(ctx, game), b.settings, open.env, b.platforms, () => Promise.resolve(input.modules), game.name);
-  checks.push(plain('native plugin', open.env, plugins));
-  // PROD uses the server image of the STG build, which this check covered
-  if (open.env === 'STG' && versions !== null && (await bundleHasData(b, versions))) addDetails(checks.map((c) => c.check), 'DEV code', open.env, await serverImageDevCode(ctx, game, b.settings, open.env));
-  checks.push(plain('secret', open.env, await scanRepo(game, list)));
-  checks.push(await placeholderCheck(ctx, game, open.env));
-  const client = await clientChecks(b);
-  checks.push(...client.checks);
-  if (b.lastProd) {
-    const withImage = open.env === 'PROD' && (await bundleHasData(b, versions));
-    const repository = (b.settings.serverImage as { repository: string }).repository;
-    checks.push(
-      await compatibilityCheck({
-        ctx, game, env: open.env, settings: b.settings, lastProd: b.lastProd, data,
-        stgImage: withImage ? `${repository}:stg-${open.version}` : null,
-        compat: versions?.compat ?? '',
-      }),
-    );
-  }
-  return { checks, webSmokeLoadingMs: client.loadingMs, licenseWarnings: human.licenseWarnings, input };
+  const input = settingsCheckInput(ctx, game, open.env, b.platforms);
+  const human = input.then(humanChecks);
+  const statics = staticChecks(ctx, game, open.env);
+  const plugins = coreReleaseOfGame(ctx, game).then((release) =>
+    nativePluginProblems(ctx, release, b.settings, open.env, b.platforms, async () => (await input).modules, game.name));
+  const devImage = imageDevCode(b, versions);
+  const secret = scanRepo(game, list);
+  const placeholder = placeholderCheck(ctx, game, open.env);
+  const compat = compatibility(b, data, versions);
+  const load = [input, human, statics, plugins, devImage, secret, placeholder, compat];
+  const client = clientChecks(b, load);
+  await allSettledOrThrow([...load, client]);
+  const checks: CheckWithHuman[] = [...(await statics), ...(await human).checks];
+  checks.push(plain('native plugin', open.env, await plugins));
+  addDetails(checks.map((c) => c.check), 'DEV code', open.env, await devImage);
+  checks.push(plain('secret', open.env, await secret));
+  checks.push(await placeholder);
+  checks.push(...(await client).checks);
+  const compatCheck = await compat;
+  if (compatCheck !== null) checks.push(compatCheck);
+  return { checks, webSmokeLoadingMs: (await client).loadingMs, licenseWarnings: (await human).licenseWarnings, input: await input };
 }
 
 function emptyResult(b: Build): BuildRunResult {
@@ -165,37 +199,44 @@ async function coreVersionAt(root: string, commit: string): Promise<string | und
 }
 
 /** PROD build: the converters added after the last PROD build and the two `coreSchemaVersion`. */
-async function prodFacts(b: Build, result: BuildRunResult): Promise<void> {
-  if (b.open.env !== 'PROD') return;
+async function prodFacts(b: Build): Promise<Pick<BuildRunResult, 'converters' | 'coreSchema'>> {
+  if (b.open.env !== 'PROD') return { converters: null, coreSchema: null };
   const current = await coreSchemaVersion(b.ctx, b.settings.coreVersion);
-  if (!b.lastProd) {
-    result.converters = [];
-    result.coreSchema = { last: null, current };
-    return;
-  }
+  if (!b.lastProd) return { converters: [], coreSchema: { last: null, current } };
   const commit = await tagCommit(b.game.root, b.lastProd.tag);
-  result.converters = addedConverters(await convertersAt(b.game.root, commit), await convertersOf(b.game.root));
-  result.coreSchema = { last: await coreSchemaVersion(b.ctx, await coreVersionAt(b.game.root, commit)), current };
+  return {
+    converters: addedConverters(await convertersAt(b.game.root, commit), await convertersOf(b.game.root)),
+    coreSchema: { last: await coreSchemaVersion(b.ctx, await coreVersionAt(b.game.root, commit)), current },
+  };
 }
 
-async function serverSide(b: Build, result: BuildRunResult, versions: DataVersions): Promise<void> {
+/** What the server side of a build with data writes into its result, and the apps of `update/update.json`. */
+interface ServerFacts {
+  apps: string[];
+  protocolChange: BuildRunResult['protocolChange'];
+  matchWaitMs: number | null;
+}
+
+/** The server side facts of a build with data: none reads an artifact, so they are found beside the platform build. */
+async function serverFacts(b: Build, versions: DataVersions): Promise<ServerFacts> {
   const { ctx, game, open } = b;
-  const compat = versions.compat;
-  result.serverDataVersions = { client_data_version: versions.clientForServer, compat_client_data_version: compat };
-  let image: ServerImage;
-  if (open.env === 'PROD') image = await stgServerImage(ctx, b.settings, open.version);
-  else image = await buildServerImage(ctx, game, b.settings, open.env, open.version, compat);
-  result.serverImage = image;
   const appVersion = open.run.bundleFor;
   const apps = [...(appVersion === null ? [open.version] : []), ...(await compatibleApps(ctx, game, open.env, b.tags, versions))];
-  await writeUpdate(game.root, b.outDir, versions.client, [...new Set(apps)]);
-  if (b.lastProd) {
-    const last = await dataVersionsAt(ctx, game, await tagCommit(game.root, b.lastProd.tag));
-    if (protocolHash(last.client) !== protocolHash(versions.client)) {
-      result.protocolChange = { client_data_version: versions.clientForServer, compat_client_data_version: compat };
-    }
-    result.matchWaitMs = await matchWaitMs(ctx, game, await tagCommit(game.root, b.lastProd.tag), (await gameModules(ctx, game)).server);
-  }
+  if (!b.lastProd) return { apps: [...new Set(apps)], protocolChange: null, matchWaitMs: null };
+  const commit = await tagCommit(game.root, b.lastProd.tag);
+  const last = await dataVersionsAt(ctx, game, commit);
+  const changed = protocolHash(last.client) !== protocolHash(versions.client);
+  return {
+    apps: [...new Set(apps)],
+    protocolChange: changed ? { client_data_version: versions.clientForServer, compat_client_data_version: versions.compat } : null,
+    matchWaitMs: await matchWaitMs(ctx, game, commit, (await gameModules(ctx, game)).server),
+  };
+}
+
+/** The server image: PROD the `stg-<version>` image; DEV and STG push the image built beside the platform build. */
+async function serverImage(b: Build, image: ImageBuild): Promise<ServerImage> {
+  if (b.open.env === 'PROD') return stgServerImage(b.ctx, b.settings, b.open.version);
+  return pushServerImage(b.ctx, image);
 }
 
 function summary(result: BuildRunResult): string {
@@ -244,17 +285,44 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   const privacy = await writePrivacy({ dir: join(b.outDir, 'privacy'), env: open.env, platforms: b.platforms, settings: b.settings, modules: usedSpecModules(pre.input) });
   const withData = await bundleHasData(b, versions);
   const manifest = privacy.files.includes('PrivacyInfo.xcprivacy') ? join(b.outDir, 'privacy', 'PrivacyInfo.xcprivacy') : null;
-  await buildArtifacts(b, result, withData, { privacy: privacy.ios, file: manifest });
   const ws = await ctx.workspace();
   const list = needles(ctx, game.name, b.settings, open.env, ws.root);
-  const secret = result.checks.find((c) => c.name === 'secret');
   // the DEV build info file holds the DEV `devAccess` value (`dev_access`)
   const allowed = open.env === 'DEV' ? [DEV_ACCESS] : [];
-  const leaks = await scanArtifacts(game.root, [...b.platforms.map((p) => join(b.outDir, p)), join(b.outDir, 'patch')], list, allowed);
-  if (secret && leaks.length > 0) Object.assign(secret, { result: 'fail', details: [...secret.details, ...leaks] });
+  // beside the platform build (ogw.md `## build run`): the server image build, the server side facts and the PROD facts;
+  // only the push of the server image waits for the artifact checks
+  const image: ImageBuild = { game, settings: b.settings, env: open.env, version: open.version, compat: versions.compat };
+  const artifactsDone = { failed: false };
+  const artifacts = buildArtifacts(b, result, withData, { privacy: privacy.ios, file: manifest }).then(
+    async () => {
+      const leaks = await scanArtifacts(game.root, [...b.platforms.map((p) => join(b.outDir, p)), join(b.outDir, 'patch')], list, allowed);
+      const secret = result.checks.find((c) => c.name === 'secret');
+      if (secret && leaks.length > 0) Object.assign(secret, { result: 'fail', details: [...secret.details, ...leaks] });
+      artifactsDone.failed = result.checks.some((c) => blocksBuild(c, open.env));
+    },
+    (error: unknown) => {
+      artifactsDone.failed = true;
+      throw error;
+    },
+  );
+  // a build whose artifacts failed pushes no image: its cache build stops
+  const warm = withData && open.env !== 'PROD' ? warmServerImage(ctx, image, () => artifactsDone.failed) : Promise.resolve(false);
+  const facts = withData ? serverFacts(b, versions) : Promise.resolve(null);
+  const prod = prodFacts(b);
+  await Promise.allSettled([artifacts, warm, facts, prod]);
+  await artifacts;
+  // a build that the artifact checks block needs none of the work beside them, which ran only after them before
   if (result.checks.some((c) => blocksBuild(c, open.env))) return finishResult(b, result, true);
-  if (withData) await serverSide(b, result, versions);
-  await prodFacts(b, result);
+  await allSettledOrThrow([warm, facts, prod]);
+  const server = await facts;
+  if (withData && server !== null) {
+    result.serverDataVersions = { client_data_version: versions.clientForServer, compat_client_data_version: versions.compat };
+    result.serverImage = await serverImage(b, image);
+    await writeUpdate(game.root, b.outDir, versions.client, server.apps);
+    result.protocolChange = server.protocolChange;
+    result.matchWaitMs = server.matchWaitMs;
+  }
+  Object.assign(result, await prod);
   return finishResult(b, result, false);
 }
 

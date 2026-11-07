@@ -4,7 +4,7 @@ import * as tar from 'tar';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { LIMITS } from '../../../lib/limits.ts';
-import { runOk } from '../../../lib/proc.ts';
+import { run, runOk } from '../../../lib/proc.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { writeFileAtomic } from '../../../lib/fsx.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
@@ -55,25 +55,63 @@ function isDevCode(rel: string): boolean {
   return /^(dev|core\/[^/]+\/dev)\//.test(rel);
 }
 
+/** The server image of a DEV or STG build: what every `docker buildx build` of it is given. */
+export interface ImageBuild {
+  game: GameRepo;
+  settings: GameSettings;
+  env: Env;
+  version: string;
+  /** `compat_client_data_version` of the build, the image label `ogw.compat_client_data_version`. */
+  compat: string;
+}
+
+/**
+ * The `docker buildx build` arguments of the server image without its output (ogw.md `## server image`). Every build of
+ * one image has the same arguments, so a later build of it takes every step from the build cache of an earlier one.
+ */
+function imageArgs(image: ImageBuild, server: string): string[] {
+  const { repository, platform } = repositoryOf(image.settings);
+  return [
+    'buildx', 'build',
+    '--platform', platform,
+    '--file', join(server, 'core', 'Dockerfile'),
+    '--build-arg', `OGW_ENV=${image.env}`,
+    '--label', `ogw.compat_client_data_version=${image.compat}`,
+    '--tag', `${repository}:${buildTagName(image.env, image.version)}`,
+  ];
+}
+
 /**
  * Check `DEV code` of an STG server image: builds the image from its build context into a tar of its file system
  * (not pushed) and returns a failure for each DEV code file of the context that the image holds. A context without
  * DEV code builds nothing.
  */
-export async function serverImageDevCode(ctx: Context, game: GameRepo, settings: GameSettings, env: Env): Promise<string[]> {
-  const { platform } = repositoryOf(settings);
-  return withServerContext(ctx, game, env, async (server, dir) => {
+export async function serverImageDevCode(ctx: Context, image: ImageBuild): Promise<string[]> {
+  return withServerContext(ctx, image.game, image.env, async (server, dir) => {
     const dev = (await filesBelow(server)).map((p) => relative(server, p).split(sep).join('/')).filter(isDevCode);
     if (dev.length === 0) return [];
-    const image = join(dir, 'image.tar');
-    await runOk(
-      'docker',
-      ['buildx', 'build', '--platform', platform, '--file', join(server, 'core', 'Dockerfile'), '--build-arg', `OGW_ENV=${env}`, '--output', `type=tar,dest=${image}`, server],
-      { env: ctx.env, timeoutMs: LIMITS.programMs },
-    );
+    const file = join(dir, 'image.tar');
+    await runOk('docker', [...imageArgs(image, server), '--output', `type=tar,dest=${file}`, server], { env: ctx.env, timeoutMs: LIMITS.programMs });
     const entries: string[] = [];
-    await tar.t({ file: image, onReadEntry: (entry) => entries.push(entry.path.replace(/^\.?\/+/, '')) });
+    await tar.t({ file, onReadEntry: (entry) => entries.push(entry.path.replace(/^\.?\/+/, '')) });
     return dev.filter((rel) => entries.some((e) => e === rel || e.endsWith(`/${rel}`))).map((rel) => `server image holds DEV code: server/${rel}`);
+  });
+}
+
+/**
+ * DEV, STG: builds the server image into the build cache only, beside the platform build, so that the push after the
+ * artifact checks (`pushServerImage`) builds nothing again (ogw.md `## server image`). Returns false when `stopWhen`
+ * gave true and the build was stopped.
+ */
+export async function warmServerImage(ctx: Context, image: ImageBuild, stopWhen: () => boolean): Promise<boolean> {
+  return withServerContext(ctx, image.game, image.env, async (server) => {
+    const args = [...imageArgs(image, server), '--output', 'type=cacheonly', server];
+    const result = await run('docker', args, { env: ctx.env, timeoutMs: LIMITS.programMs, stopWhen });
+    if (result.stopped === true) return false;
+    if (result.timedOut) throw new OgwError(`docker ${args.join(' ')} timed out after ${String(LIMITS.programMs)} ms`);
+    const detail = (result.stderr || result.stdout).trim();
+    if (result.code !== 0) throw new OgwError(`docker ${args.join(' ')} failed (${String(result.code ?? result.signal)})${detail ? `: ${detail}` : ''}`);
+    return true;
   });
 }
 
@@ -81,25 +119,12 @@ export async function serverImageDevCode(ctx: Context, game: GameRepo, settings:
  * DEV, STG: builds the server image for `serverImage.platform` from the build context, with `core/Dockerfile` of the
  * copy, and pushes it as `<env>-<version>` (ogw.md `## server image`).
  */
-export async function buildServerImage(ctx: Context, game: GameRepo, settings: GameSettings, env: Env, version: string, compat: string): Promise<ServerImage> {
-  const { repository, platform } = repositoryOf(settings);
-  const tag = buildTagName(env, version);
+export async function pushServerImage(ctx: Context, image: ImageBuild): Promise<ServerImage> {
+  const { repository } = repositoryOf(image.settings);
+  const tag = buildTagName(image.env, image.version);
   await ghcrLogin(ctx);
-  await withServerContext(ctx, game, env, async (server) => {
-    await runOk(
-      'docker',
-      [
-        'buildx', 'build',
-        '--platform', platform,
-        '--file', join(server, 'core', 'Dockerfile'),
-        '--build-arg', `OGW_ENV=${env}`,
-        '--label', `ogw.compat_client_data_version=${compat}`,
-        '--tag', `${repository}:${tag}`,
-        '--push',
-        server,
-      ],
-      { env: ctx.env, timeoutMs: LIMITS.programMs },
-    );
+  await withServerContext(ctx, image.game, image.env, async (server) => {
+    await runOk('docker', [...imageArgs(image, server), '--push', server], { env: ctx.env, timeoutMs: LIMITS.programMs });
   });
   const digest = await imageDigest(ctx, `${repository}:${tag}`);
   if (digest === null) throw new OgwError(`pushed server image ${repository}:${tag} is not in the registry`);

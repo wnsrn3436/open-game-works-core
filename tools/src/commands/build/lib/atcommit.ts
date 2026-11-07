@@ -15,15 +15,30 @@ export async function contractVersionAt(root: string, commit: string): Promise<n
   return m ? Number(m[1]) : null;
 }
 
-/** Runs `fn` on a temporary worktree of the commit under `worktrees/<game>/`. */
-export async function withCommitCheckout<T>(ctx: Context, game: GameRepo, commit: string, fn: (repo: GameRepo) => Promise<T>): Promise<T> {
+/**
+ * A new temporary worktree of the commit under `worktrees/<game>/`. `onPath` gets its path before the add, so that the
+ * caller removes it (`removeCommitCheckout`) also when the add fails partway.
+ */
+export async function addCommitCheckout(ctx: Context, game: GameRepo, commit: string, onPath: (path: string) => unknown = () => undefined): Promise<GameRepo> {
   const ws = await ctx.workspace();
   const path = join(ws.worktrees, game.name, `build-${newId()}`);
+  onPath(path);
   await worktreeAdd(game.mainRoot, path, commit, undefined, { env: ctx.env });
+  return { ...game, root: path, inWorktree: true };
+}
+
+/** Removes a worktree of `addCommitCheckout`. */
+export async function removeCommitCheckout(ctx: Context, game: GameRepo, path: string): Promise<void> {
+  await worktreeRemove(game.mainRoot, path, { env: ctx.env });
+}
+
+/** Runs `fn` on a temporary worktree of the commit under `worktrees/<game>/`. */
+export async function withCommitCheckout<T>(ctx: Context, game: GameRepo, commit: string, fn: (repo: GameRepo) => Promise<T>): Promise<T> {
+  const made: string[] = [];
   try {
-    return await fn({ ...game, root: path, inWorktree: true });
+    return await fn(await addCommitCheckout(ctx, game, commit, (path) => made.push(path)));
   } finally {
-    await worktreeRemove(game.mainRoot, path, { env: ctx.env });
+    for (const path of made) await removeCommitCheckout(ctx, game, path);
   }
 }
 

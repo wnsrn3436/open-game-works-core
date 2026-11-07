@@ -1,12 +1,12 @@
 import { rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { CheckResult } from '../../check/api.ts';
 import { readScenario } from '../../check/lib/bot-playtest.ts';
 import { checkResult, failure } from '../../check/lib/evidence.ts';
 import { Slots } from '../../check/lib/instances.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import type { BuildCheck } from './buildrun.ts';
-import { buildCheckOf, didNotRun, evidenceOf, launchValuesOf, withCheckInstance, withCheckWorkspace, type CheckExporter, type ClientCheckInput } from './client-check.ts';
+import { buildCheckOf, didNotRun, evidenceOf, launchValuesOf, withCheckCopy, withCheckInstance, withWorkspacesOf, type ClientCheckInput } from './client-check.ts';
 import { outcome } from './settingschecks.ts';
 import { webRunSettings, webScenario, withWebPage, type WebRun } from './web-smoke.ts';
 
@@ -58,19 +58,19 @@ export function repeatVerdict(env: ClientCheckInput['env'], runs: readonly Repea
   return { name: NAME, result: 'pass', details: [] };
 }
 
-/** One run: its own check instance, check export and page (ogw.md `### repeat test` 1); the logs of a run that passed are not kept. */
-async function oneRun(input: ClientCheckInput, scenario: Scenario, run: WebRun, exportFor: CheckExporter, n: number): Promise<RepeatRun> {
+/**
+ * One run: its own copy of the check workspace, then its own check instance, check export and page (ogw.md
+ * `### repeat test` 1); the logs of a run that passed are not kept.
+ */
+async function oneRun(input: ClientCheckInput, scenario: Scenario, run: WebRun, n: number): Promise<RepeatRun> {
   const { ctx } = input;
   const evidence = evidenceOf(input, `repeat-test/run-${String(n)}`);
   try {
-    const repeat = await withCheckInstance(ctx, input.game, 'web', async (instance, external) => {
-      const file = await exportFor('web', launchValuesOf(instance, external, 'web'), `web-run-${String(n)}`);
-      try {
-        return await withWebPage(ctx, run, file, async (page) => runOf(input.env, (await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence)).results));
-      } finally {
-        await rm(dirname(file), { recursive: true, force: true });
-      }
-    });
+    const repeat = await withCheckCopy(input, 'web', `web-run-${String(n)}`, (exportWith) =>
+      withCheckInstance(ctx, input.game, 'web', async (instance, external) => {
+        const file = await exportWith(launchValuesOf(instance, external, 'web'));
+        return withWebPage(ctx, run, file, async (page) => runOf(input.env, (await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence)).results));
+      }));
     if (repeat.result === 'pass') await rm(join(evidence.root, evidence.dir ?? ''), { recursive: true, force: true });
     return repeat;
   } catch (error) {
@@ -83,8 +83,9 @@ async function oneRun(input: ClientCheckInput, scenario: Scenario, run: WebRun, 
 
 /**
  * Check `repeat test` (`build` `## build-time check`, ogw.md `### repeat test`): the bot playtest scenario in
- * `repeatPlan.runs` runs, each as a new user on its own DEV web export, at most `maxConcurrentInstances` at a time. Null
- * when the build has no web platform or is a PROD build.
+ * `repeatPlan.runs` runs, each as a new user on its own DEV web export made in its own copy of the one web check
+ * workspace, at most `maxConcurrentInstances` at a time: the exports of the runs are made together. Null when the build
+ * has no web platform or is a PROD build.
  */
 export async function repeatTest(input: ClientCheckInput): Promise<BuildCheck | null> {
   if (!input.platforms.includes('web') || input.env === 'PROD') return null;
@@ -100,11 +101,11 @@ export async function repeatTest(input: ClientCheckInput): Promise<BuildCheck | 
     const max = (await ctx.settings()).maxConcurrentInstances;
     if (max === null) return didNotRun(NAME, 'harness settings maxConcurrentInstances is null');
     const slots = new Slots(max);
-    return await withCheckWorkspace(input, async (exportFor) => {
+    return await withWorkspacesOf(input, async (shared) => {
       const runs = Array.from({ length: repeatPlan.runs }, async (_, i) => {
         await slots.acquire();
         try {
-          return await oneRun(input, scenario, run, exportFor, i + 1);
+          return await oneRun(shared, scenario, run, i + 1);
         } finally {
           slots.release();
         }
