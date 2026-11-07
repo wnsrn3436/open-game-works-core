@@ -454,7 +454,7 @@
           "minimum": 1
         },
         "parallel": {
-          "description": "The largest number of seeds whose seed-runs run at once, and of regression states whose refresh, admission or catch runs at once",
+          "description": "The largest number of the side commands, fixer agents, merges, core upgrades and patch applications of one ogw regress command that run at once, and of the seed-runs of ogw regress run that run at once",
           "type": "integer",
           "minimum": 1
         },

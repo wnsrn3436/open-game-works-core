@@ -48,6 +48,7 @@ export const sideCommand: CommandDef = {
       coreVersion: await harnessCoreVersion(ctx),
       promptBytes: { content: await promptBytes(harness, 'content'), translation: await promptBytes(harness, 'translation') },
       agents: (await ctx.settings()).agents,
+      instanceLease: true,
     };
     return { text: JSON.stringify(info), data: info };
   },

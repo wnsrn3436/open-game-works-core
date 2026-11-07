@@ -1,13 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeCopyRepo } from '../../../src/commands/regress/lib/copy.ts';
+import { regressPool } from '../../../src/commands/regress/lib/pool.ts';
 import type { RegressCheckFile } from '../../../src/commands/regress/lib/keys.ts';
 import { parseManifest, type Seed } from '../../../src/commands/regress/lib/repo.ts';
 import { runSeedRun, type SeedRunInput } from '../../../src/commands/regress/lib/seed-run.ts';
 import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type CheckRequest, type Side } from '../../../src/commands/regress/lib/side.ts';
 import { makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
-import { checkFile, ctxOf, item, sourceGame, write } from './helpers.ts';
+import { checkFile, ctxOf, item, meetOtherGroup, overlaps, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/regress/lib/side.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/regress/lib/side.ts')>()),
@@ -61,7 +62,6 @@ async function fixture(seed: Seed, side: 'before' | 'after' = 'after', cap = 3):
   const ctx = ctxOf(ws);
   const main = await makeCopyRepo(ctx, 'ogw-regress-fix-1', { repo: source, commit, registry: sh(source, 'git', ['rev-parse', 'id-registry']).trim() }, { kind: 'fix', state: 's' }, 'fix repo 1');
   const repo = join(ws.games, 'ogw-regress-fix-1');
-  const registry = sh(repo, 'git', ['rev-parse', 'id-registry']).trim();
   const base = checkFile('base', item('no blocker', 'fail', [['step 1', 'known blocker']]), item('full flow', 'pass'), item('static check', 'fail', [['client/c.gd:1', 'base only']]));
   const seeded = checkFile(main, item('no blocker', 'fail', [['step 1', 'known blocker'], LEAK]), item('full flow', 'fail', [['step 2', 'scenario stopped at step 2']]));
   const after = sideOf('after');
@@ -72,12 +72,13 @@ async function fixture(seed: Seed, side: 'before' | 'after' = 'after', cap = 3):
     side: side === 'after' ? after : sideOf('before'),
     after,
     repeat: 1,
-    fix: { game: 'ogw-regress-fix-1', root: repo, roots: { main, registry } },
+    fix: { game: 'ogw-regress-fix-1', root: repo, seeded: main },
     catchAfter: { base, seeded, seededPath: '/catch/after/S01.json', matched: { check: seeded.checks[0] as RegressCheckFile['checks'][number], failure: (seeded.checks[0] as RegressCheckFile['checks'][number]).failures[1] as RegressCheckFile['checks'][number]['failures'][number] } },
     oracle: null,
     work: join(ws.root, 'work', 'S01-after-1'),
     cap,
     diff: join(ws.root, 'regress', 'S01-after-1.diff'),
+    pool: regressPool(4),
   };
   return { ws, repo, input, fixers: [], checks: [] };
 }
@@ -124,7 +125,7 @@ beforeEach(() => {
 });
 
 describe('seed-run', () => {
-  it('fixes in iteration 1: input, record, measures, diff, and the fix repo put back', async () => {
+  it('fixes in iteration 1: input, record, measures and diff', async () => {
     const f = await fixture(seedOf());
     fakeFixer(f, () => ({ code: 'fixed', result: 'fixed', note: '`client/tests/test_a.gd::test_one`' }));
     // the final check still has the failure of the base that the seeded check has not: no new defect
@@ -164,9 +165,6 @@ describe('seed-run', () => {
     expect(record).toContain('| flame-leak | pass | none | none |');
     expect(record).toMatch(/\| flame-leak \| blocker \|.*\| check \| fixed \|/);
     expect(record).toContain('| content | 1 | 1000 | 900 | 10 | 0.50 | 0 | 0 |');
-    // the fix repo is back at its root: the next seed-run starts from the seeded commit
-    expect(sh(f.repo, 'git', ['rev-parse', 'main']).trim()).toBe(f.input.fix.roots.main);
-    expect(existsSync(join(f.repo, records))).toBe(false);
   });
 
   it('counts an unconfirmed claim, gives the next iteration the previous record and the failure that found it, and fixes in iteration 2', async () => {
@@ -200,7 +198,7 @@ describe('seed-run', () => {
     expect(result.measures['test first']).toBeNull();
   });
 
-  it('is unknown when the fixer does not end done, and the fix repo is put back', async () => {
+  it('is unknown when the fixer does not end done', async () => {
     const f = await fixture(seedOf());
     fakeFixer(f, () => 'fail');
     fakeChecks(f);
@@ -208,7 +206,6 @@ describe('seed-run', () => {
     expect(result).toMatchObject({ result: 'unknown', reason: 'agent job failed: limit' });
     expect(result.measures.fixed).toBeNull();
     expect(result.measures['input tokens']).toBe(1000);
-    expect(sh(f.repo, 'git', ['rev-parse', 'main']).trim()).toBe(f.input.fix.roots.main);
   });
 
   it('is unknown when the confirmation gives no result twice in the last iteration', async () => {
@@ -255,6 +252,37 @@ describe('seed-run', () => {
     expect(vi.mocked(sideMerge)).toHaveBeenCalledWith(expect.anything(), f.input.side, 'tj');
     expect(result).toMatchObject({ result: 'fixed', guards: [] });
     expect(vi.mocked(sideCheck).mock.calls[0]?.[2].proof).toBeNull();
+  });
+
+  it('runs the translation sub-agents of the languages together and merges them one at a time', async () => {
+    const seed = seedOf({ match: [{ check: 'no placeholder', where: '^data/', message: '^translation_(stale|missing) (en|ja) ' }], fixer: 'translation', row: { id: 'flame-leak', severity: 'major', owner: 'data', why: 'w', source: 'check' } });
+    const f = await fixture(seed);
+    const missing = item('no placeholder', 'fail', [['data/translations/en.csv:4', 'translation_missing en c'], ['data/translations/ja.csv:4', 'translation_missing ja c']]);
+    f.input.catchAfter = { ...f.input.catchAfter, seeded: checkFile('s', missing), matched: { check: missing, failure: missing.failures[0] as RegressCheckFile['checks'][number]['failures'][number] } };
+    const started = new Set<string>();
+    vi.mocked(sideAgent).mockImplementation(async (_ctx, _side, request) => {
+      const language = readFileSync(request.input, 'utf8').trim();
+      // each agent waits until the agent of the other language has started too: they run together
+      await meetOtherGroup(started, language, 2000);
+      return { job: `t${language}`, status: 'done', output: null, reason: null };
+    });
+    const merging: string[] = [];
+    const spans: Span[] = [];
+    vi.mocked(sideMerge).mockImplementation(async (_ctx, _side, job) => {
+      const start = performance.now();
+      merging.push(job);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      spans.push({ key: job, group: 'merge', start, end: performance.now() });
+      return null;
+    });
+    vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [item('no placeholder', 'pass')], fixTestProof: [] }, minutes: 1 }));
+    const began = performance.now();
+    const result = await runSeedRun(ctxOf(f.ws), f.input);
+    expect(result).toMatchObject({ result: 'fixed' });
+    expect(merging.sort()).toEqual(['ten', 'tja']);
+    expect(overlaps(spans, true)).toEqual([]);
+    // the agents met at once instead of waiting out the meeting limit
+    expect(performance.now() - began).toBeLessThan(1500);
   });
 
   it('gives the before side its own fixed by its own target checks on the final commit', async () => {

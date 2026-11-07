@@ -33,6 +33,11 @@ export interface SideInfo {
   coreVersion: string | null;
   promptBytes: { content: number; translation: number };
   agents: Record<string, AgentSettings>;
+  /**
+   * The instances of regress games that the side tool starts hold the performance lease (ogw.md `### performance lease`);
+   * absent for a side tool from before, whose checks with performance run alone (`### regress run`).
+   */
+  instanceLease?: true;
 }
 
 export interface Side extends SideSpec {

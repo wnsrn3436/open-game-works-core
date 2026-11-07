@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { makeCopyRepo, resetFixRepo, rootOf } from '../../../src/commands/regress/lib/copy.ts';
+import { makeCopyRepo } from '../../../src/commands/regress/lib/copy.ts';
 import { guardViolations, testCount } from '../../../src/commands/regress/lib/guards.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
 import { commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
@@ -36,26 +36,22 @@ describe('copy repo (regression state, fix repo)', () => {
     await expect(makeCopyRepo(ctx, 'ogw-regress-s', { repo: source, commit, registry }, { kind: 'state', state: 's' }, 'again')).rejects.toThrow('exists');
   });
 
-  it('is put back by the reset: main and id-registry at their roots, other branches, tags, worktrees and untracked files gone', async () => {
+  it('makes a fix repo in its reserved folder only when that folder is there and empty', async () => {
     const ws = makeWorkspace();
     const commit = sourceGame(ws);
     const source = join(ws.games, 'src');
     const ctx = ctxOf(ws);
-    const main = await makeCopyRepo(ctx, 'fix', { repo: source, commit, registry: sh(source, 'git', ['rev-parse', 'id-registry']).trim() }, { kind: 'fix', state: 's' }, 'fix repo');
-    const repo = join(ws.games, 'fix');
-    const registry = await rootOf(ctx, repo, 'id-registry');
-    write(repo, 'client/a.gd', 'var x = 2\n');
-    sh(repo, 'git', ['commit', '-qam', 'fix', '--no-verify']);
-    sh(repo, 'git', ['branch', 'agent/x']);
-    sh(repo, 'git', ['tag', 't1']);
-    sh(repo, 'git', ['worktree', 'add', '--quiet', join(ws.worktrees, 'fix', 'agent-x'), 'agent/x']);
-    write(repo, 'untracked.txt', 'x');
-    await resetFixRepo(ctx, repo, { main, registry });
+    const registry = sh(source, 'git', ['rev-parse', 'id-registry']).trim();
+    const make = (name: string): Promise<string> => makeCopyRepo(ctx, name, { repo: source, commit, registry }, { kind: 'fix', state: 's' }, 'fix repo', true);
+    await expect(make('ogw-regress-fix-1')).rejects.toThrow('is not an empty folder');
+    mkdirSync(join(ws.games, 'ogw-regress-fix-1'));
+    const main = await make('ogw-regress-fix-1');
+    const repo = join(ws.games, 'ogw-regress-fix-1');
     expect(sh(repo, 'git', ['rev-parse', 'main']).trim()).toBe(main);
-    expect(sh(repo, 'git', ['for-each-ref', '--format=%(refname:short)']).trim().split('\n').sort()).toEqual(['id-registry', 'main']);
-    expect(existsSync(join(repo, 'untracked.txt'))).toBe(false);
     expect(readFileSync(join(repo, 'client/a.gd'), 'utf8')).toBe('var x = 1\n');
-    expect(sh(repo, 'git', ['worktree', 'list']).trim().split('\n')).toHaveLength(1);
+    expect(await readMark(join(repo, '.git'))).toEqual({ kind: 'fix', state: 's' });
+    await expect(make('ogw-regress-fix-1')).rejects.toThrow('is not an empty folder');
+    expect(existsSync(join(repo, 'client/a.gd'))).toBe(true);
   });
 });
 

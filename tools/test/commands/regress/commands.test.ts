@@ -8,7 +8,8 @@ import { stateSettings, upgradeCore } from '../../../src/commands/regress/lib/op
 import { withRegressLock } from '../../../src/commands/regress/lib/repo.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
 import { ogw, makeWorkspace, sh, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
-import { ctxOf, item, joinedSpans, meetOtherGroup, overlaps, runningBeside, sourceGame, write, type Span } from './helpers.ts';
+import { checkInputs } from '../../../src/commands/regress/lib/inputs.ts';
+import { ctxOf, item, joinedSpans, meetOtherGroup, overlaps, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
@@ -231,8 +232,10 @@ describe('ogw regress refresh and admission', () => {
     expect(read('S02')).toMatchObject({ result: 'stale', reason: 'not caught: missed, missed, missed' });
     const busy = 'unknown (no blocker: unknown: host busy)';
     expect(read('S03')).toMatchObject({ result: 'stale', reason: `not caught: ${busy}, ${busy}, ${busy}`, catch: ['unknown', 'unknown', 'unknown'] });
-    // one check of the three that does not catch it is enough to make it stale
-    expect(read('S04')).toMatchObject({ result: 'stale', reason: `not caught: caught, ${busy}, caught` });
+    // one check of the three that does not catch it is enough to make it stale; the 3 checks run together, so which is second varies
+    const s04 = read('S04');
+    expect(s04.result).toBe('stale');
+    expect(String(s04.reason).replace(/^not caught: /, '').split(', ').sort()).toEqual(['caught', 'caught', busy]);
     const broken = 'unknown (ogw regress check exit 1: the bot client did not start)';
     expect(read('S05')).toMatchObject({ result: 'stale', reason: `not caught: ${broken}, ${broken}, ${broken}`, catch: ['unknown', 'unknown', 'unknown'] });
     expect(existsSync(join(ws.regress, 'seeds/S02/patch-1.0.0.diff'))).toBe(false);
@@ -289,8 +292,9 @@ describe('ogw regress refresh and admission', () => {
     let n = 0;
     vi.mocked(regressChecks).mockImplementation(() => (++n === 2 ? Promise.reject(new OgwError('the server did not start')) : Promise.resolve({ checks: [item('no blocker', 'pass')], fixTestProof: [] })));
     const run = await ogw(ws, ['regress', 'refresh']);
-    expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; none; check 2: ogw regress check exit 1: the server did not start)');
-    expect(run.stdout).toContain('seed S01: stale (base fails target: lc none; none; none; none; check 2: ogw regress check exit 1: the server did not start)');
+    // the 3 base checks run together: the one that fails is the one that comes second
+    expect(run.stdout).toMatch(/state lc: no base-1\.0\.0 \(none; none; none; none; check [123]: ogw regress check exit 1: the server did not start\)/);
+    expect(run.stdout).toMatch(/seed S01: stale \(base fails target: lc none; none; none; none; check [123]: ogw regress check exit 1: the server did not start\)/);
     expect(sh(join(ws.games, 'ogw-regress-lc'), 'git', ['tag', '--list']).trim()).toBe('');
   });
 
@@ -355,26 +359,35 @@ describe('ogw regress refresh and admission', () => {
     return readFileSync(input, 'utf8').trim();
   }
 
-  it('runs one translation sub-agent per language with missing or stale translations before the base checks of a state at the core version, and merges each', async () => {
+  it('runs one translation sub-agent per language with missing or stale translations before the base checks of a state at the core version, the languages together, and merges each, one merge at a time', async () => {
     const ws = makeWorkspace();
     bootstrap(ws, translatedSource(ws), { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
     const state = join(ws.games, 'ogw-regress-lc');
     const order: string[] = [];
-    vi.mocked(sideAgent).mockImplementation((_ctx, _side, request) => {
+    const started = new Set<string>();
+    const met: boolean[] = [];
+    vi.mocked(sideAgent).mockImplementation(async (_ctx, _side, request) => {
       order.push(`${request.role} ${languageOf(request.input)} ${request.seedRun.replace(/-\d+:/, '-<ms>:')}`);
       // the input is committed in the seed-run records of the refresh
       expect(request.input).toMatch(/\/records\/loops\/refresh-1\.0\.0-\d+\/translation-input-(en|ja)-\d+\.md$/);
       expect(sh(state, 'git', ['status', '--porcelain', '--', request.input])).toBe('');
-      return Promise.resolve({ job: `t${languageOf(request.input)}`, status: 'done', output: null, reason: null });
+      // the agent of a language waits until that of the other language has started: they run together
+      await meetOtherGroup(started, languageOf(request.input), 5000);
+      met.push(started.size === 2);
+      return { job: `t${languageOf(request.input)}`, status: 'done', output: null, reason: null };
     });
-    vi.mocked(sideMerge).mockImplementation((_ctx, _side, job) => {
+    const merges: Span[] = [];
+    vi.mocked(sideMerge).mockImplementation(async (_ctx, _side, job) => {
+      const start = performance.now();
       order.push(`merge ${job}`);
       // the merged translation of a language: its file without missing or stale rows
       write(state, `data/translations/${job.slice(1)}.csv`, 'key,source,source_hash,current_hash,text\na,가,h1,h1,A\nb,나,h3,h3,B\nc,다,h4,h4,C\n');
+      await new Promise((resolve) => setTimeout(resolve, 20));
       sh(state, 'git', ['add', '-A']);
       sh(state, 'git', ['commit', '-qm', `translation ${job}`, '--no-verify']);
-      return Promise.resolve(null);
+      merges.push({ key: job, group: 'merge', start, end: performance.now() });
+      return null;
     });
     const checks = vi.mocked(regressChecks).getMockImplementation();
     vi.mocked(regressChecks).mockImplementation((...args) => {
@@ -384,9 +397,14 @@ describe('ogw regress refresh and admission', () => {
     const run = await ogw(ws, ['regress', 'refresh']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    expect(order).toEqual(['translation en refresh-1.0.0-<ms>:1', 'merge ten', 'translation ja refresh-1.0.0-<ms>:1', 'merge tja', ...Array<string>(6).fill('check')]);
+    expect(order.slice(0, 2)).toEqual(['translation en refresh-1.0.0-<ms>:1', 'translation ja refresh-1.0.0-<ms>:1']);
+    expect(met).toEqual([true, true]);
+    expect(order.slice(2, 4).sort()).toEqual(['merge ten', 'merge tja']);
+    expect(order.slice(4)).toEqual(Array<string>(6).fill('check'));
+    expect(overlaps(merges, true)).toEqual([]);
     // the base is main after the merges
-    expect(sh(state, 'git', ['log', '-1', '--format=%s', 'base-1.0.0']).trim()).toBe('translation tja');
+    expect(sh(state, 'git', ['log', '-1', '--format=%s', 'base-1.0.0']).trim()).toMatch(/^translation t(en|ja)$/);
+    expect(sh(state, 'git', ['log', '--format=%s', 'base-1.0.0']).split('\n').filter((l) => l.startsWith('translation t')).sort()).toEqual(['translation ten', 'translation tja']);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
     expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | tag |');
     expect(record).toContain('| lc | 1.0.0 | none | none | none | done (ten, tja) | 3 checks | none | base-1.0.0 |');
@@ -430,7 +448,7 @@ describe('ogw regress refresh and admission', () => {
     expect(sh(ws.regress, 'git', ['log', '-1', '--format=%s']).trim()).toBe('regress seed S11');
   });
 
-  it('keeps in each base check the harness commit that made it, and checks a tagged base again, keeping its tag, for another harness commit', async () => {
+  it('keeps in each base check the check inputs of the harness commit that made it, and checks a tagged base again, keeping its tag, for other check inputs', async () => {
     const ws = makeWorkspace();
     const commit = sourceGame(ws, 'src');
     bootstrap(ws, commit, { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
@@ -438,21 +456,38 @@ describe('ogw regress refresh and admission', () => {
     expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
     const state = join(ws.games, 'ogw-regress-lc');
     const base = sh(state, 'git', ['rev-parse', 'base-1.0.0']).trim();
-    const kept = (): [string, string][] =>
+    const kept = (): [string, string, string][] =>
       [1, 2, 3].map((k) => {
-        const file = JSON.parse(readFileSync(join(ws.regress, `records/refresh-1.0.0/lc-base-${String(k)}.json`), 'utf8')) as { commit: string; harness: string };
-        return [file.commit, file.harness];
+        const file = JSON.parse(readFileSync(join(ws.regress, `records/refresh-1.0.0/lc-base-${String(k)}.json`), 'utf8')) as { commit: string; harness: string; checkInputs: string };
+        return [file.commit, file.harness, file.checkInputs];
       });
     const harnessHead = (): string => sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    const inputsOf = async (): Promise<string> => checkInputs(ctxOf(ws), ws.harness, harnessHead());
     const checked = (): string[] => vi.mocked(regressChecks).mock.calls.map((c) => [...(c[3].only ?? ['all'])].join(','));
     const first = harnessHead();
-    expect(kept()).toEqual([[base, first], [base, first], [base, first]]);
+    const firstInputs = await inputsOf();
+    expect(kept()).toEqual([[base, first, firstInputs], [base, first, firstInputs], [base, first, firstInputs]]);
     // the same harness commit takes the kept base checks
     vi.mocked(regressChecks).mockClear();
     expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
     expect(checked()).toEqual(['no blocker', 'no blocker', 'no blocker']);
     expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | base-1.0.0 |');
-    // another harness commit of the same core version checks the tagged base again with its own check code
+    // a harness commit that changes only documents no check reads keeps them
+    for (const doc of ['AGENTS.md', 'tools/ogw.md', 'agents/content.md', 'skills/server-content/SKILL.md', 'tools/test/a.test.ts']) write(ws.harness, doc, `changed ${doc}\n`);
+    sh(ws.harness, 'git', ['add', '-A']);
+    sh(ws.harness, 'git', ['commit', '-qm', 'documents']);
+    expect(await inputsOf()).toBe(firstInputs);
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    expect(checked()).toEqual(['no blocker', 'no blocker', 'no blocker']);
+    // a harness document that check code reads is a check input
+    write(ws.harness, 'skills/game-design/SKILL.md', 'other design doc rules\n');
+    sh(ws.harness, 'git', ['add', '-A']);
+    sh(ws.harness, 'git', ['commit', '-qm', 'design rules']);
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    expect(checked()).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
+    // other check code of the same core version checks the tagged base again with its own check code
     write(ws.harness, 'tools/changed.txt', 'other check code\n');
     sh(ws.harness, 'git', ['add', '-A']);
     sh(ws.harness, 'git', ['commit', '-qm', 'check code']);
@@ -461,7 +496,8 @@ describe('ogw regress refresh and admission', () => {
     expect(checked()).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
     expect(sh(state, 'git', ['rev-parse', 'base-1.0.0']).trim()).toBe(base);
     const second = harnessHead();
-    expect(kept()).toEqual([[base, second], [base, second], [base, second]]);
+    const secondInputs = await inputsOf();
+    expect(kept()).toEqual([[base, second, secondInputs], [base, second, secondInputs], [base, second, secondInputs]]);
     expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | base-1.0.0 |');
     // ogw regress seed does the same
     write(ws.harness, 'tools/changed.txt', 'more check code\n');
@@ -473,7 +509,7 @@ describe('ogw regress refresh and admission', () => {
     vi.mocked(regressChecks).mockClear();
     expect((await ogw(ws, ['regress', 'seed', folder])).stdout).toBe('seed S12: admitted\n');
     expect(checked()).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
-    expect(kept().map(([, harness]) => harness)).toEqual(Array<string>(3).fill(harnessHead()));
+    expect(kept().map(([, harness, inputs]) => [harness, inputs])).toEqual(Array<string[]>(3).fill([harnessHead(), await inputsOf()]));
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
   });
 });
@@ -496,78 +532,79 @@ describe('ogw regress refresh: the order of the admissions', () => {
   }
 
   /**
-   * Fake checks that catch the leak and keep the span of each check of a seeded commit, keyed by the seeded code and
-   * grouped by state. With `meet`, a check of a seeded commit waits until one of another state has started.
+   * Fake checks that catch the leak and keep the span of each check of a seeded commit (with `all`, of each check), keyed
+   * by the checked code and its number, grouped by state. With `meet`, a check waits until a check with the same meeting
+   * key and another id (`meet` of its code, state and number) has started, at most 15 s: such checks that run together
+   * meet at once, and checks that run one after another do not overlap.
    */
-  function timedChecks(spans: Span[], meet: boolean): void {
-    const started = new Set<string>();
+  function timedChecks(spans: Span[], meet: ((code: string, state: string, n: number) => { key: string; id: string }) | null, all = false): void {
+    const started = new Map<string, Set<string>>();
+    let n = 0;
     vi.mocked(regressChecks).mockImplementation(async (_ctx, game) => {
       const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8').trim();
       const leak = code.includes('leak');
-      if (leak) {
+      const k = ++n;
+      if (leak || all) {
         const start = performance.now();
-        if (meet) await meetOtherGroup(started, game.name);
+        if (meet !== null) {
+          const { key, id } = meet(code, game.name, k);
+          started.set(key, new Set([...(started.get(key) ?? []), id]));
+          for (const until = Date.now() + 15_000; (started.get(key)?.size ?? 0) < 2 && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 5));
+        }
         await new Promise((resolve) => setTimeout(resolve, 15));
-        spans.push({ key: code, group: game.name, start, end: performance.now() });
+        spans.push({ key: all ? `${code} ${String(k)}` : code, group: game.name, start, end: performance.now() });
       }
       return { checks: [item('regression test', 'pass'), item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : []), item('full flow', 'pass')], fixTestProof: [] };
     });
   }
 
-  it('admits the seeds of one state one after another and the states together', async () => {
-    const ws = makeWorkspace();
+  it('admits the seeds of one state and of different states together, each seed once the refresh of its state has ended', async () => {
+    // room for every check at once: a check that waits for another seed holds its slot, so a lower limit could keep the other out
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 16 } });
     twoStates(ws);
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
     const spans: Span[] = [];
-    timedChecks(spans, true);
+    // every check of a seeded commit waits until one of another seed of its state has started
+    timedChecks(spans, (code, state) => ({ key: state, id: code }));
     const run = await ogw(ws, ['regress', 'refresh']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     const admissions = joinedSpans(spans);
     expect(admissions.map((s) => s.key).sort()).toEqual(['var x = leakS21', 'var x = leakS22', 'var x = leakS23', 'var x = leakS24']);
-    expect(overlaps(admissions, true)).toEqual([]);
+    // two seeds of one state, and seeds of the two states, are admitted beside each other
+    expect(overlaps(admissions.map((s) => ({ ...s, group: 'all' })), true).some((pair) => pair.includes('leakS21') && pair.includes('leakS22'))).toBe(true);
     expect(overlaps(admissions, false)).not.toEqual([]);
     expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toMatch(/\| S21 \| admitted [^\n]*\n\| S22 \| admitted [^\n]*\n\| S23 \| admitted [^\n]*\n\| S24 \| admitted /);
   });
 
-  it('admits the seeds of at most regress.parallel states at a time', async () => {
+  it('runs at most regress.parallel checks at a time', async () => {
     const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 1 } });
     twoStates(ws);
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
     const spans: Span[] = [];
-    timedChecks(spans, false);
+    timedChecks(spans, null, true);
     expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
-    const admissions = joinedSpans(spans);
-    expect(admissions).toHaveLength(4);
-    expect(overlaps(admissions, true)).toEqual([]);
-    expect(overlaps(admissions, false)).toEqual([]);
+    // 3 base checks of each state and 3 checks of each of the 4 seeds
+    expect(spans).toHaveLength(18);
+    expect(overlaps(spans.map((s) => ({ ...s, group: 'all' })), true)).toEqual([]);
   });
 
-  it('runs a check with performance while no other check of the refresh runs, and the checks without performance of different states together', async () => {
-    const ws = makeWorkspace();
+  it('runs the base checks of a state and the checks of a seed with performance together: only their measurements keep a quiet host', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 16 } });
     twoStates(ws, ['S22', 'S24']);
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
-    const spans: (Span & { performance: boolean })[] = [];
-    const started = new Set<string>();
-    let n = 0;
-    vi.mocked(regressChecks).mockImplementation(async (_ctx, game, _evidence, pick) => {
-      const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8').trim();
-      const key = `${game.name} ${code} ${String(++n)}`;
-      const start = performance.now();
-      if (!pick.performance) await meetOtherGroup(started, game.name);
-      await new Promise((resolve) => setTimeout(resolve, 15));
-      spans.push({ key, group: game.name, start, end: performance.now(), performance: pick.performance });
-      const leak = code.includes('leak');
-      return { checks: [item('regression test', 'pass'), item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : []), item('full flow', 'pass')], fixTestProof: [] };
-    });
+    const spans: Span[] = [];
+    // every check waits until another check of the same commit has started
+    timedChecks(spans, (code, state, n) => ({ key: `${state} ${code}`, id: String(n) }), true);
     const run = await ogw(ws, ['regress', 'refresh']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    // 3 base checks of each state and 3 checks of each seeded commit of S22 and S24 have performance
-    const alone = spans.filter((s) => s.performance);
-    expect(alone).toHaveLength(12);
-    for (const span of alone) expect(runningBeside(spans, span)).toEqual([]);
-    expect(overlaps(spans.filter((s) => !s.performance), false)).not.toEqual([]);
+    const base = spans.filter((s) => s.key.startsWith("var x = 1 "));
+    expect(base).toHaveLength(6);
+    // the 3 base checks of one state, with performance, run beside each other
+    for (const state of ['ogw-regress-lc', 'ogw-regress-lc2']) expect(overlaps(base.filter((s) => s.group === state).map((s) => ({ ...s, group: 'all' })), true)).not.toEqual([]);
+    const s22 = spans.filter((s) => s.key.startsWith('var x = leakS22'));
+    expect(overlaps(s22.map((s) => ({ ...s, group: 'all' })), true)).not.toEqual([]);
   });
 });
 

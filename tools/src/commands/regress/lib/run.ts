@@ -4,11 +4,10 @@ import { join, relative } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
-import { revParse } from '../../../lib/git.ts';
 import type { AgentSettings } from '../../../lib/settings.ts';
 import { dataDir } from '../../env/lib/host.ts';
 import { makeCopyRepo, registryCommit } from './copy.ts';
-import { checkGate, pooled, type CheckGate } from './pool.ts';
+import { every, pooled, regressPool, type RegressPool } from './pool.ts';
 import { catchOf, type CatchResult, type RegressCheckFile } from './keys.ts';
 import { commitRegress, fixGame, listSeeds, readAdmission, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
 import { renderReport, type CatchLine, type RunData, type SeedLine } from './report.ts';
@@ -36,51 +35,73 @@ interface Admitted {
   admission: Admission;
 }
 
+type Checked = { file: RegressCheckFile; path: string } | { error: string };
+
 interface SideCatch {
-  base: Map<string, { file: RegressCheckFile; path: string } | { error: string }>;
-  seeded: Map<string, { file: RegressCheckFile; path: string } | { error: string }>;
+  base: Map<string, Checked>;
+  seeded: Map<string, Checked>;
   catches: Map<string, CatchResult>;
 }
 
 /**
- * The catch of each admitted seed by one side (`### regress run` 2), with the second check of a catch that is not its
- * `expect`: the checks of one state one after another, its base first, and the states together, at most `parallel`, a
- * check with performance alone (`gate`).
+ * The catch of each admitted seed by one side (`### regress run` 2): the check of the base of each state and the first
+ * check of each seeded commit together, the catch of a seed once the check of the base of its state has ended, and the
+ * second check of a catch that is not its `expect`.
  */
-async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], folder: string, parallel: number, gate: CheckGate): Promise<SideCatch> {
+async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], folder: string, pool: RegressPool): Promise<SideCatch> {
   const out: SideCatch = { base: new Map(), seeded: new Map(), catches: new Map() };
+  const bases = new Map<string, Promise<Checked>>();
+  // the base checks come first to the pool: every catch waits for one
+  for (const { seed, admission } of admitted) {
+    const state = seed.manifest.state;
+    if (bases.has(state)) continue;
+    const path = join(folder, `${state}-base.json`);
+    bases.set(
+      state,
+      pool.check(true, () => sideCheck(ctx, side, { game: stateGame(state), commit: admission.base as string, out: path, checks: null, performance: true, proof: null })).then((checked): Checked => {
+        const result = 'file' in checked ? { file: checked.file, path } : checked;
+        out.base.set(state, result);
+        return result;
+      }),
+    );
+  }
   const catchOfSeed = async ({ seed, admission }: Admitted): Promise<void> => {
-    const base = out.base.get(seed.manifest.state);
     const once = async (attempt: number): Promise<CatchResult> => {
       const path = join(folder, attempt === 1 ? `${seed.id}.json` : `${seed.id}-${String(attempt)}.json`);
       const performance = seed.manifest.performance;
-      const checked = await gate.run(performance, () => sideCheck(ctx, side, { game: stateGame(seed.manifest.state), commit: admission.seeded as string, out: path, checks: null, performance, proof: null }));
+      const checked = await pool.check(performance, () => sideCheck(ctx, side, { game: stateGame(seed.manifest.state), commit: admission.seeded as string, out: path, checks: null, performance, proof: null }));
       if (!('file' in checked)) return { catch: 'unknown', reason: checked.error, collateral: [], pipeline: null, matched: null };
       out.seeded.set(seed.id, { file: checked.file, path });
+      const base = await bases.get(seed.manifest.state);
       if (base === undefined || !('file' in base)) return { catch: 'unknown', reason: `the base check of ${seed.manifest.state}: ${base === undefined ? 'none' : base.error}`, collateral: [], pipeline: null, matched: null };
       return catchOf(seed.manifest, base.file, checked.file);
     };
     const first = await once(1);
     out.catches.set(seed.id, first.catch === seed.manifest.expect ? first : await once(2));
   };
-  const states = [...new Map(admitted.map((a) => [a.seed.manifest.state, a.admission.base as string])).entries()];
-  await pooled(states, parallel, async ([state, base]) => {
-    const path = join(folder, `${state}-base.json`);
-    const checked = await gate.run(true, () => sideCheck(ctx, side, { game: stateGame(state), commit: base, out: path, checks: null, performance: true, proof: null }));
-    out.base.set(state, 'file' in checked ? { file: checked.file, path } : checked);
-    for (const one of admitted.filter((a) => a.seed.manifest.state === state)) await catchOfSeed(one);
-  });
+  await every([...admitted.map(catchOfSeed), ...bases.values()]);
   return out;
 }
 
-/** The seed-run plan of one seed: in repeat k, the before side first for odd k and the after side first for even k. */
-export function seedRunOrder(repeats: number): { side: SideName; repeat: number }[] {
-  const order: { side: SideName; repeat: number }[] = [];
+/** One seed-run of the plan of a run: its seed, side, repeat and its order `k` in the run, from 1. */
+export interface SeedRunPlan {
+  admitted: Admitted;
+  side: SideName;
+  repeat: number;
+  k: number;
+}
+
+/**
+ * The seed-runs of `seeds` in the order they start (`### regress run` 4): repeat by repeat, seed by seed, the two sides of
+ * a repeat next to each other, the before side first for an odd repeat and the after side first for an even one.
+ */
+export function seedRunPlan<T extends Admitted>(seeds: readonly T[], repeats: number): (SeedRunPlan & { admitted: T })[] {
+  const plan: (SeedRunPlan & { admitted: T })[] = [];
   for (let repeat = 1; repeat <= repeats; repeat++) {
     const sides: SideName[] = repeat % 2 === 1 ? ['before', 'after'] : ['after', 'before'];
-    for (const side of sides) order.push({ side, repeat });
+    for (const admitted of seeds) for (const side of sides) plan.push({ admitted, side, repeat, k: plan.length + 1 });
   }
-  return order;
+  return plan;
 }
 
 /** Removes the fix repos and their worktree folders: those of this run, and those an ended run left. */
@@ -92,28 +113,24 @@ async function removeFixRepos(ctx: Context): Promise<void> {
   }
 }
 
-interface FixPlan {
-  admitted: Admitted;
-  game: string;
-  root: string;
-  roots: { main: string; registry: string | null };
-}
-
-/** The fix repos, all made before any fixer starts (`### regress run` 3). */
-async function makeFixRepos(ctx: Context, plans: readonly Admitted[]): Promise<FixPlan[]> {
+/**
+ * The folders of the fix repos of `plan` and of their worktrees, made before any fixer starts (`### regress run` 3), so
+ * that the sandbox of each fixer, which takes its list of games when it starts, blocks the fix repos of the others.
+ */
+async function reserveFixRepos(ctx: Context, plan: readonly SeedRunPlan[]): Promise<void> {
   const ws = await ctx.workspace();
   await removeFixRepos(ctx);
-  const out: FixPlan[] = [];
-  for (const [index, admitted] of plans.entries()) {
-    const game = fixGame(index + 1);
-    const state = join(ws.games, stateGame(admitted.seed.manifest.state));
-    const registry = await registryCommit(ctx, state);
-    const main = await makeCopyRepo(ctx, game, { repo: state, commit: admitted.admission.seeded as string, registry }, { kind: 'fix', state: admitted.seed.manifest.state }, `fix repo ${String(index + 1)}`);
-    // the worktree folder exists before any fixer starts, so the sandbox of the other fixers blocks the worktrees made in it
-    await mkdir(join(ws.worktrees, game), { recursive: true });
-    out.push({ admitted, game, root: join(ws.games, game), roots: { main, registry: await revParse(join(ws.games, game), 'refs/heads/id-registry', { env: ctx.env }) } });
-  }
-  return out;
+  for (const { k } of plan) for (const parent of [ws.games, ws.worktrees]) await mkdir(join(parent, fixGame(k)), { recursive: true });
+}
+
+/** Makes the fix repo of seed-run `k` in its folder from the seeded commit of its seed: its root and the root commit of `main`. */
+async function makeFixRepo(ctx: Context, { admitted, k }: SeedRunPlan): Promise<{ game: string; root: string; seeded: string }> {
+  const ws = await ctx.workspace();
+  const game = fixGame(k);
+  const state = join(ws.games, stateGame(admitted.seed.manifest.state));
+  const registry = await registryCommit(ctx, state);
+  const seeded = await makeCopyRepo(ctx, game, { repo: state, commit: admitted.admission.seeded as string, registry }, { kind: 'fix', state: admitted.seed.manifest.state }, `fix repo ${String(k)}`, true);
+  return { game, root: join(ws.games, game), seeded };
 }
 
 export interface RunOutcome {
@@ -144,44 +161,61 @@ async function seedsAt(repo: string, version: string, only: readonly string[] | 
   return { lines, admitted };
 }
 
-/** The fix phase (`### regress run` 4): the seed-runs of each seed in its fix repo, the seeds with `performance` last and alone. */
-async function fixPhase(ctx: Context, runMs: number, sides: Record<SideName, Side>, plans: readonly FixPlan[], after: SideCatch, folder: string, repo: string, repeats: number): Promise<SeedRunResult[]> {
+interface FixPhase {
+  runMs: number;
+  sides: Record<SideName, Side>;
+  after: SideCatch;
+  folder: string;
+  repo: string;
+  pool: RegressPool;
+  /** The side tools hold the performance lease for their instances; otherwise the seeds with `performance` run alone. */
+  leased: boolean;
+}
+
+/**
+ * The fix phase (`### regress run` 3 and 4): every seed-run in a fix repo of its own, at most `regress.parallel` at a
+ * time; without `leased`, the seed-runs of the seeds with `performance` after the others, one at a time.
+ */
+async function fixPhase(ctx: Context, phase: FixPhase, fixable: readonly Admitted[], repeats: number): Promise<SeedRunResult[]> {
   const settings = await ctx.settings();
-  let k = 0;
-  const runSeed = async (plan: FixPlan): Promise<SeedRunResult[]> => {
-    const { seed } = plan.admitted;
-    const base = after.base.get(seed.manifest.state);
-    const seeded = after.seeded.get(seed.id);
-    const catchResult = after.catches.get(seed.id);
-    if (base === undefined || !('file' in base) || seeded === undefined || !('file' in seeded)) return [];
-    const results: SeedRunResult[] = [];
-    for (const step of seedRunOrder(repeats)) {
-      k++;
-      const id = seedRunId(seed.id, step.side, step.repeat);
-      results.push(
-        await runSeedRun(ctx, {
-          runMs,
-          k,
-          seed,
-          side: sides[step.side],
-          after: sides.after,
-          repeat: step.repeat,
-          fix: { game: plan.game, root: plan.root, roots: plan.roots },
-          catchAfter: { base: base.file, seeded: seeded.file, seededPath: seeded.path, matched: catchResult?.matched ?? null },
-          oracle: seed.manifest.oracle ? join(seedDir(repo, seed.id), 'oracle') : null,
-          work: join(folder, 'fix', id),
-          cap: settings.loopStop.repeatedDefect,
-          diff: join(repo, 'records', 'runs', String(runMs), `${id}.diff`),
-        }),
-      );
+  const ready = fixable.filter(({ seed }) => {
+    const base = phase.after.base.get(seed.manifest.state);
+    const seeded = phase.after.seeded.get(seed.id);
+    return base !== undefined && 'file' in base && seeded !== undefined && 'file' in seeded;
+  });
+  const plan = seedRunPlan(ready, repeats);
+  await reserveFixRepos(ctx, plan);
+  const runOne = async (step: SeedRunPlan): Promise<SeedRunResult> => {
+    const { seed } = step.admitted;
+    const base = phase.after.base.get(seed.manifest.state) as { file: RegressCheckFile };
+    const seeded = phase.after.seeded.get(seed.id) as { file: RegressCheckFile; path: string };
+    const id = seedRunId(seed.id, step.side, step.repeat);
+    const ws = await ctx.workspace();
+    try {
+      return await runSeedRun(ctx, {
+        runMs: phase.runMs,
+        k: step.k,
+        seed,
+        side: phase.sides[step.side],
+        after: phase.sides.after,
+        repeat: step.repeat,
+        fix: await makeFixRepo(ctx, step),
+        catchAfter: { base: base.file, seeded: seeded.file, seededPath: seeded.path, matched: phase.after.catches.get(seed.id)?.matched ?? null },
+        oracle: seed.manifest.oracle ? join(seedDir(phase.repo, seed.id), 'oracle') : null,
+        work: join(phase.folder, 'fix', id),
+        cap: settings.loopStop.repeatedDefect,
+        diff: join(phase.repo, 'records', 'runs', String(phase.runMs), `${id}.diff`),
+        pool: phase.pool,
+      });
+    } finally {
+      // the fix repo of a seed-run goes when it ends: the next seed-run has one of its own
+      for (const parent of [ws.games, ws.worktrees]) await rm(join(parent, fixGame(step.k)), { recursive: true, force: true });
     }
-    return results;
   };
-  const quiet = plans.filter((p) => !p.admitted.seed.manifest.performance);
-  const loud = plans.filter((p) => p.admitted.seed.manifest.performance);
-  const first = (await pooled(quiet, settings.regress.parallel, runSeed)).flat();
-  const last = (await pooled(loud, 1, runSeed)).flat();
-  return [...first, ...last];
+  if (phase.leased) return pooled(plan, settings.regress.parallel, runOne);
+  const quiet = await pooled(plan.filter((p) => !p.admitted.seed.manifest.performance), settings.regress.parallel, runOne);
+  const loud = await pooled(plan.filter((p) => p.admitted.seed.manifest.performance), 1, runOne);
+  return [...quiet, ...loud];
 }
 
 /** Copies the check files (not the evidence) of the run into `records/runs/<unix ms>/checks/` of the regress repo. */
@@ -201,33 +235,33 @@ export async function regressRun(ctx: Context, repo: string, options: RunOptions
   const runMs = Date.now();
   const settings = await ctx.settings();
   const folder = join(await dataDir(ctx), 'regress', String(runMs));
-  const sides: Record<SideName, Side> = { before: await makeSide(ctx, options.before), after: await makeSide(ctx, options.after) };
+  const [before, after] = await every([makeSide(ctx, options.before), makeSide(ctx, options.after)]);
+  const sides: Record<SideName, Side> = { before, after };
   const data: RunData = { run: runMs, catchOnly: options.catchOnly, sides: [sides.before, sides.after], seeds: [], catches: [], seedRuns: [] };
   try {
     if (sides.before.unknown === null && sides.after.unknown === null) {
       const version = requireSameCore(sides.before.info as NonNullable<Side['info']>, sides.after.info as NonNullable<Side['info']>);
       const { lines, admitted } = await seedsAt(repo, version, options.seeds);
       data.seeds = lines;
-      // the fix phase needs no gate: its checks with performance are those of the seeds with performance, which run alone
-      const gate = checkGate();
-      const caught = {
-        before: await catchPhase(ctx, sides.before, admitted, join(folder, 'catch', 'before'), settings.regress.parallel, gate),
-        after: await catchPhase(ctx, sides.after, admitted, join(folder, 'catch', 'after'), settings.regress.parallel, gate),
-      };
-      data.catches = admitted.map((a): CatchLine => ({ seed: a.seed.id, before: caught.before.catches.get(a.seed.id) ?? null, after: caught.after.catches.get(a.seed.id) ?? null }));
+      // a side tool whose instances do not hold the performance lease measures only with no other check beside it
+      const leased = sides.before.info?.instanceLease === true && sides.after.info?.instanceLease === true;
+      const pool = regressPool(settings.regress.parallel, !leased);
+      const [caughtBefore, caughtAfter] = await every([
+        catchPhase(ctx, sides.before, admitted, join(folder, 'catch', 'before'), pool),
+        catchPhase(ctx, sides.after, admitted, join(folder, 'catch', 'after'), pool),
+      ]);
+      data.catches = admitted.map((a): CatchLine => ({ seed: a.seed.id, before: caughtBefore.catches.get(a.seed.id) ?? null, after: caughtAfter.catches.get(a.seed.id) ?? null }));
       if (!options.catchOnly) {
-        const fixable = admitted.filter((a) => a.seed.manifest.fixer !== 'none' && caught.after.catches.get(a.seed.id)?.catch !== 'unknown');
+        const fixable = admitted.filter((a) => a.seed.manifest.fixer !== 'none' && caughtAfter.catches.get(a.seed.id)?.catch !== 'unknown');
         try {
-          const plans = await makeFixRepos(ctx, fixable);
-          data.seedRuns = await fixPhase(ctx, runMs, sides, plans, caught.after, folder, repo, options.repeats);
+          data.seedRuns = await fixPhase(ctx, { runMs, sides, after: caughtAfter, folder, repo, pool, leased }, fixable, options.repeats);
         } finally {
           await removeFixRepos(ctx);
         }
       }
     }
   } finally {
-    await removeSide(ctx, sides.before);
-    await removeSide(ctx, sides.after);
+    await every([removeSide(ctx, sides.before), removeSide(ctx, sides.after)]);
   }
   const records = join('records', 'runs', String(runMs));
   await mkdir(join(repo, records), { recursive: true });

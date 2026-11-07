@@ -1,7 +1,7 @@
 /**
- * One seed-run (ogw.md `### seed-run` of `## regress`): a side fixing one seed in the fix repo of the seed, in
+ * One seed-run (ogw.md `### seed-run` of `## regress`): a side fixing one seed in the fix repo of the seed-run, in
  * iterations of a fixer job and a confirmation with the after side's checker, then the final check, the guards and the
- * diff, and the fix repo put back.
+ * diff.
  */
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,13 +15,14 @@ import { DEFECT_COLUMNS, defectRow, proofExemption, type Defect, type DefectsFil
 import type { FixTestProof } from '../../loop/lib/files.ts';
 import { document, renderTable } from '../../loop/lib/markdown.ts';
 import { reportRows } from '../../loop/lib/record.ts';
-import { resetFixRepo } from './copy.ts';
 import { guardViolations } from './guards.ts';
 import { cleanFor, keysOf, matching, targetChecks, type Matched, type RegressCheckFile } from './keys.ts';
 import { emptyMeasures, type MeasureValues } from './measures.ts';
 import type { ReportRow } from '../../loop/lib/defects.ts';
+import { every, type RegressPool } from './pool.ts';
+import { translationAgents } from './refresh.ts';
 import type { Seed } from './repo.ts';
-import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type FixerRun, type ProbeResult, type Side } from './side.ts';
+import { jobFacts, sideAgent, sideCheck, sideProbe, type FixerRun, type ProbeResult, type Side } from './side.ts';
 
 export interface SeedRunInput {
   /** `<unix ms>` of the run. */
@@ -32,8 +33,8 @@ export interface SeedRunInput {
   side: Side;
   after: Side;
   repeat: number;
-  /** The fix repo of the seed: its game name, checkout and root commits. */
-  fix: { game: string; root: string; roots: { main: string; registry: string | null } };
+  /** The fix repo of the seed-run: its game name, its checkout, and the root commit of its `main`, which holds the seeded tree. */
+  fix: { game: string; root: string; seeded: string };
   /** The after side's catch checks of the seed: base, seeded, and the first matching failure of the seeded check. */
   catchAfter: { base: RegressCheckFile; seeded: RegressCheckFile; seededPath: string; matched: Matched | null };
   /** The oracle folder of the seed, or null. */
@@ -44,6 +45,8 @@ export interface SeedRunInput {
   cap: number;
   /** Where the diff from the seeded to the final commit goes: `records/runs/<unix ms>/<seed-run>.diff` of the regress repo. */
   diff: string;
+  /** The work of the run (`## regress`): the side commands of the seed-run run through it. */
+  pool: RegressPool;
 }
 
 /** One iteration of a seed-run, kept in `run.json`. */
@@ -150,14 +153,15 @@ async function confirmCheck(ctx: Context, input: SeedRunInput, commit: string, p
   const targets = targetChecks(input.seed.manifest);
   if (targets.length === 0 && proof === null) return { file: null, minutes: 0 };
   const checks = targets.length > 0 ? targets : ['regression test'];
-  const checked = await sideCheck(ctx, input.after, { game: input.fix.game, commit, out: path, checks, performance: input.seed.manifest.performance, proof });
+  const checked = await input.pool.work(() => sideCheck(ctx, input.after, { game: input.fix.game, commit, out: path, checks, performance: input.seed.manifest.performance, proof }));
   return 'file' in checked ? { file: checked.file, minutes: checked.minutes } : { file: null, minutes: 0 };
 }
 
 async function confirmProbe(ctx: Context, input: SeedRunInput, commit: string, out: string): Promise<{ probe: ProbeResult | null; minutes: number }> {
   if (input.oracle === null) return { probe: null, minutes: 0 };
+  const oracle = input.oracle;
   const started = Date.now();
-  const probe = await sideProbe(ctx, input.after, { game: input.fix.game, commit, oracle: input.oracle, out });
+  const probe = await input.pool.work(() => sideProbe(ctx, input.after, { game: input.fix.game, commit, oracle, out }));
   return { probe, minutes: (Date.now() - started) / 60_000 };
 }
 
@@ -165,8 +169,8 @@ async function confirmOnce(ctx: Context, input: SeedRunInput, commit: string, n:
   const seed = input.seed.manifest;
   const path = join(input.work, `check-${String(n)}${attempt > 1 ? `-${String(attempt)}` : ''}.json`);
   const hasTargets = targetChecks(seed).length > 0;
-  const { file, minutes } = await confirmCheck(ctx, input, commit, path, proof);
-  const probed = await confirmProbe(ctx, input, commit, join(input.work, `probe-${String(n)}-${String(attempt)}.json`));
+  // the check and the probe do not wait for each other
+  const [{ file, minutes }, probed] = await every([confirmCheck(ctx, input, commit, path, proof), confirmProbe(ctx, input, commit, join(input.work, `probe-${String(n)}-${String(attempt)}.json`))]);
   const found = hasTargets && file !== null ? (matching(seed, file)[0] ?? null) : null;
   const checkResult = !hasTargets || (file !== null && (found !== null || cleanFor(seed, file).clean));
   const probeResult = probed.probe === null || probed.probe.result !== 'unknown';
@@ -226,40 +230,45 @@ interface Fixed {
   failure: string | null;
 }
 
-/** The fixer of iteration n: one content agent, or one translation sub-agent per language with its merge. */
-async function fix(ctx: Context, input: SeedRunInput, records: string, n: number, inputFiles: readonly string[]): Promise<Fixed> {
+/** An input file of a fixer: a content input, or a translation input with its language. */
+interface FixerInput {
+  language: string | null;
+  input: string;
+}
+
+/** The fixer of iteration n: one content agent, or one translation sub-agent per language, the languages together, each merged. */
+async function fix(ctx: Context, input: SeedRunInput, records: string, n: number, inputFiles: readonly FixerInput[]): Promise<Fixed> {
   const seedRun = `${records}:${String(n)}`;
+  if (input.seed.manifest.fixer === 'translation') {
+    const translated = await translationAgents(ctx, input.side, input.pool, input.fix.game, seedRun, inputFiles.map((f) => ({ language: f.language ?? '', input: f.input })));
+    return { run: translated.runs, merged: translated.failure === null, failure: translated.failure };
+  }
   const runs: FixerRun[] = [];
   for (const file of inputFiles) {
-    const role = input.seed.manifest.fixer === 'translation' ? 'translation' : 'content';
-    const ran = await sideAgent(ctx, input.side, { role, game: input.fix.game, input: file, seedRun });
+    const ran = await input.pool.work(() => sideAgent(ctx, input.side, { role: 'content', game: input.fix.game, input: file.input, seedRun }));
     runs.push(ran);
-    if (ran.status !== 'done') return { run: runs, merged: false, failure: ran.reason ?? `the ${role} job did not end done` };
-    if (role === 'translation' && ran.job !== null) {
-      const merge = await sideMerge(ctx, input.side, ran.job);
-      if (merge !== null) return { run: runs, merged: false, failure: merge };
-    }
+    if (ran.status !== 'done') return { run: runs, merged: false, failure: ran.reason ?? 'the content job did not end done' };
   }
   return { run: runs, merged: true, failure: null };
 }
 
-async function writeInputs(ctx: Context, input: SeedRunInput, records: string, n: number, defect: Defect): Promise<string[]> {
+async function writeInputs(ctx: Context, input: SeedRunInput, records: string, n: number, defect: Defect): Promise<FixerInput[]> {
   const dir = join(input.fix.root, 'records', 'loops', records);
   await mkdir(dir, { recursive: true });
   const defects: DefectsFile = { defects: [defect], previous: null, recordedBy: 'ogw regress run' };
   await writeJsonAtomic(join(dir, 'defects.json'), defects);
-  const files: string[] = [];
+  const files: FixerInput[] = [];
   if (input.seed.manifest.fixer === 'translation') {
     for (const language of translationLanguagesOf(input.catchAfter.seeded)) {
       const file = join(dir, `translation-input-${language}-${String(Date.now())}.md`);
       await writeFileAtomic(file, `${language}\n`);
-      files.push(file);
+      files.push({ language, input: file });
     }
   } else {
     const previous = n > 1 ? `records/loops/${records}/iteration-${String(n - 1)}.md` : null;
     const file = join(dir, `content-input-${String(n)}.md`);
     await writeFileAtomic(file, contentInput(previous, defect));
-    files.push(file);
+    files.push({ language: null, input: file });
   }
   await commitPaths(input.fix.root, [join('records', 'loops', records)], `regress ${records}: input ${String(n)}`, { env: ctx.env, noVerify: true });
   return files;
@@ -355,7 +364,7 @@ export async function runSeedRun(ctx: Context, input: SeedRunInput): Promise<See
   const defect = firstDefect(input);
   if (input.catchAfter.matched !== null) fromFailure(defect, input.catchAfter.matched, input.catchAfter.seededPath);
   const role = input.seed.manifest.fixer === 'translation' ? 'translation' : 'content';
-  const tally: Tally = { seeded: input.fix.roots.main, allRuns: [], checkMinutes: 0, unconfirmed: 0, lastProof: null, claimed: false, defect, role, confirmed: true, ended: false };
+  const tally: Tally = { seeded: input.fix.seeded, allRuns: [], checkMinutes: 0, unconfirmed: 0, lastProof: null, claimed: false, defect, role, confirmed: true, ended: false };
   try {
     for (let n = 1; n <= input.cap; n++) {
       result.reason = await iterate(ctx, input, records, n, tally, iterations);
@@ -374,54 +383,53 @@ export async function runSeedRun(ctx: Context, input: SeedRunInput): Promise<See
   }
 }
 
-/** The final checks, the guards, the diff and the measures, then the fix repo put back. */
+/** The final checks, the guards, the diff and the measures. */
 async function finish(ctx: Context, input: SeedRunInput, result: SeedRunResult, tally: Tally): Promise<SeedRunResult> {
   const seed = input.seed.manifest;
   const m = result.measures;
-  try {
-    const final = await head(input.fix.root, { env: ctx.env });
-    result.final = final;
-    const facts = await jobRecords(ctx, tally.allRuns, tally.role);
-    m['input tokens'] = facts.usage.input;
-    m['cached tokens'] = facts.usage.cached;
-    m['output tokens'] = facts.usage.output;
-    m['cost USD'] = facts.usage.cost;
-    m.turns = facts.usage.turns;
-    m['agent minutes'] = facts.minutes;
-    await writeFileAtomic(input.diff, await git(input.fix.root, ['diff', '--binary', tally.seeded, final], { env: ctx.env }));
-    if (!tally.ended) {
-      result.result = 'unknown';
-      return result;
-    }
-    const fixedNow = tally.defect.status === 'fixed';
-    result.result = fixedNow ? 'fixed' : 'not fixed';
-    m.fixed = fixedNow ? 1 : 0;
-    m.iterations = fixedNow ? result.iterations.length : input.cap + 1;
-    m['unconfirmed claims'] = tally.unconfirmed;
-    m['test first'] = tally.claimed ? tally.lastProof : null;
-    result.guards = await guardViolations(ctx, input.fix.root, tally.seeded, final, seed, seed.fixer === 'translation');
-    m.guards = result.guards.length;
-    let checkMinutes = tally.checkMinutes;
-    const finalCheck = await sideCheck(ctx, input.after, { game: input.fix.game, commit: final, out: join(input.work, 'final.json'), checks: null, performance: seed.performance, proof: null });
-    if ('file' in finalCheck) {
-      checkMinutes += finalCheck.minutes;
-      const known = new Set([...keysOf(input.catchAfter.base), ...keysOf(input.catchAfter.seeded)]);
-      const placeholders = placeholderKeys(finalCheck.file);
-      result.newDefects = [...keysOf(finalCheck.file)].filter((key) => !known.has(key) && !placeholders.has(key));
-      m['new defects'] = result.newDefects.length;
-      const seededPlaceholders = placeholderKeys(input.catchAfter.seeded);
-      m.placeholders = [...placeholders].filter((key) => !seededPlaceholders.has(key)).length;
-    }
-    if (input.side.name === 'before') {
-      const own = await ownFixed(ctx, input, final);
-      checkMinutes += own.minutes;
-      m['own fixed'] = own.value;
-    }
-    m['check minutes'] = checkMinutes;
+  const final = await head(input.fix.root, { env: ctx.env });
+  result.final = final;
+  const facts = await jobRecords(ctx, tally.allRuns, tally.role);
+  m['input tokens'] = facts.usage.input;
+  m['cached tokens'] = facts.usage.cached;
+  m['output tokens'] = facts.usage.output;
+  m['cost USD'] = facts.usage.cost;
+  m.turns = facts.usage.turns;
+  m['agent minutes'] = facts.minutes;
+  await writeFileAtomic(input.diff, await git(input.fix.root, ['diff', '--binary', tally.seeded, final], { env: ctx.env }));
+  if (!tally.ended) {
+    result.result = 'unknown';
     return result;
-  } finally {
-    await resetFixRepo(ctx, input.fix.root, input.fix.roots);
   }
+  const fixedNow = tally.defect.status === 'fixed';
+  result.result = fixedNow ? 'fixed' : 'not fixed';
+  m.fixed = fixedNow ? 1 : 0;
+  m.iterations = fixedNow ? result.iterations.length : input.cap + 1;
+  m['unconfirmed claims'] = tally.unconfirmed;
+  m['test first'] = tally.claimed ? tally.lastProof : null;
+  result.guards = await guardViolations(ctx, input.fix.root, tally.seeded, final, seed, seed.fixer === 'translation');
+  m.guards = result.guards.length;
+  let checkMinutes = tally.checkMinutes;
+  // the final check of the after side and the before side's own checks do not wait for each other
+  const [finalCheck, own] = await every([
+    input.pool.work(() => sideCheck(ctx, input.after, { game: input.fix.game, commit: final, out: join(input.work, 'final.json'), checks: null, performance: seed.performance, proof: null })),
+    input.side.name === 'before' ? ownFixed(ctx, input, final) : Promise.resolve(null),
+  ]);
+  if ('file' in finalCheck) {
+    checkMinutes += finalCheck.minutes;
+    const known = new Set([...keysOf(input.catchAfter.base), ...keysOf(input.catchAfter.seeded)]);
+    const placeholders = placeholderKeys(finalCheck.file);
+    result.newDefects = [...keysOf(finalCheck.file)].filter((key) => !known.has(key) && !placeholders.has(key));
+    m['new defects'] = result.newDefects.length;
+    const seededPlaceholders = placeholderKeys(input.catchAfter.seeded);
+    m.placeholders = [...placeholders].filter((key) => !seededPlaceholders.has(key)).length;
+  }
+  if (own !== null) {
+    checkMinutes += own.minutes;
+    m['own fixed'] = own.value;
+  }
+  m['check minutes'] = checkMinutes;
+  return result;
 }
 
 /** `own fixed`: the before side's own target checks and oracle on the final commit. */

@@ -3,8 +3,8 @@ import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { regressChecks, type CheckResult } from '../../../src/commands/check/api.ts';
 import { jobFacts, makeSide, removeSide, sideAgent, sideCheck, sideMerge, sideProbe, type Side, type SideSpec } from '../../../src/commands/regress/lib/side.ts';
-import { seedRunOrder } from '../../../src/commands/regress/lib/run.ts';
-import { ogw, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
+import { seedRunPlan } from '../../../src/commands/regress/lib/run.ts';
+import { ogw, makeWorkspace, sh, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
 import { item, meetOtherGroup, overlaps, runningBeside, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
@@ -74,8 +74,9 @@ async function admitted(ws: TestWorkspace, secondState = false): Promise<void> {
   vi.mocked(sideCheck).mockReset();
 }
 
-function fakeSide(spec: SideSpec, coreVersion = '1.0.0'): Side {
-  return { ...spec, worktree: `/sides/${spec.name}`, unknown: null, info: { commit: spec.commit, coreVersion, promptBytes: { content: 1000, translation: 500 }, agents: { content: { cli: 'claude-code', model: `${spec.name}-model`, effort: 'high' } } } };
+/** A side whose side tool runs; with `leased` false, one from before its instances held the performance lease. */
+function fakeSide(spec: SideSpec, coreVersion = '1.0.0', leased = true): Side {
+  return { ...spec, worktree: `/sides/${spec.name}`, unknown: null, info: { commit: spec.commit, coreVersion, promptBytes: { content: 1000, translation: 500 }, agents: { content: { cli: 'claude-code', model: `${spec.name}-model`, effort: 'high' } }, ...(leased ? { instanceLease: true as const } : {}) } };
 }
 
 /** The content of client/a.gd at a commit of a game repo. */
@@ -90,9 +91,11 @@ beforeEach(() => {
   vi.mocked(jobFacts).mockResolvedValue({ usage: { cli: 'claude-code', model: 'm', effort: 'high', inputTokens: 100, cachedTokens: 0, outputTokens: 1, costUsd: 1, costUnknown: null, turns: 2 }, startedAt: 0, endedAt: 60_000 });
 });
 
-describe('seed-run order', () => {
-  it('alternates which side starts per repeat', () => {
-    expect(seedRunOrder(3).map((s) => `${s.side}${String(s.repeat)}`)).toEqual(['before1', 'after1', 'after2', 'before2', 'before3', 'after3']);
+describe('seed-run plan', () => {
+  it('starts repeat by repeat, seed by seed, the two sides of a repeat next to each other, the side that goes first alternating', () => {
+    const seed = (id: string): { seed: { id: string }; admission: object } => ({ seed: { id }, admission: {} });
+    const plan = seedRunPlan([seed('S1'), seed('S2')] as unknown as Parameters<typeof seedRunPlan>[0], 2);
+    expect(plan.map((p) => `${String(p.k)} ${p.admitted.seed.id} ${p.side}${String(p.repeat)}`)).toEqual(['1 S1 before1', '2 S1 after1', '3 S2 before1', '4 S2 after1', '5 S1 after2', '6 S1 before2', '7 S2 after2', '8 S2 before2']);
   });
 });
 
@@ -134,38 +137,78 @@ describe('ogw regress run', () => {
     expect(vi.mocked(removeSide)).toHaveBeenCalledTimes(2);
   });
 
-  it('checks the catch of one state one after another, its base first, and the states together, a check with performance alone, one side after the other', async () => {
-    const ws = makeWorkspace();
-    await admitted(ws, true);
-    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
-    const spans: (Span & { performance: boolean })[] = [];
-    const started: Record<string, Set<string>> = { before: new Set(), after: new Set() };
+  /**
+   * Fake checks that keep the span of each check, keyed by side and file, and that wait with `meet` until a check of
+   * another group (side and game) has started too.
+   */
+  function timedChecks(ws: TestWorkspace, spans: (Span & { performance: boolean })[], meet: (request: { performance: boolean }) => boolean): void {
+    const started = new Set<string>();
     vi.mocked(sideCheck).mockImplementation(async (_ctx, side, request) => {
       const start = performance.now();
       const group = `${side.name} ${request.game}`;
-      // the checks without performance of the two states meet; one with performance runs alone
-      if (!request.performance) await meetOtherGroup(started[side.name] as Set<string>, group);
+      if (meet(request)) await meetOtherGroup(started, group);
       await new Promise((resolve) => setTimeout(resolve, 15));
       spans.push({ key: `${side.name} ${basename(request.out)}`, group, start, end: performance.now(), performance: request.performance });
       return { file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 };
     });
+  }
+
+  it('checks the catch of both sides and of every state together, a catch once the base check of its state has ended', async () => {
+    const ws = makeWorkspace();
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    const spans: (Span & { performance: boolean })[] = [];
+    // every check waits until a check of another side or state has started: checks that ran one after another would not meet
+    timedChecks(ws, spans, () => true);
     const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    // per side: the base checks of lc and lc2, and one check of each seeded commit
     expect(spans.map((s) => s.key).sort()).toEqual(['after S01.json', 'after S07b.json', 'after S08.json', 'after S09.json', 'after lc-base.json', 'after lc2-base.json', 'before S01.json', 'before S07b.json', 'before S08.json', 'before S09.json', 'before lc-base.json', 'before lc2-base.json']);
-    expect(overlaps(spans, true)).toEqual([]);
+    // checks of one state run beside each other, with performance or without, and the sides beside each other
+    expect(overlaps(spans, true)).not.toEqual([]);
+    expect(overlaps(spans.filter((s) => s.performance), false)).not.toEqual([]);
+    const before = spans.filter((s) => s.key.startsWith('before'));
+    const after = spans.filter((s) => s.key.startsWith('after'));
+    expect(Math.min(...after.map((s) => s.start))).toBeLessThan(Math.max(...before.map((s) => s.end)));
+    const report = readFileSync(run.stdout.split('\n')[0]?.replace('report: ', '') ?? '', 'utf8');
+    for (const seed of ['S01', 'S08', 'S09']) expect(report).toContain(`| ${seed} | `);
+    expect(report).toMatch(/\| S01 \| lc \| caught \| caught \(pipeline none\) \| caught \(pipeline none\) \|/);
+  });
+
+  it('with a side tool whose instances do not hold the performance lease, checks the catch with performance alone', async () => {
+    const ws = makeWorkspace();
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after')));
+    const spans: (Span & { performance: boolean })[] = [];
+    timedChecks(ws, spans, (request) => !request.performance);
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
     // the base checks and the checks of S09 have performance
     expect(spans.filter((s) => s.performance).map((s) => s.key).sort()).toEqual(['after S09.json', 'after lc-base.json', 'after lc2-base.json', 'before S09.json', 'before lc-base.json', 'before lc2-base.json']);
     for (const span of spans.filter((s) => s.performance)) expect(runningBeside(spans, span)).toEqual([]);
-    for (const side of ['before', 'after']) expect(overlaps(spans.filter((s) => s.key.startsWith(side) && !s.performance), false)).not.toEqual([]);
-    for (const group of new Set(spans.map((s) => s.group))) expect([...spans].sort((a, b) => a.start - b.start).find((s) => s.group === group)?.key).toMatch(/-base\.json$/);
-    const before = spans.filter((s) => s.key.startsWith('before'));
-    const after = spans.filter((s) => s.key.startsWith('after'));
-    expect(Math.max(...before.map((s) => s.end))).toBeLessThanOrEqual(Math.min(...after.map((s) => s.start)));
+    expect(overlaps(spans.filter((s) => !s.performance), false)).not.toEqual([]);
   });
 
-  it('runs the seed-runs of a seed in its fix repo, made before any fixer, alternating sides, and removes the fix repos', async () => {
+  /** A fixer that fixes the leak on the after side and leaves it on the before side, in the fix repo of its game. */
+  function fakeFixer(ws: TestWorkspace, seen: string[], before: () => void = () => undefined): void {
+    vi.mocked(sideAgent).mockImplementation((_ctx, side, request) => {
+      before();
+      const repo = join(ws.games, request.game);
+      // every seed-run starts from the seeded commit in a fix repo of its own
+      if (request.seedRun.endsWith(':1')) expect(readFileSync(join(repo, 'client/a.gd'), 'utf8')).toMatch(/^var x = leak\d*\n$/);
+      seen.push(`${side.name} ${request.game} ${request.seedRun}`);
+      const [records, n] = request.seedRun.split(':') as [string, string];
+      write(repo, 'client/a.gd', side.name === 'after' ? 'var x = 1\n' : `var x = leak${n}\n`);
+      write(repo, `records/loops/${records}/content-${n}.md`, '## defects\n\n| id | result | note |\n|---|---|---|\n| flame-leak | fixed | done |\n');
+      sh(repo, 'git', ['add', '-A']);
+      sh(repo, 'git', ['commit', '-qm', 'fix', '--no-verify']);
+      return Promise.resolve({ job: 'j', status: 'done', output: null, reason: null });
+    });
+  }
+
+  it('runs each seed-run in a fix repo of its own, all reserved before any fixer, and removes the fix repos', async () => {
     const ws = makeWorkspace();
     await admitted(ws);
     const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
@@ -176,39 +219,31 @@ describe('ogw regress run', () => {
       return Promise.resolve({ file, minutes: 1 });
     });
     const seen: string[] = [];
-    vi.mocked(sideAgent).mockImplementation((_ctx, side, request) => {
-      const repo = join(ws.games, request.game);
-      expect(existsSync(join(ws.worktrees, request.game))).toBe(true);
-      // every seed-run starts from the seeded commit: the fix repo was put back after the one before
-      if (request.seedRun.endsWith(':1')) expect(readFileSync(join(repo, 'client/a.gd'), 'utf8')).toBe('var x = leak\n');
-      seen.push(`${side.name} ${request.game} ${request.seedRun}`);
-      const [records, n] = request.seedRun.split(':') as [string, string];
-      write(repo, 'client/a.gd', side.name === 'after' ? 'var x = 1\n' : `var x = leak${n}\n`);
-      write(repo, `records/loops/${records}/content-${n}.md`, '## defects\n\n| id | result | note |\n|---|---|---|\n| flame-leak | fixed | done |\n');
-      sh(repo, 'git', ['add', '-A']);
-      sh(repo, 'git', ['commit', '-qm', 'fix', '--no-verify']);
-      return Promise.resolve({ job: 'j', status: 'done', output: null, reason: null });
+    // the folders of the fix repos of all 4 seed-runs and of their worktrees are there before any fixer starts
+    const reserved: boolean[] = [];
+    fakeFixer(ws, seen, () => {
+      if (reserved.length === 0) for (let k = 1; k <= 4; k++) for (const parent of [ws.games, ws.worktrees]) reserved.push(existsSync(join(parent, `ogw-regress-fix-${String(k)}`)));
     });
     const run = await ogw(ws, ['regress', 'run', '--before', head, '--repeats', '2', '--after-agent', 'content=codex/gpt/high']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    // the before side never fixes it and runs to the cap of loopStop.repeatedDefect iterations
-    expect(seen.map((s) => s.replace(/regress-\d+-/, 'regress-ms-'))).toEqual([
+    // the before side never fixes it and runs to the cap of loopStop.repeatedDefect iterations; seed-run k in fix repo k
+    expect(seen.map((s) => s.replace(/regress-\d+-/, 'regress-ms-')).sort()).toEqual([
+      'after ogw-regress-fix-2 regress-ms-2:1',
+      'after ogw-regress-fix-3 regress-ms-3:1',
       'before ogw-regress-fix-1 regress-ms-1:1',
       'before ogw-regress-fix-1 regress-ms-1:2',
       'before ogw-regress-fix-1 regress-ms-1:3',
-      'after ogw-regress-fix-1 regress-ms-2:1',
-      'after ogw-regress-fix-1 regress-ms-3:1',
-      'before ogw-regress-fix-1 regress-ms-4:1',
-      'before ogw-regress-fix-1 regress-ms-4:2',
-      'before ogw-regress-fix-1 regress-ms-4:3',
+      'before ogw-regress-fix-4 regress-ms-4:1',
+      'before ogw-regress-fix-4 regress-ms-4:2',
+      'before ogw-regress-fix-4 regress-ms-4:3',
     ]);
+    expect(reserved).toEqual(Array<boolean>(8).fill(true));
     expect(vi.mocked(makeSide).mock.calls.map((c) => c[1])).toEqual([
       { name: 'before', commit: head, agents: {} },
       { name: 'after', commit: head, agents: { content: { cli: 'codex', model: 'gpt', effort: 'high' } } },
     ]);
-    expect(existsSync(join(ws.games, 'ogw-regress-fix-1'))).toBe(false);
-    expect(existsSync(join(ws.worktrees, 'ogw-regress-fix-1'))).toBe(false);
+    for (let k = 1; k <= 4; k++) for (const parent of [ws.games, ws.worktrees]) expect(existsSync(join(parent, `ogw-regress-fix-${String(k)}`))).toBe(false);
     const report = readFileSync(run.stdout.split('\n')[0]?.replace('report: ', '') ?? '', 'utf8');
     expect(report).toMatch(/\| S01 \| before \| 1 \| not fixed \| 0 \| 4 \|/);
     expect(report).toMatch(/\| S01 \| after \| 1 \| fixed \| 1 \| 1 \|/);
@@ -216,8 +251,68 @@ describe('ogw regress run', () => {
     const ms = /records\/runs\/(\d+)\.md/.exec(run.stdout)?.[1] ?? '';
     expect(existsSync(join(ws.regress, 'records', 'runs', ms, 'S01-after-1.diff'))).toBe(true);
     expect(existsSync(join(ws.regress, 'records', 'runs', ms, 'checks', 'catch', 'after', 'S01.json'))).toBe(true);
-    const data = JSON.parse(readFileSync(join(ws.regress, 'records', 'runs', ms, 'run.json'), 'utf8')) as { seedRuns: unknown[] };
-    expect(data.seedRuns).toHaveLength(4);
+    const data = JSON.parse(readFileSync(join(ws.regress, 'records', 'runs', ms, 'run.json'), 'utf8')) as { seedRuns: { id: string }[] };
+    expect(data.seedRuns.map((r) => r.id)).toEqual(['S01-before-1', 'S01-after-1', 'S01-after-2', 'S01-before-2']);
+  });
+
+  /** The spans of the fixer jobs of the seed-runs, keyed by seed-run records, grouped by seed and side. */
+  /**
+   * With `meet`, each fixer waits until `meet` fixers run at once or `limitMs` has passed: fixers that run together get
+   * past it at once, and one that runs alone only at the limit.
+   */
+  function timedFixer(ws: TestWorkspace, spans: Span[], meet: number, limitMs: number): void {
+    let running = 0;
+    vi.mocked(sideAgent).mockImplementation(async (_ctx, side, request) => {
+      const start = performance.now();
+      running += 1;
+      const repo = join(ws.games, request.game);
+      const seed = readFileSync(join(repo, 'client/a.gd'), 'utf8').trim();
+      const group = `${seed} ${side.name}`;
+      for (const until = Date.now() + limitMs; running < meet && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+      const [records, n] = request.seedRun.split(':') as [string, string];
+      write(repo, 'client/a.gd', 'var x = 1\n');
+      write(repo, `records/loops/${records}/content-${n}.md`, '## defects\n\n| id | result | note |\n|---|---|---|\n| flame-leak | fixed | done |\n');
+      sh(repo, 'git', ['add', '-A']);
+      sh(repo, 'git', ['commit', '-qm', 'fix', '--no-verify']);
+      spans.push({ key: records, group, start, end: performance.now() });
+      return { job: 'j', status: 'done', output: null, reason: null };
+    });
+  }
+
+  it('runs the seed-runs of every seed, side and repeat together, also those of a seed with performance', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 8 } });
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 }));
+    const spans: Span[] = [];
+    timedFixer(ws, spans, 8, 2000);
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--repeats', '2', '--seeds', 'S08', 'S09']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // 2 seeds, 2 sides, 2 repeats, each fixed in iteration 1
+    expect(spans).toHaveLength(8);
+    // the two seed-runs of one seed and side run beside each other, and S09 (performance) beside those of S08
+    expect(overlaps(spans, true)).not.toEqual([]);
+    const s09 = spans.filter((s) => s.group.startsWith('var x = leak9'));
+    expect(s09.some((span) => runningBeside(spans, span).some((key) => spans.find((o) => o.key === key)?.group.startsWith('var x = leak8') === true))).toBe(true);
+  });
+
+  it('with a side tool whose instances do not hold the performance lease, runs the seed-runs of a seed with performance after the others, one at a time', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), parallel: 8 } });
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    vi.mocked(makeSide).mockImplementation((_ctx, spec) => Promise.resolve(fakeSide(spec, '1.0.0', spec.name === 'after')));
+    vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 }));
+    const spans: Span[] = [];
+    timedFixer(ws, spans, 2, 500);
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--repeats', '2', '--seeds', 'S08', 'S09']);
+    expect(run.code).toBe(0);
+    const s09 = spans.filter((s) => s.group.startsWith('var x = leak9'));
+    expect(s09).toHaveLength(4);
+    for (const span of s09) expect(runningBeside(spans, span)).toEqual([]);
+    const s08 = spans.filter((s) => s.group.startsWith('var x = leak8'));
+    expect(Math.max(...s08.map((s) => s.end))).toBeLessThanOrEqual(Math.min(...s09.map((s) => s.start)));
   });
 
   it('writes only sides and unknown with an unknown side and ends with exit code 1', async () => {
