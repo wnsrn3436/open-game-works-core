@@ -1,10 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCodeCheck } from '../../../src/commands/code/api.ts';
 import { readCoreSpecDir } from '../../../src/commands/core/lib/impl.ts';
-import { constraintViolations, coreTestCommand, implementedConstraints, requiredTargets, testRecordViolations } from '../../../src/commands/core/lib/release-conditions.ts';
+import { constraintViolations, coreSpecViolations, coreTestCommand, implementedConstraints, requiredTargets, testRecordViolations } from '../../../src/commands/core/lib/release-conditions.ts';
+import type { Context } from '../../../src/lib/command.ts';
 import { addTestRecord, mergedResults } from '../../../src/commands/core/lib/test-records.ts';
 import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
 import { baseProtoBreaks } from '../../../src/commands/core/lib/base-proto-compat.ts';
@@ -45,6 +46,11 @@ vi.mock('../../../src/commands/core/lib/github.ts', async (importOriginal) => {
     createRelease: async (...args: Parameters<typeof original.createRelease>) => {
       await (globalThis as { onCreateRelease?: () => Promise<void> }).onCreateRelease?.();
       return original.createRelease(...args);
+    },
+    releaseExists: async (...args: Parameters<typeof original.releaseExists>) => {
+      const fails = (globalThis as { releaseExistsFails?: string }).releaseExistsFails;
+      if (fails !== undefined) throw new Error(fails);
+      return original.releaseExists(...args);
     },
   };
 });
@@ -494,6 +500,27 @@ describe('ogw core release', () => {
     expect(Object.keys(gh.created())).toEqual(['v1.2.0']);
   });
 
+  it('keeps the tag and the commit when gh fails after create and cannot tell whether the release exists, with the reason', async () => {
+    const { ws, env } = await setup();
+    const hook = globalThis as { onCreateRelease?: () => Promise<void>; releaseExistsFails?: string };
+    // the release view before the release answers; the one after the failed create cannot
+    hook.onCreateRelease = () => {
+      hook.onCreateRelease = undefined;
+      hook.releaseExistsFails = 'gh release view v1.2.0 timed out';
+      return Promise.resolve();
+    };
+    try {
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env: { ...env, FAKE_GH_CREATE_THEN_FAIL: '1' } });
+      expect(run.code).toBe(1);
+      const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+      expect(run.stderr).toContain(`could not tell whether release v1.2.0 exists in wnsrn3436/open-game-works-core-impl (gh release view v1.2.0 timed out); kept tag v1.2.0 (pushed) and commit ${head}`);
+      expect(sh(ws.coreImpl, 'git', ['rev-parse', 'v1.2.0^{commit}']).trim()).toBe(head);
+    } finally {
+      hook.onCreateRelease = undefined;
+      hook.releaseExistsFails = undefined;
+    }
+  });
+
   it('compares the base proto with the highest release below the version', async () => {
     const { ws, env: base } = await setup();
     const gh = fakeGh(ws, {
@@ -524,6 +551,16 @@ describe('ogw core release', () => {
 });
 
 describe('release condition parts', () => {
+  it('reads a core-spec file that is not JSON as differing from ogw core spec, and fails on one that cannot be read', async () => {
+    const impl = mkdtempSync(join(tmpdir(), 'ogw-core-spec-'));
+    writeFiles(impl, { 'core-spec/A.json': 'not json' });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: new Map([['A', {}]]), settingTypes: new Map(), errors: [] });
+    expect(await coreSpecViolations({} as Context, impl)).toEqual(['core-spec/A.json differs from ogw core spec']);
+    mkdirSync(join(impl, 'core-spec', 'B.json'));
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: new Map([['A', {}], ['B', {}]]), settingTypes: new Map(), errors: [] });
+    await expect(coreSpecViolations({} as Context, impl)).rejects.toMatchObject({ code: 'EISDIR' });
+  });
+
   it('requires only the targets that have an implementation', async () => {
     const ws = makeWorkspace();
     writeImpl(ws.coreImpl);

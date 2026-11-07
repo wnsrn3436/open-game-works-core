@@ -1,6 +1,7 @@
 // Harness consistency check items: schema, native agents, human prep.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { OgwError } from '../../../lib/errors.ts';
 import { readJson } from '../../../lib/fsx.ts';
 import { loadSchema, validateAgainst } from '../../../lib/settings.ts';
 import { bulletStartsWith, deployBulletsAt, HUMAN_PREP, type DeployBullet } from '../../game/lib/human-prep.ts';
@@ -34,7 +35,9 @@ export function checkHumanPrep(build: DocFile | undefined, starts: readonly stri
   let bullets: DeployBullet[];
   try {
     bullets = deployBulletsAt(build.lines.map((l) => l.text).join('\n'));
-  } catch {
+  } catch (error) {
+    // the OgwError of a skill without `## deploy`
+    if (!(error instanceof OgwError)) throw error;
     return [{ item, where, reason: 'no ## deploy section' }];
   }
   const failures: Failure[] = [];

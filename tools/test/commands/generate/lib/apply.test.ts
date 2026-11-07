@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, utimesSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -43,6 +43,23 @@ describe('applyPlan', () => {
     expect(existsSync(join(root, 'core', 'a', 'x.gd.uid'))).toBe(true);
     expect(existsSync(join(root, 'core', 'gone'))).toBe(false);
     expect(existsSync(join(root, 'core'))).toBe(true);
+  });
+
+  it('fails when a folder the mirror emptied cannot be removed', async () => {
+    const root = temp();
+    const source = temp();
+    write(join(source, 'keep.gd'), 'k');
+    write(join(root, 'core', 'locked', 'sub', 'old.gd'), 'o');
+    const plan = emptyPlan();
+    plan.mirrors.push({ source, target: 'core' });
+    // core/locked lets no entry go: core/locked/sub can lose its file but not be removed
+    chmodSync(join(root, 'core', 'locked'), 0o555);
+    try {
+      await expect(applyPlan(root, plan)).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      chmodSync(join(root, 'core', 'locked'), 0o755);
+    }
+    expect(existsSync(join(root, 'core', 'locked', 'sub'))).toBe(true);
   });
 
   it('overlays folders without removing other files', async () => {

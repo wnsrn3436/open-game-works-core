@@ -59,9 +59,12 @@ export function buildTool(env: NodeJS.ProcessEnv, implDir: string, tool: ToolNam
   const key = toolDir(implDir, tool);
   let build = done.get(key);
   if (!build) {
-    build = buildToolNow(env, implDir, tool);
+    // a failed build is not kept, so the next call builds again; the caller gets the failure
+    build = buildToolNow(env, implDir, tool).catch((error: unknown) => {
+      done.delete(key);
+      throw error;
+    });
     done.set(key, build);
-    build.catch(() => done.delete(key));
   }
   return build;
 }

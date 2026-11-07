@@ -8,7 +8,8 @@ import { harnessSecretNames, SCOPES, scopeSecretNames } from './names.ts';
 
 /**
  * The secret store services of every secret that harness settings and the game settings under `paths.games` name. A
- * game whose settings ogw cannot read names none.
+ * game without game settings names none; game settings that cannot be read or are not JSON fail, so that the move is not
+ * recorded as done without their secrets.
  */
 export async function knownSecretServices(ctx: Context): Promise<string[]> {
   const services = harnessSecretNames(await ctx.settings()).map(harnessSecretService);
@@ -18,8 +19,7 @@ export async function knownSecretServices(ctx: Context): Promise<string[]> {
     for (const game of folders) {
       const root = join(games, game);
       if (!exists(gameSettingsPath(root))) continue;
-      const settings = await loadGameSettings(root).catch(() => null);
-      if (settings === null) continue;
+      const settings = await loadGameSettings(root);
       for (const scope of SCOPES) for (const name of scopeSecretNames(settings, scope)) services.push(gameSecretService(game, scope, name));
     }
   }

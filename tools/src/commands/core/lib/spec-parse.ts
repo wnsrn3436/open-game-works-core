@@ -543,8 +543,9 @@ export function isSettingType(type: string): boolean {
 function parseJsonValue(text: string): { ok: true; value: unknown } | { ok: false } {
   try {
     return { ok: true, value: JSON.parse(text) as unknown };
-  } catch {
-    return { ok: false };
+  } catch (error) {
+    if (error instanceof SyntaxError) return { ok: false };
+    throw error;
   }
 }
 

@@ -342,7 +342,7 @@ server.on('listening', async () => {
 });
 
 describe('module pool', () => {
-  it('runs every module without waiting for its dependencies, keeps the concurrency, reports each, and counts a throw as fail', async () => {
+  it('runs every module without waiting for its dependencies, keeps the concurrency and reports each', async () => {
     let running = 0;
     let peak = 0;
     const reported: string[] = [];
@@ -351,15 +351,27 @@ describe('module pool', () => {
       peak = Math.max(peak, running);
       await new Promise((r) => setTimeout(r, 10));
       running--;
-      if (m === 'c') throw new Error('boom');
       return m === 'b' ? 'fail' : 'pass';
     }, (m, r) => {
       reported.push(`${m} ${r}`);
       return Promise.resolve();
     });
-    expect([...results]).toEqual([['a', 'pass'], ['b', 'fail'], ['c', 'fail'], ['d', 'pass']]);
+    expect([...results]).toEqual([['a', 'pass'], ['b', 'fail'], ['c', 'pass'], ['d', 'pass']]);
     expect(peak).toBe(2);
-    expect(reported.sort()).toEqual(['a pass', 'b fail', 'c fail', 'd pass']);
+    expect(reported.sort()).toEqual(['a pass', 'b fail', 'c pass', 'd pass']);
+  });
+
+  it('fails with the error of a run that throws, once the other runs have ended', async () => {
+    const ended: string[] = [];
+    const pool = runModulePool(['a', 'b', 'c'], 2, async (m) => {
+      await new Promise((r) => setTimeout(r, m === 'a' ? 1 : 30));
+      if (m === 'a') throw new Error('boom');
+      ended.push(m);
+      return 'pass';
+    }, () => Promise.resolve());
+    await expect(pool).rejects.toThrow('boom');
+    // the worker of the throw stops; the other one runs b and then c before the pool fails
+    expect(ended).toEqual(['b', 'c']);
   });
 
   it('runs a module once when it is given twice, and one at a time with a concurrency of 0', async () => {

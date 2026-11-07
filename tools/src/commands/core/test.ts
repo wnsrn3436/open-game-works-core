@@ -3,7 +3,7 @@ import { availableParallelism } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { flag, str, type CommandArgs, type CommandDef, type CommandResult, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, readJsonIfExists, writeIfChanged, writeJsonAtomic } from '../../lib/fsx.ts';
+import { exists, readJsonIfExists, whenNotFound, writeIfChanged, writeJsonAtomic } from '../../lib/fsx.ts';
 import { coreSettingsFile, coreSettingTypesFile } from '../generate/api.ts';
 import { resolveCoreImpl } from '../../lib/game.ts';
 import { commonDir, head, statusLines } from '../../lib/git.ts';
@@ -194,8 +194,9 @@ export function moduleArgs(given: readonly string[]): string[] {
   return given.flatMap((arg) => arg.split(/\s+/).filter((name) => name !== ''));
 }
 
+/** The real path of `path`; the resolved path when it does not exist. */
 async function realOf(path: string): Promise<string> {
-  return realpath(path).catch(() => resolve(path));
+  return realpath(path).catch(whenNotFound(resolve(path)));
 }
 
 /** The command line of a `--file` run of `argv` (the arguments after `ogw core test`) without `--web`. */

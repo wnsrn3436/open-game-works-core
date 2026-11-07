@@ -1,6 +1,6 @@
 import { Cdp, devtoolsEndpoint } from '../../build/lib/chromium.ts';
 import type { TestInput } from '../../check/api.ts';
-import { OgwError } from '../../../lib/errors.ts';
+import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 
 /**
@@ -50,9 +50,10 @@ export function pageInput(profile: string, pageUrl: string, ended: () => string 
       await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: input.key }, sessionId);
     },
     close: () => {
+      // a session whose open failed has no connection to close: `put` already gave that failure to its caller
       void session?.then(({ cdp }) => {
         cdp.close();
-      }, () => undefined);
+      }, ignoreCleanupError);
     },
   };
 }

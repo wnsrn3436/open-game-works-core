@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -58,8 +58,16 @@ describe('ogw secret set', () => {
       old,
       JSON.stringify({ 'ogw/mygame/STG/ssh-stg': 'ssh', 'ogw/mygame/signing/android-keystore': 'ks', 'ogw/harness/gen-api-key': 'gen', 'ogw/mygame/DEV/unnamed': 'stays' }),
     );
-    makeGame(ws, 'broken', { 'settings.json': '{' });
+    // game settings that are not JSON name secrets nobody can know: the move fails and records nothing
+    const broken = makeGame(ws, 'broken', { 'settings.json': '{' });
     const env = { ...ws.env, OGW_TEST_OLD_SECRET_FILE: old };
+    const refused = await ogw(ws, ['secret', 'set', 'mygame', 'DEV', 'atk-dev'], { stdin: 'v\n', env });
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain(`invalid JSON in ${join(broken, 'settings.json')}`);
+    expect(existsSync(join(ws.root, 'secrets.json.moved.json'))).toBe(false);
+    expect(store()).toEqual({});
+    // a game folder without game settings names none
+    rmSync(join(broken, 'settings.json'));
     expect((await ogw(ws, ['secret', 'set', 'mygame', 'DEV', 'atk-dev'], { stdin: 'v\n', env })).code).toBe(0);
     expect(store()).toEqual({
       'ogw/mygame/STG/ssh-stg': 'ssh',

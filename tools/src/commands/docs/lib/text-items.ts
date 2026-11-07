@@ -94,8 +94,10 @@ function targetPath(target: string): string {
   const path = target.split('#')[0] as string;
   try {
     return decodeURI(path);
-  } catch {
-    return path;
+  } catch (error) {
+    // the URIError of an encoding that is not valid
+    if (error instanceof URIError) return path;
+    throw error;
   }
 }
 

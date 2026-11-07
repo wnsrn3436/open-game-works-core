@@ -14,12 +14,8 @@ const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** The video id of a YouTube watch, shorts, live, embed or youtu.be URL; null for any other URL. */
 export function youtubeId(text: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
-    return null;
-  }
+  const url = URL.parse(text);
+  if (url === null) return null;
   if (url.protocol !== 'https:' || !YOUTUBE_HOSTS.includes(url.hostname)) return null;
   const id = url.hostname === 'youtu.be'
     ? url.pathname.slice(1)

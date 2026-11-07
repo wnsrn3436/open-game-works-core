@@ -84,12 +84,16 @@ export async function mergedRecords(implDir: string, commit: string): Promise<Ma
 
 /** The `side` of a `core-spec/` file's bytes, or null. */
 export function sideOf(bytes: Buffer | null): unknown {
+  if (bytes === null) return null;
+  let parsed: unknown;
   try {
-    return bytes === null ? null : (JSON.parse(bytes.toString('utf8')) as { side?: unknown }).side;
-  } catch {
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
     // a core-spec file that is not JSON names no client module
-    return null;
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
+  return typeof parsed === 'object' && parsed !== null ? (parsed as { side?: unknown }).side : null;
 }
 
 /** Module name and side of every `core-spec/` file at `commit` (main by default). */

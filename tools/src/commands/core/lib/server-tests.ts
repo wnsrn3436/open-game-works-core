@@ -4,7 +4,7 @@
  */
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { readJsonIfExists, removeModulesLink, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { readJsonIfExists, removeModulesLink, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { newId } from '../../../lib/ids.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { run } from '../../../lib/proc.ts';
@@ -208,8 +208,9 @@ export function vitestArgs(options: ServerTestRunOptions, config: string, report
   return args;
 }
 
+/** The modification time of `path`; null when it does not exist. */
 async function mtime(path: string): Promise<number | null> {
-  return stat(path).then((s) => s.mtimeMs, () => null);
+  return stat(path).then((s) => s.mtimeMs, whenNotFound(null));
 }
 
 /**

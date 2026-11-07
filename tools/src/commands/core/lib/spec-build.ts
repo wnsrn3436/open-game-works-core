@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { byteCompare } from '../../../lib/order.ts';
 import { mdLines, section, tableAt, type MdLine } from './spec-md.ts';
 import { readModuleEntries, type ModuleEntry } from './spec-modules.ts';
@@ -19,8 +20,9 @@ export interface CoreSpecResult {
 async function readLines(path: string, rel: string): Promise<MdLine[]> {
   try {
     return mdLines(await readFile(path, 'utf8'));
-  } catch {
-    throw new OgwError(`spec file not found: ${rel}`);
+  } catch (error) {
+    if (isNotFound(error)) throw new OgwError(`spec file not found: ${rel}`);
+    throw error;
   }
 }
 

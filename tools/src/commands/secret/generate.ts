@@ -84,7 +84,9 @@ function addPublicKey(ctx: Context, game: string, env: EnvName, envObject: JsonO
   let publicKey: string;
   try {
     publicKey = ed25519PublicKey(seed);
-  } catch {
+  } catch (error) {
+    // the OgwError of a value that is not such a seed
+    if (!(error instanceof OgwError)) throw error;
     throw new OgwError(`secret ${name} is not a standard base64 32-byte Ed25519 seed`);
   }
   const keys = Array.isArray(envObject.updatePublicKeys) ? (envObject.updatePublicKeys as unknown[]) : [];

@@ -1,5 +1,5 @@
 import { availableParallelism } from 'node:os';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseProtoErrors } from '../../../src/commands/core/lib/base-proto-check.ts';
@@ -288,6 +288,14 @@ describe('ogw core test godot', () => {
       expect(run.code, argv.join(' ')).toBe(1);
       expect(`${run.stdout}${run.stderr}`).toContain(message);
     }
+    // an absolute --file that does not exist is not one of them; one whose real path cannot be read fails with its error
+    const absent = join(ws.coreImpl, 'client/godot/core/ui_core/tests/absent.gd');
+    expect((await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', absent], { env })).stderr).toContain('--file must be a .gd file in client/godot/core/ui_core/tests/ of UICore');
+    const loop = join(ws.root, 'loop.gd');
+    symlinkSync(loop, loop);
+    const looped = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', loop], { env });
+    expect(looped.code).toBe(1);
+    expect(looped.stderr).toContain('ELOOP');
   });
 
   it('takes a --file path relative to the checkout, the module folder or its tests/ folder, or absolute, when it names one test file', async () => {

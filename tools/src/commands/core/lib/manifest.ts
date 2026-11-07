@@ -14,7 +14,11 @@ function isAssetMap(value: unknown): value is Record<string, string> {
  * Folders (extracted assets) are not assets. Returns one line per problem; empty when it matches.
  */
 export async function verifyRelease(dir: string, version: string): Promise<string[]> {
-  const manifest = await readJsonIfExists<Partial<Record<keyof Manifest, unknown>>>(join(dir, 'manifest.json')).catch(() => null);
+  // a manifest that is not JSON is invalid (`readJson` fails with an OgwError); one that cannot be read fails the check
+  const manifest = await readJsonIfExists<Partial<Record<keyof Manifest, unknown>>>(join(dir, 'manifest.json')).catch((error: unknown) => {
+    if (error instanceof OgwError) return null;
+    throw error;
+  });
   if (!isAssetMap(manifest?.assets)) return ['manifest.json is missing or invalid'];
   const problems: string[] = [];
   if (manifest.version !== version) problems.push(`manifest.json version is ${JSON.stringify(manifest.version)}, not ${version}`);

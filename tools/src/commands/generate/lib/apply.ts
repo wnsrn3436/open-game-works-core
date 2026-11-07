@@ -34,12 +34,16 @@ function isKeptMeta(path: string, kept: ReadonlySet<string>): boolean {
   return isMetaFile(path) && kept.has(sourceOf(path));
 }
 
+/** Removes `dir` and its parents below `stop` while they are empty; the first folder that is not empty stops it. */
 async function removeEmptyDirs(dir: string, stop: string): Promise<void> {
   for (let current = dir; current.length > stop.length; current = dirname(current)) {
     try {
       await rmdir(current);
-    } catch {
-      return;
+    } catch (error) {
+      // POSIX lets rmdir of a folder that is not empty fail with ENOTEMPTY or EEXIST
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOTEMPTY' || code === 'EEXIST') return;
+      throw error;
     }
   }
 }

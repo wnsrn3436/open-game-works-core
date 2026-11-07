@@ -61,12 +61,15 @@ async function writeEngineJson(implDir: string, texts: Map<string, string>): Pro
   return changed;
 }
 
-/** Whether the GitHub release exists after `gh release create` failed; null when `gh` cannot tell. */
-async function releaseAfterFailure(ctx: Context, repo: string, tag: string): Promise<boolean | null> {
+/**
+ * Whether the GitHub release exists after `gh release create` failed; when `gh` cannot tell (ogw.md `## core release`),
+ * the reason it cannot.
+ */
+async function releaseAfterFailure(ctx: Context, repo: string, tag: string): Promise<boolean | { unknown: string }> {
   try {
     return await releaseExists(ctx, repo, tag);
-  } catch {
-    return null;
+  } catch (error) {
+    return { unknown: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -120,7 +123,7 @@ async function publish(ctx: Context, implDir: string, settings: HarnessSettings,
     const message = error instanceof Error ? error.message : String(error);
     const exists = pushed ? await releaseAfterFailure(ctx, repo, release.tag) : false;
     if (exists !== false) {
-      const state = exists ? `release ${release.tag} exists in ${repo}` : `could not tell whether release ${release.tag} exists in ${repo}`;
+      const state = exists === true ? `release ${release.tag} exists in ${repo}` : `could not tell whether release ${release.tag} exists in ${repo} (${exists.unknown})`;
       throw new OgwError(`${message}\n${state}; kept tag ${release.tag} (pushed) and commit ${release.commit}: check the release and its assets`);
     }
     const problems: string[] = [];

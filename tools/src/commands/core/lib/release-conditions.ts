@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJsonIfExists } from '../../../lib/fsx.ts';
 import { revParse } from '../../../lib/git.ts';
 import { byteCompare } from '../../../lib/order.ts';
@@ -79,7 +80,11 @@ export async function coreSpecViolations(ctx: Context, implDir: string): Promise
   const dir = join(implDir, 'core-spec');
   for (const [name, module] of build.modules) {
     const file = join(dir, `${name}.json`);
-    const current = await readJsonIfExists(file).catch(() => undefined);
+    // a file that is not JSON (`readJson` fails with an OgwError) differs; one that cannot be read fails the release
+    const current = await readJsonIfExists(file).catch((error: unknown) => {
+      if (error instanceof OgwError) return undefined;
+      throw error;
+    });
     if (current === null) violations.push(`core-spec/${name}.json is missing`);
     else if (!isDeepStrictEqual(current, module)) violations.push(`core-spec/${name}.json differs from ogw core spec`);
   }

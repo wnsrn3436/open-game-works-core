@@ -128,7 +128,8 @@ export async function readCoreSpecDir(implDir: string, options: { required?: boo
     try {
       modules.push(asModule(await readJson(file), file));
     } catch (error) {
-      if (options.skipInvalid !== true) throw error;
+      // the OgwError of a file that is not JSON or not a module object; a file that cannot be read fails
+      if (options.skipInvalid !== true || !(error instanceof OgwError)) throw error;
     }
   }
   return modules.sort((a, b) => byteCompare(a.name, b.name));

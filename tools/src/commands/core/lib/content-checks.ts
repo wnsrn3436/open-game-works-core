@@ -1,5 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJsonIfExists } from '../../../lib/fsx.ts';
 import { enginesOf, readEngineJson } from './impl.ts';
 import { requiredTextIds } from './spec-licenses.ts';
@@ -15,7 +16,11 @@ interface LicenseFile {
  * needs are the ones `ogw core licenses` writes (`requiredTextIds`).
  */
 export async function licenseErrors(implDir: string, harness: string): Promise<string[]> {
-  const file = await readJsonIfExists<LicenseFile>(join(implDir, 'licenses.json')).catch(() => null);
+  // a file that is not JSON is invalid (`readJson` fails with an OgwError); a file that cannot be read fails the check run
+  const file = await readJsonIfExists<LicenseFile>(join(implDir, 'licenses.json')).catch((error: unknown) => {
+    if (error instanceof OgwError) return null;
+    throw error;
+  });
   if (!file || !Array.isArray(file.components) || typeof file.texts !== 'object' || file.texts === null) return ['licenses.json is missing or invalid'];
   const errors: string[] = [];
   const names = new Set(file.components.map((c) => c.name));
@@ -55,7 +60,7 @@ export async function fixtureIdErrors(implDir: string, known: ReadonlySet<string
   if (!exists(dir)) return [];
   const errors: string[] = [];
   for (const file of (await readdir(dir)).filter((f) => f.endsWith('.json')).sort(byteCompare)) {
-    const fixture = await readJsonIfExists<{ cases?: { input?: unknown; expected?: unknown }[] }>(join(dir, file)).catch(() => null);
+    const fixture = await readJsonIfExists<{ cases?: { input?: unknown; expected?: unknown }[] }>(join(dir, file));
     const names = new Set<string>();
     for (const c of fixture?.cases ?? []) {
       idNamesIn(c.input, names);

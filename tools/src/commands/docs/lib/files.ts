@@ -1,6 +1,7 @@
 // The harness markdown files that `ogw docs check` reads.
 import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { whenNotFound } from '../../../lib/fsx.ts';
 import { git } from '../../../lib/git.ts';
 import { mdLines, type MdLine } from '../../core/lib/spec-md.ts';
 
@@ -36,7 +37,8 @@ export async function listDocs(harness: string): Promise<DocFile[]> {
   const docs: DocFile[] = [];
   for (const rel of paths) {
     const abs = join(harness, rel);
-    const stat = await lstat(abs).catch(() => null);
+    // a tracked file deleted from the working tree is not read
+    const stat = await lstat(abs).catch(whenNotFound(null));
     if (!stat?.isFile()) continue;
     docs.push({ rel, abs, lines: mdLines(await readFile(abs, 'utf8')) });
   }

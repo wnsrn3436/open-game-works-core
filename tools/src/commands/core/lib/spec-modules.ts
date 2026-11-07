@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { linkTargets, mdLines, section, soleCodeSpan, tableAt, type MdLine, type MdTable } from './spec-md.ts';
 
 export type Side = 'client' | 'server';
@@ -23,8 +24,9 @@ export const MODULE_SKILLS: readonly { side: Side; skill: string }[] = [
 async function readLines(path: string): Promise<MdLine[]> {
   try {
     return mdLines(await readFile(path, 'utf8'));
-  } catch {
-    throw new OgwError(`file not found: ${path}`);
+  } catch (error) {
+    if (isNotFound(error)) throw new OgwError(`file not found: ${path}`);
+    throw error;
   }
 }
 

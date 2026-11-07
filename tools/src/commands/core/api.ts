@@ -3,7 +3,7 @@ import { readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
+import { exists, readJsonIfExists, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { commitPaths, git, gitRaw, showFile, worktreeRemove } from '../../lib/git.ts';
 import { newId } from '../../lib/ids.ts';
@@ -59,9 +59,12 @@ function localRelease(ctx: Context, implDir: string, version: string): Promise<C
   const key = `${implDir}\0${version}`;
   let release = localReleases.get(key);
   if (!release) {
-    release = buildLocalRelease(ctx, version);
+    // a failed build is not kept, so the next call builds again; the caller gets the failure
+    release = buildLocalRelease(ctx, version).catch((error: unknown) => {
+      localReleases.delete(key);
+      throw error;
+    });
     localReleases.set(key, release);
-    release.catch(() => localReleases.delete(key));
   }
   return release;
 }
@@ -349,7 +352,7 @@ export async function releasePendingProposals(ctx: Context, repo: GameRepo): Pro
 /** Released core proposals whose version is above `from` and at most `to`. */
 export async function releasedProposals(game: GameRepo, from: string, to: string): Promise<string[]> {
   const dir = join(game.root, 'records', 'core-proposals');
-  const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.md')).sort();
+  const names = (await readdir(dir).catch(whenNotFound([] as string[]))).filter((n) => n.endsWith('.md')).sort();
   const out: string[] = [];
   for (const name of names) {
     const [first, second] = (await readFile(join(dir, name), 'utf8')).split(/\r?\n/);

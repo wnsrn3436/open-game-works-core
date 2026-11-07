@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { byteCompare } from '../../../lib/order.ts';
 import { codeSpans, mdLines, section } from './spec-md.ts';
 
@@ -92,8 +93,9 @@ export async function resourceRightsSpans(harness: string): Promise<string[]> {
   let text: string;
   try {
     text = await readFile(join(harness, rel), 'utf8');
-  } catch {
-    throw new OgwError(`file not found: ${rel}`);
+  } catch (error) {
+    if (isNotFound(error)) throw new OgwError(`file not found: ${rel}`);
+    throw error;
   }
   const lines = mdLines(text);
   const sec = section(lines, 2, 'resource rights');

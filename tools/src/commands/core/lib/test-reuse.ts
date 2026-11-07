@@ -67,12 +67,12 @@ export function keyPaths(target: ReuseTarget, module: string, all: readonly Core
 }
 
 /**
- * The tree of the harness `tools/` at HEAD, or null when it has changes not committed or cannot be read: then HEAD's
- * tree is not the code that runs, and no result keyed by it is kept or used.
+ * The tree of the harness `tools/` at HEAD, or null when it has changes not committed or HEAD has no `tools/`: then
+ * HEAD's tree is not the code that runs, and no result keyed by it is kept or used. A failure of `git status` fails.
  */
 export async function harnessToolsTree(env: NodeJS.ProcessEnv): Promise<string | null> {
   const harness = harnessRoot(env);
-  if ((await statusLines(harness, { env }, ['tools']).catch(() => ['unreadable'])).length > 0) return null;
+  if ((await statusLines(harness, { env }, ['tools'])).length > 0) return null;
   const tree = await gitRaw(harness, ['rev-parse', 'HEAD:tools'], { env });
   return tree.code === 0 ? tree.stdout.trim() : null;
 }
@@ -118,9 +118,9 @@ async function resultsFolder(env: NodeJS.ProcessEnv): Promise<string> {
   return join(await commonDir(harnessRoot(env), { env }), 'ogw-cache', 'core-test-results');
 }
 
-/** The passing result kept with `key`, or null. */
+/** The passing result kept with `key`, or null; a kept file that cannot be read or is not JSON fails. */
 export async function keptResult(env: NodeJS.ProcessEnv, key: string): Promise<KeptResult | null> {
-  const kept = await readJsonIfExists<Partial<KeptResult>>(join(await resultsFolder(env), `${key}.json`)).catch(() => null);
+  const kept = await readJsonIfExists<Partial<KeptResult>>(join(await resultsFolder(env), `${key}.json`));
   return typeof kept?.tests === 'number' && typeof kept.passed === 'number' && kept.tests > 0 && kept.passed === kept.tests ? { tests: kept.tests, passed: kept.passed } : null;
 }
 

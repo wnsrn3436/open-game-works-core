@@ -38,12 +38,7 @@ function deriveOperators(env: JsonObject, name: EnvName): void {
 }
 
 function originOf(url: unknown): string | null {
-  if (typeof url !== 'string') return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
+  return typeof url === 'string' ? (URL.parse(url)?.origin ?? null) : null;
 }
 
 function deriveCors(env: JsonObject, web: boolean): void {

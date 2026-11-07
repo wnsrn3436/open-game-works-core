@@ -135,12 +135,7 @@ function iosLoginIssues(settings: GameSettings, name: EnvName, env: JsonObject):
 }
 
 function originOf(url: unknown): string | null {
-  if (typeof url !== 'string') return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
+  return typeof url === 'string' ? (URL.parse(url)?.origin ?? null) : null;
 }
 
 function webIssues(settings: GameSettings, name: EnvName, env: JsonObject): Issue[] {

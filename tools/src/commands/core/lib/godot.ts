@@ -2,7 +2,7 @@ import { cp, mkdir, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
-import { OgwError } from '../../../lib/errors.ts';
+import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
 import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { newId } from '../../../lib/ids.ts';
 import { checkoutLock, commonDir } from '../../../lib/git.ts';
@@ -145,9 +145,12 @@ export function setupGodot(ctx: Context, implDir: string, engineJson: EngineJson
   const project = join(implDir, 'client', 'godot');
   let setup = done.get(project);
   if (!setup) {
-    setup = setupGodotNow(ctx, implDir, engineJson, project);
+    // a failed setup is not kept, so the next call sets up again; the caller gets the failure
+    setup = setupGodotNow(ctx, implDir, engineJson, project).catch((error: unknown) => {
+      done.delete(project);
+      throw error;
+    });
     done.set(project, setup);
-    setup.catch(() => done.delete(project));
   }
   return setup;
 }
@@ -574,8 +577,9 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
     input.close();
     if (browser) killTree(browser, 'SIGKILL');
     await host.close();
-    await rm(profile, { recursive: true, force: true }).catch(() => undefined);
-    await rm(appDir, { recursive: true, force: true }).catch(() => undefined);
+    // the outcome is made: removing the browser profile and the page folder cannot change it
+    await rm(profile, { recursive: true, force: true }).catch(ignoreCleanupError);
+    await rm(appDir, { recursive: true, force: true }).catch(ignoreCleanupError);
   }
 }
 

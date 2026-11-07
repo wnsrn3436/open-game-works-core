@@ -29,12 +29,8 @@ const MAX_REDIRECTS = 10;
  * A hash pinned from a plain `http:` download would trust whatever a network attacker sent.
  */
 export function downloadAllowed(url: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
+  const parsed = URL.parse(url);
+  if (parsed === null) return false;
   if (parsed.protocol === 'https:') return true;
   return parsed.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
 }
