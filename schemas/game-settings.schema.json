@@ -102,7 +102,7 @@
       "default": 3
     },
     "targetFps": {
-      "description": "Target frame rate in frames per second. The frame limit of each `QualityCore` quality level and the fps bound and the frame budget of the performance check are made from it",
+      "description": "Target frame rate in frames per second. The frame limit of each `QualityCore` quality level and the fps bound and the frame budget of the performance check are made from it, and the flash check of the UI quality check records at it",
       "type": "integer",
       "minimum": 1,
       "default": 60
@@ -199,7 +199,7 @@
             "default": 0
           },
           "pixelRatio": {
-            "description": "Window pixels per CSS pixel of the device the item models: the screen scale on ios and macos (pixels per pt), the density ÷ 160 on android (pixels per dp), the display scale ÷ 100 on windows (pixels per epx), the desktop scale factor on linux, `devicePixelRatio` on web. The UI quality check measures text, buttons and panels in window pixels ÷ this value",
+            "description": "Window pixels per CSS pixel of the device the item models: the screen scale on ios and macos (pixels per pt), the density ÷ 160 on android (pixels per dp), the display scale ÷ 100 on windows (pixels per epx), the desktop scale factor on linux, `devicePixelRatio` on web. The UI quality check measures text, buttons, panels and flashing areas in window pixels ÷ this value",
             "type": "number",
             "exclusiveMinimum": 0
           }
