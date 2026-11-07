@@ -115,12 +115,25 @@ export async function coreTarget(ctx: Context): Promise<Target> {
   };
 }
 
-/** Reads `<target>` from the positionals: `harness`, `game <game>`, or `core`. Returns the target and the positionals after it. */
-export async function openTarget(ctx: Context, positionals: readonly string[], usage: string): Promise<{ target: Target; rest: string[] }> {
+/** The words that name a scope of `ogw settings`; no harness settings path starts with one (ogw.md `## settings path`). */
+export const SCOPES: readonly string[] = ['harness', 'game', 'core'];
+
+/**
+ * Reads `<target>` from the positionals: `harness`, `game <game>`, or `core`. Returns the target and the positionals after
+ * it. With `harnessWithout`, positionals that do not start with a scope word are of harness settings (`ogw settings get`
+ * and `ogw settings describe`, ogw.md `## settings path`).
+ */
+export async function openTarget(
+  ctx: Context,
+  positionals: readonly string[],
+  usage: string,
+  options: { harnessWithout?: boolean } = {},
+): Promise<{ target: Target; rest: string[] }> {
   const [kind, name] = positionals;
   if (kind === 'harness') return { target: await harnessTarget(ctx), rest: positionals.slice(1) };
   if (kind === 'core') return { target: await coreTarget(ctx), rest: positionals.slice(1) };
   if (kind === 'game' && name !== undefined) return { target: await gameTarget(ctx, name), rest: positionals.slice(2) };
+  if (options.harnessWithout === true && kind !== undefined && !SCOPES.includes(kind)) return { target: await harnessTarget(ctx), rest: [...positionals] };
   throw new OgwError(`usage: ${usage}`);
 }
 
@@ -146,10 +159,12 @@ export async function withGameTarget<T>(ctx: Context, name: string, fn: (target:
   return withGameSettingsLock(game.root, ctx.env, async () => fn(await gameTarget(ctx, name)));
 }
 
-function keyOf(keys: readonly string[], text: string, path: string): string {
+/** The core settings key `text` starts with; `schemaFile`, the schema the core agent edits, is named when there is none. */
+function keyOf(keys: readonly string[], text: string, path: string, schemaFile?: string): string {
   const key = matchCoreKey(keys, text);
-  if (key === null) throw new OgwError(`no core settings key in ${path}`);
-  return key;
+  if (key !== null) return key;
+  const rule = schemaFile === undefined ? '' : `: ${schemaFile} has no key it starts with, and a new key goes into that schema before ogw settings set core writes its value`;
+  throw new OgwError(`no core settings key in ${path}${rule}`);
 }
 
 function splitRest(rest: string, path: string): string[] {
@@ -196,7 +211,7 @@ export async function filePath(target: Target, segments: Segments, options: Path
 /** Splits a `.`-joined path. A core settings key is read as one segment. A harness settings host key path is under this host's `hosts` entry (`filePath`). */
 export async function parsePath(target: Target, path: string, options: PathOptions = {}): Promise<string[]> {
   if (target.kind === 'core') {
-    const key = keyOf(coreKeys(target.schema), path, path);
+    const key = keyOf(coreKeys(target.schema), path, path, join(target.coreImpl ?? '', 'settings', 'core-settings.schema.json'));
     return [key, ...restOf(path, key, path)];
   }
   if (target.kind === 'game' && path.startsWith('core.')) {

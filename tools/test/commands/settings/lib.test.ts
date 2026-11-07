@@ -7,9 +7,10 @@ import { coreFiles, coreKeys, implConstraints, matchCoreKey } from '../../../src
 import { constraintIssues } from '../../../src/commands/settings/lib/game-check.ts';
 import { addedLeaves, changedPaths, getAt, mergeSettings, setAt, unsetAt } from '../../../src/commands/settings/lib/json-path.ts';
 import { child, expand, infoOf, locate, ownerOf, propertyPaths, type SchemaNode } from '../../../src/commands/settings/lib/schema-nav.ts';
+import { SCOPES } from '../../../src/commands/settings/lib/target.ts';
 import { pointerPath, schemaIssues } from '../../../src/commands/settings/lib/validate.ts';
 import { createContext } from '../../../src/lib/command.ts';
-import { makeWorkspace } from '../../helpers/workspace.ts';
+import { makeWorkspace, realHarness } from '../../helpers/workspace.ts';
 
 vi.mock('../../../src/commands/core/api.ts', () => ({
   coreRelease: vi.fn(),
@@ -20,6 +21,14 @@ vi.mock('../../../src/commands/core/api.ts', () => ({
 }));
 
 const object = () => 'object' as const;
+
+describe('settings scopes', () => {
+  it('no harness settings path starts with a scope word, so a path without a scope is a harness settings path', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const schema = JSON.parse(await readFile(join(realHarness, 'schemas', 'harness-settings.schema.json'), 'utf8')) as { properties: Record<string, unknown> };
+    expect(Object.keys(schema.properties).filter((key) => SCOPES.includes(key))).toEqual([]);
+  });
+});
 
 describe('json-path', () => {
   it('gets values', () => {

@@ -99,9 +99,9 @@ export async function resolveValue(target: Target, segments: Segments): Promise<
 
 export const get: CommandDef = {
   name: ['settings', 'get'],
-  usage: 'ogw settings get <harness|game <game>|core> <path>',
+  usage: 'ogw settings get [harness|game <game>|core] <path>',
   async run(ctx, args) {
-    const { target, rest } = await openTarget(ctx, args.positionals, this.usage);
+    const { target, rest } = await openTarget(ctx, args.positionals, this.usage, { harnessWithout: true });
     expectPositionals({ ...args, positionals: rest }, 1, 1, this.usage);
     const segments = await parsePath(target, rest[0] as string);
     const path = display(segments);

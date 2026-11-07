@@ -182,8 +182,25 @@ describe('ogw settings get', () => {
     expect((await get('game', 'mygame', 'core.UICore.theme')).stderr).toBe('game settings have no coreVersion\n');
   });
 
+  it('reads harness settings when the first argument is not a scope', async () => {
+    expect(await get('jobWaitTimeoutMs')).toEqual(await get('harness', 'jobWaitTimeoutMs'));
+    expect(await get('jobWaitTimeoutMs')).toEqual({ code: 0, stdout: '1234\n', stderr: '' });
+    expect((await get('paths.games')).stdout).toBe('"games"\n');
+    expect(await get('nope')).toEqual({ code: 1, stdout: '', stderr: 'not a settings path: nope\n' });
+  });
+
+  it('names the core settings schema and where a new key goes for a core path without a key', async () => {
+    writeCoreImpl(ws);
+    const schema = join(ws.coreImpl, 'settings', 'core-settings.schema.json');
+    expect(await get('core', 'NewCore.limit')).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: `no core settings key in NewCore.limit: ${schema} has no key it starts with, and a new key goes into that schema before ogw settings set core writes its value\n`,
+    });
+  });
+
   it('checks the arguments', async () => {
-    const usage = 'usage: ogw settings get <harness|game <game>|core> <path>\n';
+    const usage = 'usage: ogw settings get [harness|game <game>|core] <path>\n';
     expect((await get()).stderr).toBe(usage);
     expect((await get('game')).stderr).toBe(usage);
     expect((await get('other', 'x')).stderr).toBe(usage);

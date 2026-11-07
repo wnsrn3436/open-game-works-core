@@ -165,7 +165,11 @@ describe('ogw settings set', () => {
       'NetworkCore.requestTimeoutMs × 2 must be at most InputBlockCore.maxDurationMs\n',
     );
     expect((await set('core', 'UICore.theme.size', '0')).stderr).toBe('UICore.theme.size: must be >= 1\n');
-    expect((await set('core', 'Nope.key', '1')).stderr).toBe('no core settings key in Nope.key\n');
+    expect((await set('core', 'Nope.key', '1')).stderr).toBe(
+      `no core settings key in Nope.key: ${join(ws.coreImpl, 'settings', 'core-settings.schema.json')} has no key it starts with, and a new key goes into that schema before ogw settings set core writes its value\n`,
+    );
+    // set keeps its scope: a path alone is no harness settings write
+    expect((await set('jobWaitTimeoutMs', '5')).stderr).toContain('usage: ogw settings set');
     // a constraint whose other key has no value yet does not block the first value
     const values = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
     delete values['NetworkCore.requestTimeoutMs'];

@@ -123,7 +123,12 @@ describe('ogw settings describe', () => {
 
   it('fails for a path the schema does not have', async () => {
     expect(await describeCmd('game', 'mygame', 'environments.DEV.nope')).toEqual({ code: 1, stdout: '', stderr: 'not a settings path: environments.DEV.nope\n' });
-    expect((await describeCmd('game', 'mygame')).stderr).toBe('usage: ogw settings describe <harness|game <game>|core> <path>\n');
+    expect((await describeCmd('game', 'mygame')).stderr).toBe('usage: ogw settings describe [harness|game <game>|core] <path>\n');
+  });
+
+  it('describes a harness settings path given without a scope', async () => {
+    expect(await describeCmd('jobWaitTimeoutMs')).toEqual(await describeCmd('harness', 'jobWaitTimeoutMs'));
+    expect((await describeCmd('jobWaitTimeoutMs')).stdout).toContain('path: jobWaitTimeoutMs\n');
   });
 });
 

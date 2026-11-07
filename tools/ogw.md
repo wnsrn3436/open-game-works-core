@@ -30,6 +30,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 - instance wait
 - instance measure
 - telemetry compare
+- settings path
 - settings describe
 - game init
 - game derive
@@ -615,6 +616,11 @@ What the harness tool writes in the engine project of a game. The renderer table
 ## telemetry compare
 
 The tool counts an `input_latency_ms` difference of 17 ms or less as no difference.
+
+## settings path
+
+- `ogw settings get` and `ogw settings describe` read harness settings when their first argument is not a scope (`harness`, `game`, `core`): `ogw settings get <path>` is `ogw settings get harness <path>`. No harness settings path starts with a scope word
+- A core settings path whose start is no key of `core-settings.schema.json` of the core checkout fails with `no core settings key in <path>`, followed by that schema file and the rule that a new key goes into that schema before `ogw settings set core` writes its value
 
 ## settings describe
 

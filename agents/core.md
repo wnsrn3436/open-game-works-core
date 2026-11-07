@@ -17,7 +17,7 @@ You are the core agent of open-game-works. The first line of the input file, `co
 ## rules
 
 - Do not add a public API, hook, event or core settings key that is not in the spec. Do not guess and write what is needed, or what is not known because the spec cannot settle it; write it in `## spec proposals` of the report
-- Write core settings values only to `core-settings.json`, with `ogw settings set core`
+- Write core settings values only to `core-settings.json`, with `ogw settings set core`. A new key goes into `core-settings.schema.json` first, since `ogw settings set core` writes only the keys of that schema
 - In git, only commit to the branch of that worktree. Do not switch branches or rewrite history
 - When the input gives the absolute harness path of an engine-specific implementation rules document, or names `## <engine> build` of `tools/ogw.md`, write to that path or that section (`## godot build` shows its form) and make `ogw docs check` pass. Do not commit them. Do not edit other files of the harness. When they are the only target of the input, skip steps 2 and 3
 
