@@ -18,6 +18,7 @@ import { loginTokenAgent } from '../../secret/lib/login-token.ts';
 import { probeBuildTool } from '../api.ts';
 import type { EngineSource } from './engines.ts';
 import { whichIn, type HostPlatform } from './host.ts';
+import { runIfPresent } from './probe.ts';
 import { dockerBuildx, probeProgram } from './probe.ts';
 import type { AgentCliCheck, BuildToolCheck, EnvCheckResult, ProgramCheck, ProviderCliCheck, TokenCheck } from './results.ts';
 
@@ -49,13 +50,13 @@ function tail(text: string): string {
 
 export async function hostInfo(ctx: Context, platform: HostPlatform | null): Promise<EnvCheckResult['host']> {
   const list = cpus();
-  const disk = await statfs((await ctx.workspace()).root).catch(() => null);
+  const disk = await statfs((await ctx.workspace()).root);
   return {
     platform,
     os: `${type()} ${release()}`,
     cpu: { model: list[0]?.model ?? '', count: list.length },
     memoryBytes: totalmem(),
-    freeDiskBytes: disk ? disk.bavail * disk.bsize : null,
+    freeDiskBytes: disk.bavail * disk.bsize,
   };
 }
 
@@ -85,10 +86,11 @@ export const CLI_DEFS: Record<string, CliDef> = {
   grok: { program: 'grok', login: null },
 };
 
+/** The login check of an installed CLI: logged in when it ends with code 0. A CLI that cannot be started is thrown. */
 async function loginState(env: NodeJS.ProcessEnv, def: CliDef): Promise<Pick<CliState, 'loggedIn' | 'loginOutput'>> {
   if (def.login === null) return { loggedIn: null, loginOutput: '' };
-  const result = await run(def.program, def.login, { env, timeoutMs: LIMITS.shortMs }).catch(() => null);
-  return { loggedIn: result !== null && result.code === 0, loginOutput: result === null ? '' : `${result.stdout}\n${result.stderr}` };
+  const result = await run(def.program, def.login, { env, timeoutMs: LIMITS.shortMs });
+  return { loggedIn: result.code === 0, loginOutput: `${result.stdout}\n${result.stderr}` };
 }
 
 export interface PromptRun {
@@ -143,8 +145,10 @@ function jsonLines(stdout: string): JsonObject[] {
     try {
       const value: unknown = JSON.parse(line);
       return isPlainObject(value) ? [value] : [];
-    } catch {
-      return [];
+    } catch (error) {
+      // a line that is not JSON (a stderr line) is no message
+      if (error instanceof SyntaxError) return [];
+      throw error;
     }
   });
 }
@@ -375,7 +379,8 @@ export async function udpReaches(ctx: Context, serial: string, address: string):
 export async function deviceChecks(ctx: Context, settings: HarnessSettings): Promise<EnvCheckResult['testDevices']> {
   const devices = settings.testDevices ?? [];
   if (devices.length === 0) return [];
-  const listed = await run('adb', ['devices'], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
+  // without adb on this host no device is in `adb devices`
+  const listed = await runIfPresent('adb', ['devices'], { env: ctx.env, timeoutMs: LIMITS.shortMs });
   const connected = new Set(
     (listed?.stdout ?? '')
       .split(/\r?\n/)

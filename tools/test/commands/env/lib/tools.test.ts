@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256Text } from '../../../../src/commands/env/lib/files.ts';
-import { InstallFailure, installItem, installLockPath, makeRunnable, readMarker } from '../../../../src/commands/env/lib/install.ts';
+import { InstallFailure, installItem, installLockPath, makeRunnable, readMarker, refillFolder } from '../../../../src/commands/env/lib/install.ts';
 import { setNet } from '../../../../src/commands/env/lib/net.ts';
 import {
   downloadFor,
@@ -223,7 +223,18 @@ describe('ffmpeg and postgres probes', () => {
     expect(await hasLibvorbis(ctx, join(bin, 'fails'))).toBe(false);
     expect(await hasLibvorbis(ctx, join(bin, 'prefixed'))).toBe(false);
     expect(await hasLibvorbis(ctx, join(bin, 'suffixed'))).toBe(false);
-    expect(await hasLibvorbis(ctx, join(bin, 'missing'))).toBe(false);
+    // a program that cannot be started has no encoder list: that failure is thrown, not read as no libvorbis
+    await expect(hasLibvorbis(ctx, join(bin, 'missing'))).rejects.toThrow(/cannot run .*missing: spawn .* ENOENT$/);
+  });
+
+  it('fails the install of an ffmpeg that cannot be started with the reason it cannot, not as one without libvorbis', async () => {
+    const { ws, ctx } = setup();
+    const body = '#!/nonexistent/interpreter\n';
+    setNet(fakeNet({ 'https://dl/ffmpeg': body }));
+    const result = await installTool(ctx, 'ffmpeg', { version: '6', downloads: [d('any', 'https://dl/ffmpeg', body)] });
+    expect(result).toMatchObject({ installed: false, mismatches: [] });
+    expect(result.reason).toMatch(/^cannot run .*ffmpeg: spawn .* ENOENT$/);
+    expect(existsSync(join(ws.root, '.ogw', 'tools', 'ffmpeg', '6'))).toBe(false);
   });
 
   it('checks and pulls the pinned postgres image', async () => {
@@ -296,5 +307,28 @@ describe('install routine', () => {
     expect(failed).toEqual({ installed: false, mismatches: [{ what: 'w', path: 'p', expected: 'e', actual: 'a' }], reason: 'bad place' });
     expect(await installItem({ ...item, dir: other, place: () => Promise.resolve(null) })).toEqual({ installed: false, mismatches: [], reason: 'none' });
     expect(existsSync(other)).toBe(false);
+  });
+
+  it('keeps the entry a failed fill asks to keep, and names a failure to keep it in the reason', async () => {
+    const { ws } = setup();
+    const dir = join(ws.root, 'items', 'm');
+    const boom = (): Promise<object> => Promise.reject(new Error('boom'));
+    // a folder that is not there yet: nothing to empty
+    const fill = async (): Promise<object> => {
+      mkdirSync(join(dir, '.reuse'), { recursive: true });
+      writeFileSync(join(dir, '.reuse', 'f'), 'f');
+      writeFileSync(join(dir, 'partial'), 'p');
+      return boom();
+    };
+    expect(await refillFolder(dir, fill, '.reuse', () => Promise.resolve(true))).toEqual({ installed: false, mismatches: [], reason: 'boom' });
+    expect(readdirSync(dir)).toEqual(['.reuse']);
+    // keeping fails: the folder goes whole and the reason names both failures
+    const kept = await refillFolder(dir, fill, '.reuse', () => Promise.reject(new Error('rename failed: ENOSPC')));
+    expect(kept).toEqual({ installed: false, mismatches: [], reason: 'boom; .reuse was not kept: rename failed: ENOSPC' });
+    expect(existsSync(dir)).toBe(false);
+    // a file where the install folder is: its entries cannot be listed, which is no missing folder
+    mkdirSync(join(ws.root, 'items'), { recursive: true });
+    writeFileSync(dir, 'x');
+    await expect(refillFolder(dir, fill, '.reuse', () => Promise.resolve(true))).rejects.toMatchObject({ code: 'ENOTDIR' });
   });
 });

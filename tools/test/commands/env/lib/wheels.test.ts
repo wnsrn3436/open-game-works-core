@@ -235,6 +235,19 @@ describe('resolving wheels', () => {
     );
   });
 
+  it('throws a failure to read PyPI, which is no CPython minor without the wheels', async () => {
+    setNet(
+      fakeNet({
+        'https://pypi.org/pypi/gdtoolkit/json': { releases: { '4.0': [file('gdtoolkit-4.0-py3-none-any.whl')] } },
+        'https://pypi.org/pypi/gdtoolkit/4.0/json': { info: { requires_dist: ['c'] }, urls: [] },
+        'https://pypi.org/pypi/c/json': () => ({ status: 503, headers: {}, body: Buffer.from('busy') }),
+      }),
+    );
+    const failed = gdtoolkitPin('4.0');
+    await expect(failed).rejects.toThrow(/pypi\.org\/pypi\/c\/json/);
+    await expect(failed).rejects.not.toThrow(/no CPython 3\.x has wheels/);
+  });
+
   it('reads the CPython minor versions of the python and abi tags of every project read', async () => {
     setNet(fakeNet({ 'https://pypi.org/pypi/e/json': { releases: { '1': [file('e-1-py3-cp313-win_amd64.whl'), file('e-1-cp310-abi3-win_amd64.whl'), file('e-1-cp39-cp39t-win_amd64.whl'), file('e-1.tar.gz')], '2': [] } } }));
     const pypi = new Pypi();

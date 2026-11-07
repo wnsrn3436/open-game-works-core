@@ -544,6 +544,15 @@ describe('ogw env propose', () => {
     expect(await ogw(ws, ['env', 'propose'], { env })).toMatchObject({ code: 1, stderr: `uv pip compile for macos-arm64 CPython 3.12 failed: ${conflict.trim()}\n` });
   });
 
+  it('fails with the reason the Python of the method environment cannot be started', async () => {
+    const { ws, env } = setup();
+    // the Python uv names is a folder: it is found, but cannot be started
+    const python = join(ws.root, 'bin', 'venv-python');
+    rmSync(python);
+    mkdirSync(python);
+    expect(await ogw(ws, ['env', 'propose'], { env })).toMatchObject({ code: 1, stderr: `cannot run ${python}: spawn ${python} EACCES\n` });
+  });
+
   it('pins only a git+https:// or git+ssh:// repository of a dependency and gives git no other URL', async () => {
     const C = 'c'.repeat(40);
     const proposal = async (dependency: string): Promise<{ code: number; stderr: string; calls: string[]; leftOut: boolean }> => {

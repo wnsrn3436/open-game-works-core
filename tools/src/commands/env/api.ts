@@ -16,7 +16,7 @@ import {
 } from './lib/engines.ts';
 import { hostPlatform } from './lib/host.ts';
 import { readMarker, type InstallResult } from './lib/install.ts';
-import { dockerBuildx, firstLine, ghStatus } from './lib/probe.ts';
+import { dockerBuildx, firstLine, ghStatus, runIfPresent } from './lib/probe.ts';
 import { downloadFor, installedToolProgram, postgresPresent } from './lib/tools.ts';
 
 export { buildToolDir, dockerBuildx, ghStatus, hostPlatform, postgresPresent };
@@ -158,7 +158,7 @@ export interface BuildToolProbe {
   downloadable: boolean;
   /** The version command ended with code 0 and its first output line starts with the version. */
   ok: boolean;
-  /** First line of stdout, or of stderr when stdout is empty; null when the program did not run. */
+  /** First line of stdout, or of stderr when stdout is empty; null when the program is not on this host. */
   output: string | null;
 }
 
@@ -171,7 +171,7 @@ export async function probeBuildTool(ctx: Context, tool: BuildToolSpec): Promise
   const program = downloadable ? await buildToolProgram(ctx, tool.name, tool.version) : null;
   if (downloadable && program === null) return { downloadable, ok: false, output: null };
   const [cmd, ...args] = tool.versionCommand.trim().split(/\s+/);
-  const result = await run(program ?? (cmd as string), args, { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
+  const result = await runIfPresent(program ?? (cmd as string), args, { env: ctx.env, timeoutMs: LIMITS.shortMs });
   if (!result) return { downloadable, ok: false, output: null };
   const output = firstLine(result.stdout) || firstLine(result.stderr);
   return { downloadable, ok: result.code === 0 && output.startsWith(tool.version), output };

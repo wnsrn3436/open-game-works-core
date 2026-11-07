@@ -344,6 +344,18 @@ describe('files', () => {
     expect(calls.split('\n').filter((l) => l.startsWith('detach'))).toHaveLength(1);
     expect(readdirSync(join(dir, 'out')).filter((name) => name.startsWith('.mount-'))).toEqual([]);
   });
+
+  it('fails the extraction of a dmg whose image hdiutil cannot detach', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ogw-dmg-'));
+    const bin = fakeBin(join(dir, 'bin'), {
+      hdiutil: 'if [ "$1" = attach ]; then mkdir -p "$5/A.app"; exit 0; fi\necho "hdiutil: detach failed - Resource busy" >&2\nexit 16',
+      ditto: 'mkdir -p "$2"',
+    });
+    writeFileSync(join(dir, 'b.dmg'), 'dmg');
+    await expect(extractArchive(join(dir, 'b.dmg'), join(dir, 'out'), { ...process.env, PATH: `${bin}:/usr/bin:/bin` })).rejects.toThrow(
+      /^hdiutil detach .* -force failed \(16\): hdiutil: detach failed - Resource busy$/,
+    );
+  });
 });
 
 describe('host', () => {

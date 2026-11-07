@@ -1,6 +1,6 @@
 import { chmod, copyFile, mkdir, readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
-import { readJsonIfExists, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { readJsonIfExists, whenNotFound, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { withLock } from '../../../lib/lock.ts';
 import type { ToolDownload } from '../../../lib/settings.ts';
@@ -111,15 +111,17 @@ export async function refillFolder(dir: string, fill: () => Promise<object>, kee
     await writeJsonAtomic(join(dir, 'installed.json'), await fill());
     return INSTALLED;
   } catch (error) {
-    const kept = keep !== undefined && keepOnFailure !== undefined && (await keepOnFailure().catch(() => false));
-    if (kept) await removeExcept(dir, keep);
+    // a failure to keep the entry `keep` is named in the reason; the folder is then removed whole
+    const kept = keep !== undefined && keepOnFailure !== undefined ? await keepOnFailure().catch((keepError: unknown) => (keepError as Error).message) : false;
+    if (kept === true && keep !== undefined) await removeExcept(dir, keep);
     else await rm(dir, { recursive: true, force: true });
-    return { installed: false, mismatches: error instanceof InstallFailure ? error.mismatches : [], reason: (error as Error).message };
+    const reason = typeof kept === 'string' ? `${(error as Error).message}; ${keep ?? ''} was not kept: ${kept}` : (error as Error).message;
+    return { installed: false, mismatches: error instanceof InstallFailure ? error.mismatches : [], reason };
   }
 }
 
 async function removeExcept(dir: string, keep: string): Promise<void> {
-  for (const name of await readdir(dir).catch(() => [])) if (name !== keep) await rm(join(dir, name), { recursive: true, force: true });
+  for (const name of await readdir(dir).catch(whenNotFound([]))) if (name !== keep) await rm(join(dir, name), { recursive: true, force: true });
 }
 
 /** A program of a Python virtual environment: `Scripts/<program>.exe` on Windows, `bin/<program>` elsewhere. */

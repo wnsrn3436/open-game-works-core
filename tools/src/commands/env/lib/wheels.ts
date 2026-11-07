@@ -173,6 +173,9 @@ export function hostOf(platform: HostPlatform): MarkerHost {
   return markerHostOf(os, arch);
 }
 
+/** The wheels of a release do not resolve on a platform and CPython minor: a wheel is missing or a dependency does not fit. */
+export class WheelResolutionError extends OgwError {}
+
 /** The highest version satisfying the specifiers that has a wheel for the platform and Python. */
 async function chooseVersion(pypi: Pypi, name: string, specifiers: string[], platform: HostPlatform, minor: number): Promise<{ version: string; wheel: { file: PypiFile; pure: boolean } }> {
   const project = await pypi.project(name);
@@ -184,14 +187,17 @@ async function chooseVersion(pypi: Pypi, name: string, specifiers: string[], pla
     if (wheel) return { version, wheel };
     candidates.splice(candidates.indexOf(version), 1);
   }
-  throw new OgwError(`no wheel of ${name} ${specifiers.join(',')} for ${platform} CPython 3.${String(minor)}`);
+  throw new WheelResolutionError(`no wheel of ${name} ${specifiers.join(',')} for ${platform} CPython 3.${String(minor)}`);
 }
 
-/** Every wheel the root release needs on a platform and CPython 3.<minor>, the root first. */
+/**
+ * Every wheel the root release needs on a platform and CPython 3.<minor>, the root first. A `WheelResolutionError` when
+ * they do not resolve there; any other failure (PyPI cannot be read, a dependency cannot be parsed) is not about the platform.
+ */
 export async function resolveWheels(pypi: Pypi, root: { name: string; version: string }, platform: HostPlatform, minor: number): Promise<ResolvedWheel[]> {
   const host = hostOf(platform);
   const rootWheel = pickWheel((await pypi.project(root.name)).releases[root.version] ?? [], platform, minor);
-  if (!rootWheel) throw new OgwError(`no wheel of ${root.name} ${root.version} for ${platform} CPython 3.${String(minor)}`);
+  if (!rootWheel) throw new WheelResolutionError(`no wheel of ${root.name} ${root.version} for ${platform} CPython 3.${String(minor)}`);
   const resolved = new Map<string, ResolvedWheel>([[normalizeName(root.name), { name: root.name, version: root.version, ...rootWheel }]]);
   const queue: Pending[] = [{ name: root.name, version: root.version, extras: new Set() }];
   for (let item = queue.shift(); item !== undefined; item = queue.shift()) {
@@ -205,7 +211,7 @@ export async function resolveWheels(pypi: Pypi, root: { name: string; version: s
       if (known) {
         const version = parseVersion(known.version);
         if (version === null || !requirement.specifiers.every((s) => satisfies(version, s))) {
-          throw new OgwError(`${requirement.name} ${known.version} does not satisfy ${text} of ${item.name}`);
+          throw new WheelResolutionError(`${requirement.name} ${known.version} does not satisfy ${text} of ${item.name}`);
         }
         if (extras.size > 0) queue.push({ name: known.name, version: known.version, extras });
         continue;

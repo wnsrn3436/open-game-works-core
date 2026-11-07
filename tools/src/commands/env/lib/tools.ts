@@ -6,6 +6,7 @@ import type { PythonToolPin, ToolDownload, ToolPin } from '../../../lib/settings
 import { archiveKind, extractArchive, findFile } from './files.ts';
 import { dataDir, hostPlatform, safeSegment, type HostPlatform } from './host.ts';
 import { InstallFailure, installItem, makeRunnable, readMarker, venvProgram, type InstallResult } from './install.ts';
+import { runIfPresent } from './probe.ts';
 
 export type ToolName = 'blender' | 'chromium' | 'gdtoolkit' | 'ffmpeg' | 'placeholderFont';
 export const TOOL_NAMES: readonly ToolName[] = ['blender', 'placeholderFont', 'chromium', 'gdtoolkit', 'ffmpeg'];
@@ -54,10 +55,10 @@ async function placePythonTool(ctx: Context, pin: PythonToolPin, wheels: string[
   return venvProgram(venv, 'gdlint', windows);
 }
 
-/** ffmpeg must have the `libvorbis` encoder (`tools.ffmpeg` `description`). */
+/** ffmpeg must have the `libvorbis` encoder (`tools.ffmpeg` `description`). A program that cannot be started is thrown. */
 export async function hasLibvorbis(ctx: Context, ffmpeg: string): Promise<boolean> {
-  const result = await run(ffmpeg, ['-hide_banner', '-encoders'], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
-  return result !== null && result.code === 0 && /\slibvorbis\s/.test(result.stdout);
+  const result = await run(ffmpeg, ['-hide_banner', '-encoders'], { env: ctx.env, timeoutMs: LIMITS.shortMs });
+  return result.code === 0 && /\slibvorbis\s/.test(result.stdout);
 }
 
 async function placeProgram(ctx: Context, name: ToolName, file: string, dir: string): Promise<string | null> {
@@ -97,9 +98,9 @@ export function postgresImage(pin: { tag: string; digest: string }): string {
   return `postgres:${pin.tag}@${pin.digest}`;
 }
 
-/** True when the pinned `postgres` image is in this host's Docker. */
+/** True when the pinned `postgres` image is in this host's Docker; false when it is not or Docker is not on this host. */
 export async function postgresPresent(ctx: Context, pin: { tag: string; digest: string }): Promise<boolean> {
-  const result = await run('docker', ['image', 'inspect', `postgres@${pin.digest}`], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
+  const result = await runIfPresent('docker', ['image', 'inspect', `postgres@${pin.digest}`], { env: ctx.env, timeoutMs: LIMITS.shortMs });
   return result !== null && result.code === 0;
 }
 

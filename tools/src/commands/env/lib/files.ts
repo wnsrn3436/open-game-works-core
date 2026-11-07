@@ -95,7 +95,8 @@ async function extractDmg(file: string, dir: string, env: NodeJS.ProcessEnv): Pr
       await runOk('ditto', [join(mount, entry.name), join(dir, entry.name)], options);
     }
   } finally {
-    await runOk('hdiutil', ['detach', mount, '-force'], options).catch(() => undefined);
+    // an image left attached stays mounted inside the install folder: a failed detach fails the extraction
+    await runOk('hdiutil', ['detach', mount, '-force'], options);
     await rm(mount, { recursive: true, force: true });
   }
 }

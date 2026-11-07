@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readdir, realpath } from 'node:fs/promises';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { whenNotFound } from '../../../lib/fsx.ts';
 import { run } from '../../../lib/proc.ts';
 import { dockerBlocked, localSocketsBlocked, userServicesBlocked } from '../../agent/lib/cli-command.ts';
 
@@ -72,7 +73,7 @@ export function callError(stderr: string): string | null {
  * and the GPU the way the host does.
  */
 export async function gpuDevices(dev = '/dev'): Promise<string[]> {
-  const names = await readdir(dev).catch(() => []);
+  const names = await readdir(dev).catch(whenNotFound([]));
   return names
     .filter((name) => name.startsWith('nvidia') || name === 'dri')
     .sort()
@@ -154,6 +155,6 @@ export async function runSandboxed(
 }
 
 export async function isEmptyDir(dir: string): Promise<boolean> {
-  const entries = await readdir(dir).catch(() => []);
+  const entries = await readdir(dir).catch(whenNotFound([]));
   return entries.length === 0;
 }

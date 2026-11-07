@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { blockingMethods, generationMethods, installMethodJob } from '../../../src/commands/generation/api.ts';
@@ -72,6 +72,18 @@ describe('blockingMethods', () => {
     expect(await blockingMethods(ctx, game, 'bgm/song')).toEqual([]);
     expect(await blockingMethods(ctx, game, 'image/bad')).toEqual([]);
     expect(await blockingMethods(ctx, game, 'image/missing')).toEqual([]);
+    expect(await blockingMethods(ctx, game, 'nokind')).toEqual([]);
+  });
+
+  it('throws a list that cannot be read, which is no key the list rejects', async () => {
+    const { ctx, game } = await open();
+    const list = join(game.root, 'resource', 'resources.csv');
+    rmSync(list);
+    mkdirSync(list);
+    await expect(blockingMethods(ctx, game, 'image/hero')).rejects.toMatchObject({ code: 'EISDIR' });
+    rmSync(list, { recursive: true });
+    writeFileSync(list, 'key,description\n"unclosed\n');
+    await expect(blockingMethods(ctx, game, 'image/hero')).rejects.toThrow();
   });
 
   it('needs flux2-klein installed for trellis2, which calls it', async () => {

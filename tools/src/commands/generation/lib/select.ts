@@ -96,8 +96,33 @@ export function gameImageMethod(settings: HarnessSettings, rows: readonly Resour
  * The parsed `spec` of a resource key of `resource/resources.csv` and the rows of the list; fails when the row is
  * missing or its spec breaks the rules.
  */
-export async function keySpec(game: GameRepo, key: string): Promise<{ type: string; spec: Spec; rows: ResourceRow[] }> {
+export async function keySpec(game: GameRepo, key: string): Promise<KeyedSpec> {
+  return listedSpec(await readList(game.root), key);
+}
+
+/** The type, parsed `spec` and list rows of a key. */
+export interface KeyedSpec {
+  type: string;
+  spec: Spec;
+  rows: ResourceRow[];
+}
+
+/**
+ * `keySpec`, or null for a key the list or its spec rejects (`listedSpec` throws an `OgwError` only for that); a list
+ * that cannot be read is thrown.
+ */
+export async function keySpecIfListed(game: GameRepo, key: string): Promise<KeyedSpec | null> {
   const rows = await readList(game.root);
+  try {
+    return listedSpec(rows, key);
+  } catch (error) {
+    if (error instanceof OgwError) return null;
+    throw error;
+  }
+}
+
+/** `keySpec` for the rows of a list already read; it throws an `OgwError` only for a key the list or its spec rejects. */
+function listedSpec(rows: ResourceRow[], key: string): KeyedSpec {
   const row = findRow(rows, key);
   if (!row) throw new OgwError(`resource key ${key} is not in resource/resources.csv`);
   const { type } = requireKey(key);
@@ -115,7 +140,7 @@ export async function chooseMethods(ctx: Context, settings: HarnessSettings, gam
 }
 
 /** `chooseMethods` for a key whose type, parsed `spec` and list rows were read already (`keySpec`). */
-export async function keyChoices(ctx: Context, settings: HarnessSettings, key: string, keyed: { type: string; spec: Spec; rows: ResourceRow[] }): Promise<MethodChoice[]> {
+export async function keyChoices(ctx: Context, settings: HarnessSettings, key: string, keyed: KeyedSpec): Promise<MethodChoice[]> {
   if (key.startsWith(LOGO_PREFIX)) {
     const logotype = settings.resourceGeneration.find((m) => m.name === LOGOTYPE_METHOD);
     const fonts = settings.resourceGeneration.find((m) => m.name === FONT_CATALOG);
@@ -180,8 +205,8 @@ export async function installedOnHost(ctx: Context, method: GenerationMethod): P
  * (`production.md` `## logo`). Empty for a key with an installed method or with no method other than the temporary
  * method.
  */
-export async function uninstalledMethods(ctx: Context, settings: HarnessSettings, game: GameRepo, key: string): Promise<string[]> {
-  const choices = await chooseMethods(ctx, settings, game, key);
+export async function uninstalledMethods(ctx: Context, settings: HarnessSettings, key: string, keyed: KeyedSpec): Promise<string[]> {
+  const choices = await keyChoices(ctx, settings, key, keyed);
   const names = choices.filter((c) => c.temporary !== true).map((c) => c.name);
   const missing: string[] = [];
   const drawn = key.startsWith(LOGO_PREFIX) && names.some((name) => name !== LOGOTYPE_METHOD);

@@ -19,7 +19,7 @@ import { parseRequirement, parseVersion, compareVersions, isPrerelease } from '.
 import { throttleRate } from './benchmark.ts';
 import { envResultPath, type HostPlatform } from './host.ts';
 import { agentCliLabel, agentCliUsers, loginTokenError, loginTokenState, readEnvResult, type EnvResults, type MeasuredRun, type ProviderCliCheck } from './results.ts';
-import { FIRST_PYTHON_MINOR, hostOf, markerFits, normalizeName, pinEntries, Pypi, resolveWheels, WHEEL_PLATFORMS, type PypiFile, type PypiProject, type ResolvedWheel } from './wheels.ts';
+import { FIRST_PYTHON_MINOR, hostOf, markerFits, normalizeName, pinEntries, Pypi, resolveWheels, WHEEL_PLATFORMS, WheelResolutionError, type PypiFile, type PypiProject, type ResolvedWheel } from './wheels.ts';
 import { LOGOTYPE_METHOD } from '../../generation/api.ts';
 
 export interface Proposal {
@@ -244,9 +244,9 @@ async function venvPythonMinor(ctx: Context): Promise<number> {
   const found = await run('uv', ['python', 'find', '--system'], options).catch((error: unknown) => ({ code: null, stdout: '', stderr: (error as Error).message }));
   const python = found.stdout.trim();
   if (found.code !== 0 || python === '') throw new OgwError(`uv python find found no Python: ${found.stderr.trim()}`);
-  const version = await run(python, ['--version'], options).catch(() => null);
-  const minor = /^Python 3\.(\d+)/.exec(`${version?.stdout ?? ''}${version?.stderr ?? ''}`.trim())?.[1];
-  if (version?.code !== 0 || minor === undefined) throw new OgwError(`cannot read the version of ${python}`);
+  const version = await run(python, ['--version'], options);
+  const minor = /^Python 3\.(\d+)/.exec(`${version.stdout}${version.stderr}`.trim())?.[1];
+  if (version.code !== 0 || minor === undefined) throw new OgwError(`cannot read the version of ${python}`);
   return Number(minor);
 }
 
@@ -256,13 +256,8 @@ async function venvPythonMinor(ctx: Context): Promise<number> {
  * transport from it.
  */
 function isRemoteRepository(repository: string): boolean {
-  if (/[\s\p{Cc}]/u.test(repository)) return false;
-  let url: URL;
-  try {
-    url = new URL(repository);
-  } catch {
-    return false;
-  }
+  if (/[\s\p{Cc}]/u.test(repository) || !URL.canParse(repository)) return false;
+  const url = new URL(repository);
   return (url.protocol === 'https:' || url.protocol === 'ssh:') && url.hostname !== '' && !url.hostname.startsWith('-') && !url.username.startsWith('-');
 }
 
@@ -606,7 +601,9 @@ export async function gdtoolkitPin(version: string, pypi: Pypi = new Pypi()): Pr
       for (const platform of WHEEL_PLATFORMS) perPlatform.set(platform, await resolveWheels(pypi, { name: 'gdtoolkit', version }, platform, minor));
       best = { minor, pin: { version, python: `3.${String(minor)}`, ...pinEntries(perPlatform) } };
     } catch (error) {
-      problems.push((error as Error).message);
+      // a minor without the wheels is passed over; a failure to read PyPI is not a missing wheel
+      if (!(error instanceof WheelResolutionError)) throw error;
+      problems.push(error.message);
     }
   }
   if (best !== null) return best.pin;

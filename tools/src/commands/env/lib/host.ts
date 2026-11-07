@@ -43,6 +43,9 @@ export function safeSegment(text: string): string {
   return cleaned === '' || cleaned === '.' || cleaned === '..' ? '_' : cleaned;
 }
 
+/** The `access` errors of a PATH candidate that is no program: absent, not executable, or below a PATH entry that is no folder. */
+const NOT_A_PROGRAM: ReadonlySet<string> = new Set(['ENOENT', 'EACCES', 'ENOTDIR']);
+
 /** Finds a program on the PATH of `env`. */
 export async function whichIn(env: NodeJS.ProcessEnv, program: string, platform: NodeJS.Platform = process.platform): Promise<string | null> {
   const dirs = (env.PATH ?? env.Path ?? '').split(delimiter).filter((d) => d !== '');
@@ -53,8 +56,9 @@ export async function whichIn(env: NodeJS.ProcessEnv, program: string, platform:
       try {
         await access(candidate, constants.X_OK);
         return candidate;
-      } catch {
-        // not here
+      } catch (error) {
+        // not here: no such file, not executable, or a PATH entry that is no folder
+        if (!NOT_A_PROGRAM.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
       }
     }
   }

@@ -67,11 +67,12 @@ async function claudeAliasModel(ctx: Context, alias: string, efforts: string[] |
 
 /** Claude Code: one model per alias of `CLAUDE_ALIASES`, the aliases run together, with the efforts of `claude --help`. */
 async function claudeModels(ctx: Context): Promise<CliModelsCheck> {
-  const help = await run('claude', ['--help'], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
-  const efforts = help === null ? null : claudeHelpEfforts(`${help.stdout}\n${help.stderr}`);
+  const help = await run('claude', ['--help'], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch((error: unknown) => (error as Error).message);
+  const efforts = typeof help === 'string' ? null : claudeHelpEfforts(`${help.stdout}\n${help.stderr}`);
   const results = await Promise.all(CLAUDE_ALIASES.map((alias) => claudeAliasModel(ctx, alias, efforts)));
   const unknown = results.filter((r): r is string => typeof r === 'string');
-  if (efforts === null) unknown.push('efforts: claude --help lists no levels for --effort');
+  if (typeof help === 'string') unknown.push(`efforts: cannot run claude --help: ${help}`);
+  else if (efforts === null) unknown.push('efforts: claude --help lists no levels for --effort');
   return { cli: 'claude-code', models: results.filter((r): r is CliModel => typeof r !== 'string'), unknown };
 }
 
@@ -80,8 +81,9 @@ export function codexCatalogModels(stdout: string): CliModel[] | string {
   let value: unknown;
   try {
     value = JSON.parse(stdout);
-  } catch {
-    return 'codex debug models printed no JSON';
+  } catch (error) {
+    if (error instanceof SyntaxError) return 'codex debug models printed no JSON';
+    throw error;
   }
   const items = isPlainObject(value) ? value.models : undefined;
   if (!Array.isArray(items)) return 'the output of codex debug models has no models array';
@@ -196,12 +198,13 @@ export function installSource(real: string, home: string): InstallSource | null 
 /** The installed version of one agent CLI against the latest version its install source publishes. */
 async function cliVersion(env: NodeJS.ProcessEnv, cli: AgentCli, program: string, path: string): Promise<CliVersionCheck> {
   const none = { cli, installed: null, source: null, latest: null, behind: null, update: null };
-  const printed = await run(program, ['--version'], { env, timeoutMs: LIMITS.shortMs }).catch(() => null);
-  const installed = printed === null || printed.code !== 0 ? null : versionIn(`${printed.stdout}\n${printed.stderr}`);
-  const real = await realpath(path).catch(() => path);
+  const printed = await run(program, ['--version'], { env, timeoutMs: LIMITS.shortMs }).catch((error: unknown) => (error as Error).message);
+  const installed = typeof printed === 'string' || printed.code !== 0 ? null : versionIn(`${printed.stdout}\n${printed.stderr}`);
+  const real = await realpath(path);
   const from = installSource(real, env.HOME ?? homedir());
   if (from === null) return { ...none, installed, reason: `${real} is not under a Homebrew cask, a Homebrew formula, an npm package or the Claude Code installer` };
   const known = { ...none, installed, source: from.source, update: from.update };
+  if (typeof printed === 'string') return { ...known, reason: `cannot run ${program} --version: ${printed}` };
   if (installed === null) return { ...known, reason: `${program} --version printed no version` };
   const latest = await from.latest().catch((error: unknown) => (error as Error).message);
   if (latest === null) return { ...known, reason: `${from.source} gives no latest version` };

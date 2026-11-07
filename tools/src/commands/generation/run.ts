@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { expectPositionals, list, positional, str, type CommandArgs, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, readText } from '../../lib/fsx.ts';
+import { exists, readText, whenNotFound } from '../../lib/fsx.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { withLock } from '../../lib/lock.ts';
 import { isInside } from '../../lib/paths.ts';
@@ -47,12 +47,10 @@ async function stageFor(
 
 /** Real path of a path that may not exist yet: the real path of its nearest existing folder, then the rest. */
 async function realPathOf(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    const parent = dirname(path);
-    return parent === path ? path : join(await realPathOf(parent), basename(path));
-  }
+  const real = await realpath(path).catch(whenNotFound(null));
+  if (real !== null) return real;
+  const parent = dirname(path);
+  return parent === path ? path : join(await realPathOf(parent), basename(path));
 }
 
 /**
@@ -133,7 +131,7 @@ interface ItemResult {
 const ITEM_ERROR = 'ogw-error.txt';
 
 async function itemError(out: string): Promise<string | undefined> {
-  const text = await readFile(join(out, ITEM_ERROR), 'utf8').catch(() => null);
+  const text = await readFile(join(out, ITEM_ERROR), 'utf8').catch(whenNotFound(null));
   return text === null ? undefined : (text.trim().split('\n')[0] ?? '').slice(0, 300);
 }
 

@@ -8,7 +8,7 @@ import { toolProgram } from '../env/api.ts';
 import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { installCommand } from './install.ts';
 import { methodDir } from './lib/install.ts';
-import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice, type Stage } from './lib/select.ts';
+import { chooseMethods, keySpecIfListed, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice, type Stage } from './lib/select.ts';
 import { performanceLeaseBase } from './lib/lease.ts';
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
 
@@ -29,15 +29,13 @@ export function catalogEntries(ctx: Context, method: string): Promise<CatalogFil
 }
 
 /**
- * The methods that block a resource key on this host, as `uninstalledMethods` says; empty when they cannot be told (a
- * key the list or its spec rejects, which the resource sub-agent reports, or a file that cannot be read).
+ * The methods that block a resource key on this host, as `uninstalledMethods` says; empty for a key the list or its
+ * spec rejects, which the resource sub-agent reports. A list or settings that cannot be read are thrown.
  */
 export async function blockingMethods(ctx: Context, game: GameRepo, resourceKey: string): Promise<string[]> {
-  try {
-    return await uninstalledMethods(ctx, await runHarnessSettings(ctx, game), game, resourceKey);
-  } catch {
-    return [];
-  }
+  const settings = await runHarnessSettings(ctx, game);
+  const keyed = await keySpecIfListed(game, resourceKey);
+  return keyed === null ? [] : uninstalledMethods(ctx, settings, resourceKey, keyed);
 }
 
 /**

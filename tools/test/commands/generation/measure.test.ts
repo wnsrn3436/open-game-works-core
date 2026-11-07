@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readList } from '../../../src/commands/resource/lib/list.ts';
 import { rigFixtureProblem } from '../../../src/commands/generation/lib/rig-fixture.ts';
-import { blockedLines, callError, gpuDevices, hiddenSockets, maxMemory, seatbeltProfile, wrapped } from '../../../src/commands/generation/lib/sandbox.ts';
+import { blockedLines, callError, gpuDevices, hiddenSockets, isEmptyDir, maxMemory, seatbeltProfile, wrapped } from '../../../src/commands/generation/lib/sandbox.ts';
 import { runCall, STANDARD_JOBS, standardImage, type CallInput, type StandardJob } from '../../../src/commands/generation/lib/standard.ts';
 import { PROVIDER_PROMPT } from '../../../src/commands/generation/measure.ts';
 import { createContext, type Context } from '../../../src/lib/command.ts';
@@ -347,6 +347,37 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     expect(await refused(['--batch', file('w.json', JSON.stringify([{ key: 'sfx/a' }]))])).toContain('item 1 is not {"key", "prompt", "images", "out"}');
     expect(await refused(['--batch', file('v.json', JSON.stringify([{ ...items[0], out: o(1) }, { ...items[1], out: join(ws.root, 'b1link') }]))])).toContain('gives one out folder to two items');
     expect(await refused(['--batch', join(ws.root, 'batch.json'), '--key', 'sfx/a'])).toContain('--batch goes without --key, --prompt, --image and --out');
+  });
+
+  it('fails the run when the ogw-error.txt of an item cannot be read, and gives no reason for an item without one', async () => {
+    setJob('audio', {
+      stages: [],
+      prompt: '',
+      image: false,
+      outputs: ['sound.wav'],
+      call: () => Promise.resolve({ cmd: '/bin/sh', args: ['-c', 'exit 1'] }),
+      // the first item has no ogw-error.txt; the second has a folder in its place, which cannot be read as a file
+      batch: (inputs) => Promise.resolve({ cmd: '/bin/sh', args: ['-c', `mkdir "${inputs[1]?.out ?? ''}/ogw-error.txt"; exit 1`] }),
+    });
+    const { ws, env } = workspace(methods);
+    makeGame(ws, 'g', { 'resource/resources.csv': resources });
+    expect((await ogw(ws, ['generation', 'install', 'audio'], { env })).code).toBe(0);
+    const o = (n: number): string => join(ws.root, `e${String(n)}`);
+    writeFileSync(join(ws.root, 'a.txt'), 'A');
+    const batch = (items: { key: string; prompt: string; out: string }[]): string => {
+      writeFileSync(join(ws.root, 'batch.json'), JSON.stringify(items));
+      return join(ws.root, 'batch.json');
+    };
+    const one = await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--batch', batch([{ key: 'sfx/a', prompt: join(ws.root, 'a.txt'), out: o(1) }]), '--json'], { env });
+    expect(JSON.parse(one.stdout)).toMatchObject({ items: [{ key: 'sfx/a', out: o(1), result: 'failed' }] });
+    const two = [
+      { key: 'sfx/a', prompt: join(ws.root, 'a.txt'), out: o(2) },
+      { key: 'sfx/b', prompt: join(ws.root, 'a.txt'), out: o(3) },
+    ];
+    const run = await ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--batch', batch(two)], { env });
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('EISDIR');
   });
 
   it('keeps an output file of an out folder that an item takes as its input image', async () => {
@@ -930,6 +961,17 @@ describe('sandbox helpers', () => {
     mkdirSync(join(dev, 'dri'));
     expect(await gpuDevices(dev)).toEqual(['dri', 'nvidia-uvm', 'nvidia0', 'nvidiactl'].map((n) => `${dev}/${n}`));
     expect(await gpuDevices(join(dev, 'none'))).toEqual([]);
+    // a file where the device folder is: not read as no devices
+    await expect(gpuDevices(join(dev, 'null'))).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
+
+  it('reads a missing out folder as empty and throws one that cannot be read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ogw-empty-'));
+    expect(await isEmptyDir(join(dir, 'none'))).toBe(true);
+    expect(await isEmptyDir(dir)).toBe(true);
+    writeFileSync(join(dir, 'f'), '');
+    expect(await isEmptyDir(dir)).toBe(false);
+    await expect(isEmptyDir(join(dir, 'f'))).rejects.toMatchObject({ code: 'ENOTDIR' });
   });
 
   it('makes a PNG of the requested size', () => {
