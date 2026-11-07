@@ -15,7 +15,7 @@ import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/laun
 import { agentCliCommand, agentResumeCommand } from '../../../src/commands/agent/lib/cli-command.ts';
 import { jobHarnessSettings } from '../../../src/commands/agent/lib/meta.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
-import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
+import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, realHarness, sh, testSettings } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, noUsage, readRunLog, RESULT, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
@@ -441,7 +441,11 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('o
     const workspace = await ctx.workspace();
     const agent: AgentSettings = { cli: 'claude-code', model: 'm', effort: 'high' };
     const run = (role: string, game: string | null) => cliToRun(ctx, role, agent, workspace, null, null, null, game);
-    expect(await run('content', 'g')).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
+    // a game alone runs without the sandbox unless the seeds of the regression suite are on this host: `regress/` of the
+    // harness repo this code runs from is one of them
+    const alone = await run('content', 'g');
+    if (existsSync(join(realHarness, 'regress'))) expect(readFileSync(join(alone.profileFolder as string, 'sandbox.sb'), 'utf8')).toContain(join(realHarness, 'regress'));
+    else expect(alone).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
     makeGame(ws, 'other', { 'settings.json': {} });
     for (const role of ['content', 'translation', 'server-hardening', 'client-hardening']) {
       const wrapped = await run(role, 'g');
@@ -485,8 +489,10 @@ describe('otherGameFolders', () => {
     for (const dir of dirs) mkdirSync(dir, { recursive: true });
     writeFileSync(join(ws.games, '.DS_Store'), '');
     const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees, regress: join(ws.root, 'regress-repo') };
-    expect(await otherGameFolders(folders, 'g')).toEqual([join(ws.games, 'other'), join(ws.worktrees, 'other')]);
-    expect(await otherGameFolders({ ...folders, games: join(ws.root, 'none'), worktrees: join(ws.root, 'none') }, 'g')).toEqual([]);
+    // the seeds of the harness repo this code runs from, when it has them
+    const seeds = existsSync(join(realHarness, 'regress')) ? [join(realHarness, 'regress')] : [];
+    expect(await otherGameFolders(folders, 'g')).toEqual([join(ws.games, 'other'), join(ws.worktrees, 'other'), ...seeds]);
+    expect(await otherGameFolders({ ...folders, games: join(ws.root, 'none'), worktrees: join(ws.root, 'none') }, 'g')).toEqual(seeds);
   });
 
   it('keeps the side worktrees open and blocks the seeds: the regress repo and regress/ of the harness and of each side worktree', async () => {
