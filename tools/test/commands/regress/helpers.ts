@@ -90,8 +90,10 @@ export function runningBeside(spans: readonly Span[], span: Span): string[] {
  * has passed: work of two groups that runs together gets past it at once, and work of groups that runs one after
  * another gets past it only at the limit, with no other group started.
  */
-export async function meetOtherGroup(started: Set<string>, group: string, limitMs = 10_000): Promise<void> {
+export async function meetOtherGroup(started: Set<string>, group: string, limitMs = 10_000): Promise<boolean> {
   started.add(group);
   const until = Date.now() + limitMs;
-  while (![...started].some((g) => g !== group) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+  const met = (): boolean => [...started].some((g) => g !== group);
+  while (!met() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+  return met();
 }

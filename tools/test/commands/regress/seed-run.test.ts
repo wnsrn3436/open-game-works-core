@@ -260,10 +260,11 @@ describe('seed-run', () => {
     const missing = item('no placeholder', 'fail', [['data/translations/en.csv:4', 'translation_missing en c'], ['data/translations/ja.csv:4', 'translation_missing ja c']]);
     f.input.catchAfter = { ...f.input.catchAfter, seeded: checkFile('s', missing), matched: { check: missing, failure: missing.failures[0] as RegressCheckFile['checks'][number]['failures'][number] } };
     const started = new Set<string>();
+    const met: boolean[] = [];
     vi.mocked(sideAgent).mockImplementation(async (_ctx, _side, request) => {
       const language = readFileSync(request.input, 'utf8').trim();
       // each agent waits until the agent of the other language has started too: they run together
-      await meetOtherGroup(started, language, 2000);
+      met.push(await meetOtherGroup(started, language));
       return { job: `t${language}`, status: 'done', output: null, reason: null };
     });
     const merging: string[] = [];
@@ -276,13 +277,12 @@ describe('seed-run', () => {
       return null;
     });
     vi.mocked(sideCheck).mockImplementation((_ctx, _side, request) => Promise.resolve({ file: { commit: request.commit, checks: [item('no placeholder', 'pass')], fixTestProof: [] }, minutes: 1 }));
-    const began = performance.now();
     const result = await runSeedRun(ctxOf(f.ws), f.input);
     expect(result).toMatchObject({ result: 'fixed' });
     expect(merging.sort()).toEqual(['ten', 'tja']);
     expect(overlaps(spans, true)).toEqual([]);
-    // the agents met at once instead of waiting out the meeting limit
-    expect(performance.now() - began).toBeLessThan(1500);
+    // each agent saw the other one started: agents one after another leave the first one alone until its limit
+    expect(met).toEqual([true, true]);
   });
 
   it('gives the before side its own fixed by its own target checks on the final commit', async () => {
