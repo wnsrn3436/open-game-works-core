@@ -103,7 +103,7 @@ describe('runData', () => {
     expect(existsSync(join(root, '.ogw-generate.lock'))).toBe(false);
   });
 
-  it('passes the binary-built worktree of the latest PROD data tag as --previous and removes worktrees', async () => {
+  it('passes the binary-built worktree of the latest PROD data tag as --previous and keeps the builds', async () => {
     const ws = makeWorkspace();
     const v1 = makeRelease(ws, '1.0.0');
     const v2 = makeRelease(ws, '2.0.0');
@@ -133,8 +133,11 @@ describe('runData', () => {
     expect(args[args.length - 2]).toBe('--previous');
     expect(args.at(-1)).toContain(join(ws.worktrees, 'g'));
     expect(current?.previousVersion).toBe('bundle-data');
-    expect(worktreesOf(ws)).toEqual([]);
-    expect(sh(root, 'git', ['worktree', 'list']).trim().split('\n')).toHaveLength(1);
+    // the builds of prod-1.0.0-bundle-2 and of its app tag stay, each a worktree of its own
+    expect(worktreesOf(ws).filter((name) => name.startsWith('prod-data-'))).toHaveLength(2);
+    expect(worktreesOf(ws)).toHaveLength(2);
+    expect(sh(root, 'git', ['worktree', 'list']).trim().split('\n')).toHaveLength(3);
+    expect(args.at(-1)).toMatch(/\/prod-data-[0-9a-f]+$/);
   });
 
   it('with useLocalCore, binary-builds the PROD tag with the published data tool of the tag core version', async () => {
@@ -176,7 +179,9 @@ describe('runData', () => {
     expect(calls.at(-1)?.previousVersion).toBe('app1');
     expect(calls.at(-1)?.previousServerVersion).toBe('server-only');
     expect(calls.at(-2)?.args).toContain('--binary');
-    expect(worktreesOf(ws)).toEqual([]);
+    // the second run made the build of prod-1.0.0-bundle-2 only, and removed that of prod-1.0.0-bundle-1, which it did not read
+    expect(calls.filter((c) => (c.args as string[]).includes('--binary'))).toHaveLength(3);
+    expect(worktreesOf(ws)).toHaveLength(2);
   });
 
   it('takes a bundle tag whose Client build target data alone differs from its app tag', async () => {
@@ -209,7 +214,39 @@ describe('runData', () => {
     const calls = toolCalls(release, 'data-tool.tgz');
     expect(calls.filter((c) => (c.args as string[]).includes('--binary'))).toHaveLength(4);
     expect(calls.at(-1)?.previousVersion).toBe('app1');
-    expect(worktreesOf(ws)).toEqual([]);
+    expect(worktreesOf(ws)).toHaveLength(4);
+  });
+
+  it('makes the build of a PROD data tag once for runs at the same time and later runs, and again for another tag commit or core version', async () => {
+    const ws = makeWorkspace();
+    const v1 = makeRelease(ws, '1.0.0');
+    makeRelease(ws, '2.0.0');
+    const root = makeGame(ws, 'g', { 'settings.json': GAME_SETTINGS, 'data/version.txt': 'app1' });
+    sh(root, 'git', ['tag', 'prod-1.0.0']);
+    write(join(root, 'settings.json'), { ...GAME_SETTINGS, coreVersion: '2.0.0' });
+    commitAll(root, 'upgrade');
+    const ctx = ctxOf(ws);
+    const game = await ctx.game('g');
+    const binaries = (): number => toolCalls(v1, 'data-tool.tgz').filter((c) => (c.args as string[]).includes('--binary')).length;
+    const runs = await Promise.all([runData(ctx, game), runData(ctx, game), runData(ctx, game)]);
+    expect(runs.map((r) => r.exitCode)).toEqual([0, 0, 0]);
+    expect(binaries()).toBe(1);
+    await runData(ctx, game);
+    expect(binaries()).toBe(1);
+    const [kept] = worktreesOf(ws);
+    // a new PROD tag commit: its build is made, and the build of the old one goes
+    write(join(root, 'data', 'version.txt'), 'app2');
+    commitAll(root, 'release 2');
+    sh(root, 'git', ['tag', 'prod-2.0.0']);
+    await runData(ctx, game);
+    expect(worktreesOf(ws)).toHaveLength(1);
+    expect(worktreesOf(ws)[0]).not.toBe(kept);
+    // a build that did not end leaves no record: the next run makes it again
+    rmSync(join(game.commonDir, 'ogw-prod-data'), { recursive: true, force: true });
+    const before = toolCalls(join(ws.coreReleases, '2.0.0'), 'data-tool.tgz').filter((c) => (c.args as string[]).includes('--binary')).length;
+    await runData(ctx, game);
+    expect(toolCalls(join(ws.coreReleases, '2.0.0'), 'data-tool.tgz').filter((c) => (c.args as string[]).includes('--binary')).length).toBe(before + 1);
+    expect(worktreesOf(ws)).toHaveLength(1);
   });
 
   it('fails when a bundle tag has no app tag or a previous binary build fails', async () => {

@@ -4,14 +4,13 @@ import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { checkoutLock, isCheckout, listTags, worktreeRemove } from '../../lib/git.ts';
+import { checkoutLock, isCheckout } from '../../lib/git.ts';
 import { withLock } from '../../lib/lock.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../lib/settings.ts';
 import { coreReleaseOfGame, extractedAsset, publishedRelease, type CoreRelease } from '../core/api.ts';
 import { runGenerate, splitModules } from '../generate/api.ts';
 import { readCoreSpec, usedModules } from '../generate/lib/core-spec.ts';
-import { binaryBuildAt, type CommitBuild } from './lib/binary-build.ts';
-import { prodTagCandidates } from './lib/prod-tag.ts';
+import { withProdData } from './lib/prod-build.ts';
 import { runNodeTool, withTempDir, type ToolRun } from './lib/tool.ts';
 
 export interface DataLine {
@@ -98,32 +97,6 @@ async function runTool(ctx: Context, input: ToolInput): Promise<ToolRun> {
   );
 }
 
-/**
- * The binary-built worktree of the PROD data tag, or null without a PROD tag. A bundle patch tag is the
- * PROD data tag only when its Client or Server data version differs from its app version tag's. Each tag is built
- * at most once.
- */
-async function prodDataBuild(ctx: Context, game: GameRepo, made: string[]): Promise<string | null> {
-  const tags = await listTags(game.root, { env: ctx.env });
-  const builds = new Map<string, CommitBuild>();
-  const buildOf = async (tag: string): Promise<CommitBuild> => {
-    let built = builds.get(tag);
-    if (built === undefined) {
-      built = await binaryBuildAt(ctx, game, `refs/tags/${tag}^{commit}`, tag, made);
-      builds.set(tag, built);
-    }
-    return built;
-  };
-  for (const candidate of await prodTagCandidates(game.root, tags)) {
-    const built = await buildOf(candidate.tag);
-    if (candidate.appTag === null) return built.dir;
-    if (!tags.includes(candidate.appTag)) throw new OgwError(`bundle patch tag ${candidate.tag} has no tag ${candidate.appTag}`);
-    const app = await buildOf(candidate.appTag);
-    if (built.versions.client !== app.versions.client || built.versions.server !== app.versions.server) return built.dir;
-  }
-  return null;
-}
-
 /** The published release of the checkout's game settings `coreVersion`. */
 async function publishedReleaseOf(ctx: Context, game: GameRepo, settings: GameSettings): Promise<CoreRelease> {
   if (typeof settings.coreVersion !== 'string') throw new OgwError(`game settings of ${game.name} have no coreVersion`);
@@ -147,18 +120,14 @@ export async function runData(
   const settings = await loadGameSettings(game.root);
   const release = options?.published === true ? await publishedReleaseOf(ctx, game, settings) : await coreReleaseOfGame(ctx, game);
   const toolDir = await extractedAsset(ctx, release, 'data-tool.tgz');
-  const made: string[] = [];
-  try {
-    const result = await withTempDir('ogw-data-', ctx.env, async (tmp) => {
-      const checkout = isCheckout(game.root);
-      const previous = options?.prodCompare !== false && checkout ? await prodDataBuild(ctx, game, made) : null;
-      const binary = options?.binary === true;
-      const strict = options?.strict === true;
-      const idRegistry = checkout ? null : join(game.root, 'id_registry.json');
-      return runTool(ctx, { gameDir: game.root, settings, release, toolDir, dir: join(tmp, 'current'), binary, strict, previous, idRegistry });
-    });
-    return { exitCode: result.exitCode, lines: parseDataLines(result.stdout), stderr: result.stderr };
-  } finally {
-    for (const dir of made) await worktreeRemove(game.root, dir, { env: ctx.env });
-  }
+  const result = await withTempDir('ogw-data-', ctx.env, async (tmp) => {
+    const checkout = isCheckout(game.root);
+    const binary = options?.binary === true;
+    const strict = options?.strict === true;
+    const idRegistry = checkout ? null : join(game.root, 'id_registry.json');
+    const run = (previous: string | null): Promise<ToolRun> => runTool(ctx, { gameDir: game.root, settings, release, toolDir, dir: join(tmp, 'current'), binary, strict, previous, idRegistry });
+    // the kept build of the PROD data tag stays while the data tool reads it
+    return options?.prodCompare !== false && checkout ? withProdData(ctx, game, run) : run(null);
+  });
+  return { exitCode: result.exitCode, lines: parseDataLines(result.stdout), stderr: result.stderr };
 }

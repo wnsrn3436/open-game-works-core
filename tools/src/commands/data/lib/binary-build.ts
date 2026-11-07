@@ -52,10 +52,10 @@ export interface CommitBuild {
  * A binary build of the commit `rev` (named `label` in messages) in a new worktree under `worktrees/<game>/`, with the
  * data tool of the published release of that commit's core version, also with harness settings `useLocalCore`. It
  * runs no `ogw generate` and no comparison with the PROD data tag: the data of an older commit may lack what newer
- * PROD data has. The worktree is pushed to `made` once it exists; the caller removes it.
+ * PROD data has. The worktree (`at`, or a new one) is pushed to `made` once it exists; the caller removes it.
  */
-export async function binaryBuildAt(ctx: Context, game: GameRepo, rev: string, label: string, made: string[]): Promise<CommitBuild> {
-  const dir = join((await ctx.workspace()).worktrees, game.name, newId());
+export async function binaryBuildAt(ctx: Context, game: GameRepo, rev: string, label: string, made: string[], at?: string): Promise<CommitBuild> {
+  const dir = at ?? join((await ctx.workspace()).worktrees, game.name, newId());
   await worktreeAdd(game.root, dir, rev, undefined, { env: ctx.env });
   made.push(dir);
   if (typeof (await loadGameSettings(dir)).coreVersion !== 'string') throw new OgwError(`no coreVersion in settings.json at ${label}`);
