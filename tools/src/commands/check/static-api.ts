@@ -26,6 +26,7 @@ import * as formatArgs from './static/format-args.ts';
 import * as frameCode from './static/frame-code.ts';
 import * as framePolling from './static/frame-polling.ts';
 import * as gameSettingsOwner from './static/game-settings-owner.ts';
+import * as gamepadInput from './static/gamepad-input.ts';
 import * as gameStateLock from './static/game-state-lock.ts';
 import * as generatedDiff from './static/generated-diff.ts';
 import * as hapticFormat from './static/haptic-format.ts';
@@ -58,7 +59,7 @@ export const STATIC_CHECKS: readonly StaticCheckModule[] = [
   coreDiff, generatedDiff, contract, devReference, typeCheck, lint, dataLiteral, resourceHash, nineSliceSize, blockToken, testInput, framePolling,
   hapticFormat, embeddedScript, themeOnly, fontWeight, sceneLinks, tweenPreset, finiteTween, systemClock, gameStateLock, sharedFormula, botScenario, optionEntry, gameSettingsOwner, designTarget,
   simulationTarget, featureBoundary, forbiddenApi, settingsAccess, resourceLoad, engineRandom, dataMutation, frameCode,
-  literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference, shortcutRootPanel, playGuideInput,
+  literalTiming, objectDestroy, determinism, virtualPadLayout, formatArgs, actionReference, anchorReference, gamepadInput, shortcutRootPanel, playGuideInput,
 ];
 
 function toFailure(f: Finding): CheckFailure {

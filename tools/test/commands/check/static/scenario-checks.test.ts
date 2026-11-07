@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as botScenario from '../../../../src/commands/check/static/bot-scenario.ts';
+import * as gamepadInput from '../../../../src/commands/check/static/gamepad-input.ts';
 import * as optionEntry from '../../../../src/commands/check/static/option-entry.ts';
 import * as sharedFormula from '../../../../src/commands/check/static/shared-formula.ts';
 import { absentLines, lines, memContext, sorted } from './helpers.ts';
@@ -221,27 +222,53 @@ describe('shared formula', () => {
   });
 });
 
+const UI_VOLUME = ['SoundCore.get_volume(SoundCore.SoundBus.UI)', 'SoundCore.set_volume(SoundCore.SoundBus.UI, 1.0)'];
+const BASE_MODULES = ['AuthCore', 'BootstrapCore', 'InputCore', 'LocalizationCore', 'NativeUiCore', 'ResolutionCore', 'SoundCore', 'UICore'];
+const inputEvent = (cls: string): string => `Object(${cls},"resource_local_to_scene":false,"device":-1,"script":null)`;
+/** A `project.godot` whose `[input]` holds each action with one event per class. */
+const project = (actions: Record<string, string[]>): string => {
+  const body = Object.entries(actions).map(([name, classes]) => `${name}={\n"deadzone": 0.5,\n"events": [${classes.map(inputEvent).join('\n, ')}\n]\n}`);
+  return `[application]\n\nconfig/name="g"\n\n[input]\n\n${body.join('\n')}\n`;
+};
+const CORE_INPUT = {
+  back: ['InputEventKey', 'InputEventJoypadButton'],
+  cutscene_advance: ['InputEventKey', 'InputEventJoypadButton'],
+  cutscene_skip: ['InputEventKey', 'InputEventJoypadButton'],
+};
+/** 1-based line of the first line of `text` that starts with `prefix`. */
+const lineOf = (text: string, prefix: string): number => text.split('\n').findIndex((l) => l.startsWith(prefix)) + 1;
+
 describe('option entry', () => {
   const ALL_CALLS = [
     'AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses',
-    'AuthCore.issue_deletion_code',
+    'AuthCore.issue_deletion_code', ...UI_VOLUME,
   ];
-  const code = (calls: string[]): string => `class_name OptionsPanel\nfunc f() -> void:\n${calls.map((c) => `\t${c}()`).join('\n')}\n`;
+  const code = (calls: string[]): string => `class_name OptionsPanel\nfunc f() -> void:\n${calls.map((c) => `\t${c.includes('(') ? c : `${c}()`}`).join('\n')}\n`;
 
   it('requires the calls every game needs, outside DEV and test code', async () => {
-    modules.value = { client: [], server: [] };
+    modules.value = { client: BASE_MODULES, server: [] };
     const sc = memContext({
       'settings.json': '{\n  "engine": "godot"\n}\n',
       'client/features/options/options_panel.gd': code(ALL_CALLS.slice(1)),
       'client/dev/x.gd': code(['AuthCore.open_terms_document']),
+      'client/tests/x.gd': code(['AuthCore.open_terms_document']),
     });
     expect(absentLines(await optionEntry.run(sc))).toEqual(['client/features:1 | option entry: no `AuthCore.open_terms_document` call in client content code']);
     const ok = memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': code(ALL_CALLS) });
     expect(await optionEntry.run(ok)).toEqual([]);
   });
 
+  it('requires a volume of the Ui bus that UICore plays', async () => {
+    modules.value = { client: BASE_MODULES, server: [] };
+    const sc = memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': code(ALL_CALLS.filter((c) => !UI_VOLUME.includes(c))) });
+    expect(absentLines(await optionEntry.run(sc))).toEqual([
+      'client/features:1 | option entry: no `SoundCore.get_volume` call with `SoundCore.SoundBus.UI` in client content code',
+      'client/features:1 | option entry: no `SoundCore.set_volume` call with `SoundCore.SoundBus.UI` in client content code',
+    ]);
+  });
+
   it('requires the conditional calls from settings, modules and iap products', async () => {
-    modules.value = { client: ['AdCore'], server: [] };
+    modules.value = { client: [...BASE_MODULES, 'AdCore', 'PaymentCore', 'PushCore'], server: [] };
     const settings = {
       environments: { DEV: { adapters: { 'login-apple': null } }, STG: { adapters: { 'login-google': 'sandbox' } }, PROD: {} },
       consent: { privacyChoices: true },
@@ -265,5 +292,172 @@ describe('option entry', () => {
       'data/tables/iap_product.csv:6 | option entry: no `PaymentCore.restore_purchases` call in client content code',
       'data/tables/iap_product.csv:6 | option entry: no `PaymentCore.open_subscription_management` call in client content code',
     ]));
+  });
+
+  const LANGUAGE_CALLS = ['LocalizationCore.list_languages(languages)', 'LocalizationCore.get_language', 'LocalizationCore.select_language(1)', 'BootstrapCore.request_restart'];
+  const SCREEN_MODE_CALLS = ['ResolutionCore.is_screen_mode_supported', 'ResolutionCore.get_screen_mode', 'ResolutionCore.set_screen_mode(ResolutionCore.ScreenMode.FULLSCREEN)'];
+  const PLAY = [
+    'class_name PlayScene',
+    'func f(scope: Object) -> void:',
+    '\tSoundCore.play_bgm(ResourceKey.BGM__MAIN, scope)',
+    '\tSoundCore.play(ResourceKey.SFX__HIT, SoundCore.SoundBus.SFX, scope)',
+    '\tSoundCore.play(ResourceKey.VOICE__HI, SoundCore.SoundBus.VOICE, scope)',
+    '\tSoundCore.play_haptic(ResourceKey.HAPTIC__HIT, scope)',
+    '\tAccessibilityCore.play_voice(ResourceKey.VOICE__HI, scope, "k")',
+    '\tCameraCore.shake(0.5)',
+    '\tScreenEffectCore.flash(ScreenEffectCore.ScreenEffectChannel.WORLD, self, Color.WHITE, 1.0, 10, 10, 10)',
+    '',
+  ].join('\n');
+
+  it('requires the standard option calls from settings, calls and the input map', async () => {
+    modules.value = { client: [...BASE_MODULES, 'AccessibilityCore', 'CameraCore', 'ScreenEffectCore'], server: [] };
+    const settingsText = JSON.stringify({ supportedLanguages: ['ko', 'en'], buildPlatforms: ['android', 'macos'], gamepadSupported: true }, null, 2);
+    const projectText = project({ ...CORE_INPUT, aim: ['InputEventJoypadMotion'], jump: ['InputEventKey', 'InputEventJoypadButton'] });
+    const files = { 'settings.json': settingsText, 'client/project.godot': projectText, 'client/features/play/play_scene.gd': PLAY };
+    const s = (key: string): string => `settings.json:${String(lineOf(settingsText, `  "${key}"`))}`;
+    const p = (row: number): string => `client/features/play/play_scene.gd:${String(row)}`;
+    const godot = (action: string): string => `client/project.godot:${String(lineOf(projectText, `${action}=`))}`;
+    const missing = (where: string, calls: string[]): string[] => calls.map((c) => `${where} | option entry: no ${c} in client content code`);
+    const volume = (bus: string): string[] => [`\`SoundCore.get_volume\` call with \`SoundCore.SoundBus.${bus}\``, `\`SoundCore.set_volume\` call with \`SoundCore.SoundBus.${bus}\``];
+    const calls = (list: string[]): string[] => list.map((c) => `\`${c}\` call`);
+    expect(lines(await optionEntry.run(memContext({ ...files, 'client/features/options/options_panel.gd': code(ALL_CALLS) })))).toEqual(sorted([
+      ...missing(s('supportedLanguages'), calls(['LocalizationCore.list_languages', 'LocalizationCore.get_language', 'LocalizationCore.select_language', 'BootstrapCore.request_restart'])),
+      ...missing(s('buildPlatforms'), calls(['ResolutionCore.is_screen_mode_supported', 'ResolutionCore.get_screen_mode', 'ResolutionCore.set_screen_mode'])),
+      ...missing(p(3), volume('BGM')),
+      ...missing(p(4), volume('SFX')),
+      ...missing(p(5), volume('VOICE')),
+      ...missing(p(6), calls(['SoundCore.is_haptic_enabled', 'SoundCore.set_haptic_enabled'])),
+      ...missing(p(7), calls(['AccessibilityCore.get_settings', 'AccessibilityCore.set_subtitles'])),
+      ...missing(p(8), calls(['AccessibilityCore.set_reduce_shake'])),
+      ...missing(p(9), calls(['AccessibilityCore.set_reduce_flash'])),
+      ...missing(godot('jump'), calls(['InputCore.get_keys', 'InputCore.wait_key', 'InputCore.set_keys', 'InputCore.cancel_wait_key', 'InputCore.reset_keys'])),
+      ...missing(godot('aim'), calls(['InputCore.get_pad_buttons', 'InputCore.wait_pad_button', 'InputCore.set_pad_buttons', 'InputCore.reset_pad_buttons'])),
+    ]));
+    const options = [
+      ...ALL_CALLS, ...LANGUAGE_CALLS, ...SCREEN_MODE_CALLS,
+      ...['BGM', 'SFX', 'VOICE'].flatMap((b) => [`SoundCore.get_volume(SoundCore.SoundBus.${b})`, `SoundCore.set_volume(SoundCore.SoundBus.${b}, 1.0)`]),
+      'SoundCore.is_haptic_enabled', 'SoundCore.set_haptic_enabled(true)', 'AccessibilityCore.get_settings', 'AccessibilityCore.set_subtitles(true)',
+      'AccessibilityCore.set_reduce_shake(true)', 'AccessibilityCore.set_reduce_flash(true)', 'InputCore.get_keys(&"jump", keys)', 'InputCore.wait_key',
+      'InputCore.set_keys(&"jump", keys)', 'InputCore.cancel_wait_key', 'InputCore.reset_keys', 'InputCore.get_pad_buttons(&"jump", keys)',
+      'InputCore.wait_pad_button', 'InputCore.set_pad_buttons(&"jump", keys)', 'InputCore.reset_pad_buttons',
+    ];
+    expect(await optionEntry.run(memContext({ ...files, 'client/features/options/options_panel.gd': code(options) }))).toEqual([]);
+  });
+
+  it('requires no standard option whose condition does not hold', async () => {
+    modules.value = { client: BASE_MODULES, server: [] };
+    const sc = memContext({
+      'settings.json': JSON.stringify({ supportedLanguages: ['en'], buildPlatforms: ['android', 'ios'], gamepadSupported: true }),
+      'client/project.godot': project({ ...CORE_INPUT, jump: ['InputEventKey', 'InputEventMouseButton'] }),
+      'client/features/options/options_panel.gd': code(ALL_CALLS),
+      'client/features/play/play_scene.gd': 'class_name PlayScene\nfunc f(scope: Object) -> void:\n\tSoundCore.play(ResourceKey.SFX__A, SoundCore.SoundBus.UI, scope)\n',
+      'client/dev/cheat.gd': PLAY,
+      'client/tests/test_play.gd': PLAY,
+    });
+    expect(await optionEntry.run(sc)).toEqual([]);
+    const web = memContext({
+      'settings.json': JSON.stringify({ supportedLanguages: ['en'], buildPlatforms: ['web'] }),
+      'client/project.godot': project({ ...CORE_INPUT, jump: ['InputEventMouseButton', 'InputEventJoypadButton'] }),
+      'client/features/options/options_panel.gd': code(ALL_CALLS),
+    });
+    expect(absentLines(await optionEntry.run(web)).map((l) => l.replace(/^.* \| /, ''))).toEqual(sorted(
+      ['cancel_wait_key', 'get_keys', 'reset_keys', 'set_keys', 'wait_key'].map((op) => `option entry: no \`InputCore.${op}\` call in client content code`),
+    ));
+    const coreOnly = memContext({
+      'settings.json': JSON.stringify({ buildPlatforms: ['windows'], gamepadSupported: true }),
+      'client/project.godot': project(CORE_INPUT),
+      'client/features/options/options_panel.gd': code([...ALL_CALLS, ...SCREEN_MODE_CALLS]),
+    });
+    expect(await optionEntry.run(coreOnly)).toEqual([]);
+  });
+
+  it('plays Sfx for a positional player and Voice for a cutscene voice', async () => {
+    modules.value = { client: BASE_MODULES, server: [] };
+    const cutscene = ',,\nAll,All,Client\nid(key),string,reskey?\nid,kind,voice\n[intro_1],Line,null\n[intro_2],Line,voice/intro_2\n';
+    const scene = '[gd_scene format=3]\n\n[node name="Main" type="Node2D"]\n\n[node name="Hum" type="AudioStreamPlayer2D" parent="."]\n';
+    const volume = (where: string, bus: string): string[] =>
+      ['get_volume', 'set_volume'].map((op) => `${where} | option entry: no \`SoundCore.${op}\` call with \`SoundCore.SoundBus.${bus}\` in client content code`);
+    const sc = memContext({
+      'settings.json': '{}',
+      'client/features/options/options_panel.gd': code(ALL_CALLS),
+      'resource/scene/main.tscn': scene,
+      'data/tables/cutscene_step.csv': cutscene,
+    });
+    expect(absentLines(await optionEntry.run(sc))).toEqual(sorted([...volume('data/tables/cutscene_step.csv:6', 'VOICE'), ...volume('resource/scene/main.tscn:5', 'SFX')]));
+    const spawned = memContext({
+      'settings.json': '{}',
+      'client/features/options/options_panel.gd': code(ALL_CALLS),
+      'client/features/world/world.gd': 'class_name World\nfunc f() -> void:\n\tvar p: AudioStreamPlayer3D = AudioStreamPlayer3D.new()\n\tadd_child(p)\n',
+    });
+    expect(absentLines(await optionEntry.run(spawned))).toEqual(volume('client/features/world/world.gd:3', 'SFX'));
+  });
+
+  it('reports a bus argument that is not a SoundBus element', async () => {
+    modules.value = { client: BASE_MODULES, server: [] };
+    const sc = memContext({
+      'settings.json': '{}',
+      'client/features/options/options_panel.gd': code([...ALL_CALLS, 'SoundCore.set_volume(bus, 1.0)', 'SoundCore.get_volume(SoundCore.SoundBus.LOUD)']),
+      'client/features/play/play_scene.gd': 'class_name PlayScene\nfunc f(bus: int, scope: Object) -> void:\n\tSoundCore.play(ResourceKey.SFX__A, bus, scope)\n\tSoundCore.play(ResourceKey.SFX__A)\n',
+    });
+    const bad = (where: string, op: string): string => `${where} | option entry: the \`SoundBus\` argument of \`SoundCore.${op}\` is not a \`SoundCore.SoundBus\` element`;
+    expect(lines(await optionEntry.run(sc))).toEqual([
+      bad('client/features/options/options_panel.gd:11', 'set_volume'),
+      bad('client/features/options/options_panel.gd:12', 'get_volume'),
+      bad('client/features/play/play_scene.gd:3', 'play'),
+      bad('client/features/play/play_scene.gd:4', 'play'),
+    ]);
+  });
+
+  it('requires the module of each needed call to be a module the game uses', async () => {
+    modules.value = { client: BASE_MODULES.filter((m) => m !== 'NativeUiCore'), server: [] };
+    const sc = memContext({
+      'settings.json': '{}',
+      'client/features/options/options_panel.gd': code([...ALL_CALLS, 'AccessibilityCore.get_settings', 'AccessibilityCore.set_reduce_shake(true)']),
+      'client/features/play/play_scene.gd': 'class_name PlayScene\nfunc f() -> void:\n\tCameraCore.shake(0.5)\n',
+    });
+    expect(absentLines(await optionEntry.run(sc))).toEqual(sorted([
+      'client/features/play/play_scene.gd:3 | option entry: `AccessibilityCore` (for `AccessibilityCore.get_settings`) is not a module the game uses',
+      'client/features:1 | option entry: `NativeUiCore` (for `NativeUiCore.copy_text`) is not a module the game uses',
+    ]));
+  });
+});
+
+describe('gamepad input', () => {
+  const CONTENT = [
+    'class_name PlayHud',
+    'func f() -> void:',
+    '\tif InputCore.get_device() == InputCore.InputDevice.GAMEPAD:',
+    '\t\tpass',
+    '\tvar family: GameData.InputPromptFamily = GameData.InputPromptFamily.PLAY_STATION',
+    '\tInputCore.get_pad_buttons(&"jump", PackedStringArray())',
+    '\tEventCore.subscribe(GamepadConnectionChangedEvent, _on_pad)',
+    '\tif InputCore.get_device() == InputCore.InputDevice.TOUCH and family == GameData.InputPromptFamily.TOUCH:',
+    '\t\tInputCore.get_keys(&"jump", PackedStringArray())',
+    '',
+  ].join('\n');
+  const PROJECT = project({ ...CORE_INPUT, aim: ['InputEventJoypadMotion'], fire: ['InputEventKey', 'InputEventMouseButton'], jump: ['InputEventKey', 'InputEventJoypadButton'] });
+
+  it('reports gamepad bindings of content actions and gamepad names in content code while gamepadSupported is not true', async () => {
+    const files = { 'client/project.godot': PROJECT, 'client/features/play/play_hud.gd': CONTENT, 'client/dev/pad.gd': CONTENT, 'client/tests/test_pad.gd': CONTENT };
+    const unsupported = 'while game settings `gamepadSupported` is not `true`';
+    const name = (row: number, text: string): string => `client/features/play/play_hud.gd:${String(row)} | gamepad input: \`${text}\` is gamepad input ${unsupported}`;
+    const action = (text: string): string =>
+      `client/project.godot:${String(lineOf(PROJECT, `${text}=`))} | gamepad input: action \`${text}\` has a gamepad button or gamepad axis direction in its default binding ${unsupported}`;
+    const expected = sorted([
+      action('aim'), action('jump'),
+      name(3, 'InputCore.InputDevice.GAMEPAD'), name(5, 'GameData.InputPromptFamily.PLAY_STATION'), name(6, 'InputCore.get_pad_buttons'), name(7, 'GamepadConnectionChangedEvent'),
+    ]);
+    expect(lines(await gamepadInput.run(memContext({ ...files, 'settings.json': '{}' })))).toEqual(expected);
+    expect(lines(await gamepadInput.run(memContext({ ...files, 'settings.json': '{"gamepadSupported": false}' })))).toEqual(expected);
+    expect(await gamepadInput.run(memContext({ ...files, 'settings.json': '{"gamepadSupported": true}' }))).toEqual([]);
+  });
+
+  it('passes core actions with gamepad bindings, ui_ actions and content actions without them', async () => {
+    const sc = memContext({
+      'settings.json': '{}',
+      'client/project.godot': project({ ...CORE_INPUT, fire: ['InputEventKey', 'InputEventMouseButton'], ui_accept: ['InputEventJoypadButton'] }),
+      'client/features/play/play_hud.gd': 'class_name PlayHud\nfunc f() -> void:\n\tif InputCore.get_device() == InputCore.InputDevice.KEYBOARD_MOUSE:\n\t\tInputCore.get_keys(&"fire", PackedStringArray())\n',
+    });
+    expect(await gamepadInput.run(sc)).toEqual([]);
   });
 });

@@ -19,7 +19,7 @@ vi.mock('../../../../src/commands/env/api.ts', () => ({
 }));
 vi.mock('../../../../src/commands/generate/api.ts', () => ({
   runGenerate: () => Promise.resolve(),
-  gameModules: () => Promise.resolve({ client: [], server: [] }),
+  gameModules: () => Promise.resolve({ client: ['AuthCore', 'NativeUiCore', 'SoundCore', 'UICore'], server: [] }),
   gameCoreSpec: () => Promise.resolve({ version: '1.0.0', modules: [] }),
 }));
 vi.mock('../../../../src/commands/data/api.ts', () => ({
@@ -32,7 +32,10 @@ vi.mock('../../../../src/commands/settings/api.ts', () => ({
   gameCheckErrors: () => (mocks.failCheck ? Promise.reject(new OgwError('game check broke')) : Promise.resolve([])),
 }));
 
-const ALWAYS = ['AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code'];
+const ALWAYS = [
+  'AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code',
+  'SoundCore.get_volume(SoundCore.SoundBus.UI)', 'SoundCore.set_volume(SoundCore.SoundBus.UI, 1.0)',
+];
 
 async function setup(
   files: Record<string, string | object>,
@@ -58,7 +61,7 @@ const GAME = {
     ],
     goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 },
   },
-  'client/features/options/options_panel.gd': `class_name OptionsPanel\nfunc f() -> void:\n${ALWAYS.map((c) => `\t${c}()`).join('\n')}\n`,
+  'client/features/options/options_panel.gd': `class_name OptionsPanel\nfunc f() -> void:\n${ALWAYS.map((c) => `\t${c.includes('(') ? c : `${c}()`}`).join('\n')}\n`,
   // every release asset is `empty/`: the client zip's `core/` is absent, so `client/core/` is empty
   'server/core/engine.json': '{"godot": "4.5.1.stable"}',
 };
@@ -70,7 +73,7 @@ describe('staticCheck', () => {
       'frame polling', 'haptic format', 'embedded script', 'theme only', 'font weight', 'scene links', 'tween preset', 'finite tween', 'system clock', 'game state lock', 'shared formula', 'bot scenario', 'option entry',
       'game settings owner', 'design target', 'simulation target', 'feature boundary', 'forbidden GDScript API', 'settings access',
       'resource load', 'engine random', 'data mutation', 'frame code', 'literal timing', 'object destroy', 'determinism',
-      'virtual pad layout', 'format args', 'action reference', 'anchor reference', 'shortcut root panel', 'play guide input',
+      'virtual pad layout', 'format args', 'action reference', 'anchor reference', 'gamepad input', 'shortcut root panel', 'play guide input',
     ]);
   });
 
