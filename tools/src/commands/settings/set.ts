@@ -4,7 +4,8 @@ import { writeChecked } from './lib/change.ts';
 import { display, setAt } from './lib/json-path.ts';
 import { containerKinds, parsePath, withTarget, withValue } from './lib/target.ts';
 
-function parseValue(text: string): unknown {
+/** A `<JSON value>` argument of `ogw settings set`. */
+export function parseValue(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {

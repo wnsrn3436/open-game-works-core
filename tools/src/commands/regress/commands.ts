@@ -7,6 +7,7 @@ import { exists, readJson, readJsonIfExists, writeJsonAtomic } from '../../lib/f
 import { git, gitLine, head, revParse, statusLines, tagExists } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { harnessCoreVersion } from '../core/lib/harness-core.ts';
+import { parseValue } from '../settings/set.ts';
 import { makeCopyRepo } from './lib/copy.ts';
 import { baseTag, refresh } from './lib/refresh.ts';
 import {
@@ -68,7 +69,7 @@ export const initCommand: CommandDef = {
       for (const seed of await listSeeds(ws.regress)) if (!states.some((s) => s.state === seed.manifest.state)) throw new OgwError(`seed ${seed.id}: state ${seed.manifest.state} is not in ${join(bootstrap, STATES_FILE)}`);
       const entries: StateEntry[] = [];
       for (const entry of states) {
-        entries.push(await makeState(ctx, entry.state, entry.game, entry.commit));
+        entries.push({ ...(await makeState(ctx, entry.state, entry.game, entry.commit)), ...(entry.settings === undefined ? {} : { settings: entry.settings }) });
         made.push(stateGame(entry.state));
       }
       await writeStates(ws.regress, entries);
@@ -104,6 +105,27 @@ export const stateCommand: CommandDef = {
       await writeStates(repo, [...states, entry]);
       await commitRegress(ctx, repo, [STATES_FILE], `regress state ${state}`);
       return { text: `state ${state}: ${stateGame(state)} from ${game} ${entry.commit}`, data: entry };
+    });
+  },
+};
+
+export const settingsCommand: CommandDef = {
+  name: ['regress', 'settings'],
+  usage: 'ogw regress settings <state> <path> <JSON value> [<path> <JSON value>]...',
+  async run(ctx, args) {
+    const [state, ...rest] = args.positionals;
+    if (state === undefined || rest.length < 2 || rest.length % 2 !== 0) throw new OgwError(`usage: ${this.usage}`);
+    const pairs: [string, unknown][] = [];
+    for (let i = 0; i < rest.length; i += 2) pairs.push([rest[i] as string, parseValue(rest[i + 1] as string)]);
+    const repo = await regressRepo(ctx);
+    return withRegressLock(ctx, repo, async () => {
+      const states = await readStates(repo);
+      const entry = states.find((s) => s.state === state);
+      if (entry === undefined) throw new OgwError(`state ${state} is not in ${STATES_FILE}`);
+      const settings = { ...entry.settings, ...Object.fromEntries(pairs) };
+      await writeStates(repo, states.map((s) => (s === entry ? { ...s, settings } : s)));
+      await commitRegress(ctx, repo, [STATES_FILE], `regress settings ${state}`);
+      return { text: pairs.map(([path]) => `set ${path}`).join('\n'), data: { state, settings } };
     });
   },
 };
@@ -173,7 +195,7 @@ export const refreshCommand: CommandDef = {
       const done = await refresh(ctx, repo, self, version, await listSeeds(repo), null);
       await commitRegress(ctx, repo, done.paths, `regress refresh ${version}`);
       const lines = [
-        ...done.states.map((s) => `state ${s.state}: ${s.tag ?? `no ${baseTag(version)} (${s.upgrade}; ${s.content}; ${s.checks})`}`),
+        ...done.states.map((s) => `state ${s.state}: ${s.tag ?? `no ${baseTag(version)} (${s.settings}; ${s.upgrade}; ${s.content}; ${s.checks})`}`),
         ...done.seeds.map((s) => `seed ${s.seed}: ${s.admission.result}${s.admission.reason === null ? '' : ` (${s.admission.reason})`}`),
         `record: ${join(repo, 'records', `refresh-${version}.md`)}`,
       ];

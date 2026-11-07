@@ -2,21 +2,43 @@
   {
     "state": "lantern-crypt",
     "game": "open-game-works-game-lantern-crypt",
-    "commit": "8f94d651cf8f807d007e89a93fc5f614ba367469"
+    "commit": "8f94d651cf8f807d007e89a93fc5f614ba367469",
+    "settings": {
+      "uiCheckScreens.0.pixelRatio": 1,
+      "uiCheckScreens.1.pixelRatio": 2,
+      "uiCheckScreens.2.pixelRatio": 1,
+      "uiCheckScreens.3.pixelRatio": 1
+    }
   },
   {
     "state": "block-stack",
     "game": "open-game-works-game-block-stack",
-    "commit": "8d286ea22ec865291038412164000e62d9772cb4"
+    "commit": "8d286ea22ec865291038412164000e62d9772cb4",
+    "settings": {
+      "uiCheckScreens.0.pixelRatio": 1,
+      "uiCheckScreens.1.pixelRatio": 1
+    }
   },
   {
     "state": "iso-survivors",
     "game": "open-game-works-game-iso-survivors",
-    "commit": "1dd7e1cfdd8463f84b24b91e334563659b44fdea"
+    "commit": "1dd7e1cfdd8463f84b24b91e334563659b44fdea",
+    "settings": {
+      "uiCheckScreens.0.pixelRatio": 1,
+      "uiCheckScreens.1.pixelRatio": 2,
+      "uiCheckScreens.2.pixelRatio": 1,
+      "uiCheckScreens.3.pixelRatio": 1
+    }
   },
   {
     "state": "mana-clash",
     "game": "open-game-works-game-mana-clash",
-    "commit": "09ee0d70d77cfe7f0711c6d4d138818ac246c21a"
+    "commit": "09ee0d70d77cfe7f0711c6d4d138818ac246c21a",
+    "settings": {
+      "uiCheckScreens.0.pixelRatio": 1,
+      "uiCheckScreens.1.pixelRatio": 2,
+      "uiCheckScreens.2.pixelRatio": 1,
+      "uiCheckScreens.3.pixelRatio": 1
+    }
   }
 ]

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { regressChecks, type CheckResult } from '../../../src/commands/check/api.ts';
 import { sideAgent, sideProbe } from '../../../src/commands/regress/lib/side.ts';
-import { upgradeCore } from '../../../src/commands/regress/lib/ops.ts';
+import { stateSettings, upgradeCore } from '../../../src/commands/regress/lib/ops.ts';
 import { withRegressLock } from '../../../src/commands/regress/lib/repo.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
 import { ogw, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
@@ -13,7 +13,7 @@ vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
   regressChecks: vi.fn(),
 }));
-vi.mock('../../../src/commands/regress/lib/ops.ts', () => ({ upgradeCore: vi.fn(), dataTool: vi.fn(() => Promise.resolve(null)) }));
+vi.mock('../../../src/commands/regress/lib/ops.ts', () => ({ upgradeCore: vi.fn(), stateSettings: vi.fn(), dataTool: vi.fn(() => Promise.resolve(null)) }));
 vi.mock('../../../src/commands/regress/lib/side.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/regress/lib/side.ts')>()),
   sideAgent: vi.fn(),
@@ -39,8 +39,8 @@ function patchOf(to: string): string {
 }
 
 /** A harness with the bootstrap folder `regress/` of one state and the given seeds, at core version 1.0.0. */
-function bootstrap(ws: TestWorkspace, commit: string, seeds: Record<string, { manifest: object; patch: string; reference?: string; oracle?: boolean }>): void {
-  write(ws.harness, 'regress/states.json', JSON.stringify([{ state: 'lc', game: 'src', commit }]));
+function bootstrap(ws: TestWorkspace, commit: string, seeds: Record<string, { manifest: object; patch: string; reference?: string; oracle?: boolean }>, settings?: Record<string, unknown>): void {
+  write(ws.harness, 'regress/states.json', JSON.stringify([{ state: 'lc', game: 'src', commit, ...(settings === undefined ? {} : { settings }) }]));
   for (const [id, seed] of Object.entries(seeds)) {
     write(ws.harness, `regress/seeds/${id}/seed.json`, JSON.stringify(seed.manifest));
     write(ws.harness, `regress/seeds/${id}/patch-0.9.0.diff`, seed.patch);
@@ -66,6 +66,7 @@ function fakeChecks(): void {
 beforeEach(() => {
   vi.mocked(regressChecks).mockReset();
   vi.mocked(upgradeCore).mockReset();
+  vi.mocked(stateSettings).mockReset().mockResolvedValue({ ok: true, text: 'none' });
   vi.mocked(sideAgent).mockReset();
   vi.mocked(sideProbe).mockReset();
   fakeChecks();
@@ -117,6 +118,62 @@ describe('ogw regress init, state, status', () => {
   });
 });
 
+describe('ogw regress settings', () => {
+  it('keeps the settings of a state from regress/ of the harness, and writes values over them, one commit each', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    bootstrap(ws, commit, {}, { 'uiCheckScreens.0.pixelRatio': 1 });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const states = (): unknown => JSON.parse(readFileSync(join(ws.regress, 'states.json'), 'utf8'));
+    expect(states()).toEqual([{ state: 'lc', game: 'src', commit, settings: { 'uiCheckScreens.0.pixelRatio': 1 } }]);
+    const run = await ogw(ws, ['regress', 'settings', 'lc', 'uiCheckScreens.0.pixelRatio', '2', 'uiCheckScreens.1.pixelRatio', '1']);
+    expect(run).toMatchObject({ code: 0, stdout: 'set uiCheckScreens.0.pixelRatio\nset uiCheckScreens.1.pixelRatio\n' });
+    expect(states()).toEqual([{ state: 'lc', game: 'src', commit, settings: { 'uiCheckScreens.0.pixelRatio': 2, 'uiCheckScreens.1.pixelRatio': 1 } }]);
+    expect(sh(ws.regress, 'git', ['log', '-1', '--format=%s']).trim()).toBe('regress settings lc');
+    expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
+    expect((await ogw(ws, ['regress', 'settings', 'nowhere', 'a', '1'])).stderr).toBe('state nowhere is not in states.json\n');
+    expect((await ogw(ws, ['regress', 'settings', 'lc', 'a', 'not json'])).stderr).toBe('not a JSON value: not json\n');
+    expect((await ogw(ws, ['regress', 'settings', 'lc', 'a'])).stderr).toBe('usage: ogw regress settings <state> <path> <JSON value> [<path> <JSON value>]...\n');
+    expect(states()).toEqual([{ state: 'lc', game: 'src', commit, settings: { 'uiCheckScreens.0.pixelRatio': 2, 'uiCheckScreens.1.pixelRatio': 1 } }]);
+  });
+
+  it('writes the settings of a state below the core version of the harness before its upgrade, and stops there when a lead value is missing', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    bootstrap(ws, commit, { S01: { manifest: MANIFEST, patch: patchOf('leak') } }, { 'uiCheckScreens.0.pixelRatio': 1 });
+    sh(ws.harness, 'git', ['tag', 'core-v2.0.0']);
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const order: string[] = [];
+    vi.mocked(stateSettings).mockImplementation((_ctx, game, values, version) => {
+      order.push(`settings ${game.name} ${JSON.stringify(values)} ${version}`);
+      return Promise.resolve({ ok: false, text: 'missing: uiCheckScreens.1.pixelRatio' });
+    });
+    vi.mocked(upgradeCore).mockImplementation(() => {
+      order.push('upgrade');
+      return Promise.resolve({ ok: true, text: '2.0.0' });
+    });
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(order).toEqual(['settings ogw-regress-lc {"uiCheckScreens.0.pixelRatio":1} 2.0.0']);
+    expect(sideAgent).not.toHaveBeenCalled();
+    expect(regressChecks).not.toHaveBeenCalled();
+    expect(run.stdout).toContain('state lc: no base-2.0.0 (missing: uiCheckScreens.1.pixelRatio; none; none; none)');
+    expect(run.stdout).toContain('seed S01: stale (base fails target: lc missing: uiCheckScreens.1.pixelRatio; none; none; none)');
+    const record = readFileSync(join(ws.regress, 'records', 'refresh-2.0.0.md'), 'utf8');
+    expect(record).toContain('| state | from | settings | upgrade | content job | base checks | base failures | tag |');
+    expect(record).toContain('| lc | 1.0.0 | missing: uiCheckScreens.1.pixelRatio | none | none | none | none | none |');
+    // with the value written, the next refresh goes on to the upgrade
+    order.length = 0;
+    vi.mocked(stateSettings).mockImplementation(() => {
+      order.push('settings');
+      return Promise.resolve({ ok: true, text: 'set' });
+    });
+    vi.mocked(sideAgent).mockResolvedValue({ job: 'c1', status: 'done', output: null, reason: null });
+    await ogw(ws, ['regress', 'refresh']);
+    expect(order).toEqual(['settings', 'upgrade']);
+    expect(readFileSync(join(ws.regress, 'records', 'refresh-2.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | set | to 2.0.0 |');
+  });
+});
+
 describe('ogw regress refresh and admission', () => {
   it('checks and tags the base, admits a caught seed and keeps its patch, base checks and record', async () => {
     const ws = makeWorkspace();
@@ -141,7 +198,7 @@ describe('ogw regress refresh and admission', () => {
     expect(vi.mocked(regressChecks).mock.calls.slice(0, 3).every((c) => c[3].performance)).toBe(true);
     expect(existsSync(join(ws.regress, 'records/refresh-1.0.0/lc-base-1.json'))).toBe(true);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| lc | 1.0.0 | none | none | 3 clean | none | base-1.0.0 |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | 3 clean | none | base-1.0.0 |');
     expect(record).toContain('| S01 | admitted | none | caught, caught, caught | none |');
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
     expect((await ogw(ws, ['regress', 'status'])).stdout).toContain('state lc: base-1.0.0\nseed S01: admitted\n');

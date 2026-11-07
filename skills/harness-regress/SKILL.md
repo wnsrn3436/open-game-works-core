@@ -19,6 +19,7 @@ description: Holds the terms of the regression suite and the procedure in which 
 
 1. Run `ogw regress status`. When there is no regress repo, run `ogw regress init`
 2. When a seed is `not admitted` at the core version of the harness, or a state has no base at it, tell the human that `ogw regress refresh` runs one content agent per state whose core is below that version and the checks of every state and seed, and run `ogw regress refresh --background` when the human says yes. Wait with `ogw job wait <id>`. Report the stale seeds with their reasons: a stale seed stays `unknown` in runs until the human gives a new patch, which goes in with `ogw regress seed <folder> --background`
+   - When the record gives a state `settings` `missing: <path>, ...`, decide each value as `## procedure` 4 of [game-setup](../game-setup/SKILL.md) decides it, from the game settings of `ogw-regress-<state>` and `ogw settings describe game ogw-regress-<state> <path>` (e.g. `pixelRatio` from the device that the `uiCheckScreens` item models), write them once with `ogw regress settings <state> <path> <JSON value> [<path> <JSON value>]...`, and run the refresh again. Ask the human a value that cannot be decided that way
 3. Decide the sides from the request:
    - before: by default the accepted harness. Without one, ask the human, with the harness commit before the change as the recommendation
    - after: by default the harness HEAD, committed
@@ -30,5 +31,5 @@ description: Holds the terms of the regression suite and the procedure in which 
 
 ## rules
 
-- Read only `ogw regress status`, the reports and the refresh records. Do not read `seeds/` of the regress repo or `regress/` of the harness repo, and do not open the fix repos or the `<seed-run>.diff` files: a harness edited with the seeds in view is fitted to them
+- Read only `ogw regress status`, the reports, the refresh records and, for missing state settings, the game settings of the states through `ogw settings`. Do not read `seeds/` of the regress repo or `regress/` of the harness repo, and do not open the fix repos or the `<seed-run>.diff` files: a harness edited with the seeds in view is fitted to them
 - An `unknown` seed or seed-run is not a defect to fix; report it with its reason

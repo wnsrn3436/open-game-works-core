@@ -17,6 +17,8 @@ export interface StateEntry {
   state: string;
   game: string;
   commit: string;
+  /** The game settings values the state needs and its source commit lacks, by `ogw settings set` path. */
+  settings?: Record<string, unknown>;
 }
 
 export interface MatchItem {

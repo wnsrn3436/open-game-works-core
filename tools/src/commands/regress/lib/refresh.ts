@@ -17,7 +17,7 @@ import { document, renderTable } from '../../loop/lib/markdown.ts';
 import { costRows, renderCost } from '../../loop/lib/cost.ts';
 import type { JobRecord } from '../../../lib/jobs.ts';
 import { catchOf, cleanFor, keysOf, targetChecks, type RegressCheckFile } from './keys.ts';
-import { dataTool, upgradeCore } from './ops.ts';
+import { dataTool, stateSettings, upgradeCore } from './ops.ts';
 import { admissionPath, latestPatch, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
 import { jobFacts, sideAgent, sideCheck, sideProbe, type Side } from './side.ts';
 import { pooled } from './pool.ts';
@@ -144,6 +144,8 @@ export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admiss
 export interface StateRefresh {
   state: string;
   from: string;
+  /** The `settings` column of the record. */
+  settings: string;
   upgrade: string;
   content: string;
   checks: string;
@@ -206,10 +208,10 @@ async function checkBase(ctx: Context, repo: string, self: Side, state: string, 
 }
 
 /** Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 3). */
-export async function refreshState(ctx: Context, repo: string, self: Side, state: string, version: string, seeds: readonly Seed[]): Promise<StateRefresh> {
+export async function refreshState(ctx: Context, repo: string, self: Side, state: string, version: string, seeds: readonly Seed[], settings: Readonly<Record<string, unknown>>): Promise<StateRefresh> {
   const game = await ctx.game(stateGame(state));
   const tag = baseTag(version);
-  const out: StateRefresh = { state, from: '', upgrade: 'none', content: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
+  const out: StateRefresh = { state, from: '', settings: 'none', upgrade: 'none', content: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
   if (await tagExists(game.root, tag, { env: ctx.env })) {
     const base = (await revParse(game.root, `refs/tags/${tag}`, { env: ctx.env })) as string;
     out.from = await coreVersionAt(ctx, game.root, base);
@@ -227,6 +229,9 @@ export async function refreshState(ctx: Context, repo: string, self: Side, state
   await git(game.root, ['checkout', '--quiet', 'main'], { env: ctx.env });
   out.from = await coreVersionAt(ctx, game.root, 'main');
   if (compareVersions(out.from, version) < 0) {
+    const written = await stateSettings(ctx, game, settings, version);
+    out.settings = written.text;
+    if (!written.ok) return out;
     const upgraded = await upgradeCore(ctx, game.name, version);
     out.upgrade = upgraded.ok ? `to ${version}` : `failed: ${upgraded.text.split('\n')[0] ?? ''}`;
     if (!upgraded.ok) return out;
@@ -257,7 +262,7 @@ export async function refreshRecord(ctx: Context, states: readonly StateRefresh[
   const jobs: JobRecord[] = [];
   for (const id of states.flatMap((s) => s.jobs)) jobs.push({ meta: { role: 'content', usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
   return document([
-    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'upgrade', 'content job', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.upgrade, s.content, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
+    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
     ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`]))],
     ['cost', renderCost(costRows(jobs, true))],
   ]);
@@ -268,15 +273,17 @@ export async function refreshRecord(ctx: Context, states: readonly StateRefresh[
  * regress repo, for the commit.
  */
 export async function refresh(ctx: Context, repo: string, self: Side, version: string, seeds: readonly Seed[], onlyStates: readonly string[] | null): Promise<{ paths: string[]; states: StateRefresh[]; seeds: SeedRefresh[] }> {
-  const known = (await readStates(repo)).map((s) => s.state);
-  const states = onlyStates ?? known;
+  const entries = await readStates(repo);
+  const states = onlyStates ?? entries.map((s) => s.state);
   const parallel = (await ctx.settings()).regress.parallel;
-  const refreshed = await pooled(states, parallel, (state) => refreshState(ctx, repo, self, state, version, seeds.filter((s) => s.manifest.state === state)));
+  const refreshed = await pooled(states, parallel, (state) =>
+    refreshState(ctx, repo, self, state, version, seeds.filter((s) => s.manifest.state === state), entries.find((e) => e.state === state)?.settings ?? {}),
+  );
   const results = await Promise.all(
     seeds.map(async (seed): Promise<SeedRefresh> => {
       const state = refreshed.find((s) => s.state === seed.manifest.state);
       if (state === undefined || state.base === null || state.baseChecks.length === 0) {
-        return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : `${state.upgrade}; ${state.content}; ${state.checks}`}`) };
+        return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : `${state.settings}; ${state.upgrade}; ${state.content}; ${state.checks}`}`) };
       }
       return { seed: seed.id, admission: await admitSeed(ctx, { repo, seed, version, base: state.base, baseChecks: state.baseChecks, self }) };
     }),
