@@ -95,27 +95,6 @@ describe('blockingMethods', () => {
     expect(await blockingMethods(ctx, game, 'model/rock')).toEqual([]);
   });
 
-  it('needs flux2-klein installed for z-image-turbo, which calls it, and font-catalog too for a logo it draws', async () => {
-    const ZIT = { name: 'z-image-turbo', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins: PINS, measured: [{ resolution: 512, result: 'ok' }] };
-    const LOGOTYPE = { name: 'logotype', kind: 'procedural', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ result: 'ok' }] };
-    const ws = makeWorkspace({ resourceGeneration: [IMAGE, ZIT, LOGOTYPE, FONTS], imageMethod: 'z-image-turbo' });
-    makeGame(ws, 'g', { 'resource/resources.csv': `${RESOURCES}image/logo/ko,logo,size=1024x512;alpha=true,placeholder,,,,,,,,\n` });
-    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    const game = await ctx.game('g');
-    expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['z-image-turbo', 'flux2-klein']);
-    expect(await blockingMethods(ctx, game, 'image/logo/ko')).toEqual(['z-image-turbo', 'flux2-klein', 'font-catalog']);
-    await writeInstall(ws, ZIT);
-    expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['flux2-klein']);
-    expect(await blockingMethods(ctx, game, 'image/logo/ko')).toEqual(['flux2-klein', 'font-catalog']);
-    await install(ws, 'flux2-klein');
-    expect(await blockingMethods(ctx, game, 'image/hero')).toEqual([]);
-    expect(await blockingMethods(ctx, game, 'image/logo/ko')).toEqual(['font-catalog']);
-    const names = async (key: string): Promise<string[]> => (await generationMethods(ctx, game, key)).map((c) => `${c.name}${c.notInstalled === true ? ' not installed' : ''}`);
-    expect(await names('image/hero')).toEqual(['z-image-turbo', 'flux2-klein']);
-    await install(ws, 'font-catalog');
-    expect(await blockingMethods(ctx, game, 'image/logo/ko')).toEqual([]);
-  });
-
   it('treats a provider method installed for another ffmpeg as another install, which leaves it not installed here', async () => {
     const { ws, ctx, game } = await open();
     // the install of a checkout whose cli puts its own ffmpeg on PATH, while this one has none installed: another key

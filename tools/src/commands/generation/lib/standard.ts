@@ -398,43 +398,6 @@ async function flux2Call(input: CallInput): Promise<Call[]> {
   return [generate, await backgroundCall(input, python, env)];
 }
 
-/**
- * Bits of the on-the-fly quantization of `z-image-turbo`: its bf16 weights (a 6B transformer and a 4B text encoder,
- * about 20 GB) leave a 24 GB host no room, and 8 bits is the quantization mflux documents for it.
- */
-export const Z_IMAGE_QUANTIZE = 8;
-/** Inference steps of `z-image-turbo`: the step count of its distillation, which mflux defaults to. */
-export const Z_IMAGE_STEPS = 9;
-
-async function zImageTurboCall(input: CallInput): Promise<Call[]> {
-  if (input.images.length > 0) throw new OgwError('z-image-turbo takes no --image: it draws from text alone, and an image made from reference images is a flux2-klein call (production.md ## method)');
-  const python = pythonOf(input);
-  const env = await modelEnv(input);
-  const [width, height] = imageSize(input.stage?.resolution, input.size);
-  const generate: Call = {
-    cmd: venvProgram(python, 'mflux-generate-z-image-turbo'),
-    args: [
-      '--model',
-      hfDir(input),
-      '--quantize',
-      String(Z_IMAGE_QUANTIZE),
-      '--steps',
-      String(Z_IMAGE_STEPS),
-      '--prompt-file',
-      input.promptFile,
-      '--width',
-      String(width),
-      '--height',
-      String(height),
-      '--output',
-      join(input.out, 'image.png'),
-      ...(input.seed === null ? [] : ['--seed', String(input.seed)]),
-    ],
-    env,
-  };
-  return [generate, await backgroundCall(input, python, env)];
-}
-
 /** Writes the item list of a driver call next to the prompt of the first item, which the call reads. */
 async function jobsFile(inputs: readonly CallInput[], items: readonly Record<string, unknown>[]): Promise<string> {
   const file = `${first(inputs).promptFile}.jobs.json`;
@@ -492,25 +455,14 @@ async function blenderCall(input: CallInput): Promise<Call> {
 /** The standard test prompt of `qwen3-tts`: a JSON object (`tools/ogw.md` `## generation call`). */
 const QWEN3_TTS_PROMPT = `${JSON.stringify({ text: 'Welcome back, hero. The gate to the next stage is open.', speaker: 'Ryan', language: 'English' })}\n`;
 
-/** The standard stages and the standard test prompt of the text-to-image methods. */
-const IMAGE_STAGES: StageValues[] = [{ resolution: 512 }, { resolution: 1024 }, { resolution: 2048 }];
-const IMAGE_PROMPT = 'A red apple game item, centered, plain background, front view.';
-
 /** Standard test jobs, fixed in the tool. A method missing here has no standard test job and no `generation run` call. */
 export const STANDARD_JOBS: Record<string, StandardJob> = {
   'flux2-klein': {
-    stages: IMAGE_STAGES,
-    prompt: IMAGE_PROMPT,
+    stages: [{ resolution: 512 }, { resolution: 1024 }, { resolution: 2048 }],
+    prompt: 'A red apple game item, centered, plain background, front view.',
     image: false,
     outputs: ['image.png', 'image-alpha.png'],
     call: flux2Call,
-  },
-  'z-image-turbo': {
-    stages: IMAGE_STAGES,
-    prompt: IMAGE_PROMPT,
-    image: false,
-    outputs: ['image.png', 'image-alpha.png'],
-    call: zImageTurboCall,
   },
   'ace-step': {
     stages: [{ durationMs: 30000 }, { durationMs: 60000 }, { durationMs: 120000 }, { durationMs: 240000 }],

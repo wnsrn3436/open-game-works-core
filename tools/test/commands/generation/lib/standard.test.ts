@@ -84,8 +84,6 @@ describe('standard test jobs', () => {
     expect(STANDARD_SEED).toBe(42);
     expect(DEFAULT_RESOLUTION).toBe(1024);
     expect(STANDARD_JOBS['flux2-klein']).toMatchObject({ stages: [{ resolution: 512 }, { resolution: 1024 }, { resolution: 2048 }], image: false, outputs: ['image.png', 'image-alpha.png'] });
-    expect(STANDARD_JOBS['z-image-turbo']).toMatchObject({ stages: [{ resolution: 512 }, { resolution: 1024 }, { resolution: 2048 }], image: false, outputs: ['image.png', 'image-alpha.png'] });
-    expect(STANDARD_JOBS['z-image-turbo']?.prompt).toBe(STANDARD_JOBS['flux2-klein']?.prompt);
     expect(STANDARD_JOBS['ace-step']).toMatchObject({ stages: [{ durationMs: 30000 }, { durationMs: 60000 }, { durationMs: 120000 }, { durationMs: 240000 }], image: false });
     expect(STANDARD_JOBS['ace-step']?.outputs).toEqual(['music.wav', 'music.json']);
     expect(STANDARD_JOBS['moss-sfx']).toMatchObject({ stages: [{ durationMs: 1000 }, { durationMs: 3000 }, { durationMs: 10000 }], outputs: ['sound.wav'] });
@@ -155,27 +153,6 @@ describe('standard test jobs', () => {
     await expect(calls('flux2-klein', { marker: marker('/m', { files: null }) })).rejects.toThrow('method flux2-klein has no file pin');
     await expect(calls('flux2-klein', { marker: marker('/m', { python: null }) })).rejects.toThrow('method flux2-klein has no Python environment: its pins have no git or pip pin');
     await expect(calls('flux2-klein', { marker: null })).rejects.toThrow('method flux2-klein has no Python environment');
-  });
-
-  it('calls mflux z-image-turbo with 8-bit quantization and 9 steps, then rembg, and refuses an image', async () => {
-    const { list, input: i } = await calls('z-image-turbo', { stage: { resolution: 512 }, size: [256, 128], seed: 42 });
-    const bin = join(i.dir, 'venv', 'bin');
-    expect(list).toHaveLength(2);
-    expect(list[0]).toMatchObject({
-      cmd: join(bin, 'mflux-generate-z-image-turbo'),
-      args: ['--model', join(i.dir, 'hf', '1'), '--quantize', '8', '--steps', '9', '--prompt-file', i.promptFile, '--width', '512', '--height', '256', '--output', join(i.out, 'image.png'), '--seed', '42'],
-    });
-    expect(list[0]?.env).toMatchObject({ HOME: join(i.dir, 'home'), HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' });
-    expect(list[1]).toMatchObject({ cmd: join(bin, 'python'), args: [join(i.dir, 'drivers', 'ogw_rembg.py'), join(i.out, 'image.png'), join(i.out, 'image-alpha.png')] });
-    expect(list[1]?.env).toMatchObject({ U2NET_HOME: join(i.dir, 'files'), HF_HUB_OFFLINE: '1' });
-    expect(readFileSync(join(i.dir, 'drivers', 'ogw_rembg.py'), 'utf8')).toBe(DRIVERS.rembg);
-    // generation run: the default resolution without a stage, and no seed
-    const run = await calls('z-image-turbo');
-    expect(run.list[0]?.args.slice(6)).toEqual(['--prompt-file', run.input.promptFile, '--width', '1024', '--height', '1024', '--output', join(run.input.out, 'image.png')]);
-    await expect(calls('z-image-turbo', { images: ['/ref.png'] })).rejects.toThrow('z-image-turbo takes no --image: it draws from text alone, and an image made from reference images is a flux2-klein call (production.md ## method)');
-    await expect(calls('z-image-turbo', { marker: marker('/m', { files: null }) })).rejects.toThrow('method z-image-turbo has no file pin');
-    await expect(calls('z-image-turbo', { marker: marker('/m', { hf: [] }) })).rejects.toThrow('method z-image-turbo has no hf pin');
-    await expect(calls('z-image-turbo', { marker: null })).rejects.toThrow('method z-image-turbo has no Python environment');
   });
 
   it('names no driver file after a module the driver imports, and leaves no other file in drivers/', async () => {

@@ -60,11 +60,8 @@ export interface MethodChoice {
 }
 
 export const IMAGE_METHOD = 'flux2-klein';
-/**
- * The methods whose making calls `flux2-klein`: the part images of `rig-2d`, the source illustration of `trellis2`, and
- * the images `z-image-turbo` makes from reference images, as it draws from text alone (`production.md` `## method`).
- */
-const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2', 'z-image-turbo']);
+/** The methods whose making calls `flux2-klein`: the part images of `rig-2d` and the source illustration of `trellis2` (`production.md` `## method`). */
+const NEEDS_IMAGE_METHOD = new Set(['rig-2d', 'trellis2']);
 /** Image types: the image method of a game makes them (`production.md` `## method`). */
 export const IMAGE_TYPES: readonly string[] = ['image', 'sprite_sheet', 'icon', 'background', 'nine_slice', 'texture', 'skybox', 'app_icon', 'splash'];
 
