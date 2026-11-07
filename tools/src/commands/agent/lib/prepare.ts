@@ -51,6 +51,8 @@ export interface AgentRequest {
   variant?: number;
   /** content, translation: outside a run, in a game with the regression mark (ogw.md `## agent`, `### seed-run`). */
   seedRun?: SeedRun;
+  /** seed: the folder `ogw regress refresh` made for the agent, which holds its input (ogw.md `### seed agent`). */
+  seedPlace?: string;
 }
 
 /** The seed-run records `records/loops/<records>/` and the iteration of `ogw agent --seed-run <records>:<n>`. */
@@ -83,6 +85,7 @@ function checkRequest(request: AgentRequest): Role {
   if (!gameRole && request.game !== undefined) throw new OgwError(`--game is not given to role ${role}`);
   if (role !== 'core' && (request.modules ?? []).length > 0) throw new OgwError('--module is given only to role core');
   checkPlaces(role, request);
+  checkSeedPlace(role, request);
   return role;
 }
 
@@ -92,6 +95,12 @@ function checkPlaces(role: Role, request: AgentRequest): void {
   if (request.runPlace !== undefined && (role !== 'judge' || request.calibration !== undefined)) throw new OgwError('a run place is given only to role judge, without a calibration place');
   if (request.variant !== undefined && (role !== 'content' || !Number.isInteger(request.variant) || request.variant < 1)) throw new OgwError('a variant is a positive integer given only to role content');
   if (request.seedRun !== undefined && ((role !== 'content' && role !== 'translation') || request.variant !== undefined)) throw new OgwError('--seed-run is given only to role content or translation, without a variant');
+}
+
+/** The seed agent starts only with its folder, which `ogw regress refresh` makes (ogw.md `## agent`). */
+function checkSeedPlace(role: Role, request: AgentRequest): void {
+  if (role === 'seed' && request.seedPlace === undefined) throw new OgwError('the seed agent starts only in ogw regress refresh, which makes its folder');
+  if (role !== 'seed' && request.seedPlace !== undefined) throw new OgwError('a seed folder is given only to role seed');
 }
 
 /**
@@ -458,6 +467,21 @@ async function startCoreOrReview(ctx: Context, role: Role, meta: AgentMeta, base
   return launchJob(ctx, meta);
 }
 
+/**
+ * The seed agent (ogw.md `## agent`, `### seed agent`): in the folder `ogw regress refresh` made, which holds its input,
+ * with the result file `result.md` there; outside any run, with no session.
+ */
+function startSeedAgent(ctx: Context, meta: AgentMeta, folder: string): Promise<string> {
+  if (!isInside(folder, meta.input) || meta.input === folder) throw new OgwError(`the input of the seed agent is not in its folder ${folder}: ${meta.input}`);
+  meta.place = { kind: 'seed', dir: folder };
+  meta.folder = folder;
+  meta.output = join(folder, SEED_RESULT_FILE);
+  return launchJob(ctx, meta);
+}
+
+/** The result file of the seed agent in its folder. */
+export const SEED_RESULT_FILE = 'result.md';
+
 /** `ogw agent <role> ...`: checks the request, prepares the agent's folder and input, and starts its job. */
 export async function startAgent(ctx: Context, request: AgentRequest): Promise<string> {
   const role = checkRequest(request);
@@ -467,5 +491,6 @@ export async function startAgent(ctx: Context, request: AgentRequest): Promise<s
   const taskInput = request.taskInput === undefined ? input : resolve(ctx.cwd, request.taskInput);
   const meta = baseMeta(role, input, taskInput, request);
   if (request.baseCommit !== undefined && role !== 'review') throw new OgwError('a base commit is given only to role review');
+  if (role === 'seed') return startSeedAgent(ctx, meta, resolve(ctx.cwd, request.seedPlace as string));
   return GAME_ROLES.includes(role) ? startGameAgent(ctx, role, meta, request) : startCoreOrReview(ctx, role, meta, request.baseCommit);
 }

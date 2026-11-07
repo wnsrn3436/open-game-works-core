@@ -24,6 +24,8 @@ import { admissionPath, latestPatch, readStates, seedDir, stateGame, type Admiss
 import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type FixerRun, type Side } from './side.ts';
 import { checkInputs } from './inputs.ts';
 import { every, regressPool, type RegressPool } from './pool.ts';
+import { addedFailures } from './expect.ts';
+import { rebasable, rebaseSeed, rebaseText, type SeedRebase } from './rebase.ts';
 
 /** The number of checks of a base and of a seeded commit at admission. */
 export const ADMISSION_CHECKS = 3;
@@ -39,7 +41,7 @@ function baseChecksDir(repo: string, version: string): string {
 }
 
 function stale(reason: string, fields: Partial<Admission> = {}): Admission {
-  return { result: 'stale', base: null, seeded: null, reference: null, catch: [], oracle: null, reason, at: Date.now(), ...fields };
+  return { result: 'stale', base: null, seeded: null, reference: null, catch: [], oracle: null, reason, added: null, at: Date.now(), ...fields };
 }
 
 /** A checkout of the regression state at a worktree path, as `ctx.game` gives it there. */
@@ -112,7 +114,7 @@ async function applySeed(ctx: Context, input: AdmitInput, state: GameRepo): Prom
  * the same number, and its text for the stale reason: an `unknown` catch with why (the error of a check that did not
  * run, or the reason of the catch).
  */
-async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<{ catches: string[]; texts: string[] }> {
+async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<{ catches: string[]; texts: string[]; files: (RegressCheckFile | null)[] }> {
   const manifest = input.seed.manifest;
   const { self, pool } = input.run;
   const checks = manifest.expect === 'caught' ? targetChecks(manifest) : null;
@@ -121,10 +123,12 @@ async function admissionCatches(ctx: Context, input: AdmitInput, state: string, 
       const out = join(work, `seeded-${String(i + 1)}.json`);
       const checked = await pool.check(manifest.performance, () => sideCheck(ctx, self, { game: state, commit: seeded, out, checks, performance: manifest.performance, proof: null }));
       const base = input.baseChecks[i] ?? input.baseChecks[0];
-      return !('file' in checked) ? { catch: 'unknown', reason: checked.error } : base === undefined ? { catch: 'unknown', reason: 'no base check' } : catchOf(manifest, base, checked.file);
+      const file = 'file' in checked ? checked.file : null;
+      const result = !('file' in checked) ? { catch: 'unknown', reason: checked.error } : base === undefined ? { catch: 'unknown', reason: 'no base check' } : catchOf(manifest, base, checked.file);
+      return { ...result, file };
     }),
   );
-  return { catches: results.map((r) => r.catch), texts: results.map((r) => (r.catch === 'unknown' ? `unknown (${r.reason ?? ''})` : r.catch)) };
+  return { catches: results.map((r) => r.catch), texts: results.map((r) => (r.catch === 'unknown' ? `unknown (${r.reason ?? ''})` : r.catch)), files: results.map((r) => r.file) };
 }
 
 /** Step 4 of admission: the probes of the seeded commit and of the reference commit, together. */
@@ -160,8 +164,10 @@ export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admiss
   if ('result' in applied) return applied;
   const work = join(await dataDir(ctx), 'regress', `admit-${version}`, seed.id);
   await mkdir(work, { recursive: true });
-  const { catches, texts } = await admissionCatches(ctx, input, state.name, applied.seeded, work);
-  const fields = { base: input.base, seeded: applied.seeded, reference: applied.reference, catch: catches };
+  const { catches, texts, files } = await admissionCatches(ctx, input, state.name, applied.seeded, work);
+  // what `ogw regress expect` makes the target checks of a seed that the checks catch although no check was known to
+  const added = seed.manifest.expect === 'missed' ? addedFailures(files, input.baseChecks) : null;
+  const fields = { base: input.base, seeded: applied.seeded, reference: applied.reference, catch: catches, added };
   if (catches.some((c) => c !== seed.manifest.expect)) return stale(`not ${seed.manifest.expect}: ${texts.join(', ')}`, fields);
   let oracle: Admission['oracle'] = null;
   if (applied.reference !== null) {
@@ -361,22 +367,26 @@ export function untaggedWhy(state: StateRefresh): string {
 export interface SeedRefresh {
   seed: string;
   admission: Admission;
+  /** What the seed agent of the seed came to (`### seed agent`); absent or null when none ran. */
+  rebase?: SeedRebase | null;
 }
 
 /** `records/refresh-<v>.md`. */
 export async function refreshRecord(ctx: Context, states: readonly StateRefresh[], seeds: readonly SeedRefresh[]): Promise<string> {
   const jobs: JobRecord[] = [];
-  for (const { id, role } of states.flatMap((s) => s.jobs)) jobs.push({ meta: { role, usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
+  const seedJobs = seeds.flatMap((s) => (s.rebase?.job === null || s.rebase?.job === undefined ? [] : [{ id: s.rebase.job, role: 'seed' as const }]));
+  for (const { id, role } of [...states.flatMap((s) => s.jobs), ...seedJobs]) jobs.push({ meta: { role, usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
   return document([
     ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'translation', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.translation, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
-    ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`]))],
+    ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle', 'rebase'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`, rebaseText(s.rebase)]))],
     ['cost', renderCost(costRows(jobs, true))],
   ]);
 }
 
 /**
  * Refreshes the states of `seeds` at `version` and admits the seeds (`### regress refresh`), each seed once the refresh of
- * its state has ended: the paths it wrote in the regress repo, for the commit.
+ * its state has ended. With `rebase` (`ogw regress refresh`), a seed whose admission ends stale for a reason that goes to
+ * the seed agent is rebased then (`### seed agent`). The paths it wrote in the regress repo, for the commit.
  */
 export async function refresh(ctx: Context, repo: string, self: Side, version: string, seeds: readonly Seed[], onlyStates: readonly string[] | null): Promise<{ paths: string[]; states: StateRefresh[]; seeds: SeedRefresh[] }> {
   const entries = await readStates(repo);
@@ -386,10 +396,14 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
   const refreshing = new Map(states.map((state) => [state, refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {})]));
   const admitting = seeds.map(async (seed): Promise<SeedRefresh> => {
     const state = await refreshing.get(seed.manifest.state);
-    if (state === undefined || state.base === null || state.baseChecks.length === 0) {
+    if (state === undefined || state.base === null || state.tag === null || state.baseChecks.length === 0) {
       return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : untaggedWhy(state)}`) };
     }
-    return { seed: seed.id, admission: await admitSeed(ctx, { run, seed, base: state.base, baseChecks: state.baseChecks }) };
+    const input = { run, seed, base: state.base, baseChecks: state.baseChecks };
+    const admission = await admitSeed(ctx, input);
+    // `ogw regress seed` and `ogw regress expect` admit as they are; the refresh rebases when its seed's admission ends
+    if (onlyStates !== null || !rebasable(admission)) return { seed: seed.id, admission };
+    return { seed: seed.id, ...(await rebaseSeed(ctx, { run, tag: state.tag, admit: () => admitSeed(ctx, input) }, seed, admission)) };
   });
   const [refreshed, results] = await every([every([...refreshing.values()]), every(admitting)]);
   const paths: string[] = [];

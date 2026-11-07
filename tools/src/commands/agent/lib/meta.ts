@@ -34,7 +34,9 @@ export type AgentPlace =
   | { kind: 'game-worktree'; checkout: string; worktrees: string; branch: string; baseCommit: string }
   | { kind: 'core-worktree'; coreImpl: string; worktrees: string; baseCommit: string }
   | { kind: 'tool-worktree'; harness: string; baseCommit: string }
-  | { kind: 'temp'; dir: string; checkout: string };
+  | { kind: 'temp'; dir: string; checkout: string }
+  /** seed: the folder `ogw regress refresh` made, which holds the input and result file and which the refresh removes. */
+  | { kind: 'seed'; dir: string };
 
 /** Review fields of a review agent job, read from the review input. */
 export interface ReviewOf {

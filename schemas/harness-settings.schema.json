@@ -54,7 +54,8 @@
         "server-hardening",
         "client-hardening",
         "core",
-        "review"
+        "review",
+        "seed"
       ],
       "properties": {
         "content": {
@@ -82,6 +83,9 @@
           "$ref": "#/$defs/agent"
         },
         "review": {
+          "$ref": "#/$defs/agent"
+        },
+        "seed": {
           "$ref": "#/$defs/agent"
         }
       }

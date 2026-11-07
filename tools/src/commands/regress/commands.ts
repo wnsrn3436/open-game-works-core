@@ -9,7 +9,9 @@ import { LIMITS } from '../../lib/limits.ts';
 import { harnessCoreVersion } from '../core/lib/harness-core.ts';
 import { parseValue } from '../settings/set.ts';
 import { makeCopyRepo } from './lib/copy.ts';
-import { baseTag, refresh, untaggedWhy } from './lib/refresh.ts';
+import { ADMISSION_CHECKS, baseTag, refresh, untaggedWhy } from './lib/refresh.ts';
+import { caughtMatch, writeCaughtManifest } from './lib/expect.ts';
+import { rebaseText } from './lib/rebase.ts';
 import {
   ACCEPTED_FILE,
   admissionPath,
@@ -27,6 +29,8 @@ import {
   withRegressLock,
   writeStates,
   type Accepted,
+  type MatchItem,
+  type Seed,
   type StateEntry,
 } from './lib/repo.ts';
 import { totalsLines, type RunData } from './lib/report.ts';
@@ -196,7 +200,7 @@ export const refreshCommand: CommandDef = {
       await commitRegress(ctx, repo, done.paths, `regress refresh ${version}`);
       const lines = [
         ...done.states.map((s) => `state ${s.state}: ${s.tag ?? `no ${baseTag(version)} (${untaggedWhy(s)})`}`),
-        ...done.seeds.map((s) => `seed ${s.seed}: ${s.admission.result}${s.admission.reason === null ? '' : ` (${s.admission.reason})`}`),
+        ...done.seeds.map((s) => `seed ${s.seed}: ${s.admission.result}${s.admission.reason === null ? '' : ` (${s.admission.reason})`}${s.rebase === null || s.rebase === undefined ? '' : `; seed agent: ${rebaseText(s.rebase)}`}`),
         `record: ${join(repo, 'records', `refresh-${version}.md`)}`,
       ];
       const failed = done.seeds.some((s) => s.admission.result !== 'admitted');
@@ -231,6 +235,49 @@ export const seedCommand: CommandDef = {
       const admission = done.seeds[0]?.admission;
       const text = `seed ${id}: ${admission?.result ?? 'none'}${admission?.reason ? ` (${admission.reason})` : ''}`;
       return { exitCode: admission?.result === 'admitted' ? 0 : 1, text, data: { seed: id, admission } };
+    });
+  },
+};
+
+/**
+ * The seed of `ogw regress expect <seed> caught` and what its `match` becomes: a seed with `expect` `missed` whose
+ * admission at `version` is stale with each of its checks `caught`. Fails for any other seed.
+ */
+async function caughtSeed(repo: string, id: string, version: string): Promise<{ seed: Seed; made: { checks: string[]; match: MatchItem[] } }> {
+  const seed = (await listSeeds(repo)).find((s) => s.id === id);
+  if (seed === undefined) throw new OgwError(`no seed ${id} in ${join(repo, SEEDS_DIR)}`);
+  const admission = await readAdmission(repo, id, version);
+  const caughtEach = admission?.catch.length === ADMISSION_CHECKS && admission.catch.every((c) => c === 'caught');
+  if (seed.manifest.expect !== 'missed' || admission?.result !== 'stale' || !caughtEach) {
+    throw new OgwError(`seed ${id} is not a seed with expect missed whose admission at ${version} is stale with not missed: ${Array<string>(ADMISSION_CHECKS).fill('caught').join(', ')}`);
+  }
+  const made = caughtMatch(admission);
+  if ('error' in made) throw new OgwError(`seed ${id}: ${made.error}`);
+  return { seed, made };
+}
+
+export const expectCommand: CommandDef = {
+  name: ['regress', 'expect'],
+  usage: 'ogw regress expect <seed> caught [--background]',
+  background: { timeLimitMs: () => LIMITS.jobMs },
+  async run(ctx, args) {
+    expectPositionals(args, 2, 2, this.usage);
+    const id = positional(args, 0, 'seed');
+    if (positional(args, 1, 'expect') !== 'caught') throw new OgwError(`usage: ${this.usage}`);
+    const repo = await regressRepo(ctx);
+    const version = await harnessVersion(ctx);
+    return withRegressLock(ctx, repo, async () => {
+      const { seed, made } = await caughtSeed(repo, id, version);
+      const state = join((await ctx.workspace()).games, stateGame(seed.manifest.state));
+      if (!(await tagExists(state, baseTag(version), { env: ctx.env }))) throw new OgwError(`state ${seed.manifest.state} has no ${baseTag(version)}: run ogw regress refresh`);
+      await writeCaughtManifest(seedDir(repo, id), made.match);
+      await rm(admissionPath(repo, id, version), { force: true });
+      const self = harnessSide(await head((await ctx.workspace()).harness, { env: ctx.env }));
+      const done = await refresh(ctx, repo, self, version, [{ id, manifest: await readManifest(seedDir(repo, id)) }], [seed.manifest.state]);
+      await commitRegress(ctx, repo, [join(SEEDS_DIR, id), ...done.paths], `regress expect ${id} caught`);
+      const result = done.seeds[0]?.admission;
+      const lines = [`seed ${id}: expect caught, target checks ${made.checks.join(', ')}`, `seed ${id}: ${result?.result ?? 'none'}${result?.reason ? ` (${result.reason})` : ''}`];
+      return { exitCode: result?.result === 'admitted' ? 0 : 1, text: lines.join('\n'), data: { seed: id, checks: made.checks, admission: result } };
     });
   },
 };

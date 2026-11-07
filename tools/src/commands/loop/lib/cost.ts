@@ -64,12 +64,15 @@ function withoutCostCell(row: CostRow): string {
   return `${String(row.withoutCost)} (${row.costUnknown.map((r) => `${r.reason}: ${String(r.jobs)}`).join(', ')})`;
 }
 
+/** The order of the rows of `## cost`: the roles of a game, then the seed agent of `ogw regress refresh`. */
+const COST_ROLES: readonly string[] = [...GAME_ROLES, 'seed'];
+
 /**
  * The rows of `## cost` over `jobs` (`ogw agent` jobs): one per role that has a job, in role order, and with `total`
  * a last row over all of them.
  */
 export function costRows(jobs: readonly JobRecord[], total: boolean): CostRow[] {
-  const rows = GAME_ROLES.map((role) => rowOf(role, jobs.filter((job) => job.meta.role === role))).filter((row) => row.jobs > 0);
+  const rows = COST_ROLES.map((role) => rowOf(role, jobs.filter((job) => job.meta.role === role))).filter((row) => row.jobs > 0);
   return total && rows.length > 0 ? [...rows, rowOf('total', jobs)] : rows;
 }
 

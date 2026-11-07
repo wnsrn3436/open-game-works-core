@@ -45,6 +45,11 @@
       "cli": "claude-code",
       "model": "claude-opus-5-5",
       "effort": "high"
+    },
+    "seed": {
+      "cli": "claude-code",
+      "model": "claude-opus-5-5",
+      "effort": "high"
     }
   },
   "instanceWaitTimeoutMs": 1800000,

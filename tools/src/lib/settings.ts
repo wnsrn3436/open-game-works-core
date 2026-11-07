@@ -19,7 +19,8 @@ export type Role =
   | 'server-hardening'
   | 'client-hardening'
   | 'core'
-  | 'review';
+  | 'review'
+  | 'seed';
 
 export const ROLES: readonly Role[] = [
   'content',
@@ -31,6 +32,7 @@ export const ROLES: readonly Role[] = [
   'client-hardening',
   'core',
   'review',
+  'seed',
 ];
 
 export interface AgentSettings {

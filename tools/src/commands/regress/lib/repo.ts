@@ -69,6 +69,14 @@ export interface Seed {
   manifest: SeedManifest;
 }
 
+/** A failure of a check item, with the check name and platform of its item (`added` of an admission). */
+export interface AddedFailure {
+  check: string;
+  platform: string | null;
+  where: string;
+  message: string;
+}
+
 /** `admitted-<v>.json` (ogw.md `### admission`). */
 export interface Admission {
   result: 'admitted' | 'stale';
@@ -78,6 +86,11 @@ export interface Admission {
   catch: string[];
   oracle: { seeded: string; reference: string } | null;
   reason: string | null;
+  /**
+   * For `expect` `missed`, per check of the seeded commit, its failures whose finding key no base check has: what
+   * `ogw regress expect` makes `match` of. Null otherwise, and absent in an admission written before it.
+   */
+  added?: AddedFailure[][] | null;
   at: number;
 }
 
