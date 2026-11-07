@@ -64,14 +64,19 @@ function restartCommand(body: Record<string, unknown>): { command: string; args:
 /**
  * The commands the supervisor sends the client `main` on each connection of its automation channel (ogw.md
  * `## runner`), in sending order: the feedback switches of `--feedback-off` and `--reward-presentation-off` before
- * any other command, then `set_network_delay` of `--network-delay`.
+ * any other command, then `set_network_delay` of `--network-delay`, then `set_test_screen` and `set_virtual_notch` of
+ * the test screen of the flash check.
  */
-function connectionCommands(plan: Pick<InstancePlan, 'feedbackOff' | 'rewardPresentationOff' | 'networkDelayMs'>): { command: string; args: string[] }[] {
+export function connectionCommands(plan: Pick<InstancePlan, 'feedbackOff' | 'rewardPresentationOff' | 'networkDelayMs' | 'testScreen'>): { command: string; args: string[] }[] {
   const commands: { command: string; args: string[] }[] = [];
   if (plan.feedbackOff === true) commands.push({ command: 'set_feedback_off', args: ['on'] });
   if (plan.rewardPresentationOff === true) commands.push({ command: 'set_reward_presentation_off', args: ['on'] });
   const delayMs = plan.networkDelayMs ?? 0;
   if (delayMs > 0) commands.push({ command: 'set_network_delay', args: [String(delayMs)] });
+  if (plan.testScreen !== undefined) {
+    const { window, fillMode, notch } = plan.testScreen;
+    commands.push({ command: 'set_test_screen', args: [String(window[0]), String(window[1]), fillMode] }, { command: 'set_virtual_notch', args: notch.map(String) });
+  }
   return commands;
 }
 
@@ -440,7 +445,7 @@ export class Supervisor {
   }
 
   /**
-   * `--feedback-off`, `--reward-presentation-off` and `--network-delay` (ogw.md `## runner`): sends their commands to
+   * `--feedback-off`, `--reward-presentation-off`, `--network-delay` and the test screen (ogw.md `## runner`): sends their commands to
    * the client `main` each time its automation channel connects, before any other command of that connection. The
    * start checks the answers at the first connection; a later answer that is not `ok` goes to the log.
    */

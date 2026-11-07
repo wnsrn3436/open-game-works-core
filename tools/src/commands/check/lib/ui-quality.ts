@@ -6,7 +6,9 @@ import { automationRequest, restartClient, type AutomationResponse } from '../..
 import type { CheckFailure, CheckResult } from '../api.ts';
 import type { InstanceCheckOptions } from './bot-playtest.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from './evidence.ts';
+import { flashCheck, type FlashPart } from './flash-check.ts';
 import { withInstance } from './instances.ts';
+import type { Scenario } from './scenario.ts';
 
 /** Game settings `uiCheckScreens` item. */
 export interface UiCheckScreen {
@@ -33,6 +35,10 @@ export interface UiQualityOptions extends InstanceCheckOptions {
   maxTextScale: number | null;
   /** Game settings `uiQuality`. */
   quality: UiQualityLimits;
+  /** Game settings `targetFps`: the movie fps of the flash check. */
+  targetFps: number;
+  /** `readScenario` of the checkout: the flash check records it. */
+  scenario: Scenario | string;
 }
 
 /** Game settings `uiQuality`: the numbers of the presentation conditions (ogw.md `## UI quality`). */
@@ -549,11 +555,18 @@ async function inspect(ctx: Context, id: string, platform: string, options: UiQu
   return checkResult('UI quality', platform, run.failures);
 }
 
-/** UI quality of one platform profile (ogw.md `## UI quality`) in an instance that draws the screen. */
-export async function uiQualityCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
-  // without the pixel ratio of a screen no size of its captures can be judged: no instance starts
-  const missing = missingPixelRatios(options.screens, options.baseResolution);
-  if (missing.length > 0) return checkResult('UI quality', platform, missing.map((path) => failure(unknownSceneWhere(null), `${path}: missing`)), true);
+/**
+ * The UI quality item of the captures and that of the flash check together (ogw.md `## UI quality`): `fail` with the
+ * failures of the parts that fail, else `unknown` with the reasons of the parts that are `unknown`, else `pass`.
+ */
+export function withFlash(captures: CheckResult, flash: FlashPart): CheckResult {
+  const flashFails = !flash.unknown && flash.failures.length > 0;
+  if (captures.result === 'fail' || flashFails) return { ...captures, result: 'fail', failures: [...(captures.result === 'fail' ? captures.failures : []), ...(flashFails ? flash.failures : [])] };
+  if (captures.result === 'unknown' || flash.unknown) return { ...captures, result: 'unknown', failures: [...(captures.result === 'unknown' ? captures.failures : []), ...(flash.unknown ? flash.failures : [])] };
+  return captures;
+}
+
+async function capturesCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
   try {
     return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, (instance) =>
       inspect(ctx, instance.id, platform, options), options.evidence,
@@ -561,4 +574,15 @@ export async function uiQualityCheck(ctx: Context, game: string, platform: strin
   } catch (error) {
     return checkResult('UI quality', platform, [failure(unknownSceneWhere(null), `UI quality did not run: ${(error as Error).message}`)], true);
   }
+}
+
+/** UI quality of one platform profile (ogw.md `## UI quality`): the captures and the flash check, each in an instance that draws the screen. */
+export async function uiQualityCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
+  // without the pixel ratio of a screen no size of its captures can be judged: no instance starts
+  const missing = missingPixelRatios(options.screens, options.baseResolution);
+  if (missing.length > 0) return checkResult('UI quality', platform, missing.map((path) => failure(unknownSceneWhere(null), `${path}: missing`)), true);
+  const screens = measured(screensOfOrientation(options.screens, options.baseResolution));
+  const flashOptions = { ...options, screens };
+  const [captures, flash] = await Promise.all([capturesCheck(ctx, game, platform, options), flashCheck(ctx, game, platform, flashOptions)]);
+  return withFlash(captures, flash);
 }

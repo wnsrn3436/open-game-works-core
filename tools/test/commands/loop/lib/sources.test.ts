@@ -153,6 +153,12 @@ describe('finding sources', () => {
       id: 'small-touch-target-prefab-x-y', severity: 'major', owner: 'client content', why: 'UI quality: small touch target in prefab/x/y',
     });
     expect(uiQualityFields('clipped A')).toEqual({});
+    // a general and a red flash in one scene are one defect, the scene being where the flash check saw them
+    const flash = (kind: string): string => `flash ${kind}: more than 3 flashes in one second over 30000 CSS px² of a 341x256 CSS px field, frames 3-45 in scene/play (tablet)`;
+    expect(uiQualityFields(flash('general'))).toEqual({ id: 'flash-scene-play', severity: 'major', owner: 'client content', why: 'UI quality: flash in scene/play' });
+    expect(uiQualityFields(flash('red'))).toMatchObject({ id: 'flash-scene-play' });
+    // a flash check that could not judge names no kind
+    expect(uiQualityFields('flash: the movie maker wrote no image')).toEqual({});
   });
 
   it('keeps the id a defect of the run already has for the same kind and prefab or scene, and leaves the rest to the lead agent while a UI resource is a placeholder', () => {

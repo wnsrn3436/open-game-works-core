@@ -180,13 +180,13 @@ export function clientLaunch(
   root: string,
   headless: boolean,
   launchValueFile: string,
-  movie: { file: string; resolution: [number, number] } | null = null,
+  movie: { file: string; resolution: [number, number]; fps?: number } | null = null,
 ): Launch {
   if (plan.engine !== 'godot') throw new OgwError(`not defined: the dev run of engine ${plan.engine}`);
   const args = ['--path', join(root, 'client'), '--rendering-method', plan.renderingMethod];
   if (headless) args.push('--headless');
   if (movie !== null) {
-    const fps = String(MOVIE_FPS);
+    const fps = String(movie.fps ?? MOVIE_FPS);
     args.push('--resolution', `${String(movie.resolution[0])}x${String(movie.resolution[1])}`, '--write-movie', movie.file, '--fixed-fps', fps);
   }
   args.push('--', `--launch-values=${launchValueFile}`);

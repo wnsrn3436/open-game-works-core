@@ -22,7 +22,7 @@ function rowSimulationOwner(message: string): string {
   return message.trim().split(/\s+/)[0] === 'error' ? 'client content' : 'data';
 }
 
-/** The kinds of UI quality problems (`check/lib/ui-quality.ts`), as their messages start. */
+/** The kinds of UI quality problems (`check/lib/ui-quality.ts`, `check/lib/flash-check.ts`), as their messages start. */
 const UI_KINDS: readonly [RegExp, string][] = [
   [/^low contrast /, 'low contrast'],
   [/^small text /, 'small text'],
@@ -32,6 +32,7 @@ const UI_KINDS: readonly [RegExp, string][] = [
   [/^[0-9]+ text sizes /, 'text sizes'],
   [/^gamepad focus does not reach /, 'gamepad focus'],
   [/^small touch target /, 'small touch target'],
+  [/^flash (?:general|red): /, 'flash'],
 ];
 
 function kebab(text: string): string {

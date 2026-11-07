@@ -136,6 +136,8 @@ export async function gameChecks(
     gamepadSupported: settings.gamepadSupported === true,
     maxTextScale: await maxTextScale(ctx, game, modules.client),
     quality: settings.uiQuality as UiQualityLimits,
+    targetFps: numberSetting(settings, 'targetFps'),
+    scenario,
   };
   // One import before the checks run together: an instance skips its import once `client/.godot/` exists, so no import
   // may still be writing it when the instances start. A failed import removed `client/.godot/` (each instance start then

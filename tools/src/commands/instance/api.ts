@@ -31,9 +31,10 @@ import {
   writeRecord,
   type ExternalClient,
   type InstanceRecord,
+  type TestScreen,
 } from './lib/records.ts';
 
-export type { ExternalClient } from './lib/records.ts';
+export type { ExternalClient, TestScreen } from './lib/records.ts';
 import { launchSupervisor } from './lib/spawn.ts';
 import { FixtureError } from './lib/steps.ts';
 import { START_LIMIT_MS } from './lib/supervisor.ts';
@@ -64,8 +65,13 @@ export interface InstanceOptions {
    * Otherwise the client `main` (the outside one of `externalClient` too) logs in with dev account `main`.
    */
   played?: boolean;
-  /** Record the client `main` with the engine's movie maker into `file` (`ogw video`), in game settings `baseResolution`. */
-  movie?: { file: string };
+  /**
+   * Record the client `main` with the engine's movie maker into `file` (`ogw video`, the flash check of `ogw check`): in a
+   * window of `resolution` (game settings `baseResolution` when absent) at `fps` frames per second (`MOVIE_FPS` when absent).
+   */
+  movie?: { file: string; resolution?: [number, number]; fps?: number };
+  /** The `uiCheckScreens` item the supervisor gives the client `main` on each connection of its automation channel (the flash check). */
+  testScreen?: TestScreen;
   /**
    * Folder to run instead of `games/<game>/`, for example the benchmark game unpacked from a core release.
    * Not with `commit`. It need not be a git repo.
@@ -358,7 +364,8 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
         ...plan,
         ...(options.externalClient === true ? { external: true } : {}),
         ...(options.played === true ? { played: true } : {}),
-        ...(options.movie === undefined ? {} : { movie: { ...options.movie, resolution: baseResolution(gameSettings) } }),
+        ...(options.movie === undefined ? {} : { movie: { ...options.movie, resolution: options.movie.resolution ?? baseResolution(gameSettings) } }),
+        ...(options.testScreen === undefined ? {} : { testScreen: options.testScreen }),
         ...(options.inputLatencyMs === undefined || options.inputLatencyMs <= 0 ? {} : { inputLatencyMs: options.inputLatencyMs }),
         ...(options.networkDelayMs === undefined || options.networkDelayMs <= 0 ? {} : { networkDelayMs: options.networkDelayMs }),
         ...(options.feedbackOff === true ? { feedbackOff: true as const } : {}),

@@ -332,6 +332,9 @@ describe('launch', () => {
     const split = movie.indexOf('--');
     expect(movie.slice(0, split)).toEqual(expect.arrayContaining(['--resolution', '1920x1080', '--write-movie', '/t/raw.avi', '--fixed-fps', '60']));
     expect(movie.slice(split)).toEqual(['--', '--launch-values=/v']);
+    // the flash check: its own window size and fps, the frames as PNG images
+    const flash = clientLaunch(plan, '/g', false, '/v', { file: '/t/frame.png', resolution: [393, 852], fps: 30 }).args;
+    expect(flash.slice(0, flash.indexOf('--'))).toEqual(expect.arrayContaining(['--resolution', '393x852', '--write-movie', '/t/frame.png', '--fixed-fps', '30']));
   });
 });
 
