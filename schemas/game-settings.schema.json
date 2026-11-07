@@ -158,7 +158,8 @@
           "name",
           "window",
           "fillMode",
-          "notch"
+          "notch",
+          "pixelRatio"
         ],
         "properties": {
           "name": {
@@ -198,10 +199,9 @@
             "default": 0
           },
           "pixelRatio": {
-            "description": "Window pixels per CSS pixel of the device the item models: the screen scale on ios and macos (pixels per pt), the density ÷ 160 on android (pixels per dp), the display scale ÷ 100 on windows (pixels per epx), the desktop scale factor on linux, `devicePixelRatio` on web. The UI quality check measures text and buttons in window pixels ÷ this value",
+            "description": "Window pixels per CSS pixel of the device the item models: the screen scale on ios and macos (pixels per pt), the density ÷ 160 on android (pixels per dp), the display scale ÷ 100 on windows (pixels per epx), the desktop scale factor on linux, `devicePixelRatio` on web. The UI quality check measures text, buttons and panels in window pixels ÷ this value",
             "type": "number",
-            "exclusiveMinimum": 0,
-            "default": 1
+            "exclusiveMinimum": 0
           }
         }
       }
@@ -223,8 +223,8 @@
           "minimum": 1,
           "default": 6
         },
-        "minFontPx": {
-          "description": "The smallest text size, in pixels of a window 1080 pixels high",
+        "minFontSize": {
+          "description": "The smallest `font_size` of a text element, in CSS pixels (`pixelRatio` of `uiCheckScreens`)",
           "type": "number",
           "exclusiveMinimum": 0,
           "default": 18

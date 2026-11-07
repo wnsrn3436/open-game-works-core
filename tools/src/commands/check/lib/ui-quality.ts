@@ -15,8 +15,13 @@ export interface UiCheckScreen {
   fillMode: string;
   notch: [number, number, number, number];
   keyboard?: number;
-  /** Window pixels per CSS pixel of the device the item models. */
+  /** Window pixels per CSS pixel of the device the item models; a required value that a game may not have filled yet. */
   pixelRatio?: number;
+}
+
+/** A `uiCheckScreens` item with its `pixelRatio`: every size of its captures is judged in CSS pixels. */
+export interface MeasuredScreen extends UiCheckScreen {
+  pixelRatio: number;
 }
 
 export interface UiQualityOptions extends InstanceCheckOptions {
@@ -35,7 +40,8 @@ export interface UiQualityLimits {
   /** The longest real time waited after an open command for the opening presentation to end. */
   settleLimitMs: number;
   maxFontSizes: number;
-  minFontPx: number;
+  /** The smallest `font_size` of text, in CSS pixels. */
+  minFontSize: number;
   /** The smallest contrast ratio of text that is not large text. */
   minContrast: number;
   /** The smallest contrast ratio of large text. */
@@ -128,7 +134,7 @@ function luminance(r: number, g: number, b: number): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
-/** The shortest side of a panel body, in pixels of a window 1080 high: a thinner element is a bar, not a panel. */
+/** The shortest side of a panel body, in CSS pixels: a thinner element is a bar, not a panel. */
 const PANEL_MIN_SIDE = 64;
 
 /** The smallest `font_size` of large text, in CSS pixels (ogw.md `## UI quality`). */
@@ -186,11 +192,11 @@ export function rectContrast(image: Rgba, rect: Rect): number | null {
 
 /**
  * Panel bodies: elements of a popup, panel or system popup that hold no text, take no input, are not window-sized, are
- * not thinner than `PANEL_MIN_SIDE` (a bar), and have a descendant element, with no such ancestor.
+ * not thinner than `PANEL_MIN_SIDE` CSS pixels (a bar), and have a descendant element, with no such ancestor.
  */
-export function panelBodies(elements: readonly UiElement[], sceneKey: string, window: { width: number; height: number }): UiElement[] {
+export function panelBodies(elements: readonly UiElement[], sceneKey: string, window: { width: number; height: number }, pixelRatio: number): UiElement[] {
   const windowArea = window.width * window.height;
-  const minSide = (PANEL_MIN_SIDE * window.height) / 1080;
+  const minSide = PANEL_MIN_SIDE * pixelRatio;
   const candidates = elements.filter(
     (e) =>
       e.owner !== sceneKey &&
@@ -226,7 +232,7 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
 /**
  * The presentation conditions of one capture (ogw.md `## UI quality`): text sizes, small text, the contrast of text
  * that is not dimmed and empty panels, each with the `owner` of the problem. `pixelRatio` is that of the
- * `uiCheckScreens` item of the capture: large text is text of at least 24 CSS pixels.
+ * `uiCheckScreens` item of the capture: text sizes and panel sides are judged in CSS pixels.
  */
 export function presentationProblems(
   elements: readonly UiElement[],
@@ -240,16 +246,15 @@ export function presentationProblems(
   const sizes = [...new Set(texts.map((e) => Math.round(e.fontSize)))].sort((a, b) => a - b);
   if (sizes.length > limits.maxFontSizes) problems.push({ owner: sceneKey, message: `${String(sizes.length)} text sizes (${sizes.join(', ')} px), more than ${String(limits.maxFontSizes)}` });
   for (const e of texts) {
-    const at1080 = (e.fontSize * 1080) / image.height;
-    if (at1080 < limits.minFontPx) problems.push({ owner: e.owner, message: `small text ${e.path}: ${at1080.toFixed(1)} px at 1080 high` });
+    const css = e.fontSize / pixelRatio;
+    if (css < limits.minFontSize) problems.push({ owner: e.owner, message: `small text ${e.path}: ${css.toFixed(1)} CSS px, under ${String(limits.minFontSize)}` });
     // text under a modal panel or popup is not seen; text under one whose modal is off stays measured
     if (e.dimmed || e.modalCovered || !inside(e.rect, image.width, image.height)) continue;
     const contrast = rectContrast(image, e.rect);
-    const css = e.fontSize / pixelRatio;
     const min = css >= LARGE_TEXT_CSS_PX ? limits.minLargeContrast : limits.minContrast;
     if (contrast !== null && contrast < min) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1, under ${String(min)}:1 for ${css.toFixed(1)} CSS px text` });
   }
-  for (const body of panelBodies(elements, sceneKey, image)) {
+  for (const body of panelBodies(elements, sceneKey, image, pixelRatio)) {
     const area = bounds(body.rect, image);
     if (area === null) continue;
     const size = body.rect.w * body.rect.h;
@@ -277,6 +282,15 @@ function orientation(size: readonly number[]): string {
 /** `uiCheckScreens` items whose orientation is the orientation of `baseResolution`. */
 export function screensOfOrientation(screens: readonly UiCheckScreen[], base: readonly number[]): UiCheckScreen[] {
   return screens.filter((screen) => orientation(screen.window) === orientation(base));
+}
+
+/** The settings paths of the `pixelRatio` that `uiCheckScreens` items of the orientation of `baseResolution` miss. */
+export function missingPixelRatios(screens: readonly UiCheckScreen[], base: readonly number[]): string[] {
+  return screens.flatMap((screen, i) => (orientation(screen.window) === orientation(base) && typeof screen.pixelRatio !== 'number' ? [`uiCheckScreens.${String(i)}.pixelRatio`] : []));
+}
+
+function measured(screens: readonly UiCheckScreen[]): MeasuredScreen[] {
+  return screens.filter((screen): screen is MeasuredScreen => typeof screen.pixelRatio === 'number');
 }
 
 function point(value: number): string {
@@ -437,8 +451,8 @@ type Shot = Awaited<ReturnType<UiRun['capture']>>;
  * The conditions of a capture at text scale 1000 that is not a keyboard capture (ogw.md `## UI quality`), in CSS pixels
  * of `pixelRatio` of its screen; touch targets when `touch`, the platform of the check being a touch platform.
  */
-async function judgeCapture(run: UiRun, shot: Shot, item: UiCheckScreen, context: string, quality: UiQualityLimits, touch: boolean): Promise<void> {
-  const ratio = item.pixelRatio ?? 1;
+async function judgeCapture(run: UiRun, shot: Shot, item: MeasuredScreen, context: string, quality: UiQualityLimits, touch: boolean): Promise<void> {
+  const ratio = item.pixelRatio;
   // the conditions look at the capture only through the elements of list_ui
   if (shot.elements.length > 0) {
     const image = await decodeRgba(shot.png, 'capture_screen').catch(() => null);
@@ -449,7 +463,7 @@ async function judgeCapture(run: UiRun, shot: Shot, item: UiCheckScreen, context
 }
 
 /** Captures of one screen; `touch` when the platform of the check is a touch platform. */
-async function screenCaptures(run: UiRun, language: string, item: UiCheckScreen, command: string, scales: (number | null)[], quality: UiQualityLimits, touch: boolean): Promise<void> {
+async function screenCaptures(run: UiRun, language: string, item: MeasuredScreen, command: string, scales: (number | null)[], quality: UiQualityLimits, touch: boolean): Promise<void> {
   if (!(await run.open(command, `${language}, ${item.name}`))) return;
   for (const scale of scales) {
     if (scale !== null) await run.setup('set_text_scale', [String(scale)]);
@@ -514,7 +528,7 @@ async function gamepadCheck(run: UiRun, options: UiQualityOptions, screens: UiCh
 
 async function inspect(ctx: Context, id: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
   const run = new UiRun(ctx, id, platform, options);
-  const screens = screensOfOrientation(options.screens, options.baseResolution);
+  const screens = measured(screensOfOrientation(options.screens, options.baseResolution));
   const scales = options.maxTextScale === null ? [null] : [...new Set([1000, options.maxTextScale])];
   try {
     const commands = await openCommands(run);
@@ -537,6 +551,9 @@ async function inspect(ctx: Context, id: string, platform: string, options: UiQu
 
 /** UI quality of one platform profile (ogw.md `## UI quality`) in an instance that draws the screen. */
 export async function uiQualityCheck(ctx: Context, game: string, platform: string, options: UiQualityOptions): Promise<CheckResult> {
+  // without the pixel ratio of a screen no size of its captures can be judged: no instance starts
+  const missing = missingPixelRatios(options.screens, options.baseResolution);
+  if (missing.length > 0) return checkResult('UI quality', platform, missing.map((path) => failure(unknownSceneWhere(null), `${path}: missing`)), true);
   try {
     return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, (instance) =>
       inspect(ctx, instance.id, platform, options), options.evidence,

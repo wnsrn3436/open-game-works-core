@@ -52,7 +52,7 @@ async function errors(change: (s: Settings) => void): Promise<string[]> {
   return run.stdout.trim().split('\n');
 }
 
-const mobileScreen = { name: 'phone', window: [1080, 2400], fillMode: 'Crop', notch: [0, 100, 0, 50], keyboard: 900 };
+const mobileScreen = { name: 'phone', window: [1080, 2400], fillMode: 'Crop', notch: [0, 100, 0, 50], keyboard: 900, pixelRatio: 2.625 };
 
 describe('ogw game check', () => {
   it('passes valid settings', async () => {

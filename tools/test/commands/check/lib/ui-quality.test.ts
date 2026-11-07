@@ -16,6 +16,8 @@ import {
   toElements,
   touchTargetProblems,
   uiQualityCheck,
+  missingPixelRatios,
+  type UiCheckScreen,
   type UiElement,
   type UiQualityOptions,
 } from '../../../../src/commands/check/lib/ui-quality.ts';
@@ -31,7 +33,7 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.f
 const ctx = fakeContext();
 
 /** Limits no capture breaks, for the tests of the other conditions. */
-const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontPx: 0, minContrast: 1, minLargeContrast: 1, maxEmptyShare: 2, minTouchTarget: 0 };
+const NO_LIMITS = { settleLimitMs: 0, maxFontSizes: 1000, minFontSize: 0, minContrast: 1, minLargeContrast: 1, maxEmptyShare: 2, minTouchTarget: 0 };
 /** A 1 × 1 white PNG, as capture_screen gives it. */
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==', 'base64');
 
@@ -53,11 +55,11 @@ function canvas(width: number, height: number, color: [number, number, number], 
   return { width, height, data };
 }
 
-const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontPx: 18, minContrast: 4.5, minLargeContrast: 3, maxEmptyShare: 0.6, minTouchTarget: 48 };
+const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontSize: 18, minContrast: 4.5, minLargeContrast: 3, maxEmptyShare: 0.6, minTouchTarget: 48 };
 
 describe('UI quality presentation conditions', () => {
   it('counts text sizes, finds small text and low contrast', () => {
-    // 1080 high: font_size is in pixels at 1080
+    // pixel ratio 1: font_size is in CSS pixels
     const image = canvas(200, 1080, [20, 20, 40], [[0, 0, 100, 40, [240, 240, 240]], [100, 100, 100, 40, [30, 30, 50]]]);
     const list = elements([
       el('hud/title', { text: 'T', font_size: 40, rect: [0, 0, 120, 40], owner: 'run' }),
@@ -73,7 +75,7 @@ describe('UI quality presentation conditions', () => {
     expect(presentationProblems(list, image, 'run', LIMITS, 1).map((p) => p.message)).toEqual([
       '3 text sizes (12, 20, 40 px), more than 2',
       'low contrast hud/body: 1.00:1, under 4.5:1 for 20.0 CSS px text',
-      'small text hud/tiny: 12.0 px at 1080 high',
+      'small text hud/tiny: 12.0 CSS px, under 18',
       'low contrast hud/tiny: 1.00:1, under 4.5:1 for 12.0 CSS px text',
     ]);
     // half the pixels of a rect bright: the 98th percentile is bright, the 2nd dark
@@ -86,7 +88,7 @@ describe('UI quality presentation conditions', () => {
     const ratio = rectContrast(image, { x: 0, y: 0, w: 400, h: 40 }) ?? 0;
     expect(ratio).toBeGreaterThan(3);
     expect(ratio).toBeLessThan(4.5);
-    const limits = { ...LIMITS, maxFontSizes: 10, minFontPx: 0 };
+    const limits = { ...LIMITS, maxFontSizes: 10, minFontSize: 0 };
     const text = (path: string, fontSize: number, y: number): Record<string, unknown> => el(path, { text: 'T', font_size: fontSize, rect: [0, y, 400, 40], owner: 'run' });
     const low = (list: Record<string, unknown>[], pixelRatio: number): string[] => presentationProblems(elements(list), image, 'run', limits, pixelRatio).map((p) => p.message);
     // a 1920 × 1080 display at pixel ratio 1: 24 window pixels are 24 CSS pixels, large text
@@ -98,6 +100,20 @@ describe('UI quality presentation conditions', () => {
     expect(presentationProblems(elements([text('hud/title', 72, 0)]), image, 'run', { ...limits, minLargeContrast: 4 }, 3).map((p) => p.message)).toEqual([
       'low contrast hud/title: 3.50:1, under 4:1 for 24.0 CSS px text',
     ]);
+  });
+
+  it('finds text whose font_size in CSS pixels (window pixels ÷ pixelRatio) is under minFontSize', () => {
+    const image = canvas(400, 200, [0, 0, 0]);
+    const limits = { ...NO_LIMITS, minFontSize: 18 };
+    const small = (fontSize: number, pixelRatio: number): string[] =>
+      presentationProblems(elements([el('hud/label', { text: 'L', font_size: fontSize, rect: [0, 0, 100, 20] })]), image, 'run', limits, pixelRatio).map((p) => p.message);
+    // a 1920 × 1080 display at pixel ratio 1: 18 window pixels are 18 CSS pixels
+    expect(small(18, 1)).toEqual([]);
+    expect(small(17.9, 1)).toEqual(['small text hud/label: 17.9 CSS px, under 18']);
+    // a 2556 × 1179 phone at pixel ratio 3: 18 window pixels are 6 CSS pixels, and 54 are 18
+    expect(small(18, 3)).toEqual(['small text hud/label: 6.0 CSS px, under 18']);
+    expect(small(54, 3)).toEqual([]);
+    expect(small(53.7, 3)).toEqual(['small text hud/label: 17.9 CSS px, under 18']);
   });
 
   it('judges each target button against minTouchTarget CSS pixels in width and in height', () => {
@@ -131,8 +147,9 @@ describe('UI quality presentation conditions', () => {
       el('root/frame/ok', { owner: 'shop', rect: [20, 50, 20, 10], button: true }),
       el('hud/plate', { owner: 'run', rect: [0, 0, 10, 10] }),
     ]);
-    expect(panelBodies(list, 'run', { width: 100, height: 100 }).map((e) => e.path)).toEqual(['root/frame']);
-    // a bar thinner than 64 px at 1080 high and a leaf are not panel bodies
+    // a 100 × 100 window at pixel ratio 0.5: the frame is 100 CSS px wide and high
+    expect(panelBodies(list, 'run', { width: 100, height: 100 }, 0.5).map((e) => e.path)).toEqual(['root/frame']);
+    // a bar thinner than 64 CSS px and a leaf are not panel bodies
     const bars = elements([
       el('hud/xp', { owner: 'hud', rect: [0, 0, 800, 20] }),
       el('hud/xp/fill', { owner: 'hud', rect: [0, 0, 10, 20] }),
@@ -140,11 +157,19 @@ describe('UI quality presentation conditions', () => {
       el('hud/plate/label', { owner: 'hud', rect: [0, 100, 50, 20], text: 'x' }),
       el('hud/leaf', { owner: 'hud', rect: [0, 300, 300, 300] }),
     ]);
-    expect(panelBodies(bars, 'run', { width: 1920, height: 1080 }).map((e) => e.path)).toEqual(['hud/plate']);
+    expect(panelBodies(bars, 'run', { width: 1920, height: 1080 }, 1).map((e) => e.path)).toEqual(['hud/plate']);
+    // at pixel ratio 2 the 80 window pixels of the plate are 40 CSS px: a bar; a plate of 128 window pixels is 64 CSS px
+    expect(panelBodies(bars, 'run', { width: 3840, height: 2160 }, 2).map((e) => e.path)).toEqual([]);
+    const tall = elements([el('hud/plate', { owner: 'hud', rect: [0, 100, 300, 128] }), el('hud/plate/label', { owner: 'hud', rect: [0, 100, 50, 20], text: 'x' })]);
+    expect(panelBodies(tall, 'run', { width: 3840, height: 2160 }, 2).map((e) => e.path)).toEqual(['hud/plate']);
+    // a 2556 × 1179 phone at pixel ratio 3: a plate 150 window pixels high is 50 CSS px, a bar
+    const strip = elements([el('hud/plate', { owner: 'hud', rect: [0, 0, 900, 150] }), el('hud/plate/label', { owner: 'hud', rect: [0, 0, 50, 20], text: 'x' })]);
+    expect(panelBodies(strip, 'run', { width: 2556, height: 1179 }, 3).map((e) => e.path)).toEqual([]);
+    expect(panelBodies(strip, 'run', { width: 2556, height: 1179 }, 2).map((e) => e.path)).toEqual(['hud/plate']);
   });
 
   it('finds an empty panel, and passes a filled one whether flat or textured', () => {
-    const big = { ...LIMITS, maxFontSizes: 10, minFontPx: 0, minContrast: 1 };
+    const big = { ...LIMITS, maxFontSizes: 10, minFontSize: 0, minContrast: 1 };
     const flat = canvas(100, 100, [0, 0, 0], [[10, 10, 80, 80, [30, 30, 60]]]);
     const list = elements([
       el('p', { owner: 'pop', rect: [10, 10, 80, 80] }),
@@ -214,7 +239,7 @@ describe('UI quality rules', () => {
   });
 
   it('screensOfOrientation keeps the orientation of baseResolution', () => {
-    const phone = { name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number] };
+    const phone = { name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1 };
     const pad = { ...phone, name: 'pad', window: [2048, 1536] as [number, number] };
     const square = { ...phone, name: 'square', window: [1000, 1000] as [number, number] };
     expect(screensOfOrientation([phone, pad, square], [1080, 1920]).map((s) => s.name)).toEqual(['phone', 'square']);
@@ -316,8 +341,8 @@ function options(evidenceRoot: string, extra: Partial<UiQualityOptions> = {}): U
     pollMs: 1,
     languages: ['ko', 'en'],
     screens: [
-      { name: 'phone', window: [1080, 1920], fillMode: 'Crop', notch: [0, 80, 0, 0], keyboard: 600 },
-      { name: 'wide', window: [1920, 1080], fillMode: 'Letterbox', notch: [0, 0, 0, 0] },
+      { name: 'phone', window: [1080, 1920], fillMode: 'Crop', notch: [0, 80, 0, 0], pixelRatio: 1, keyboard: 600 },
+      { name: 'wide', window: [1920, 1080], fillMode: 'Letterbox', notch: [0, 0, 0, 0], pixelRatio: 1 },
     ],
     baseResolution: [1080, 1920],
     gamepadSupported: true,
@@ -416,7 +441,7 @@ describe('uiQualityCheck', () => {
   it('without AccessibilityCore, keyboard or gamepad support it captures once per screen', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
     const { calls } = fakeUi();
-    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number] }];
+    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1 }];
     const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, maxTextScale: null, gamepadSupported: false }));
     expect(result.result).toBe('pass');
     expect(calls.filter((c) => c.startsWith('set_text_scale'))).toEqual([]);
@@ -427,7 +452,7 @@ describe('uiQualityCheck', () => {
   it('judges the presentation conditions only on captures at text scale 1000 that are not keyboard captures', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
     fakeUi();
-    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 }];
+    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1, keyboard: 600 }];
     // every capture with text breaks maxFontSizes 0
     const strict = { ...NO_LIMITS, maxFontSizes: 0 };
     const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, gamepadSupported: false, quality: strict }));
@@ -441,7 +466,7 @@ describe('uiQualityCheck', () => {
     vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) =>
       command === 'capture_screen' ? ok(null, Buffer.from('PNG')) : (base?.(c, i, command, args, client) ?? ok(null)),
     );
-    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 }];
+    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1, keyboard: 600 }];
     const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, gamepadSupported: false }));
     expect(result.failures.map((f) => f.message).filter((m) => m.includes('PNG'))).toEqual([
       'capture_screen gave no PNG image (en, phone, shop.open_main, text scale 1000)',
@@ -456,7 +481,7 @@ describe('uiQualityCheck', () => {
     vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) =>
       command === 'inv.open_bag' ? notOk('no bag') : (base?.(c, i, command, args, client) ?? ok(null)),
     );
-    const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], maxTextScale: 1000, screens: [{ name: 'p', window: [1, 2], fillMode: 'Crop', notch: [0, 0, 0, 0] }] }));
+    const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], maxTextScale: 1000, screens: [{ name: 'p', window: [1, 2], fillMode: 'Crop', notch: [0, 0, 0, 0], pixelRatio: 1 }] }));
     expect(result.failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
       'lobby | inv.open_bag failed: "no bag" (en, p)',
       'lobby | inv.open_bag failed: "no bag" (en, p, gamepad)',
@@ -473,7 +498,7 @@ describe('uiQualityCheck', () => {
       const answer = (await base?.(c, i, command, args, client)) ?? ok(null);
       return command === 'shop.open_main' && ++opens === 2 ? notOk('gone') : answer;
     });
-    const phone = { name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop' as const, notch: [0, 0, 0, 0] as [number, number, number, number], keyboard: 600 };
+    const phone = { name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop' as const, notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1, keyboard: 600 };
     const result = await uiQualityCheck(ctx, 'g', 'ios', options(root, { languages: ['en'], screens: [phone], gamepadSupported: false, maxTextScale: 1400 }));
     expect(result.failures.some((f) => f.message.startsWith('shop.open_main failed: "gone"'))).toBe(true);
     // after the failed reopen, no text scale of shop.open_main is set before the next screen opens
@@ -533,7 +558,7 @@ describe('uiQualityCheck', () => {
     vi.mocked(automationRequest).mockImplementation(async (c, i, command, args, client) =>
       command === 'focus_ui' && args[0] === 'shop/buy' ? notOk('gone') : (base?.(c, i, command, args, client) ?? ok(null)),
     );
-    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number] }];
+    const screens = [{ name: 'phone', window: [1080, 1920] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1 }];
     const result = await uiQualityCheck(ctx, 'g', 'web', options(root, { languages: ['en'], screens, maxTextScale: null }));
     expect(result.failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
       'lobby | gamepad focus does not reach shop/next after shop.open_main in shop_panel (en, phone, gamepad)',
@@ -579,16 +604,36 @@ describe('uiQualityCheck', () => {
       { name: 'display', window: [1920, 1080] as [number, number], fillMode: 'Letterbox', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 1 },
       { name: 'phone', window: [2556, 1179] as [number, number], fillMode: 'Crop', notch: [0, 0, 0, 0] as [number, number, number, number], pixelRatio: 3 },
     ];
-    const quality = { ...NO_LIMITS, minContrast: 4.5, minLargeContrast: 3, minTouchTarget: 48 };
+    const quality = { ...NO_LIMITS, minFontSize: 18, minContrast: 4.5, minLargeContrast: 3, minTouchTarget: 48 };
     const run = (platform: string) => uiQualityCheck(ctx, 'g', platform, options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { languages: ['en'], screens, baseResolution: [1920, 1080], gamepadSupported: false, maxTextScale: 1400, quality }));
-    // the display passes: 24 CSS px text is large text and the button is 48 CSS px; the phone shows the same layout at
-    // 1179 ÷ 1080 of those window pixels, a third of them in CSS pixels. Captures at text scale 1400 are not judged
+    // the display passes: 24 CSS px text is large text and not small, and the button is 48 CSS px; the phone shows the
+    // same layout at 1179 ÷ 1080 of those window pixels, a third of them in CSS pixels. Captures at text scale 1400 are
+    // not judged
     expect((await run('ios')).failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
+      'lobby | small text hud/title: 8.7 CSS px, under 18 in lobby (en, phone, hud.open_main, text scale 1000)',
       'lobby | low contrast hud/title: 3.50:1, under 4.5:1 for 8.7 CSS px text in lobby (en, phone, hud.open_main, text scale 1000)',
       'lobby | small touch target hud/pause: 17.5x17.5 CSS px, under 48 in lobby (en, phone, hud.open_main, text scale 1000)',
     ]);
     // no touch target on a platform of the other platform profile
-    expect((await run('macos')).failures.map((f) => f.message)).toEqual(['low contrast hud/title: 3.50:1, under 4.5:1 for 8.7 CSS px text in lobby (en, phone, hud.open_main, text scale 1000)']);
+    expect((await run('macos')).failures.map((f) => f.message)).toEqual([
+      'small text hud/title: 8.7 CSS px, under 18 in lobby (en, phone, hud.open_main, text scale 1000)',
+      'low contrast hud/title: 3.50:1, under 4.5:1 for 8.7 CSS px text in lobby (en, phone, hud.open_main, text scale 1000)',
+    ]);
+  });
+
+  it('is unknown and starts no instance when a screen of the orientation of baseResolution has no pixelRatio', async () => {
+    fakeUi();
+    const screen = (name: string, window: [number, number], pixelRatio?: number): UiCheckScreen => ({ name, window, fillMode: 'Letterbox', notch: [0, 0, 0, 0], ...(pixelRatio === undefined ? {} : { pixelRatio }) });
+    // items 0 and 2 are of the orientation and miss it; item 1 is portrait, which this check does not capture
+    const screens = [screen('display', [1920, 1080]), screen('tall', [1080, 1920]), screen('laptop', [1440, 900]), screen('wide', [3440, 1440], 1)];
+    const result = await uiQualityCheck(ctx, 'g', 'macos', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { screens, baseResolution: [1920, 1080] }));
+    expect(result).toMatchObject({ name: 'UI quality', platform: 'macos', result: 'unknown' });
+    expect(result.failures).toEqual([
+      { where: 'settings.json:1', message: 'uiCheckScreens.0.pixelRatio: missing', evidence: [] },
+      { where: 'settings.json:1', message: 'uiCheckScreens.2.pixelRatio: missing', evidence: [] },
+    ]);
+    expect(startInstance).not.toHaveBeenCalled();
+    expect(missingPixelRatios(screens, [1080, 1920])).toEqual(['uiCheckScreens.1.pixelRatio']);
   });
 
   it('is unknown when boot does not reach Done after set_language', async () => {

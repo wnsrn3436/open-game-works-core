@@ -215,6 +215,20 @@ describe('ogw settings list', () => {
     expect((await ogw(ws, ['game', 'check', 'mygame', '--build'])).stdout).toContain('appId: missing\n');
   });
 
+  it('lists the pixelRatio of a uiCheckScreens item until it is filled, as ogw game check reports it: it has no default', async () => {
+    const settings = validGameSettings();
+    settings.uiCheckScreens = [{ name: 'phone', window: [2556, 1179], fillMode: 'Crop', notch: [0, 0, 0, 0] }];
+    writeGame(settings);
+    expect((await list('game', 'mygame', '--missing')).stdout).toBe(`uiCheckScreens.0.pixelRatio: ${firstSentence(schemaDescription(gameSchema, 'properties', 'uiCheckScreens', 'items', 'properties', 'pixelRatio'))}\n`);
+    const check = await ogw(ws, ['game', 'check', 'mygame']);
+    expect(check.code).not.toBe(0);
+    expect(check.stdout).toContain('uiCheckScreens.0.pixelRatio: missing\n');
+    // another value is still written while it is missing, and the missing value is then filled
+    expect((await ogw(ws, ['settings', 'set', 'game', 'mygame', 'uiQuality.minFontSize', '16'])).code).toBe(0);
+    expect((await ogw(ws, ['settings', 'set', 'game', 'mygame', 'uiCheckScreens.0.pixelRatio', '3'])).code).toBe(0);
+    expect((await list('game', 'mygame', '--missing')).stdout).toBe('');
+  });
+
   it('lists missing values of harness and core targets', async () => {
     expect(await list('harness', '--missing')).toEqual({ code: 0, stdout: '', stderr: '' });
     writeCoreImpl(ws);

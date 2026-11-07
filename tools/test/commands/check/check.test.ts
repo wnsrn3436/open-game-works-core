@@ -59,7 +59,7 @@ const SETTINGS = {
   sourceLanguage: 'ko',
   supportedLanguages: ['ko'],
   baseResolution: [1080, 1920],
-  uiCheckScreens: [{ name: 'phone', window: [1080, 1920], fillMode: 'Crop', notch: [0, 0, 0, 0] }],
+  uiCheckScreens: [{ name: 'phone', window: [1080, 1920], fillMode: 'Crop', notch: [0, 0, 0, 0], pixelRatio: 2.625 }],
 };
 
 const SCENARIO = {

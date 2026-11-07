@@ -121,7 +121,7 @@ export function validGameSettings(): GameSettingsFixture {
     postgresqlMajor: 18,
     baseResolution: [1280, 720],
     maxResolution: [1920, 1080],
-    uiCheckScreens: [{ name: 'desktop', window: [1280, 720], fillMode: 'Letterbox', notch: [0, 0, 0, 0] }],
+    uiCheckScreens: [{ name: 'desktop', window: [1280, 720], fillMode: 'Letterbox', notch: [0, 0, 0, 0], pixelRatio: 1 }],
     titleScene: 'scene_title',
     firstScene: 'scene_lobby',
     loadingScreen: 'prefab_loading',

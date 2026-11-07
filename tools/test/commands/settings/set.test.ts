@@ -213,6 +213,8 @@ describe('caller role', () => {
     expect((await set('game', 'mygame', 'coreModules.client', '["UICore","NetworkCore"]')).code).toBe(0);
     expect((await set('game', 'mygame', 'core.InputBlockCore.maxDurationMs', '40000')).code).toBe(0);
     expect(await set('game', 'mygame', 'appId', '"com.example.x"')).toEqual({ code: 1, stdout: '', stderr: 'role content cannot change appId\n' });
+    // the scale the UI quality check measures content by is not the content agent's
+    expect((await set('game', 'mygame', 'uiCheckScreens.0.pixelRatio', '0.5')).stderr).toBe('role content cannot change uiCheckScreens.0.pixelRatio\n');
     expect((await set('game', 'mygame', 'core.NetworkCore.requestTimeoutMs', '1')).stderr).toBe(
       'role content cannot change core.NetworkCore.requestTimeoutMs (x-owner human)\n',
     );
