@@ -68,6 +68,14 @@ export function isNotFound(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT';
 }
 
+/** A rejection handler that turns a not-found error (`ENOENT`) into `value` and rethrows every other error. */
+export function whenNotFound<T>(value: T): (error: unknown) => T {
+  return (error: unknown) => {
+    if (isNotFound(error)) return value;
+    throw error;
+  };
+}
+
 /** Files below `<root>/<rel>`, as `<rel>/...` paths (`rel` `''`: paths relative to `root`); none when the folder does not exist. */
 export async function filesUnder(root: string, rel: string): Promise<string[]> {
   const dir = join(root, rel);

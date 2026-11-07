@@ -22,3 +22,11 @@ export function fail(message: string, data?: unknown): never {
 export function notBuilt(name: string): Promise<never> {
   return Promise.reject(new OgwError(`${name}: not built yet`));
 }
+
+/**
+ * The rejection handler of a best-effort cleanup whose failure cannot change a result (e.g. removing a temporary file
+ * after the result is written): its failure is dropped on purpose.
+ */
+export function ignoreCleanupError(): void {
+  // dropped on purpose: the cleanup cannot change the result
+}
