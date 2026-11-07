@@ -6,11 +6,11 @@ import type { GameRepo } from '../../lib/game.ts';
 import { listJobs } from '../../lib/jobs.ts';
 import { toolProgram } from '../env/api.ts';
 import { installCommand } from './install.ts';
-import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice } from './lib/select.ts';
+import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice, type Stage } from './lib/select.ts';
 import { performanceLeaseBase } from './lib/lease.ts';
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
 
-export type { CatalogFile, MethodChoice };
+export type { CatalogFile, MethodChoice, Stage };
 /** The logotype method and the prefix of the logo keys it letters (`production.md` `## logo`). */
 export { LOGO_PREFIX, LOGOTYPE_METHOD };
 /** The lock of the performance lease that the performance measurement of `ogw check` holds exclusively (ogw.md `### performance lease`). */

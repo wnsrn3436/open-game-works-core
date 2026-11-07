@@ -1,14 +1,15 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogEntries } from '../../../src/commands/generation/api.ts';
-import { combinedAttribution, combinedLicense, soundShape } from '../../../src/commands/resource/lib/finalize.ts';
+import { combinedAttribution, combinedLicense, soundShape, type Loudness } from '../../../src/commands/resource/lib/finalize.ts';
+import { dcOffsets, integratedLoudness, maxMomentaryLoudness, truePeak } from '../../../src/commands/resource/lib/loudness.ts';
 import { parseSpec } from '../../../src/commands/resource/lib/spec.ts';
 import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { ogw, commitAll } from '../../helpers/workspace.ts';
-import { listCsv, makeFixture, measuredMethods, pcmWav, pixels, png, readList, realFfmpegs, rowOf, silence, sine, translationCsv, wavLengthMs, type Fixture, type Row } from './fixture.ts';
+import { listCsv, makeFixture, measuredMethods, pcmWav, pixels, png, readList, readPcm, realFfmpegs, rowOf, silence, sine, spiky, translationCsv, wavLengthMs, type Fixture, type Row } from './fixture.ts';
 
 const tools = vi.hoisted(() => ({ ffmpeg: null as string | null, placeholderFont: null as string | null }));
 vi.mock('../../../src/commands/env/api.ts', () => ({
@@ -125,7 +126,7 @@ describe('ogw resource finalize', () => {
     }
   });
 
-  it('trims, normalizes loudness by bus and reports the result for sound', async () => {
+  it('removes the DC offset, shapes, matches the loudness by bus through the limiter and reports the result for sound', async () => {
     const f = setup(
       [
         { key: 'sfx/hit', spec: 'length=100;variants=2', status: 'requested' },
@@ -138,49 +139,69 @@ describe('ogw resource finalize', () => {
     await sync(f);
     const a = work(f, 'a.wav');
     const b = work(f, 'b.wav');
-    writeFileSync(a, 'A');
-    writeFileSync(b, 'B');
+    writeFileSync(a, pcmWav([[...silence(50), ...sine(300, 440, 0.3)]]));
+    writeFileSync(b, pcmWav([sine(300, 880, 0.05)]));
     const run = await finalize(f, ['sfx/hit', '--method', 'moss-sfx', '--file', a, b, '--bus', 'Ui', '--json']);
     expect(run.stderr).toBe('');
-    const data = JSON.parse(run.stdout) as { loudness: unknown[]; changed: Record<string, string> };
-    expect(data.loudness).toEqual([
-      { file: 'resource/sfx/hit.1.wav', integratedLufs: -16, truePeakDbtp: -9 },
-      { file: 'resource/sfx/hit.2.wav', integratedLufs: -16, truePeakDbtp: -9 },
-    ]);
+    const data = JSON.parse(run.stdout) as { loudness: Loudness[]; changed: Record<string, string> };
+    // Ui bus: -22 LUFS, -3 dBTP; each variant is at the target, so the variants are within 1 LU of each other
+    expect(data.loudness.map((l) => l.file)).toEqual(['resource/sfx/hit.1.wav', 'resource/sfx/hit.2.wav']);
+    for (const l of data.loudness) {
+      expect(Math.abs(l.loudnessLufs - -22)).toBeLessThanOrEqual(0.5);
+      expect(l.truePeakDbtp).toBeLessThanOrEqual(-3);
+    }
     expect(data.changed.status).toBe('final');
-    expect(readFileSync(join(f.game, 'resource/sfx/hit.1.wav'), 'utf8')).toBe('RIFF-fake');
+    // the leading silence is cut and the sound is cut to its 100 ms length
+    expect(wavLengthMs(join(f.game, 'resource/sfx/hit.1.wav'))).toBeCloseTo(100, 0);
+    expect(Math.abs((maxMomentaryLoudness(readPcm(join(f.game, 'resource/sfx/hit.1.wav'))) as number) - -22)).toBeLessThanOrEqual(0.5);
     const log = readFileSync(f.ffmpegLog, 'utf8');
-    // Every file read names its container, so that ffmpeg does not probe it.
-    expect(log).toContain(`-f wav -i ${a} -af silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,aformat=sample_rates=48000 -c:a pcm_f32le -f wav -fflags +bitexact`);
-    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af loudnorm=I=-22:TP=-3:LRA=20:print_format=json -f null -/);
-    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af loudnorm=I=-22:TP=-3:LRA=20:measured_I=-30\.00:measured_TP=-10\.00:measured_LRA=2\.00:measured_thresh=-40\.00:offset=0\.10:linear=true:print_format=summary,aformat=sample_rates=48000 -c:a pcm_s16le -f wav -fflags \+bitexact/);
-    expect(log).toMatch(/-f wav -i \S+\/out\.wav -af ebur128=peak=true -f null -/);
+    // Every file read names its container, so that ffmpeg does not probe it; ffmpeg only decodes and encodes.
+    expect(log).toContain(`-f wav -i ${a} -af aformat=sample_rates=48000 -c:a pcm_f32le -f wav -fflags +bitexact`);
+    expect(log).toMatch(/-f wav -i \S+\/leveled\.wav -c:a pcm_s16le -f wav -fflags \+bitexact/);
+    expect(log).toMatch(/-f wav -i \S+\/out\.wav -af aformat=sample_rates=48000 -c:a pcm_f32le -f wav/);
     expect(log.split('\n').filter((line) => line !== '' && !/-f (wav|ogg) -i /.test(line))).toEqual([]);
-    expect(log).not.toContain('aloop');
+    expect(log).not.toMatch(/loudnorm|silenceremove|ebur128|aloop/);
 
-    // ace-step writes WAV; finalize encodes it to the engine format of bgm (.ogg).
+    // ace-step writes WAV; finalize encodes it to the engine format of bgm (.ogg). A bgm played once is not trimmed or cut.
     const bgm = work(f, 'm.wav');
     writeFileSync(bgm, 'M');
-    const music = await finalize(f, ['bgm/main', '--method', 'ace-step', '--file', bgm]);
-    expect(music.stdout).toContain('resource/bgm/main.ogg integrated loudness -16 LUFS, true peak -9 dBTP');
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-f wav -i ${bgm} -af aformat=sample_rates=48000 -c:a pcm_f32le -f wav`);
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-f wav -i \S+\/shaped\.wav -af loudnorm=I=-16:TP=-1:LRA=20:print_format=json/);
+    const music = await finalize(f, ['bgm/main', '--method', 'ace-step', '--file', bgm, '--json']);
+    expect(music.stderr).toBe('');
+    const [main] = (JSON.parse(music.stdout) as { loudness: Loudness[] }).loudness;
+    expect(main?.file).toBe('resource/bgm/main.ogg');
+    expect(Math.abs((main?.loudnessLufs ?? 0) - -16)).toBeLessThanOrEqual(0.5);
     expect(readFileSync(f.ffmpegLog, 'utf8')).toContain('-c:a libvorbis -q:a 6 -f ogg');
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-f ogg -i \S+\/out\.ogg -af ebur128=peak=true -f null -/);
-    expect(readFileSync(join(f.game, 'resource/bgm/main.ogg'), 'utf8')).toBe('OggS-fake');
+    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-f ogg -i \S+\/out\.ogg -af aformat=sample_rates=48000 -c:a pcm_f32le/);
+    expect(readFileSync(join(f.game, 'resource/bgm/main.ogg')).toString('ascii', 0, 9)).toBe('OggS-fake');
+    expect(readPcm(join(f.game, 'resource/bgm/main.ogg')).samples.length).toBe(480000);
     expect(existsSync(join(f.game, 'resource/bgm/main.wav'))).toBe(false);
 
+    // A loop shorter than 400 ms is measured repeated: its integrated loudness is the target, while the loop played
+    // once (its maximum momentary loudness) is 6 dB under it.
     const loop = work(f, 'l.wav');
-    writeFileSync(loop, 'L');
-    await finalize(f, ['sfx/loop', '--method', 'moss-sfx', '--file', loop, '--bus', 'Sfx']);
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain(`-i ${loop} -af areverse,silenceremove=start_periods=1:start_threshold=-60dB:detection=peak,areverse,aformat=sample_rates=48000 -c:a pcm_f32le -f wav`);
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-i \S+\/shaped\.wav -af loudnorm=I=-18:TP=-1\.5:LRA=20/);
+    writeFileSync(loop, pcmWav([[...sine(600, 440, 0.2), ...silence(200)]]));
+    const looped = await finalize(f, ['sfx/loop', '--method', 'moss-sfx', '--file', loop, '--bus', 'Sfx', '--json']);
+    expect(looped.stderr).toBe('');
+    expect(Math.abs(((JSON.parse(looped.stdout) as { loudness: Loudness[] }).loudness[0]?.loudnessLufs ?? 0) - -18)).toBeLessThanOrEqual(0.5);
+    const loopPcm = readPcm(join(f.game, 'resource/sfx/loop.wav'));
+    expect(loopPcm.samples.length).toBe(4800);
+    expect(Math.abs((maxMomentaryLoudness(loopPcm) as number) - -24)).toBeLessThanOrEqual(0.5);
 
     const voice = work(f, 'v.wav');
-    writeFileSync(voice, 'V');
-    await finalize(f, ['voice/hi', '--method', 'qwen3-tts', '--file', voice]);
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toContain('loudnorm=I=-20:TP=-2');
+    writeFileSync(voice, pcmWav([sine(1000, 440, 0.3)]));
+    const said = await finalize(f, ['voice/hi', '--method', 'qwen3-tts', '--file', voice, '--json']);
+    expect(said.stderr).toBe('');
+    const [hi] = (JSON.parse(said.stdout) as { loudness: Loudness[] }).loudness;
+    expect(Math.abs((hi?.loudnessLufs ?? 0) - -20)).toBeLessThanOrEqual(0.5);
+    expect(hi?.truePeakDbtp).toBeLessThanOrEqual(-2);
     expect(rowOf(f.game, 'voice/hi')).toMatchObject({ status: 'final', text_hash: 'hash-hi' });
+  });
+
+  it('prints the loudness and true peak of each written file', async () => {
+    const f = setup([{ key: 'sfx/hit', spec: 'length=1000', status: 'requested' }]);
+    await sync(f);
+    const run = await finalize(f, ['sfx/hit', '--method', 'moss-sfx', '--file', touch(f, 'h.wav'), '--bus', 'Sfx']);
+    expect(run.stdout).toMatch(/^resource\/sfx\/hit\.wav loudness -1[78](\.[0-9]+)? LUFS, true peak -[0-9.]+ dBTP$/m);
   });
 
   it('writes text_hash of the line voice text that sync gives the row, when the voice cell came after the last sync', async () => {
@@ -212,7 +233,7 @@ describe('ogw resource finalize', () => {
     }
     expect(rowOf(f.game, 'voice/x')).toMatchObject({ status: 'final', text_key: 'cutscene_step.text.[intro].1', speaker: 'hero', text_hash: 'hash-1' });
     expect(rowOf(f.game, 'voice/y')).toMatchObject({ status: 'final', text_key: 'cutscene_step.text.[intro].2', speaker: 'none', text_hash: 'hash-2' });
-    expect(readFileSync(join(f.game, 'resource/voice/x.wav'), 'utf8')).toBe('RIFF-fake');
+    expect(readFileSync(join(f.game, 'resource/voice/x.wav')).toString('ascii', 0, 4)).toBe('RIFF');
   });
 
   it('matches an sfx to the bus loudness plus its level offset', async () => {
@@ -221,12 +242,11 @@ describe('ogw resource finalize', () => {
       { key: 'sfx/roar', spec: 'length=3000;level=loud', status: 'requested' },
     ]);
     await sync(f);
-    await finalize(f, ['sfx/pick', '--method', 'moss-sfx', '--file', touch(f, 'p.wav'), '--bus', 'Sfx']);
-    await finalize(f, ['sfx/roar', '--method', 'moss-sfx', '--file', touch(f, 'r.wav'), '--bus', 'Sfx']);
-    const log = readFileSync(f.ffmpegLog, 'utf8');
+    const pick = await finalize(f, ['sfx/pick', '--method', 'moss-sfx', '--file', touch(f, 'p.wav'), '--bus', 'Sfx', '--json']);
+    const roar = await finalize(f, ['sfx/roar', '--method', 'moss-sfx', '--file', touch(f, 'r.wav'), '--bus', 'Sfx', '--json']);
     // Sfx bus -18 LUFS: quiet -8 dB, loud +4 dB
-    expect(log).toContain('loudnorm=I=-26:TP=-1.5:LRA=20:print_format=json');
-    expect(log).toContain('loudnorm=I=-14:TP=-1.5:LRA=20:print_format=json');
+    expect(Math.abs(((JSON.parse(pick.stdout) as { loudness: Loudness[] }).loudness[0]?.loudnessLufs ?? 0) - -26)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(((JSON.parse(roar.stdout) as { loudness: Loudness[] }).loudness[0]?.loudnessLufs ?? 0) - -14)).toBeLessThanOrEqual(0.5);
   });
 
   it('makes a looped bgm of whole bars from the tempo of --music', async () => {
@@ -237,6 +257,8 @@ describe('ogw resource finalize', () => {
     const run = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', touch(f, 'm.wav'), '--music', music]);
     expect(run.stderr).toBe('');
     expect(rowOf(f.game, 'bgm/run').status).toBe('final');
+    // 7 bars of 1000 ms of the 10 s tone
+    expect(readPcm(join(f.game, 'resource/bgm/run.ogg')).samples.length).toBe(7 * 48000);
     writeFileSync(music, JSON.stringify({ bpm: 0, beatsPerBar: 4 }));
     const f2 = setup([{ key: 'bgm/run', spec: 'length=7000;loop=true', status: 'requested' }]);
     await sync(f2);
@@ -244,86 +266,172 @@ describe('ogw resource finalize', () => {
     expect(bad.stderr).toContain('bpm must be a number over 0 and beatsPerBar an integer of 1 or more');
   });
 
-  it('gives a sound shorter than one gating block one gain from the sound repeated for 1000 ms', async () => {
+  it('fails without a change a looped bgm whose loudness range is over 7 LU', async () => {
+    const f = setup([{ key: 'bgm/run', spec: 'length=20000;loop=true', status: 'requested' }]);
+    await sync(f);
+    const music = work(f, 'music.json');
+    writeFileSync(music, JSON.stringify({ bpm: 240, beatsPerBar: 4 }));
+    const before = snapshot(f);
+    // 11 s of a tone, then 11 s of it 10 dB lower: a loudness range of about 10 LU
+    const dropping = work(f, 'drop.wav');
+    writeFileSync(dropping, pcmWav([[...sine(11000, 440, 0.3), ...sine(11000, 440, 0.095)]]));
+    const bad = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', dropping, '--music', music]);
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toMatch(/drop\.wav: the loudness range is (9|10|11)\.[0-9] LU, over the 7\.0 LU of a looped bgm/);
+    expect(snapshot(f)).toBe(before);
+    // 6 dB lower: under 7 LU
+    const steady = work(f, 'steady.wav');
+    writeFileSync(steady, pcmWav([[...sine(11000, 440, 0.3), ...sine(11000, 440, 0.15)]]));
+    const ok = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', steady, '--music', music]);
+    expect(ok.stderr).toBe('');
+    expect(rowOf(f.game, 'bgm/run').status).toBe('final');
+  });
+
+  it('measures an sfx played once by its maximum momentary loudness, so that a short sound counts its energy over 400 ms', async () => {
     const f = setup([{ key: 'sfx/click', spec: 'length=100', status: 'requested' }]);
     await sync(f);
     const click = work(f, 'click.wav');
-    writeFileSync(click, 'SHORT');
+    writeFileSync(click, pcmWav([sine(100, 1000, 0.05)]));
     const run = await finalize(f, ['sfx/click', '--method', 'moss-sfx', '--file', click, '--bus', 'Ui', '--json']);
     expect(run.stderr).toBe('');
-    expect((JSON.parse(run.stdout) as { loudness: unknown[] }).loudness).toEqual([{ file: 'resource/sfx/click.wav', integratedLufs: -23, truePeakDbtp: -3 }]);
-    const log = readFileSync(f.ffmpegLog, 'utf8');
-    // Repeated: I -30, true peak -10. Ui bus: -22 LUFS, -3 dBTP. Gain min(-22 - -30, -3 - -10) = 7 dB.
-    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af aloop=loop=-1:size=2147483647,atrim=duration=1,loudnorm=I=-22:TP=-3:LRA=20:print_format=json -f null -/);
-    expect(log).toMatch(/-f wav -i \S+\/shaped\.wav -af volume=7\.00dB,aformat=sample_rates=48000 -c:a pcm_s16le -f wav/);
-    expect(log).toMatch(/-f wav -i \S+\/out\.wav -af aloop=loop=-1:size=2147483647,atrim=duration=1,ebur128=peak=true -f null -/);
-    expect(log).not.toContain('measured_I=-inf');
-    expect(readFileSync(join(f.game, 'resource/sfx/click.wav'), 'utf8')).toBe('RIFF-fakeSHORT');
+    const [result] = (JSON.parse(run.stdout) as { loudness: Loudness[] }).loudness;
+    expect(Math.abs((result?.loudnessLufs ?? 0) - -22)).toBeLessThanOrEqual(0.5);
+    // 100 ms of a 400 ms window: its loudness while it sounds is 6 dB over the target
+    const written = readPcm(join(f.game, 'resource/sfx/click.wav'));
+    const whileSounding = integratedLoudness({ ...written, samples: Float32Array.from({ length: 48000 }, (_, i) => written.samples[i % written.samples.length] as number) });
+    expect(Math.abs((whileSounding as number) - -16)).toBeLessThanOrEqual(0.5);
+
+    // a longer sfx too: 1500 ms of a quiet tone and 500 ms of it 9 dB louder, whose integrated loudness is 2 LU lower
+    const f2 = setup([{ key: 'sfx/swell', spec: 'length=2000', status: 'requested' }]);
+    await sync(f2);
+    const swell = work(f2, 'swell.wav');
+    writeFileSync(swell, pcmWav([[...sine(1500, 1000, 0.03), ...sine(500, 1000, 0.085)]]));
+    expect((await finalize(f2, ['sfx/swell', '--method', 'moss-sfx', '--file', swell, '--bus', 'Ui'])).stderr).toBe('');
+    const loudest = readPcm(join(f2.game, 'resource/sfx/swell.wav'));
+    expect(Math.abs((maxMomentaryLoudness(loudest) as number) - -22)).toBeLessThanOrEqual(0.5);
+    expect(integratedLoudness(loudest) as number).toBeLessThan(-23.5);
   });
 
-  it('gives a short sound the loudness gain when it is smaller than the true peak gain', async () => {
-    const f = setup([{ key: 'sfx/tick', spec: 'length=100', status: 'requested' }]);
+  it('limits the true peak so that a peaky sound reaches its loudness', async () => {
+    const f = setup([{ key: 'sfx/tick', spec: 'length=1000', status: 'requested' }]);
     await sync(f);
+    // A tone with a one-sample peak every 100 ms, 14 dB over the tone: the gain to the target puts the peaks over the
+    // Sfx limit of -1.5 dBTP, and the limiter takes them down by less than 6 dB.
     const tick = work(f, 'tick.wav');
-    writeFileSync(tick, 'HUSHED');
-    const run = await finalize(f, ['sfx/tick', '--method', 'moss-sfx', '--file', tick, '--bus', 'Ui']);
+    writeFileSync(tick, pcmWav([spiky(1000, 0.1, 0.5)]));
+    const run = await finalize(f, ['sfx/tick', '--method', 'moss-sfx', '--file', tick, '--bus', 'Sfx', '--json']);
     expect(run.stderr).toBe('');
-    // Repeated: I -30, true peak -30. Ui bus: -22 LUFS, -3 dBTP. Gain min(-22 - -30, -3 - -30) = 8 dB.
-    expect(readFileSync(f.ffmpegLog, 'utf8')).toMatch(/-i \S+\/shaped\.wav -af volume=8\.00dB,aformat=sample_rates=48000 -c:a pcm_s16le -f wav/);
+    const [result] = (JSON.parse(run.stdout) as { loudness: Loudness[] }).loudness;
+    expect(Math.abs((result?.loudnessLufs ?? 0) - -18)).toBeLessThanOrEqual(0.5);
+    expect(result?.truePeakDbtp).toBeLessThanOrEqual(-1.5);
+    expect(truePeak(readPcm(join(f.game, 'resource/sfx/tick.wav'))) as number).toBeLessThanOrEqual(-1.5);
   });
 
-  it('encodes again with a lower gain while the written true peak is over the bus limit', async () => {
-    const f = setup([{ key: 'sfx/boom', spec: 'length=3000', status: 'requested' }]);
+  it('fails without a change when the loudness stays more than 0.5 LU under the target with 6 dB of limiting', async () => {
+    const f = setup([{ key: 'sfx/tick', spec: 'length=1000', status: 'requested' }]);
     await sync(f);
+    const before = snapshot(f);
+    // the peaks are 30 dB over the tone
+    const tick = work(f, 'tick.wav');
+    writeFileSync(tick, pcmWav([spiky(1000, 0.0158, 0.5)]));
+    const run = await finalize(f, ['sfx/tick', '--method', 'moss-sfx', '--file', tick, '--bus', 'Sfx']);
+    expect(run.code).toBe(1);
+    expect(run.stderr).toMatch(/tick\.wav: with 6 dB of limiting, the most the limiter takes off a peak, the sound reaches -[0-9.]+ LUFS, more than 0\.5 LU under the target -18\.0 LUFS/);
+    expect(snapshot(f)).toBe(before);
+  });
+
+  it('fails without a change an sfx played once that is shorter than half the length it was made for', async () => {
+    const moss = { ...(measuredMethods().find((m) => (m as { name: string }).name === 'moss-sfx') as object), measured: [{ durationMs: 1000, result: 'ok' }] };
+    const f = setup(
+      [
+        { key: 'sfx/a', spec: 'length=200', status: 'requested' },
+        { key: 'sfx/b', spec: 'length=3000', status: 'requested' },
+      ],
+      {},
+      { resourceGeneration: [...measuredMethods().filter((m) => (m as { name: string }).name !== 'moss-sfx'), moss] },
+    );
+    await sync(f);
+    const before = snapshot(f);
+    // 60 ms of a tone, and the ring of the DC filter after it
+    const short = work(f, 'short.wav');
+    writeFileSync(short, pcmWav([[...sine(60, 500, 0.3), ...silence(500)]]));
+    const bad = await finalize(f, ['sfx/a', '--method', 'moss-sfx', '--file', short, '--bus', 'Sfx']);
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toMatch(/short\.wav: the sound is (6|7|8|9)[0-9]\.[0-9] ms after the cuts, shorter than half of the 200\.0 ms it was made for/);
+    expect(snapshot(f)).toBe(before);
+    const half = work(f, 'half.wav');
+    writeFileSync(half, pcmWav([[...sine(110, 500, 0.3), ...silence(500)]]));
+    expect((await finalize(f, ['sfx/a', '--method', 'moss-sfx', '--file', half, '--bus', 'Sfx'])).stderr).toBe('');
+    // made with the fallback stage of 1000 ms for its 3000 ms: half of 1000 ms is enough
+    const fallback = work(f, 'fallback.wav');
+    writeFileSync(fallback, pcmWav([[...sine(600, 500, 0.3), ...silence(500)]]));
+    expect((await finalize(f, ['sfx/b', '--method', 'moss-sfx', '--file', fallback, '--bus', 'Sfx'])).stderr).toBe('');
+  });
+
+  it('removes a DC offset before it measures', async () => {
+    const f = setup([{ key: 'sfx/hum', spec: 'length=1000', status: 'requested' }]);
+    await sync(f);
+    // a tone on an offset of 0.05 (-26 dBFS)
+    const hum = work(f, 'hum.wav');
+    writeFileSync(hum, pcmWav([sine(1000, 440, 0.1).map((v) => v + 0.05)]));
+    expect((await finalize(f, ['sfx/hum', '--method', 'moss-sfx', '--file', hum, '--bus', 'Sfx'])).stderr).toBe('');
+    expect(Math.abs(dcOffsets(readPcm(join(f.game, 'resource/sfx/hum.wav')))[0] as number)).toBeLessThan(10 ** (-50 / 20));
+  });
+
+  it('encodes again with a lower limiter ceiling while the written true peak is over the bus limit', async () => {
+    const f = setup([{ key: 'sfx/boom', spec: 'length=1000', status: 'requested' }]);
+    await sync(f);
+    // the limiter puts the peaks at its ceiling of -1.6 dBTP; an encode raises the largest sample by 1 dB, to -0.6
     const boom = work(f, 'boom.wav');
-    writeFileSync(boom, 'PEAKY');
+    writeFileSync(boom, pcmWav([spiky(1000, 0.1, 0.5)]));
+    writeFileSync(join(f.bin, 'encode-overshoot-db'), '1');
     const run = await finalize(f, ['sfx/boom', '--method', 'moss-sfx', '--file', boom, '--bus', 'Sfx', '--json']);
     expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-    // loudnorm leaves -0.5 dBTP; the Sfx limit is -1.5: the second encode lowers the gain by 1.0 + 0.1 dB
-    expect((JSON.parse(run.stdout) as { loudness: unknown[] }).loudness).toEqual([{ file: 'resource/sfx/boom.wav', integratedLufs: -17.1, truePeakDbtp: -1.6 }]);
-    const encodes = readFileSync(f.ffmpegLog, 'utf8').split('\n').filter((line) => line.includes('linear=true'));
-    expect(encodes).toHaveLength(2);
-    expect(encodes[0]).toContain('linear=true:print_format=summary,aformat=sample_rates=48000');
-    expect(encodes[1]).toContain('linear=true:print_format=summary,volume=-1.10dB,aformat=sample_rates=48000');
+    const [result] = (JSON.parse(run.stdout) as { loudness: Loudness[] }).loudness;
+    // the second encode starts from a ceiling 1.0 + 0.1 dB lower: -2.7 dBTP, -1.7 once encoded
+    expect(result?.truePeakDbtp).toBeLessThanOrEqual(-1.5);
+    expect(Math.abs((result?.loudnessLufs ?? 0) - -18)).toBeLessThanOrEqual(0.5);
+    expect(readFileSync(f.ffmpegLog, 'utf8').split('\n').filter((line) => line.includes('leveled.wav'))).toHaveLength(2);
     expect(rowOf(f.game, 'sfx/boom').status).toBe('final');
   });
 
   it('fails without a change when the true peak stays over the bus limit', async () => {
-    const f = setup([{ key: 'sfx/boom', spec: 'length=3000', status: 'requested' }]);
+    const f = setup([{ key: 'sfx/boom', spec: 'length=1000', status: 'requested' }]);
     await sync(f);
     const before = snapshot(f);
-    const boom = work(f, 'boom.wav');
-    writeFileSync(boom, 'PEAKY');
-    // an ffmpeg whose written file reads -0.5 dBTP whatever the gain
-    const stubborn = join(f.bin, 'ffmpeg-stubborn');
-    writeFileSync(stubborn, `#!/bin/sh\ncase "$*" in *ebur128*) printf '    I:         -16.0 LUFS\\n    Peak:       -0.5 dBFS\\n' >&2; exit 0;; esac\nexec "${f.ffmpeg}" "$@"\n`);
-    chmodSync(stubborn, 0o755);
-    tools.ffmpeg = stubborn;
-    const run = await finalize(f, ['sfx/boom', '--method', 'moss-sfx', '--file', boom, '--bus', 'Sfx']);
+    // an encode that raises the largest sample 20 dB, over the limit whatever the limiter does under 6 dB
+    writeFileSync(join(f.bin, 'encode-overshoot-db'), '20');
+    const run = await finalize(f, ['sfx/boom', '--method', 'moss-sfx', '--file', touch(f, 'boom.wav'), '--bus', 'Sfx']);
     expect(run.code).toBe(1);
-    expect(run.stderr).toContain('true peak -0.5 dBTP stays over the bus limit -1.5 dBTP after 4 encodes');
+    expect(run.stderr).toMatch(/boom\.wav: true peak [0-9.-]+ dBTP stays over the bus limit -1\.5 dBTP after 4 encodes/);
     expect(snapshot(f)).toBe(before);
-    expect(readFileSync(f.ffmpegLog, 'utf8').split('\n').filter((line) => line.includes('linear=true'))).toHaveLength(4);
+    expect(readFileSync(f.ffmpegLog, 'utf8').split('\n').filter((line) => line.includes('leveled.wav'))).toHaveLength(4);
   });
 
-  it('runs loudnorm inside its ranges and reaches bus values outside them with its own gain', async () => {
-    bus.settings['SoundCore.busLoudnessLufs'] = { ...BUS['SoundCore.busLoudnessLufs'], Ui: -2 };
-    bus.settings['SoundCore.busPeakMaxDbtp'] = { ...BUS['SoundCore.busPeakMaxDbtp'], Ui: -12 };
+  it('fails without a change when the written loudness is more than 0.5 LU from the target', async () => {
     const f = setup([{ key: 'sfx/hit', spec: 'length=1000', status: 'requested' }]);
     await sync(f);
-    const hit = work(f, 'hit.wav');
-    writeFileSync(hit, 'H');
-    const run = await finalize(f, ['sfx/hit', '--method', 'moss-sfx', '--file', hit, '--bus', 'Ui', '--json']);
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-    const log = readFileSync(f.ffmpegLog, 'utf8');
-    expect(log).toMatch(/-af loudnorm=I=-5:TP=-9:LRA=20:print_format=json -f null -/);
-    expect(log).not.toMatch(/loudnorm=I=-2\b|TP=-12/);
-    // +3 dB for the loudness loudnorm cannot reach; then -6.1 dB for the true peak over -12 dBTP
-    const encodes = log.split('\n').filter((line) => line.includes('linear=true'));
-    expect(encodes.map((line) => /volume=(-?[0-9.]+)dB/.exec(line)?.[1])).toEqual(['3.00', '-3.10']);
-    expect((JSON.parse(run.stdout) as { loudness: unknown[] }).loudness).toEqual([{ file: 'resource/sfx/hit.wav', integratedLufs: -19.1, truePeakDbtp: -12.1 }]);
+    const before = snapshot(f);
+    // an encode that lowers the level by 1 dB
+    writeFileSync(join(f.bin, 'encode-gain-db'), '-1');
+    const run = await finalize(f, ['sfx/hit', '--method', 'moss-sfx', '--file', touch(f, 'hit.wav'), '--bus', 'Sfx']);
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('hit.wav: the written loudness -19.0 LUFS is more than 0.5 LU from the target -18.0 LUFS');
+    expect(snapshot(f)).toBe(before);
+    // 0.4 dB is within it
+    writeFileSync(join(f.bin, 'encode-gain-db'), '-0.4');
+    expect((await finalize(f, ['sfx/hit', '--method', 'moss-sfx', '--file', touch(f, 'hit.wav'), '--bus', 'Sfx'])).stderr).toBe('');
+  });
+
+  it('fails without a change on a silent sound', async () => {
+    const f = setup([{ key: 'sfx/none', spec: 'length=1000', status: 'requested' }]);
+    await sync(f);
+    const before = snapshot(f);
+    const silent = work(f, 'silent.wav');
+    writeFileSync(silent, 'SILENT');
+    const run = await finalize(f, ['sfx/none', '--method', 'moss-sfx', '--file', silent, '--bus', 'Sfx']);
+    expect(run.stderr).toContain('silent.wav: no loudness to measure; the sound is silent');
+    expect(snapshot(f)).toBe(before);
   });
 
   it('makes the sheet, the SpriteFrames and the sheet row of a sprite animation', async () => {
@@ -791,7 +899,7 @@ describe('ogw resource finalize', () => {
 // The pinned ffmpeg first: it is the program finalize runs.
 const realFfmpeg = (await realFfmpegs())[0]?.program ?? null;
 
-// Runs only on a host with ffmpeg: the trim, loudness and true peak come from the real program.
+// Runs only on a host with ffmpeg: the decode and encode of the real program, around the processing of finalize.
 describe.runIf(realFfmpeg !== null)('ogw resource finalize with real ffmpeg', () => {
   const sfx = { lufs: -18, peak: -1.5 };
 
@@ -806,14 +914,14 @@ describe.runIf(realFfmpeg !== null)('ogw resource finalize with real ffmpeg', ()
     return f;
   }
 
-  async function finalizeSound(f: Fixture, key: string, wav: Buffer): Promise<{ integratedLufs: number; truePeakDbtp: number }> {
+  async function finalizeSound(f: Fixture, key: string, wav: Buffer): Promise<Loudness> {
     const file = work(f, `${key.replace('/', '-')}.wav`);
     writeFileSync(file, wav);
     const run = await finalize(f, [key, '--method', 'moss-sfx', '--file', file, '--bus', 'Sfx', '--json']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    const [loudness] = (JSON.parse(run.stdout) as { loudness: { integratedLufs: number; truePeakDbtp: number }[] }).loudness;
-    return loudness as { integratedLufs: number; truePeakDbtp: number };
+    const [loudness] = (JSON.parse(run.stdout) as { loudness: Loudness[] }).loudness;
+    return loudness as Loudness;
   }
 
   it('trims silence on both ends where every channel is silent, and meets the bus loudness and true peak', async () => {
@@ -824,25 +932,26 @@ describe.runIf(realFfmpeg !== null)('ogw resource finalize with real ffmpeg', ()
     const pad = await finalizeSound(f, 'sfx/pad', pcmWav([left, new Array<number>(left.length).fill(0)]));
     expect(wavLengthMs(join(f.game, 'resource/sfx/pad.wav'))).toBeGreaterThan(980);
     expect(wavLengthMs(join(f.game, 'resource/sfx/pad.wav'))).toBeLessThan(1020);
-    expect(Math.abs(pad.integratedLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(pad.loudnessLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
     expect(pad.truePeakDbtp).toBeLessThanOrEqual(sfx.peak);
 
     const long = await finalizeSound(f, 'sfx/long', pcmWav([sine(1500, 1000, 0.05)]));
-    expect(Math.abs(long.integratedLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(long.loudnessLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
     expect(long.truePeakDbtp).toBeLessThanOrEqual(sfx.peak);
 
-    // Shorter than one 400 ms gating block: loudness of the sound repeated, at the target since the peak allows it.
+    // Shorter than one 400 ms window: its maximum momentary loudness, which the written file has
     const click = await finalizeSound(f, 'sfx/click', pcmWav([sine(200, 1000, 0.05)]));
-    expect(Math.abs(click.integratedLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(click.loudnessLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs((maxMomentaryLoudness(readPcm(join(f.game, 'resource/sfx/click.wav'))) as number) - sfx.lufs)).toBeLessThanOrEqual(0.5);
     expect(click.truePeakDbtp).toBeLessThanOrEqual(sfx.peak);
     expect(wavLengthMs(join(f.game, 'resource/sfx/click.wav'))).toBeGreaterThan(190);
     expect(rowOf(f.game, 'sfx/click').status).toBe('final');
   });
 
-  it('keeps the true peak of a long sound that loudnorm limits dynamically under the bus limit', async () => {
+  it('keeps the true peak of the written file under the bus limit at the target loudness', async () => {
     const f = setupReal();
     await sync(f);
-    // 6000 ms of decaying noise bursts every 500 ms: loudnorm falls back to its dynamic limiter, which overshoots.
+    // 6000 ms of decaying noise bursts every 500 ms
     let seed = 1;
     const noise = (): number => {
       seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -851,20 +960,22 @@ describe.runIf(realFfmpeg !== null)('ogw resource finalize with real ffmpeg', ()
     const bursts = Array.from({ length: 6 * 48000 }, (_, i) => 0.35 * noise() * Math.exp(-((i / 48000) % 0.5) / 0.05));
     const loud = await finalizeSound(f, 'sfx/long', pcmWav([bursts]));
     expect(loud.truePeakDbtp).toBeLessThanOrEqual(sfx.peak);
+    expect(Math.abs(loud.loudnessLufs - sfx.lufs)).toBeLessThanOrEqual(0.5);
     expect(rowOf(f.game, 'sfx/long').status).toBe('final');
 
-    // A 6000 ms 12 kHz tone with a loudness target that its peak limit does not allow
-    bus.settings['SoundCore.busLoudnessLufs'] = { ...BUS['SoundCore.busLoudnessLufs'], Ui: -8 };
+    // A 6000 ms 12 kHz tone whose loudness target is near its true peak limit: the limiter reaches it
+    bus.settings['SoundCore.busLoudnessLufs'] = { ...BUS['SoundCore.busLoudnessLufs'], Ui: -9.5 };
     bus.settings['SoundCore.busPeakMaxDbtp'] = { ...BUS['SoundCore.busPeakMaxDbtp'], Ui: -9 };
     const file = work(f, 'tone.wav');
     writeFileSync(file, pcmWav([sine(6000, 12000, 0.5)]));
     const run = await finalize(f, ['sfx/pad', '--method', 'moss-sfx', '--file', file, '--bus', 'Ui', '--json']);
     expect(run.stderr).toBe('');
-    const [tone] = (JSON.parse(run.stdout) as { loudness: { truePeakDbtp: number }[] }).loudness;
+    const [tone] = (JSON.parse(run.stdout) as { loudness: Loudness[] }).loudness;
     expect(tone?.truePeakDbtp).toBeLessThanOrEqual(-9);
+    expect(Math.abs((tone?.loudnessLufs ?? 0) - -9.5)).toBeLessThanOrEqual(0.5);
   });
 
-  it('finalizes a sound for bus values outside the ranges loudnorm accepts', async () => {
+  it('finalizes a sound for bus values far from its own', async () => {
     bus.settings['SoundCore.busLoudnessLufs'] = { ...BUS['SoundCore.busLoudnessLufs'], Ui: -30 };
     bus.settings['SoundCore.busPeakMaxDbtp'] = { ...BUS['SoundCore.busPeakMaxDbtp'], Ui: -12 };
     const f = setupReal();
@@ -874,9 +985,9 @@ describe.runIf(realFfmpeg !== null)('ogw resource finalize with real ffmpeg', ()
     const run = await finalize(f, ['sfx/pad', '--method', 'moss-sfx', '--file', file, '--bus', 'Ui', '--json']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    const [quiet] = (JSON.parse(run.stdout) as { loudness: { integratedLufs: number; truePeakDbtp: number }[] }).loudness;
+    const [quiet] = (JSON.parse(run.stdout) as { loudness: Loudness[] }).loudness;
     expect(quiet?.truePeakDbtp).toBeLessThanOrEqual(-12);
-    expect(Math.abs((quiet?.integratedLufs ?? 0) - -30)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs((quiet?.loudnessLufs ?? 0) - -30)).toBeLessThanOrEqual(0.5);
     expect(rowOf(f.game, 'sfx/pad').status).toBe('final');
   });
 

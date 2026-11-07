@@ -4,6 +4,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { run } from '../../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
+import { integratedLoudness, limitTruePeak, loudnessRange, maxMomentaryLoudness, truePeak } from './loudness.ts';
 
 export const SAMPLE_RATE = 48000;
 
@@ -69,24 +70,33 @@ export type SoundShape = { kind: 'once'; trim: boolean; maxMs: number | null } |
 
 export interface SoundTarget {
   shape: SoundShape;
+  /** The loudness is the maximum momentary loudness (an `sfx` played once); otherwise the integrated loudness. */
+  momentary: boolean;
   loudnessLufs: number;
   peakMaxDbtp: number;
   ogg: boolean;
+  /** The shortest a shaped sound may be (half the length it was made for); null for no check. */
+  minLengthMs: number | null;
+  /** The widest loudness range (LU) of the shaped sound; null for no check. */
+  maxRangeLu: number | null;
 }
 
 export interface SoundResult {
   bytes: Buffer;
-  integratedLufs: number | null;
-  truePeakDbtp: number | null;
+  loudnessLufs: number;
+  truePeakDbtp: number;
 }
 
-const TRIM = 'silenceremove=start_periods=1:start_threshold=-60dB:detection=peak';
+/** Below this absolute sample value in every channel, the start and end of a sound are cut (-60 dBFS). */
+const TRIM_LEVEL = 10 ** (-60 / 20);
 /** Fade in of a sound played once. */
 const FADE_IN_MS = 2;
 /** Longest fade out of a sound played once; a shorter sound fades out over its last quarter. */
 const FADE_OUT_MS = 50;
 /** Fewest bars of a looped `bgm`. */
 const MIN_LOOP_BARS = 4;
+/** Cutoff of the first-order high-pass filter that removes the DC offset. */
+const DC_CUTOFF_HZ = 5;
 
 /** Interleaved 32-bit float samples, and the WAV chunks other than `fmt ` and `data`, kept as they are. */
 export interface Pcm {
@@ -151,10 +161,54 @@ function frames(pcm: Pcm, ms: number): number {
   return Math.round((ms * pcm.sampleRate) / 1000);
 }
 
-/** Cuts to `maxMs`, then fades in over `FADE_IN_MS` and out over `FADE_OUT_MS` or the last quarter, whichever is shorter. */
-function shapeOnce(pcm: Pcm, maxMs: number | null): Pcm {
+function frameCount(pcm: Pcm): number {
+  return pcm.samples.length / pcm.channels;
+}
+
+function lengthMs(pcm: Pcm): number {
+  return (frameCount(pcm) * 1000) / pcm.sampleRate;
+}
+
+/** Each channel through a first-order high-pass filter at `DC_CUTOFF_HZ`, with silence before the sound. */
+export function removeDc(pcm: Pcm): Pcm {
   const { channels } = pcm;
-  let count = pcm.samples.length / channels;
+  const count = frameCount(pcm);
+  const samples = new Float32Array(pcm.samples.length);
+  const alpha = 1 / (1 + (2 * Math.PI * DC_CUTOFF_HZ) / pcm.sampleRate);
+  for (let c = 0; c < channels; c++) {
+    let previousIn = 0;
+    let previousOut = 0;
+    for (let f = 0; f < count; f++) {
+      const value = pcm.samples[f * channels + c] as number;
+      previousOut = alpha * (previousOut + value - previousIn);
+      previousIn = value;
+      samples[f * channels + c] = previousOut;
+    }
+  }
+  return { ...pcm, samples };
+}
+
+/** Whether some channel of frame `f` is at least `TRIM_LEVEL`. */
+function audible(pcm: Pcm, f: number): boolean {
+  for (let c = 0; c < pcm.channels; c++) if (Math.abs(pcm.samples[f * pcm.channels + c] as number) >= TRIM_LEVEL) return true;
+  return false;
+}
+
+/** Cuts the frames below `TRIM_LEVEL` in every channel at the end, and at the start when `start`. */
+function trimmed(pcm: Pcm, start: boolean): Pcm {
+  const count = frameCount(pcm);
+  let first = 0;
+  if (start) while (first < count && !audible(pcm, first)) first++;
+  let end = count;
+  while (end > first && !audible(pcm, end - 1)) end--;
+  return { ...pcm, samples: pcm.samples.slice(first * pcm.channels, end * pcm.channels) };
+}
+
+/** Cuts the silence when `trim`, cuts to `maxMs`, then fades in over `FADE_IN_MS` and out over `FADE_OUT_MS` or the last quarter, whichever is shorter. */
+function shapeOnce(source: Pcm, trim: boolean, maxMs: number | null): Pcm {
+  const pcm = trim ? trimmed(source, true) : source;
+  const { channels } = pcm;
+  let count = frameCount(pcm);
   if (maxMs !== null) count = Math.min(count, frames(pcm, maxMs));
   const samples = pcm.samples.slice(0, count * channels);
   const fadeIn = Math.min(frames(pcm, FADE_IN_MS), Math.floor(count / 2));
@@ -171,13 +225,15 @@ function shapeOnce(pcm: Pcm, maxMs: number | null): Pcm {
 }
 
 /**
- * The loop: the first L frames, with the first X frames the equal-power crossfade of themselves (fading in) and the X
- * frames after L (fading out), so that the last frame runs on into the first. For `barMs`, X is one bar and L whole
- * bars; otherwise X is `seamMs` and L is `lengthMs` or what the file leaves after X.
+ * The loop, after the silence at the end is cut: the first L frames, with the first X frames the equal-power
+ * crossfade of themselves (fading in) and the X frames after L (fading out), so that the last frame runs on into the
+ * first. For `barMs`, X is one bar and L whole bars; otherwise X is `seamMs` and L is `lengthMs` or what the file leaves
+ * after X.
  */
-function shapeLoop(pcm: Pcm, shape: { lengthMs: number; seamMs: number; barMs: number | null }, file: string): Pcm {
+function shapeLoop(source: Pcm, shape: { lengthMs: number; seamMs: number; barMs: number | null }, file: string): Pcm {
+  const pcm = trimmed(source, false);
   const { channels } = pcm;
-  const count = pcm.samples.length / channels;
+  const count = frameCount(pcm);
   const want = frames(pcm, shape.lengthMs);
   let seam: number;
   let length: number;
@@ -204,35 +260,35 @@ function shapeLoop(pcm: Pcm, shape: { lengthMs: number; seamMs: number; barMs: n
   return { ...pcm, samples };
 }
 
+/** The sound shaped (`SoundShape`); its DC offset is removed before (`removeDc`). */
 export function shapeSound(pcm: Pcm, shape: SoundShape, file: string): Pcm {
-  return shape.kind === 'once' ? shapeOnce(pcm, shape.maxMs) : shapeLoop(pcm, shape, file);
-}
-
-function lastJson(text: string): Record<string, string> {
-  const start = text.lastIndexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end < start) throw new OgwError('ffmpeg loudnorm printed no measurement');
-  try {
-    return JSON.parse(text.slice(start, end + 1)) as Record<string, string>;
-  } catch {
-    throw new OgwError('ffmpeg loudnorm printed no measurement');
-  }
-}
-
-function lastNumber(text: string, pattern: RegExp): number | null {
-  let value: number | null = null;
-  for (const match of text.matchAll(pattern)) {
-    const parsed = Number(match[1]);
-    value = Number.isFinite(parsed) ? parsed : null;
-  }
-  return value;
+  return shape.kind === 'once' ? shapeOnce(pcm, shape.trim, shape.maxMs) : shapeLoop(pcm, shape, file);
 }
 
 /**
- * A sound shorter than one BS.1770-4 gating block (400 ms) has no integrated loudness. Such a sound is measured as the
- * sound repeated for this long (`production.md` `## finalize` step 2).
+ * A sound shorter than one BS.1770-4 gating block (400 ms) has no integrated loudness. A loop that short is measured
+ * repeated for this long (`production.md` `## finalize` step 2).
  */
 export const SHORT_SOUND_LOOP_MS = 1000;
+const GATING_BLOCK_MS = 400;
+
+function repeated(pcm: Pcm, ms: number): Pcm {
+  const want = frames(pcm, ms) * pcm.channels;
+  const samples = new Float32Array(want);
+  for (let i = 0; i < want; i++) samples[i] = pcm.samples[i % pcm.samples.length] as number;
+  return { ...pcm, samples };
+}
+
+/**
+ * The loudness of `production.md` `## finalize` step 2: the maximum momentary loudness of an `sfx` played once and of
+ * any other sound played once that is shorter than 400 ms, otherwise the integrated loudness, of a loop shorter than
+ * 400 ms repeated for `SHORT_SOUND_LOOP_MS`. Null for silence.
+ */
+export function soundLoudness(pcm: Pcm, target: Pick<SoundTarget, 'shape' | 'momentary'>): number | null {
+  const short = lengthMs(pcm) < GATING_BLOCK_MS;
+  if (target.shape.kind === 'once') return target.momentary || short ? maxMomentaryLoudness(pcm) : integratedLoudness(pcm);
+  return integratedLoudness(short ? repeated(pcm, SHORT_SOUND_LOOP_MS) : pcm);
+}
 
 /**
  * Input arguments of a sound file with its container format named, so that ffmpeg does not probe it: tonal PCM data
@@ -243,101 +299,123 @@ function input(file: string): string[] {
 }
 
 /**
- * Filters that repeat the input for `SHORT_SOUND_LOOP_MS`, with a filter after them. The `aloop` size is the largest it
- * accepts, so that it repeats the whole file. Not the `-stream_loop` input option: with `-t`, ffmpeg 6.0 then stops
- * reading without ending when the file length divides the length (100 ms of 1000 ms).
- */
-const LOOPED = `aloop=loop=-1:size=2147483647,atrim=duration=${String(SHORT_SOUND_LOOP_MS / 1000)},`;
-
-function finite(value: string | undefined): number | null {
-  const parsed = Number(value);
-  return value !== undefined && value.trim() !== '' && Number.isFinite(parsed) ? parsed : null;
-}
-
-/**
- * The loudnorm first pass of a file, repeated for `SHORT_SOUND_LOOP_MS` when `looped`: integrated loudness and true
- * peak, or null when the input has no integrated loudness.
- */
-async function measure(program: string, file: string, looped: boolean, norm: string): Promise<{ json: Record<string, string>; i: number | null; tp: number | null }> {
-  const json = lastJson(await ffmpeg(program, [...input(file), '-af', `${looped ? LOOPED : ''}${norm}:print_format=json`, '-f', 'null', '-']));
-  return { json, i: finite(json.input_i), tp: finite(json.input_tp) };
-}
-
-/** Ranges loudnorm accepts for `I` and `TP`; outside them ffmpeg refuses the filter. */
-const LOUDNORM_I: readonly [number, number] = [-70, -5];
-const LOUDNORM_TP: readonly [number, number] = [-9, 0];
-/** Encodes of one sound at most: each one after the first lowers the gain by the true peak excess of the one before. */
-const PEAK_PASSES = 4;
-/** Extra gain cut of a pass after a true peak excess, so that the next encode stays under the limit. */
-const PEAK_MARGIN_DB = 0.1;
-
-/**
- * Resamples to `SAMPLE_RATE` and keeps the channel layout. `aformat` and not `aresample`: after loudnorm, ffmpeg 6.0
- * finds no channel layout for the output of an `aresample` filter and fails; it gives the resampler it inserts for
- * `aformat` the input layout.
+ * Resamples to `SAMPLE_RATE` and keeps the channel layout. `aformat` and not `aresample`: ffmpeg 6.0 finds no channel
+ * layout for the output of an `aresample` filter in some graphs; it gives the resampler it inserts for `aformat` the
+ * input layout.
  */
 const RESAMPLE = `aformat=sample_rates=${String(SAMPLE_RATE)}`;
 
-function clamp(value: number, [low, high]: readonly [number, number]): number {
-  return Math.min(high, Math.max(low, value));
+/** The file as 32-bit float PCM at `SAMPLE_RATE`, through `<dir>/<name>`. */
+async function decode(program: string, file: string, dir: string, name: string): Promise<Pcm> {
+  const out = join(dir, name);
+  await ffmpeg(program, [...input(file), '-af', RESAMPLE, '-c:a', 'pcm_f32le', '-f', 'wav', ...BITEXACT, out]);
+  return readWavF32(await readFile(out));
 }
 
-/** Integrated loudness and true peak of a written file from the ebur128 report, repeated as in `measure`. */
-async function loudness(program: string, file: string, looped: boolean): Promise<{ i: number | null; tp: number | null }> {
-  const report = await ffmpeg(program, [...input(file), '-af', `${looped ? LOOPED : ''}ebur128=peak=true`, '-f', 'null', '-']);
-  return { i: lastNumber(report, /I:\s+(-?[0-9.]+|-inf) LUFS/g), tp: lastNumber(report, /Peak:\s+(-?[0-9.]+|-inf) dBFS/g) };
+/** Encodes of one sound at most: each one after the first lowers the limiter ceiling by the true peak excess of the one before. */
+const PEAK_PASSES = 4;
+/** How far under the true peak limit the limiter ceiling starts, and the extra cut after a true peak excess. */
+const PEAK_MARGIN_DB = 0.1;
+/** Gain passes of the limiter at most, and how near the loudness of the limited sound must come to the target. */
+const LEVEL_PASSES = 12;
+const LEVEL_TOLERANCE_LU = 0.05;
+/** How far the loudness of a written file may be from the target. */
+const WRITTEN_TOLERANCE_LU = 0.5;
+
+function scaled(pcm: Pcm, gainDb: number): Pcm {
+  const gain = 10 ** (gainDb / 20);
+  return { ...pcm, samples: pcm.samples.map((v) => v * gain) };
+}
+
+function fixed(value: number): string {
+  return value.toFixed(1);
+}
+
+/** The most the limiter takes off a peak. */
+const MAX_LIMITING_DB = 6;
+
+/**
+ * The sound times a gain, through the true peak limiter with `ceilingDbtp`, with the gain raised until the loudness of
+ * the limited sound is within `LEVEL_TOLERANCE_LU` of the target, and at most to the gain that takes `MAX_LIMITING_DB`
+ * off the highest peak (`measured.peak`, the true peak of the sound), where it must be within `WRITTEN_TOLERANCE_LU`.
+ * Each pass after the first moves the gain by the miss over the slope of the two passes before (secant), the slope kept
+ * in [0.02, 1].
+ */
+function leveled(pcm: Pcm, target: SoundTarget, ceilingDbtp: number, measured: { loudness: number; peak: number }, file: string): Pcm {
+  const most = ceilingDbtp + MAX_LIMITING_DB - measured.peak;
+  let gain = Math.min(target.loudnessLufs - measured.loudness, most);
+  let before: { gain: number; loudness: number } | null = null;
+  for (let pass = 1; pass <= LEVEL_PASSES; pass++) {
+    const limited = limitTruePeak(scaled(pcm, gain), ceilingDbtp, target.shape.kind === 'loop');
+    const loudness = soundLoudness(limited, target) as number;
+    const miss = target.loudnessLufs - loudness;
+    if (Math.abs(miss) <= LEVEL_TOLERANCE_LU) return limited;
+    if (miss > 0 && gain >= most) {
+      if (miss <= WRITTEN_TOLERANCE_LU) return limited;
+      throw new OgwError(
+        `${file}: with ${String(MAX_LIMITING_DB)} dB of limiting, the most the limiter takes off a peak, the sound reaches ${fixed(loudness)} LUFS, more than ${String(WRITTEN_TOLERANCE_LU)} LU under the target ${fixed(target.loudnessLufs)} LUFS: its true peak is ${fixed(measured.peak - measured.loudness)} dB over its loudness`,
+      );
+    }
+    const slope = before === null || gain === before.gain ? 1 : Math.min(1, Math.max(0.02, (loudness - before.loudness) / (gain - before.gain)));
+    before = { gain, loudness };
+    gain = Math.min(most, gain + miss / slope);
+  }
+  throw new OgwError(`${file}: the limiter does not bring the loudness to ${fixed(target.loudnessLufs)} LUFS under the true peak limit ${fixed(ceilingDbtp)} dBTP`);
+}
+
+/** The checks of the shaped sound that fail before it is encoded. */
+function shapedProblems(pcm: Pcm, target: SoundTarget, file: string): string | null {
+  if (!pcm.samples.some((v) => v !== 0)) return `${file}: no loudness to measure; the sound is silent`;
+  const ms = lengthMs(pcm);
+  if (target.minLengthMs !== null && ms < target.minLengthMs) {
+    return `${file}: the sound is ${fixed(ms)} ms after the cuts, shorter than half of the ${fixed(target.minLengthMs * 2)} ms it was made for`;
+  }
+  const range = target.maxRangeLu === null ? null : loudnessRange(pcm);
+  if (range !== null && target.maxRangeLu !== null && range > target.maxRangeLu) {
+    return `${file}: the loudness range is ${fixed(range)} LU, over the ${fixed(target.maxRangeLu)} LU of a looped bgm`;
+  }
+  return null;
 }
 
 /**
- * Shapes (`SoundShape`), matches integrated loudness, limits true peak, and measures the result. A sound with integrated loudness goes
- * through loudnorm's second pass, with the bus values moved into the ranges loudnorm accepts and a gain for the rest of
- * the loudness. A sound with no integrated loudness (shorter than 400 ms) gets one gain from the measurement of the
- * sound repeated for `SHORT_SOUND_LOOP_MS`: the smaller of the gain to the loudness target and the gain to the true peak
- * limit. loudnorm's limiter and the encode can leave the written file over the true peak limit: the encode is then made
- * again with the gain lowered by the excess, and the sound fails when it stays over after `PEAK_PASSES` encodes.
+ * Removes the DC offset and shapes (`SoundShape`), brings the loudness (`soundLoudness`) to the target through the
+ * true peak limiter, encodes, and measures the written file. The encode can leave the written file over the true peak
+ * limit: the sound is then limited again with the ceiling lowered by the excess, and it fails when it stays over after
+ * `PEAK_PASSES` encodes, or when the written loudness is more than `WRITTEN_TOLERANCE_LU` from the target.
  */
 export async function processSound(program: string, file: string, target: SoundTarget, env: NodeJS.ProcessEnv): Promise<SoundResult> {
-  const normI = clamp(target.loudnessLufs, LOUDNORM_I);
-  const norm = `loudnorm=I=${String(normI)}:TP=${String(clamp(target.peakMaxDbtp, LOUDNORM_TP))}:LRA=20`;
   return withTemp(env, async (dir) => {
-    const decoded = join(dir, 'decoded.wav');
-    // A loop keeps its start, where its first bar starts, and loses only the silence at its end.
-    const trim = target.shape.kind === 'loop' ? `areverse,${TRIM},areverse,` : target.shape.trim ? `${TRIM},areverse,${TRIM},areverse,` : '';
-    await ffmpeg(program, [...input(file), '-af', `${trim}${RESAMPLE}`, '-c:a', 'pcm_f32le', '-f', 'wav', ...BITEXACT, decoded]);
-    const source = join(dir, 'shaped.wav');
-    await writeFile(source, writeWavF32(shapeSound(readWavF32(await readFile(decoded)), target.shape, file)));
+    const shaped = shapeSound(removeDc(await decode(program, file, dir, 'decoded.wav')), target.shape, file);
+    const problem = shapedProblems(shaped, target, file);
+    if (problem !== null) throw new OgwError(problem);
+    const loudness = soundLoudness(shaped, target);
+    const peak = truePeak(shaped);
+    if (loudness === null || peak === null) throw new OgwError(`${file}: no loudness to measure; the sound is silent`);
+    const source = join(dir, 'leveled.wav');
     const out = join(dir, target.ogg ? 'out.ogg' : 'out.wav');
-    const first = await measure(program, source, false, norm);
-    // No true peak: no sample is left (or every sample is 0). Repeating such a file would not end.
-    if (first.tp === null) throw new OgwError(`${file}: no loudness to measure; the sound is silent`);
-    let short = false;
-    let leveling = '';
-    let gain: number;
-    if (first.i !== null && finite(first.json.target_offset) !== null) {
-      const measured = [
-        `measured_I=${String(first.json.input_i)}`,
-        `measured_TP=${String(first.json.input_tp)}`,
-        `measured_LRA=${String(first.json.input_lra)}`,
-        `measured_thresh=${String(first.json.input_thresh)}`,
-        `offset=${String(first.json.target_offset)}`,
-      ].join(':');
-      leveling = `${norm}:${measured}:linear=true:print_format=summary,`;
-      gain = target.loudnessLufs - normI;
-    } else {
-      short = true;
-      const loop = await measure(program, source, true, norm);
-      if (loop.i === null || loop.tp === null) throw new OgwError(`${file}: no loudness to measure; the sound is silent`);
-      gain = Math.min(target.loudnessLufs - loop.i, target.peakMaxDbtp - loop.tp);
-    }
+    let ceiling = target.peakMaxDbtp - PEAK_MARGIN_DB;
     for (let pass = 1; ; pass++) {
-      const volume = leveling !== '' && Math.abs(gain) < 0.005 ? '' : `volume=${gain.toFixed(2)}dB,`;
-      await ffmpeg(program, [...input(source), '-af', `${leveling}${volume}${RESAMPLE}`, ...codecArgs(target.ogg), ...BITEXACT, out]);
-      const result = await loudness(program, out, short);
-      if (result.tp === null || result.tp <= target.peakMaxDbtp) return { bytes: await readFile(out), integratedLufs: result.i, truePeakDbtp: result.tp };
-      if (pass === PEAK_PASSES) {
-        throw new OgwError(`${file}: true peak ${String(result.tp)} dBTP stays over the bus limit ${String(target.peakMaxDbtp)} dBTP after ${String(PEAK_PASSES)} encodes`);
+      await writeFile(source, writeWavF32(leveled(shaped, target, ceiling, { loudness, peak }, file)));
+      await ffmpeg(program, ['-f', 'wav', '-i', source, ...codecArgs(target.ogg), ...BITEXACT, out]);
+      const written = await decode(program, out, dir, 'written.wav');
+      const writtenPeak = truePeak(written);
+      const writtenLoudness = soundLoudness(written, target);
+      if (writtenPeak === null || writtenLoudness === null) throw new OgwError(`${file}: the written file is silent`);
+      if (writtenPeak <= target.peakMaxDbtp) {
+        if (Math.abs(writtenLoudness - target.loudnessLufs) > WRITTEN_TOLERANCE_LU) {
+          throw new OgwError(`${file}: the written loudness ${fixed(writtenLoudness)} LUFS is more than ${String(WRITTEN_TOLERANCE_LU)} LU from the target ${fixed(target.loudnessLufs)} LUFS`);
+        }
+        return { bytes: await readFile(out), loudnessLufs: round(writtenLoudness), truePeakDbtp: round(writtenPeak) };
       }
-      gain -= result.tp - target.peakMaxDbtp + PEAK_MARGIN_DB;
+      if (pass === PEAK_PASSES) {
+        throw new OgwError(`${file}: true peak ${fixed(writtenPeak)} dBTP stays over the bus limit ${String(target.peakMaxDbtp)} dBTP after ${String(PEAK_PASSES)} encodes`);
+      }
+      ceiling -= writtenPeak - target.peakMaxDbtp + PEAK_MARGIN_DB;
     }
   });
+}
+
+/** A measurement to 0.01. */
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
 }

@@ -172,7 +172,7 @@ none
 | `SoundCore.maxConcurrentPerKey` | integer | core | content | concurrent playback limit of the same resource key. 1 or more |
 | `SoundCore.masterPeakMaxDbtp` | number | core | content | limit (dBTP) of the true peak of the `Master` output. 0 or less |
 | `SoundCore.masterLimiterMarginDb` | number | core | content | value (dB) by which the limiter ceiling is set below the peak limit |
-| `SoundCore.busLoudnessLufs` | object | core | content | integrated loudness target (LUFS) per `Bgm`, `Sfx`, `Voice`, `Ui`. `ogw resource finalize` adjusts sound files to it |
+| `SoundCore.busLoudnessLufs` | object | core | content | loudness target (LUFS) per `Bgm`, `Sfx`, `Voice`, `Ui`. `ogw resource finalize` adjusts sound files to it, with the loudness measure of `## finalize` of [final resource production](../../resource/production.md) |
 | `SoundCore.busPeakMaxDbtp` | object | core | content | true peak limit (dBTP) of sound files per `Bgm`, `Sfx`, `Voice`, `Ui`. `ogw resource finalize` adjusts sound files to it |
 | `SoundCore.devHapticLogCount` | integer | core | content | number of records that `get_haptic_log` keeps. Only DEV code reads it |
 | `SoundCore.sfxPitchVariationCents` | number | core | content | largest pitch change (cents) of a `Sfx` playback. 0 or more |

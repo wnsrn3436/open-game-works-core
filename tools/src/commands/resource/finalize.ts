@@ -5,7 +5,7 @@ import { finalizeResource, type FinalizeResult } from './lib/finalize.ts';
 function text(result: FinalizeResult): string {
   const lines = Object.entries(result.changed).map(([column, value]) => `${column}=${value}`);
   for (const l of result.loudness ?? []) {
-    lines.push(`${l.file} integrated loudness ${String(l.integratedLufs)} LUFS, true peak ${String(l.truePeakDbtp)} dBTP`);
+    lines.push(`${l.file} loudness ${String(l.loudnessLufs)} LUFS, true peak ${String(l.truePeakDbtp)} dBTP`);
   }
   return lines.join('\n');
 }
