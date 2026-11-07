@@ -4,7 +4,7 @@ import { isPlainObject } from '../../../lib/json.ts';
 import { section } from '../../../lib/markdown.ts';
 import { readContentAgentFixes } from '../../loop/lib/findings.ts';
 import { readReportRows } from '../../loop/lib/record.ts';
-import { judgeResultErrors, playFeedbackErrors } from '../../loop/lib/results.ts';
+import { judgeReadingOf, judgeResultErrors, playFeedbackErrors } from '../../loop/lib/results.ts';
 import { hypothesisMomentName, judgeMoments } from '../../loop/lib/setup.ts';
 import { reviewFileAgainst } from '../../review/lib/review-file.ts';
 import { specReviewAgainst } from '../../review/lib/spec-debt.ts';
@@ -42,8 +42,7 @@ async function reviewErrors(text: string, meta: AgentMeta): Promise<string[]> {
 async function judgeErrors(text: string, meta: AgentMeta): Promise<string[]> {
   const input: unknown = JSON.parse(await readText(meta.agentInput));
   if (!isPlainObject(input)) return [];
-  const elements = Array.isArray(input.elements) ? input.elements.filter((e): e is string => typeof e === 'string') : [];
-  return judgeResultErrors(text, { withBaseline: input.B !== null && input.B !== undefined, withReference: input.reference !== null && input.reference !== undefined, elements });
+  return judgeResultErrors(text, judgeReadingOf(input));
 }
 
 /**

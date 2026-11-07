@@ -58,6 +58,8 @@ interface Fake {
   reserving: (signal: AbortSignal | undefined) => Promise<void>;
   /** Whether the agent CLI output of the agent has a limit message of `cli`. */
   limited: (agent: FakeAgent, cli: string) => boolean;
+  /** The input the job gets in place of the one the tool wrote, written over its file; undefined keeps it. */
+  editInput: (role: string, input: Record<string, unknown>) => Record<string, unknown> | undefined;
 }
 
 const fake = vi.hoisted(
@@ -77,6 +79,7 @@ const fake = vi.hoisted(
     agentStarting: () => undefined,
     reserving: () => Promise.resolve(),
     limited: () => false,
+    editInput: () => undefined,
   }),
 );
 
@@ -124,7 +127,10 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
       const id = `a${String(fake.agents.length + 1)}`;
       counters[options.role]++;
       const output = path.join(fake.root, 'records', 'loops', fake.run, `${options.role}-1-${String(counters[options.role])}.md`);
-      const input = JSON.parse(fs.readFileSync(options.input, 'utf8')) as Record<string, unknown>;
+      const written = JSON.parse(fs.readFileSync(options.input, 'utf8')) as Record<string, unknown>;
+      const edited = fake.editInput(options.role, written);
+      if (edited !== undefined) fs.writeFileSync(options.input, JSON.stringify(edited));
+      const input = edited ?? written;
       // `ogw agent` copies the play guides of a judge input when the job starts
       const guide = (side: 'A' | 'B'): string | null => {
         const path = (input[side] as { playGuide?: string } | null)?.playGuide;
@@ -291,6 +297,7 @@ beforeEach(() => {
   fake.agentStarting = () => undefined;
   fake.reserving = () => Promise.resolve();
   fake.limited = () => false;
+  fake.editInput = () => undefined;
   fake.failStart = (opts) => (typeof opts.fixture === 'string' && opts.fixture.endsWith('broken.json') ? 'fixture' : null);
   counters.play = 0;
   counters.judge = 0;
@@ -482,6 +489,45 @@ describe('ogw loop evaluate', () => {
     expect(file.judges[0]).toMatchObject({ status: 'failed', votes: null, vsReference: 'unknown', result: '' });
     expect(file.votes?.every((v) => v.this === 0 && v.baseline === 0)).toBe(true);
     expect(git(g.root, 'ls-files', `${R}/measure-1.json`)).toBe('');
+  });
+
+  it('reads no ## vs baseline of a judge whose input has B null, though the pair has a baseline game', async () => {
+    const { g, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    // the judge gets no B: it compares nothing with the baseline game and writes only ## vs reference
+    fake.editInput = (role, input) => (role === 'judge' ? { ...input, B: null } : undefined);
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      return ['## vs reference', '', '| instance | element | result | reason | evidence |', '|---|---|---|---|---|', '| A | game feel | pass | r | e |', '| B | game feel | pass | r | e |', ''].join('\n');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.baseline).toBe(base);
+    const main = file.judges.filter((j) => j.kind === 'main');
+    expect(main.map((j) => [j.status, j.votes, j.vsReference])).toEqual([
+      ['done', null, 'pass'],
+      ['done', null, 'pass'],
+    ]);
+    expect(fake.agents.filter((a) => a.role === 'judge').every((a) => a.input.B === null)).toBe(true);
+  });
+
+  it('reads no ## vs reference of a judge whose input has reference null in a completeness iteration', async () => {
+    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    fake.editInput = (role, input) => (role === 'judge' ? { ...input, reference: null } : undefined);
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const side = sideCommit(agent, 'A') === head ? 'A' : 'B';
+      return ['## vs baseline', '', '| element | winner | margin | reason | evidence |', '|---|---|---|---|---|', `| game feel | ${side} | clear | r | e |`, ''].join('\n');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    const main = file.judges.filter((j) => j.kind === 'main');
+    expect(main.map((j) => [j.status, j.votes?.['game feel'], j.vsReference])).toEqual([
+      ['done', 'this', 'unknown'],
+      ['done', 'this', 'unknown'],
+    ]);
   });
 
   it('puts this commit in B by the coin and judges without a baseline in a create run', async () => {

@@ -32,7 +32,7 @@ import {
   type VsBaseline,
   type VsReference,
 } from './files.ts';
-import { appendCoverage, judgeVerdict, type JudgeVerdict } from './results.ts';
+import { appendCoverage, judgeReadingOf, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
 import { botRun, checkTelemetryRuns, comparisonText, pairRuns, scenarioAtHead, withInputLatency, type BotRun, type PairRuns, type SharedScenario } from './shared-telemetry.ts';
 import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
@@ -205,6 +205,8 @@ export interface JudgeSlot {
   pending: { id: string; spec: Spec }[];
   attempts: number;
   instances: InstanceInfo[];
+  /** The judge input file of its current call, which sets what of its judge result is read; null before its first call. */
+  input: string | null;
   job: string | null;
   entry: JudgeEntry | null;
 }
@@ -301,7 +303,7 @@ export function judgeGroup(
 ): Group {
   const { included, omitted, size } = judgeMoments(plan, pair);
   const budget = judgeBudget(slots, pair.baseline === null ? 1 : 2, included.length, together);
-  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, fallback, fellBack: false, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], job: null, entry: null };
+  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, fallback, fellBack: false, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], input: null, job: null, entry: null };
   return { size: slot.budget, slots: [slot], gate: kind === 'main' ? 'none' : kind };
 }
 
@@ -605,6 +607,7 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
   };
   const reference = plan.kind === 'fun' || plan.reference === null ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
   const input = await inputFile(state, 'judge', { A: await game('A'), B: await game('B'), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
+  slot.input = input;
   await startJob(state, slot, input);
 }
 
@@ -802,15 +805,14 @@ async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> 
   if (slot.job !== null) await clearUnstarted(state.ctx.env, slot.job);
 }
 
-/** Reads the judge result; null when its tables cannot be read. */
-async function readVerdict(state: State, slot: JudgeSlot, output: string): Promise<JudgeVerdict | null> {
+/**
+ * Reads the judge result as its judge input sets (ogw.md `## loop evaluate`): the input file the judge got, not the
+ * pair, says whether it compared with the baseline game and with the reference game. Null when its tables cannot be read.
+ */
+async function readVerdict(slot: JudgeSlot, output: string): Promise<JudgeVerdict | null> {
   try {
-    return judgeVerdict(await readFile(output, 'utf8'), slot.side, {
-      withBaseline: slot.pair.baseline !== null,
-      withReference: state.plan.kind === 'completeness',
-      elements: elementsOf(state.plan.kind),
-      judgeMoments: slot.moments.map((m) => m.name),
-    });
+    const reading = judgeReadingOf(JSON.parse(await readFile(slot.input as string, 'utf8')));
+    return judgeVerdict(await readFile(output, 'utf8'), slot.side, { ...reading, judgeMoments: slot.moments.map((m) => m.name) });
   } catch {
     return null;
   }
@@ -863,7 +865,7 @@ async function poll(state: State, slot: Slot): Promise<boolean> {
       await finishPlay(state, slot, outcome.output);
       return true;
     }
-    const verdict = await readVerdict(state, slot, outcome.output);
+    const verdict = await readVerdict(slot, outcome.output);
     if (verdict) {
       await stopJudgeInstances(state, slot);
       slot.entry = judgeEntry(state, slot, outcome.output, verdict);

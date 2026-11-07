@@ -105,19 +105,15 @@ function readVsReference(text: string, instanceSide: 'A' | 'B'): { value: VsRefe
 }
 
 /**
- * What a judge result gives. `withBaseline` false: no votes. `withReference` false (a fun iteration): `## vs reference`
- * is not read. `judgeMoments`: the names of the save fixture moments put in that judge. Throws when a table it reads
- * cannot be read.
+ * What a judge result gives, read as its judge input sets (`judgeReadingOf`). `withBaseline` false: no votes and no lost
+ * moments. `withReference` false: `## vs reference` is not read. `judgeMoments`: the names of the save fixture moments
+ * put in that judge. Throws when a table it reads cannot be read.
  */
-export function judgeVerdict(
-  text: string,
-  instanceSide: 'A' | 'B',
-  options: { withBaseline: boolean; withReference: boolean; elements: readonly string[]; judgeMoments?: readonly string[] },
-): JudgeVerdict {
+export function judgeVerdict(text: string, instanceSide: 'A' | 'B', reading: JudgeReading & { judgeMoments?: readonly string[] }): JudgeVerdict {
   return {
-    votes: options.withBaseline ? votesOf(text, instanceSide, options.elements) : null,
-    lostMoments: options.withBaseline ? lostMoments(text, instanceSide, options.judgeMoments ?? []) : [],
-    vsReference: options.withReference ? vsReferenceOf(text, instanceSide) : null,
+    votes: reading.withBaseline ? votesOf(text, instanceSide, reading.elements) : null,
+    lostMoments: reading.withBaseline ? lostMoments(text, instanceSide, reading.judgeMoments ?? []) : [],
+    vsReference: reading.withReference ? vsReferenceOf(text, instanceSide) : null,
   };
 }
 
@@ -128,6 +124,16 @@ export interface JudgeReading {
   /** `reference` of the input is not `null`: `## vs reference` is read. */
   withReference: boolean;
   elements: readonly string[];
+}
+
+/**
+ * The reading of the judge input `input` (agents/judge.md): `## vs baseline` when its `B` is not `null`, `## vs reference`
+ * when its `reference` is not `null`, of its `elements`. Both the result format check and `ogw loop evaluate` read so.
+ */
+export function judgeReadingOf(input: unknown): JudgeReading {
+  const fields = typeof input === 'object' && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  const elements = Array.isArray(fields.elements) ? fields.elements.filter((e): e is string => typeof e === 'string') : [];
+  return { withBaseline: fields.B !== null && fields.B !== undefined, withReference: fields.reference !== null && fields.reference !== undefined, elements };
 }
 
 /** The format errors of a judge result: each way `judgeVerdict` cannot read the tables it reads (ogw.md `### result format`). */
