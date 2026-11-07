@@ -203,7 +203,7 @@ describe('ogw regress refresh and admission', () => {
     expect(vi.mocked(regressChecks).mock.calls.slice(0, 3).every((c) => c[3].performance)).toBe(true);
     expect(existsSync(join(ws.regress, 'records/refresh-1.0.0/lc-base-1.json'))).toBe(true);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| lc | 1.0.0 | none | none | none | 3 clean | none | base-1.0.0 |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | 3 checks | none | base-1.0.0 |');
     expect(record).toContain('| S01 | admitted | none | caught, caught, caught | none |');
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
     expect((await ogw(ws, ['regress', 'status'])).stdout).toContain('state lc: base-1.0.0\nseed S01: admitted\n');
@@ -235,6 +235,61 @@ describe('ogw regress refresh and admission', () => {
     expect(read('S05')).toMatchObject({ result: 'stale', reason: `not caught: ${broken}, ${broken}, ${broken}`, catch: ['unknown', 'unknown', 'unknown'] });
     expect(existsSync(join(ws.regress, 'seeds/S02/patch-1.0.0.diff'))).toBe(false);
     expect((await ogw(ws, ['regress', 'status'])).stdout).toContain('seed S02: stale (not caught: missed, missed, missed)');
+  });
+
+  it('tags the base when its checks ran and makes stale on its own a seed for which a base check is not clean, also a seed given later', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    const missing = { ...MANIFEST, element: 'no placeholder', match: [{ check: 'no placeholder', where: '^data/translations/en\\.csv:\\d+$', message: '^translation_missing en ' }] };
+    const screens = { ...MANIFEST, element: 'UI quality', match: [{ check: 'UI quality', where: '.*', message: '^clipped' }] };
+    bootstrap(ws, commit, { S01: { manifest: MANIFEST, patch: patchOf('leak') }, S06: { manifest: missing, patch: patchOf('6') }, S07: { manifest: screens, patch: patchOf('7') } });
+    // every check, of the base too, has a missing translation, and its UI quality has no result
+    vi.mocked(regressChecks).mockImplementation((_ctx, game) => {
+      const leak = readFileSync(join(game.root, 'client/a.gd'), 'utf8').includes('leak');
+      return Promise.resolve({
+        checks: [
+          item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : []),
+          item('no placeholder', 'fail', [['data/translations/en.csv:169', 'translation_missing en reserved_string.text.[controls_bomb]']]),
+          item('UI quality', 'unknown', [['scene/lobby', 'host busy']], 'macos'),
+        ],
+        fixTestProof: [],
+      });
+    });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(1);
+    const state = join(ws.games, 'ogw-regress-lc');
+    expect(sh(state, 'git', ['tag', '--list', 'base-1.0.0']).trim()).toBe('base-1.0.0');
+    const read = (id: string): Record<string, unknown> => JSON.parse(readFileSync(join(ws.regress, `seeds/${id}/admitted-1.0.0.json`), 'utf8')) as Record<string, unknown>;
+    expect(read('S01')).toMatchObject({ result: 'admitted', catch: ['caught', 'caught', 'caught'] });
+    expect(read('S06')).toMatchObject({ result: 'stale', reason: 'base fails target: no placeholder data/translations/en.csv:169 translation_missing en reserved_string.text.[controls_bomb]', seeded: null });
+    expect(read('S07')).toMatchObject({ result: 'stale', reason: 'base fails target: UI quality (macos): unknown: host busy', seeded: null });
+    // 3 base checks and the 3 checks of S01: a seed the base is not clean for is not applied or checked
+    expect(vi.mocked(regressChecks)).toHaveBeenCalledTimes(6);
+    const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | 3 checks | no placeholder\\|-\\|data/translations/en.csv\\|translation_missing en reserved_string.text.[controls_bomb] | base-1.0.0 |');
+    // a seed given later takes the kept base checks the same way
+    const folder = join(ws.root, 'new-seeds', 'S08');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'seed.json'), JSON.stringify(missing));
+    writeFileSync(join(folder, 'patch-1.0.0.diff'), patchOf('8'));
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'seed', folder])).stdout).toBe('seed S08: stale (base fails target: no placeholder data/translations/en.csv:169 translation_missing en reserved_string.text.[controls_bomb])\n');
+    expect(vi.mocked(regressChecks)).not.toHaveBeenCalled();
+  });
+
+  it('leaves the state untagged when a base check does not run', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    bootstrap(ws, commit, { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    let n = 0;
+    vi.mocked(regressChecks).mockImplementation(() => (++n === 2 ? Promise.reject(new OgwError('the server did not start')) : Promise.resolve({ checks: [item('no blocker', 'pass')], fixTestProof: [] })));
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; check 2: ogw regress check exit 1: the server did not start)');
+    expect(run.stdout).toContain('seed S01: stale (base fails target: lc none; none; none; check 2: ogw regress check exit 1: the server did not start)');
+    expect(sh(join(ws.games, 'ogw-regress-lc'), 'git', ['tag', '--list']).trim()).toBe('');
   });
 
   it('admits an oracle seed only when its probe fails on the seeded commit and passes on the reference fix', async () => {

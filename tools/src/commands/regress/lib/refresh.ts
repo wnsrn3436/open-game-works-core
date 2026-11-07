@@ -127,9 +127,20 @@ async function admissionOracle(ctx: Context, input: AdmitInput, state: string, s
   return { oracle: { seeded: onSeeded.result, reference: onReference.result }, reason };
 }
 
+/** Step 1 of admission: why a base check is not clean for the seed, from the first that is not, or null when each is. */
+function baseNotClean(seed: Seed, baseChecks: readonly RegressCheckFile[]): string | null {
+  for (const file of baseChecks) {
+    const clean = cleanFor(seed.manifest, file);
+    if (!clean.clean) return clean.reason;
+  }
+  return null;
+}
+
 /** Admits a seed at `version` (ogw.md `### admission`); a seed that fails a step is `stale` with the reason. */
 export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admission> {
   const { seed, version } = input;
+  const unclean = baseNotClean(seed, input.baseChecks);
+  if (unclean !== null) return stale(`base fails target: ${unclean}`, { base: input.base });
   const state = await ctx.game(stateGame(seed.manifest.state));
   const applied = await applySeed(ctx, input, state);
   if ('result' in applied) return applied;
@@ -196,28 +207,26 @@ async function keptBaseChecks(repo: string, version: string, state: string, comm
   return files;
 }
 
-/** 3 checks of the base candidate `commit`, kept in the regress repo, each clean for each seed of the state. */
-async function checkBase(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, commit: string, version: string, seeds: readonly Seed[]): Promise<{ files: RegressCheckFile[]; failures: string[]; clean: boolean; text: string }> {
+/**
+ * The 3 base checks of the base candidate `commit`, kept in the regress repo: all of their files, or none and why
+ * when one of them did not run. Whether they are clean for a seed is its admission's (ogw.md `### admission` 1).
+ */
+async function checkBase(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, commit: string, version: string): Promise<{ files: RegressCheckFile[]; failures: string[]; text: string }> {
   const files: RegressCheckFile[] = [];
-  const unclean: string[] = [];
   for (let i = 1; i <= ADMISSION_CHECKS; i++) {
     const out = join(baseChecksDir(repo, version), `${state}-base-${String(i)}.json`);
     const checked = await gate.run(true, () => sideCheck(ctx, self, { game: stateGame(state), commit, out, checks: null, performance: true, proof: null }));
-    if ('error' in checked) return { files, failures: [], clean: false, text: `check ${String(i)}: ${checked.error}` };
+    if ('error' in checked) return { files: [], failures: [], text: `check ${String(i)}: ${checked.error}` };
     files.push(checked.file);
-    for (const seed of seeds) {
-      const clean = cleanFor(seed.manifest, checked.file);
-      if (!clean.clean) unclean.push(`${seed.id} check ${String(i)}: ${clean.reason ?? ''}`);
-    }
   }
   // the evidence folders of the base checks stay out of the regress repo
   for (let i = 1; i <= ADMISSION_CHECKS; i++) await rm(join(baseChecksDir(repo, version), `${state}-base-${String(i)}`), { recursive: true, force: true });
   const failures = [...new Set(files.flatMap((f) => [...keysOf(f)]))];
-  return { files, failures, clean: unclean.length === 0, text: unclean.length === 0 ? `${String(ADMISSION_CHECKS)} clean` : `not clean: ${unclean.join('; ')}` };
+  return { files, failures, text: `${String(ADMISSION_CHECKS)} checks` };
 }
 
 /** Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 3). */
-export async function refreshState(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, version: string, seeds: readonly Seed[], settings: Readonly<Record<string, unknown>>): Promise<StateRefresh> {
+export async function refreshState(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, version: string, settings: Readonly<Record<string, unknown>>): Promise<StateRefresh> {
   const game = await ctx.game(stateGame(state));
   const tag = baseTag(version);
   const out: StateRefresh = { state, from: '', settings: 'none', upgrade: 'none', content: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
@@ -228,7 +237,7 @@ export async function refreshState(ctx: Context, repo: string, self: Side, gate:
     out.base = base;
     out.baseChecks = (await keptBaseChecks(repo, version, state, base)) ?? [];
     if (out.baseChecks.length === 0) {
-      const checked = await checkBase(ctx, repo, self, gate, state, base, version, seeds);
+      const checked = await checkBase(ctx, repo, self, gate, state, base, version);
       out.baseChecks = checked.files;
       out.failures = checked.failures;
       out.checks = checked.text;
@@ -250,11 +259,11 @@ export async function refreshState(ctx: Context, repo: string, self: Side, gate:
     if (!content.ok) return out;
   }
   const commit = await head(game.root, { env: ctx.env });
-  const checked = await checkBase(ctx, repo, self, gate, state, commit, version, seeds);
+  const checked = await checkBase(ctx, repo, self, gate, state, commit, version);
   out.checks = checked.text;
   out.failures = checked.failures;
   out.baseChecks = checked.files;
-  if (!checked.clean) return out;
+  if (checked.files.length === 0) return out;
   await git(game.root, ['tag', tag, commit], { env: ctx.env });
   out.tag = tag;
   out.base = commit;
@@ -309,7 +318,7 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
   const parallel = (await ctx.settings()).regress.parallel;
   const gate = checkGate();
   const refreshed = await pooled(states, parallel, (state) =>
-    refreshState(ctx, repo, self, gate, state, version, seeds.filter((s) => s.manifest.state === state), entries.find((e) => e.state === state)?.settings ?? {}),
+    refreshState(ctx, repo, self, gate, state, version, entries.find((e) => e.state === state)?.settings ?? {}),
   );
   const results = await admitSeeds(ctx, repo, self, gate, version, seeds, refreshed, parallel);
   const paths: string[] = [];
