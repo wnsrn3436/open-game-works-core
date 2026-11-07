@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import * as tar from 'tar';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BuildRunResult } from '../../../src/commands/build/lib/buildrun.ts';
+import type { MeasureGate } from '../../../src/commands/build/lib/client-check.ts';
 import { devicePerformance } from '../../../src/commands/build/lib/device-performance.ts';
 import { buildBundle, buildPlatforms } from '../../../src/commands/build/lib/platform.ts';
 import { saveSchemaCheck } from '../../../src/commands/build/lib/saveschema.ts';
@@ -352,53 +353,67 @@ describe('build run', () => {
     expect(buildPlatforms).not.toHaveBeenCalled();
   });
 
-  it('runs the build-time checks that run no game together, and the checks that run the game after them: device performance and web smoke together, repeat test after web smoke, soak test after both; DEV warning and unknown do not block, a STG failure does', async () => {
+  it('runs the build-time checks that run no game together with the instances and exports of the measurements; the measured runs after them: device performance and web smoke together, repeat test after web smoke, soak test after both; a STG failure blocks', async () => {
     const ws = makeWorkspace();
     const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
-    (environments.DEV as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
-    const { dir, env } = prepare(ws, { buildPlatforms: ['web', 'android'], environments });
+    (environments.STG as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
+    const { dir, env } = prepare(ws, { buildPlatforms: ['web', 'android'], environments, privacy: { contentData: [] } });
+    vi.mocked(gameModules).mockResolvedValue({ client: [], server: ['game-update'] });
     // a PROD tag: the backward compatibility check runs the contract tool
     git(dir, 'tag', 'prod-0.0.9');
-    await openBuildRun(ws, dir, { platforms: ['web', 'android'] });
+    await openBuildRun(ws, dir, { env: 'STG', version: '0.2.0', platforms: ['web', 'android'] });
     const order: string[] = [];
-    const load = ['static check', 'placeholder', 'contract'];
+    // the checks that run no game, and the instances and exports of the two measurements
+    const load = ['static check', 'placeholder', 'contract', 'device performance export', 'web smoke export'];
     const started = new Set<string>();
-    // a check that runs no game ends only when every other one has started (or after 5 s): run one after another, they would not
+    // a part that runs no game ends only when every other one has started (or after 5 s): run one after another, they would not
     const allStarted = async (): Promise<void> => {
       for (let i = 0; i < 250 && !load.every((name) => started.has(name)); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     };
     // device performance outlasts web smoke and the repeat test: the soak test waits for it too
-    const lasts: Record<string, number> = { 'device performance': 400, 'repeat test': 100 };
-    const traced = <T>(name: string, value: T) => async (): Promise<T> => {
+    // the Gradle export outlasts the other parts that run no game: the measured runs wait for it
+    const lasts: Record<string, number> = { 'device performance': 400, 'repeat test': 100, 'device performance export': 300 };
+    const step = async (name: string): Promise<void> => {
       order.push(`${name} start`);
       started.add(name);
       if (load.includes(name)) await allStarted();
       await new Promise((resolve) => setTimeout(resolve, lasts[name] ?? 20));
       order.push(`${name} end`);
+    };
+    const traced = <T>(name: string, value: T) => async (): Promise<T> => {
+      await step(name);
+      return value;
+    };
+    // a measurement makes its instance and export, waits at its gate, then runs
+    const measured = <T>(name: string, value: T) => async (_input: unknown, gate?: MeasureGate): Promise<T> => {
+      await step(`${name} export`);
+      gate?.exported();
+      expect(await gate?.measure).toBeNull();
+      await step(name);
       return value;
     };
     vi.mocked(staticCheck).mockImplementationOnce(traced('static check', { name: 'static check', platform: null, result: 'pass' as const, failures: [], warnings: [] }));
     vi.mocked(placeholderFailures).mockImplementationOnce(traced('placeholder', []));
     vi.mocked(runContract).mockImplementationOnce(traced('contract', { exitCode: 0, violations: [], stderr: '' }));
-    vi.mocked(devicePerformance).mockImplementationOnce(traced('device performance', { name: 'device performance', result: 'pass' as const, details: [] }));
-    vi.mocked(webSmoke).mockImplementationOnce(traced('web smoke', { check: { name: 'web smoke', result: 'pass' as const, details: [] }, loadingMs: 10 }));
-    vi.mocked(repeatTest).mockImplementationOnce(traced('repeat test', { name: 'repeat test', result: 'warn' as const, details: ['1 of 36 runs failed: crash 1, softlock 0, error log 0, failed goal 0, other 0'] }));
-    vi.mocked(soakTest).mockImplementationOnce(traced('soak test', { name: 'soak test', result: 'unknown' as const, details: ['window 3: no static_memory_bytes reading'] }));
+    vi.mocked(devicePerformance).mockImplementationOnce(measured('device performance', { name: 'device performance', result: 'pass' as const, details: [] }));
+    vi.mocked(webSmoke).mockImplementationOnce(measured('web smoke', { check: { name: 'web smoke', result: 'pass' as const, details: [] }, loadingMs: 10 }));
+    vi.mocked(repeatTest).mockImplementationOnce(traced('repeat test', { name: 'repeat test', result: 'pass' as const, details: [] }));
+    vi.mocked(soakTest).mockImplementationOnce(traced('soak test', { name: 'soak test', result: 'pass' as const, details: [] }));
     const out = await ogw(ws, ['build', 'run', 'g'], { env });
     expect([out.code, out.stderr]).toEqual([0, '']);
     const at = (event: string): number => order.indexOf(event);
     const loadEnd = Math.min(...load.map((name) => at(`${name} end`)));
     const lastLoadEnd = Math.max(...load.map((name) => at(`${name} end`)));
-    // the checks that run no game start before any of them ends
+    // the parts that run no game start before any of them ends: the Gradle export of device performance with them
     for (const name of load) expect(at(`${name} start`)).toBeLessThan(loadEnd);
-    // the checks that run the game start after all of those ended; device performance and web smoke overlap as before
+    // the measured runs start after all of those ended; device performance and web smoke overlap as before
     for (const name of ['device performance', 'web smoke', 'repeat test', 'soak test']) expect(at(`${name} start`)).toBeGreaterThan(lastLoadEnd);
     expect(Math.max(at('device performance start'), at('web smoke start'))).toBeLessThan(Math.min(at('device performance end'), at('web smoke end')));
     expect(at('repeat test start')).toBeGreaterThan(at('web smoke end'));
     expect(at('soak test start')).toBeGreaterThan(Math.max(at('device performance end'), at('repeat test end')));
-    const checks = result(dir, 'dev-0.1.0').checks.map((c) => `${c.name}:${c.result}`);
-    expect(checks.slice(-6)).toEqual(['placeholder:pass', 'device performance:pass', 'web smoke:pass', 'repeat test:warn', 'soak test:unknown', 'backward compatibility:pass']);
-    expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'DEV', version: '0.1.0', exportVersion: '0.1.0', platforms: ['web', 'android'] });
+    const checks = result(dir, 'stg-0.2.0').checks.map((c) => `${c.name}:${c.result}`);
+    expect(checks.slice(-6)).toEqual(['placeholder:pass', 'device performance:pass', 'web smoke:pass', 'repeat test:pass', 'soak test:pass', 'backward compatibility:pass']);
+    expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'STG', version: '0.2.0', exportVersion: '0.2.0', platforms: ['web', 'android'] });
 
     vi.mocked(buildPlatforms).mockClear();
     const stg = makeWorkspace();

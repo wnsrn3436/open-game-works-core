@@ -11,17 +11,20 @@ import type { InstanceInfo } from '../../instance/api.ts';
 import type { BuildCheck } from './buildrun.ts';
 import { openHeadless, type HeadlessPage } from './chromium.ts';
 import {
+  atGate,
   buildCheckOf,
   clientCheckTiming,
   didNotRun,
   ranToEnd,
   evidenceOf,
   launchValuesOf,
+  NO_GATE,
   serveFolder,
   waitClientBoot,
   withCheckCopy,
   withCheckInstance,
   type ClientCheckInput,
+  type MeasureGate,
 } from './client-check.ts';
 
 const NAME = 'web smoke';
@@ -105,8 +108,11 @@ export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, us
   }
 }
 
-/** Check `web smoke` (`build` `## build-time check`, ogw.md `### web smoke`). Null when the build has no web platform. */
-export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult | null> {
+/**
+ * Check `web smoke` (`build` `## build-time check`, ogw.md `### web smoke`). Null when the build has no web platform. Its
+ * check instance and export come first; the page opens when `gate` lets it measure.
+ */
+export async function webSmoke(input: ClientCheckInput, gate: MeasureGate = NO_GATE): Promise<WebSmokeResult | null> {
   if (!input.platforms.includes('web')) return null;
   const { ctx } = input;
   const scenario = await readScenario(input.game.root);
@@ -115,12 +121,14 @@ export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult 
     const run = await webRunSettings(ctx);
     if (typeof run === 'string') return { check: didNotRun(NAME, run), loadingMs: null };
     return await withCheckCopy(input, 'web', 'web', (exportWith) =>
-      withCheckInstance(ctx, input.game, 'web', async (instance, external) =>
-        withWebPage(ctx, run, await exportWith(launchValuesOf(instance, external, 'web')), async (page) => {
+      withCheckInstance(ctx, input.game, 'web', async (instance, external) => {
+        const file = await exportWith(launchValuesOf(instance, external, 'web'));
+        await atGate(gate);
+        return withWebPage(ctx, run, file, async (page) => {
           const { results, loadingMs } = await webScenario(input, instance, page, scenario, run.bootLimitMs, evidenceOf(input, 'web-smoke'));
           return { check: ranToEnd(NAME, buildCheckOf(NAME, input.env, results)), loadingMs };
-        }),
-      ),
+        });
+      }),
     );
   } catch (error) {
     return { check: didNotRun(NAME, error), loadingMs: null };

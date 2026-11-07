@@ -99,6 +99,42 @@ export async function withCheckInstance<T>(
   }
 }
 
+/**
+ * When a check that measures starts its measured part (ogw.md `## build run`): it calls `exported` once its check
+ * instance runs and its check export is made, then starts the run on the device or in the browser when `measure`
+ * resolves: with null, or with the reason it does not run.
+ */
+export interface MeasureGate {
+  exported: () => void;
+  measure: Promise<string | null>;
+}
+
+/** The gate of a check run on its own: it measures as soon as its export is made. */
+export const NO_GATE: MeasureGate = { exported: () => undefined, measure: Promise.resolve(null) };
+
+/** Waits at the gate after the export; a reason not to measure ends the check as one that did not run. */
+export async function atGate(gate: MeasureGate): Promise<void> {
+  gate.exported();
+  const reason = await gate.measure;
+  if (reason !== null) throw new OgwError(reason);
+}
+
+/**
+ * A gate that `open` opens with null, or with a reason not to measure, and the promise of its export: settled when the
+ * check called `exported`, or when the check `done` ended first.
+ */
+export function measureGate(): { gate: MeasureGate; open: (reason: string | null) => void; exportedOr: (done: Promise<unknown>) => Promise<unknown> } {
+  let exported: () => void = () => undefined;
+  const made = new Promise<void>((resolve) => {
+    exported = resolve;
+  });
+  let open: (reason: string | null) => void = () => undefined;
+  const measure = new Promise<string | null>((resolve) => {
+    open = resolve;
+  });
+  return { gate: { exported, measure }, open, exportedOr: (done) => Promise.race([made, Promise.allSettled([done])]) };
+}
+
 /** Launch values of ogw.md `### device performance` 3 and `### web smoke` 2. */
 export function launchValuesOf(instance: InstanceInfo, external: ExternalClient, platform: string): LaunchValues {
   return {

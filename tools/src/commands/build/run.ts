@@ -16,7 +16,7 @@ import { dataVersionsAt, protocolHash, readDataVersions, type DataVersions } fro
 import { addedConverters, convertersAt, convertersOf } from './lib/converters.ts';
 import { buildDir, buildRunFile, gameSettingsWithDefaults, requireBuildRun, type BuildCheck, type BuildRunResult, type OpenBuildRun } from './lib/buildrun.ts';
 import { settingsCheckInput } from './lib/inputs.ts';
-import { withCheckWorkspaces, type CheckPlatform, type ClientCheckInput } from './lib/client-check.ts';
+import { measureGate, withCheckWorkspaces, type CheckPlatform, type ClientCheckInput } from './lib/client-check.ts';
 import { devicePerformance } from './lib/device-performance.ts';
 import { webRunSettings, webSmoke } from './lib/web-smoke.ts';
 import { repeatTest } from './lib/repeat-test.ts';
@@ -83,10 +83,11 @@ async function exportPlatforms(input: ClientCheckInput): Promise<CheckPlatform[]
 }
 
 /**
- * The client checks (ogw.md `## build run`). The check workspaces are prepared beside the other build-time checks
- * (`load`). The checks that run the game measure or judge times on the modelled device, so they start when all of
- * `load` has ended: `device performance` and `web smoke` together, `repeat test` when `web smoke` has ended, and
- * `soak test` when `repeat test` and `device performance` have ended.
+ * The client checks (ogw.md `## build run`). The check workspaces, and the check instances and exports of
+ * `device performance` and `web smoke`, are made beside the other build-time checks (`load`). The checks that run the
+ * game measure or judge times on the modelled device, so their runs start when all of that has ended: the runs of
+ * `device performance` and `web smoke` together, `repeat test` when `web smoke` has ended, and `soak test` when
+ * `repeat test` and `device performance` have ended.
  */
 async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promise<{ checks: CheckWithHuman[]; loadingMs: number | null }> {
   const base: ClientCheckInput = {
@@ -95,10 +96,21 @@ async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promis
   return withCheckWorkspaces(base, async (workspaces) => {
     const input: ClientCheckInput = { ...base, workspaces };
     const preparing = (await exportPlatforms(input)).map((platform) => workspaces.prepare(platform));
-    // a check workspace that failed fails the checks that export from it, not the build run
-    const quiet = Promise.allSettled([...load, ...preparing]).then(() => allSettledOrThrow(load));
-    const device = quiet.then(() => devicePerformance(input));
-    const web = quiet.then(() => webSmoke(input));
+    const deviceGate = measureGate();
+    const webGate = measureGate();
+    const device = devicePerformance(input, deviceGate.gate);
+    const web = webSmoke(input, webGate.gate);
+    // a check workspace or an export that failed fails the check that uses it, not the build run
+    const exported = [deviceGate.exportedOr(device), webGate.exportedOr(web)];
+    const quiet = Promise.allSettled([...load, ...preparing, ...exported]).then(() => allSettledOrThrow(load));
+    // a check that failed with an error stops the measurements too: once their instances stopped, the run fails with it
+    const reason = await quiet.then(() => null, (error: unknown) => `a build-time check failed: ${(error as Error).message}`);
+    deviceGate.open(reason);
+    webGate.open(reason);
+    if (reason !== null) {
+      await Promise.allSettled([device, web]);
+      await allSettledOrThrow(load);
+    }
     const repeat = web.then(() => repeatTest(input));
     const soak = Promise.allSettled([repeat, device]).then(() => allSettledOrThrow([repeat, device])).then(() => soakTest(input));
     await allSettledOrThrow([device, web, repeat, soak]);

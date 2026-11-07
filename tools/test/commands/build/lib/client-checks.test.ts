@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consoleText, openHeadless } from '../../../../src/commands/build/lib/chromium.ts';
-import { buildCheckOf, clientCheckTiming, didNotRun, serveFolder, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
+import { buildCheckOf, clientCheckTiming, didNotRun, measureGate, serveFolder, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
 import { appBlocker, devicePerformance } from '../../../../src/commands/build/lib/device-performance.ts';
 import { fpsSampling } from '../../../../src/commands/check/lib/performance.ts';
 import { webSmoke } from '../../../../src/commands/build/lib/web-smoke.ts';
@@ -494,5 +494,47 @@ describe('device performance', () => {
     s.config({});
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('no slot'));
     expect((await devicePerformance(s.input))?.details).toEqual(['device performance did not run: no slot']);
+  });
+});
+
+describe('measure gate', () => {
+  /** Lines of the fake program log that start with `program `. */
+  const calls = (s: Setup, program: string): string[] => (existsSync(s.bin.log) ? readFileSync(s.bin.log, 'utf8') : '').split('\n').filter((l) => l.startsWith(`${program} `));
+
+  it('makes the instance and the apk of device performance first, and puts the app on the device only when the gate opens', async () => {
+    const s = await setup();
+    // as in the passing device test: several ticks with 10 s of frames on time at 30 fps
+    const stats = { fps: 60, frame_intervals_ms: Array<number>(300).fill(33.33) };
+    s.config({ clients: { main: { state: { scene_key: 'battle' }, delayMs: { tap: 300 }, results: { get_stats: { ok: true, result: stats } } } }, telemetry: { goal_intervals: [{}], scene_loads: [{ scene_key: 'battle', duration_ms: 100 }] } });
+    const gate = measureGate();
+    const check = devicePerformance(s.input, gate.gate);
+    await gate.exportedOr(check);
+    // the Gradle export ran and the instance runs; nothing went to the device yet
+    expect(calls(s, 'godot').some((l) => l.includes('--export-debug android-dev'))).toBe(true);
+    expect(vi.mocked(startInstance)).toHaveBeenCalledTimes(1);
+    expect(calls(s, 'adb')).toEqual([]);
+    gate.open(null);
+    expect(await check).toEqual({ name: 'device performance', result: 'pass', details: [] });
+    expect(calls(s, 'adb')[0]).toMatch(/^adb -s emulator-5554 install -r /);
+  });
+
+  it('makes the instance and the export of web smoke first, and opens the page only when the gate opens; a reason ends the check unrun', async () => {
+    const s = await setup();
+    s.config({ telemetry: { goal_intervals: [{}], scene_loads: [] } });
+    const gate = measureGate();
+    const check = webSmoke(s.input, gate.gate);
+    await gate.exportedOr(check);
+    expect(calls(s, 'godot').some((l) => l.includes('--export-debug web-dev'))).toBe(true);
+    expect(chromiumCalls(s)).toEqual([]);
+    gate.open(null);
+    expect((await check)?.check.result).toBe('pass');
+    expect(chromiumCalls(s).length).toBeGreaterThan(0);
+    const stopped = measureGate();
+    const unrun = webSmoke(s.input, stopped.gate);
+    await stopped.exportedOr(unrun);
+    stopped.open('a build-time check failed: static check broke');
+    expect((await unrun)?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: a build-time check failed: static check broke'] });
+    // its instance stopped
+    expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(2);
   });
 });

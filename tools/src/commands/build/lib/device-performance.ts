@@ -12,16 +12,19 @@ import { gameModules } from '../../generate/api.ts';
 import type { ExternalClient, InstanceInfo } from '../../instance/api.ts';
 import type { BuildCheck } from './buildrun.ts';
 import {
+  atGate,
   buildCheckOf,
   clientCheckTiming,
   didNotRun,
   ranToEnd,
   evidenceOf,
   launchValuesOf,
+  NO_GATE,
   waitClientBoot,
   withCheckCopy,
   withCheckInstance,
   type ClientCheckInput,
+  type MeasureGate,
 } from './client-check.ts';
 
 const NAME = 'device performance';
@@ -105,9 +108,10 @@ async function udpReachesHost(ctx: Context, serial: string): Promise<boolean | n
 /**
  * Check `device performance` (`build` `## build-time check`, ogw.md `### device performance`):
  * the bot playtest scenario on the first android device of harness settings `testDevices` with the DEV
- * export of the build branch HEAD, judged by ogw.md `## performance`. Null when the build has no android platform.
+ * export of the build branch HEAD, judged by ogw.md `## performance`. Null when the build has no android platform. Its
+ * check instance and apk export come first; the app goes to the device when `gate` lets it measure.
  */
-export async function devicePerformance(input: ClientCheckInput): Promise<BuildCheck | null> {
+export async function devicePerformance(input: ClientCheckInput, gate: MeasureGate = NO_GATE): Promise<BuildCheck | null> {
   const { ctx } = input;
   if (!input.platforms.includes('android')) return null;
   // harness settings `testDevices` holds android devices only (`platform` is `android`)
@@ -126,7 +130,9 @@ export async function devicePerformance(input: ClientCheckInput): Promise<BuildC
         if (udp === null) return didNotRun(NAME, `the UDP check from test device ${device.serial} could not run`);
         if (!udp) return unknown(`UDP from test device ${device.serial} does not reach this host`);
         const d: DeviceRun = { input, serial: device.serial, appId, scenario, instance, external };
-        return onDevice(d, await exportWith(launchValuesOf(instance, external, 'android')));
+        const apk = await exportWith(launchValuesOf(instance, external, 'android'));
+        await atGate(gate);
+        return onDevice(d, apk);
       }));
   } catch (error) {
     return didNotRun(NAME, error);
