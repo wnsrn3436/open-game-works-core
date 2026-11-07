@@ -10,16 +10,18 @@ import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../.
 import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, git, gitRaw, head, revParse, showFile, tagExists, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
+import { placeholderFailures } from '../../check/api.ts';
 import { releasedProposals } from '../../core/api.ts';
 import { compareVersions } from '../../core/lib/version.ts';
 import { dataDir } from '../../env/lib/host.ts';
 import { document, renderTable } from '../../loop/lib/markdown.ts';
 import { costRows, renderCost } from '../../loop/lib/cost.ts';
+import { translationLanguages } from '../../loop/dispatch.ts';
 import type { JobRecord } from '../../../lib/jobs.ts';
 import { catchOf, cleanFor, keysOf, targetChecks, type RegressCheckFile } from './keys.ts';
 import { dataTool, stateSettings, upgradeCore } from './ops.ts';
 import { admissionPath, latestPatch, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
-import { jobFacts, sideAgent, sideCheck, sideProbe, type Side } from './side.ts';
+import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type Side } from './side.ts';
 import { checkGate, pooled, type CheckGate } from './pool.ts';
 
 /** The number of checks of a base and of a seeded commit at admission. */
@@ -168,13 +170,15 @@ export interface StateRefresh {
   settings: string;
   upgrade: string;
   content: string;
+  /** The `translation` column of the record. */
+  translation: string;
   checks: string;
   failures: string[];
   tag: string | null;
   base: string | null;
   baseChecks: RegressCheckFile[];
-  /** The content agent jobs of the refresh of this state. */
-  jobs: string[];
+  /** The agent jobs of the refresh of this state: its content agent and its translation sub-agents. */
+  jobs: { id: string; role: 'content' | 'translation' }[];
 }
 
 async function coreVersionAt(ctx: Context, root: string, commit: string): Promise<string> {
@@ -184,8 +188,7 @@ async function coreVersionAt(ctx: Context, root: string, commit: string): Promis
 }
 
 /** The content agent of a state whose core was raised: the content input of `### seed-run` 1 with the raised core items. */
-async function contentPass(ctx: Context, self: Side, state: GameRepo, from: string, version: string): Promise<{ ok: boolean; text: string; job: string | null }> {
-  const records = `refresh-${version}-${String(Date.now())}`;
+async function contentPass(ctx: Context, self: Side, state: GameRepo, from: string, version: string, records: string): Promise<{ ok: boolean; text: string; job: string | null }> {
   const rel = join('records', 'loops', records);
   const items = [`- core version raised to \`${version}\``, ...(await releasedProposals(state, from, version)).map((path) => `- released core proposal \`${path}\``)];
   await writeJsonAtomic(join(state.root, rel, 'defects.json'), { defects: [], previous: null, recordedBy: 'ogw regress refresh' });
@@ -194,6 +197,27 @@ async function contentPass(ctx: Context, self: Side, state: GameRepo, from: stri
   await commitPaths(state.root, [rel], `regress refresh ${version}: content input`, { env: ctx.env, noVerify: true });
   const ran = await sideAgent(ctx, self, { role: 'content', game: state.name, input, seedRun: `${records}:1` });
   return { ok: ran.status === 'done', text: ran.status === 'done' ? `done (${ran.job ?? ''})` : `${ran.status}: ${ran.reason ?? ''}`, job: ran.job };
+}
+
+/**
+ * `### regress refresh` 2: one translation sub-agent per language with missing or stale translations on `main`, one after
+ * another, each merged, as `### seed-run` 2 runs a translation fixer. `text` is the `translation` column of the record.
+ */
+async function translationPass(ctx: Context, self: Side, state: GameRepo, version: string, records: string): Promise<{ ok: boolean; text: string; jobs: string[] }> {
+  const languages = translationLanguages((await placeholderFailures(ctx, state)).map((f) => f.message));
+  const rel = join('records', 'loops', records);
+  const jobs: string[] = [];
+  for (const language of languages) {
+    const input = join(state.root, rel, `translation-input-${language}-${String(Date.now())}.md`);
+    await writeFileAtomic(input, `${language}\n`);
+    await commitPaths(state.root, [rel], `regress refresh ${version}: translation input ${language}`, { env: ctx.env, noVerify: true });
+    const ran = await sideAgent(ctx, self, { role: 'translation', game: state.name, input, seedRun: `${records}:1` });
+    if (ran.job !== null) jobs.push(ran.job);
+    if (ran.status !== 'done' || ran.job === null) return { ok: false, text: `${language}: ${ran.status}: ${ran.reason ?? 'no job'}`, jobs };
+    const merge = await sideMerge(ctx, self, ran.job);
+    if (merge !== null) return { ok: false, text: `${language}: ${merge}`, jobs };
+  }
+  return { ok: true, text: jobs.length === 0 ? 'none' : `done (${jobs.join(', ')})`, jobs };
 }
 
 /** The base checks kept in the regress repo for `commit`, or null when they are not all there. */
@@ -225,11 +249,11 @@ async function checkBase(ctx: Context, repo: string, self: Side, gate: CheckGate
   return { files, failures, text: `${String(ADMISSION_CHECKS)} checks` };
 }
 
-/** Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 3). */
+/** Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 4). */
 export async function refreshState(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, version: string, settings: Readonly<Record<string, unknown>>): Promise<StateRefresh> {
   const game = await ctx.game(stateGame(state));
   const tag = baseTag(version);
-  const out: StateRefresh = { state, from: '', settings: 'none', upgrade: 'none', content: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
+  const out: StateRefresh = { state, from: '', settings: 'none', upgrade: 'none', content: 'none', translation: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
   if (await tagExists(game.root, tag, { env: ctx.env })) {
     const base = (await revParse(game.root, `refs/tags/${tag}`, { env: ctx.env })) as string;
     out.from = await coreVersionAt(ctx, game.root, base);
@@ -246,6 +270,8 @@ export async function refreshState(ctx: Context, repo: string, self: Side, gate:
   }
   await git(game.root, ['checkout', '--quiet', 'main'], { env: ctx.env });
   out.from = await coreVersionAt(ctx, game.root, 'main');
+  // the seed-run records of the refresh of this state, for its content agent and its translation sub-agents
+  const records = `refresh-${version}-${String(Date.now())}`;
   if (compareVersions(out.from, version) < 0) {
     const written = await stateSettings(ctx, game, settings, version);
     out.settings = written.text;
@@ -253,11 +279,15 @@ export async function refreshState(ctx: Context, repo: string, self: Side, gate:
     const upgraded = await upgradeCore(ctx, game.name, version);
     out.upgrade = upgraded.ok ? `to ${version}` : `failed: ${upgraded.text.split('\n')[0] ?? ''}`;
     if (!upgraded.ok) return out;
-    const content = await contentPass(ctx, self, game, out.from, version);
+    const content = await contentPass(ctx, self, game, out.from, version, records);
     out.content = content.text;
-    if (content.job !== null) out.jobs.push(content.job);
+    if (content.job !== null) out.jobs.push({ id: content.job, role: 'content' });
     if (!content.ok) return out;
   }
+  const translated = await translationPass(ctx, self, game, version, records);
+  out.translation = translated.text;
+  out.jobs.push(...translated.jobs.map((id) => ({ id, role: 'translation' as const })));
+  if (!translated.ok) return out;
   const commit = await head(game.root, { env: ctx.env });
   const checked = await checkBase(ctx, repo, self, gate, state, commit, version);
   out.checks = checked.text;
@@ -270,6 +300,11 @@ export async function refreshState(ctx: Context, repo: string, self: Side, gate:
   return out;
 }
 
+/** Why a state has no base: the columns of its refresh up to the base checks, as the stale reason and the output give it. */
+export function untaggedWhy(state: StateRefresh): string {
+  return [state.settings, state.upgrade, state.content, state.translation, state.checks].join('; ');
+}
+
 export interface SeedRefresh {
   seed: string;
   admission: Admission;
@@ -278,9 +313,9 @@ export interface SeedRefresh {
 /** `records/refresh-<v>.md`. */
 export async function refreshRecord(ctx: Context, states: readonly StateRefresh[], seeds: readonly SeedRefresh[]): Promise<string> {
   const jobs: JobRecord[] = [];
-  for (const id of states.flatMap((s) => s.jobs)) jobs.push({ meta: { role: 'content', usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
+  for (const { id, role } of states.flatMap((s) => s.jobs)) jobs.push({ meta: { role, usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
   return document([
-    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
+    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'translation', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.translation, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
     ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`]))],
     ['cost', renderCost(costRows(jobs, true))],
   ]);
@@ -294,7 +329,7 @@ async function admitSeeds(ctx: Context, repo: string, self: Side, gate: CheckGat
   const admit = async (seed: Seed): Promise<SeedRefresh> => {
     const state = refreshed.find((s) => s.state === seed.manifest.state);
     if (state === undefined || state.base === null || state.baseChecks.length === 0) {
-      return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : `${state.settings}; ${state.upgrade}; ${state.content}; ${state.checks}`}`) };
+      return { seed: seed.id, admission: stale(`base fails target: ${seed.manifest.state} ${state === undefined ? 'is not a state' : untaggedWhy(state)}`) };
     }
     return { seed: seed.id, admission: await admitSeed(ctx, { repo, seed, version, base: state.base, baseChecks: state.baseChecks, self, gate }) };
   };

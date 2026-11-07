@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { regressChecks, type CheckResult } from '../../../src/commands/check/api.ts';
 import { OgwError } from '../../../src/lib/errors.ts';
-import { sideAgent, sideProbe } from '../../../src/commands/regress/lib/side.ts';
+import { sideAgent, sideMerge, sideProbe } from '../../../src/commands/regress/lib/side.ts';
 import { stateSettings, upgradeCore } from '../../../src/commands/regress/lib/ops.ts';
 import { withRegressLock } from '../../../src/commands/regress/lib/repo.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
@@ -18,6 +18,7 @@ vi.mock('../../../src/commands/regress/lib/ops.ts', () => ({ upgradeCore: vi.fn(
 vi.mock('../../../src/commands/regress/lib/side.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/regress/lib/side.ts')>()),
   sideAgent: vi.fn(),
+  sideMerge: vi.fn(),
   sideProbe: vi.fn(),
 }));
 
@@ -73,6 +74,7 @@ beforeEach(() => {
   vi.mocked(upgradeCore).mockReset();
   vi.mocked(stateSettings).mockReset().mockResolvedValue({ ok: true, text: 'none' });
   vi.mocked(sideAgent).mockReset();
+  vi.mocked(sideMerge).mockReset();
   vi.mocked(sideProbe).mockReset();
   fakeChecks();
 });
@@ -161,11 +163,11 @@ describe('ogw regress settings', () => {
     expect(order).toEqual(['settings ogw-regress-lc {"uiCheckScreens.0.pixelRatio":1} 2.0.0']);
     expect(sideAgent).not.toHaveBeenCalled();
     expect(regressChecks).not.toHaveBeenCalled();
-    expect(run.stdout).toContain('state lc: no base-2.0.0 (missing: uiCheckScreens.1.pixelRatio; none; none; none)');
-    expect(run.stdout).toContain('seed S01: stale (base fails target: lc missing: uiCheckScreens.1.pixelRatio; none; none; none)');
+    expect(run.stdout).toContain('state lc: no base-2.0.0 (missing: uiCheckScreens.1.pixelRatio; none; none; none; none)');
+    expect(run.stdout).toContain('seed S01: stale (base fails target: lc missing: uiCheckScreens.1.pixelRatio; none; none; none; none)');
     const record = readFileSync(join(ws.regress, 'records', 'refresh-2.0.0.md'), 'utf8');
-    expect(record).toContain('| state | from | settings | upgrade | content job | base checks | base failures | tag |');
-    expect(record).toContain('| lc | 1.0.0 | missing: uiCheckScreens.1.pixelRatio | none | none | none | none | none |');
+    expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | tag |');
+    expect(record).toContain('| lc | 1.0.0 | missing: uiCheckScreens.1.pixelRatio | none | none | none | none | none | none |');
     // with the value written, the next refresh goes on to the upgrade
     order.length = 0;
     vi.mocked(stateSettings).mockImplementation(() => {
@@ -203,7 +205,7 @@ describe('ogw regress refresh and admission', () => {
     expect(vi.mocked(regressChecks).mock.calls.slice(0, 3).every((c) => c[3].performance)).toBe(true);
     expect(existsSync(join(ws.regress, 'records/refresh-1.0.0/lc-base-1.json'))).toBe(true);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| lc | 1.0.0 | none | none | none | 3 checks | none | base-1.0.0 |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | base-1.0.0 |');
     expect(record).toContain('| S01 | admitted | none | caught, caught, caught | none |');
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
     expect((await ogw(ws, ['regress', 'status'])).stdout).toContain('state lc: base-1.0.0\nseed S01: admitted\n');
@@ -268,7 +270,7 @@ describe('ogw regress refresh and admission', () => {
     // 3 base checks and the 3 checks of S01: a seed the base is not clean for is not applied or checked
     expect(vi.mocked(regressChecks)).toHaveBeenCalledTimes(6);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| lc | 1.0.0 | none | none | none | 3 checks | no placeholder\\|-\\|data/translations/en.csv\\|translation_missing en reserved_string.text.[controls_bomb] | base-1.0.0 |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | no placeholder\\|-\\|data/translations/en.csv\\|translation_missing en reserved_string.text.[controls_bomb] | base-1.0.0 |');
     // a seed given later takes the kept base checks the same way
     const folder = join(ws.root, 'new-seeds', 'S08');
     mkdirSync(folder, { recursive: true });
@@ -287,8 +289,8 @@ describe('ogw regress refresh and admission', () => {
     let n = 0;
     vi.mocked(regressChecks).mockImplementation(() => (++n === 2 ? Promise.reject(new OgwError('the server did not start')) : Promise.resolve({ checks: [item('no blocker', 'pass')], fixTestProof: [] })));
     const run = await ogw(ws, ['regress', 'refresh']);
-    expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; check 2: ogw regress check exit 1: the server did not start)');
-    expect(run.stdout).toContain('seed S01: stale (base fails target: lc none; none; none; check 2: ogw regress check exit 1: the server did not start)');
+    expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; none; check 2: ogw regress check exit 1: the server did not start)');
+    expect(run.stdout).toContain('seed S01: stale (base fails target: lc none; none; none; none; check 2: ogw regress check exit 1: the server did not start)');
     expect(sh(join(ws.games, 'ogw-regress-lc'), 'git', ['tag', '--list']).trim()).toBe('');
   });
 
@@ -337,6 +339,76 @@ describe('ogw regress refresh and admission', () => {
     expect(run.stdout).toContain('state lc: base-2.0.0');
     expect(inputs).toEqual(['## kind\n\ncompleteness\n\n## request\n\n- core version raised to `2.0.0`\n\n## previous record\n\nnone\n\n## defects\n\nnone\n']);
     expect(sh(state, 'git', ['show', 'base-2.0.0:settings.json'])).toBe('{"coreVersion": "2.0.0"}\n');
+  });
+
+  /** The source game with languages ko (its source), en and ja: en has a missing and a stale translation, ja has no file. */
+  function translatedSource(ws: TestWorkspace): string {
+    sourceGame(ws, 'src');
+    const root = join(ws.games, 'src');
+    write(root, 'settings.json', JSON.stringify({ coreVersion: '1.0.0', sourceLanguage: 'ko', supportedLanguages: ['ko', 'en', 'ja'] }));
+    sh(root, 'git', ['commit', '-qam', 'languages']);
+    return sh(root, 'git', ['rev-parse', 'main']).trim();
+  }
+
+  /** The language a translation input file holds. */
+  function languageOf(input: string): string {
+    return readFileSync(input, 'utf8').trim();
+  }
+
+  it('runs one translation sub-agent per language with missing or stale translations before the base checks of a state at the core version, and merges each', async () => {
+    const ws = makeWorkspace();
+    bootstrap(ws, translatedSource(ws), { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const state = join(ws.games, 'ogw-regress-lc');
+    const order: string[] = [];
+    vi.mocked(sideAgent).mockImplementation((_ctx, _side, request) => {
+      order.push(`${request.role} ${languageOf(request.input)} ${request.seedRun.replace(/-\d+:/, '-<ms>:')}`);
+      // the input is committed in the seed-run records of the refresh
+      expect(request.input).toMatch(/\/records\/loops\/refresh-1\.0\.0-\d+\/translation-input-(en|ja)-\d+\.md$/);
+      expect(sh(state, 'git', ['status', '--porcelain', '--', request.input])).toBe('');
+      return Promise.resolve({ job: `t${languageOf(request.input)}`, status: 'done', output: null, reason: null });
+    });
+    vi.mocked(sideMerge).mockImplementation((_ctx, _side, job) => {
+      order.push(`merge ${job}`);
+      // the merged translation of a language: its file without missing or stale rows
+      write(state, `data/translations/${job.slice(1)}.csv`, 'key,source,source_hash,current_hash,text\na,가,h1,h1,A\nb,나,h3,h3,B\nc,다,h4,h4,C\n');
+      sh(state, 'git', ['add', '-A']);
+      sh(state, 'git', ['commit', '-qm', `translation ${job}`, '--no-verify']);
+      return Promise.resolve(null);
+    });
+    const checks = vi.mocked(regressChecks).getMockImplementation();
+    vi.mocked(regressChecks).mockImplementation((...args) => {
+      order.push('check');
+      return (checks as NonNullable<typeof checks>)(...args);
+    });
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(order).toEqual(['translation en refresh-1.0.0-<ms>:1', 'merge ten', 'translation ja refresh-1.0.0-<ms>:1', 'merge tja', ...Array<string>(6).fill('check')]);
+    // the base is main after the merges
+    expect(sh(state, 'git', ['log', '-1', '--format=%s', 'base-1.0.0']).trim()).toBe('translation tja');
+    const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
+    expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | tag |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | done (ten, tja) | 3 checks | none | base-1.0.0 |');
+    expect(record).toMatch(/\| translation \| 2 \|/);
+  });
+
+  it('leaves the state untagged when a translation sub-agent does not end done or its merge fails', async () => {
+    const ws = makeWorkspace();
+    bootstrap(ws, translatedSource(ws), { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    vi.mocked(sideAgent).mockResolvedValue({ job: 'ten', status: 'failed', output: null, reason: 'the agent CLI exited 1' });
+    let run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; en: failed: the agent CLI exited 1; none)');
+    expect(run.stdout).toContain('seed S01: stale (base fails target: lc none; none; none; en: failed: the agent CLI exited 1; none)');
+    expect(vi.mocked(sideMerge)).not.toHaveBeenCalled();
+    vi.mocked(sideAgent).mockImplementation((_ctx, _side, request) => Promise.resolve({ job: `t${languageOf(request.input)}`, status: 'done', output: null, reason: null }));
+    vi.mocked(sideMerge).mockResolvedValue('ogw agent merge ten: the branch does not merge');
+    run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; en: ogw agent merge ten: the branch does not merge; none)');
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | en: ogw agent merge ten: the branch does not merge | none | none | none |');
+    expect(vi.mocked(regressChecks)).not.toHaveBeenCalled();
+    expect(sh(join(ws.games, 'ogw-regress-lc'), 'git', ['tag', '--list']).trim()).toBe('');
   });
 
   it('takes a new seed with ogw regress seed on the kept base checks', async () => {

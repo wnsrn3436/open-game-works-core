@@ -9,7 +9,7 @@ import { LIMITS } from '../../lib/limits.ts';
 import { harnessCoreVersion } from '../core/lib/harness-core.ts';
 import { parseValue } from '../settings/set.ts';
 import { makeCopyRepo } from './lib/copy.ts';
-import { baseTag, refresh } from './lib/refresh.ts';
+import { baseTag, refresh, untaggedWhy } from './lib/refresh.ts';
 import {
   ACCEPTED_FILE,
   admissionPath,
@@ -195,7 +195,7 @@ export const refreshCommand: CommandDef = {
       const done = await refresh(ctx, repo, self, version, await listSeeds(repo), null);
       await commitRegress(ctx, repo, done.paths, `regress refresh ${version}`);
       const lines = [
-        ...done.states.map((s) => `state ${s.state}: ${s.tag ?? `no ${baseTag(version)} (${s.settings}; ${s.upgrade}; ${s.content}; ${s.checks})`}`),
+        ...done.states.map((s) => `state ${s.state}: ${s.tag ?? `no ${baseTag(version)} (${untaggedWhy(s)})`}`),
         ...done.seeds.map((s) => `seed ${s.seed}: ${s.admission.result}${s.admission.reason === null ? '' : ` (${s.admission.reason})`}`),
         `record: ${join(repo, 'records', `refresh-${version}.md`)}`,
       ];
