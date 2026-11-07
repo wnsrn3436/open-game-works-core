@@ -220,28 +220,39 @@ async function translationPass(ctx: Context, self: Side, state: GameRepo, versio
   return { ok: true, text: jobs.length === 0 ? 'none' : `done (${jobs.join(', ')})`, jobs };
 }
 
-/** The base checks kept in the regress repo for `commit`, or null when they are not all there. */
-async function keptBaseChecks(repo: string, version: string, state: string, commit: string): Promise<RegressCheckFile[] | null> {
-  const files: RegressCheckFile[] = [];
+/** A base check kept in the regress repo (ogw.md `### regress refresh` 3): its check file and the harness commit that made it. */
+interface KeptBaseCheck extends RegressCheckFile {
+  harness: string;
+}
+
+/**
+ * The base checks kept in the regress repo for `commit` that the tool of harness commit `harness` made, or null when
+ * they are not all there: base checks of other check code are no evidence for this one.
+ */
+async function keptBaseChecks(repo: string, version: string, state: string, commit: string, harness: string): Promise<KeptBaseCheck[] | null> {
+  const files: KeptBaseCheck[] = [];
   for (let i = 1; i <= ADMISSION_CHECKS; i++) {
-    const file = await readJsonIfExists<RegressCheckFile>(join(baseChecksDir(repo, version), `${state}-base-${String(i)}.json`));
-    if (file?.commit !== commit) return null;
-    files.push(file);
+    const file = await readJsonIfExists<Partial<KeptBaseCheck>>(join(baseChecksDir(repo, version), `${state}-base-${String(i)}.json`));
+    if (file?.commit !== commit || file.harness !== harness) return null;
+    files.push(file as KeptBaseCheck);
   }
   return files;
 }
 
 /**
- * The 3 base checks of the base candidate `commit`, kept in the regress repo: all of their files, or none and why
- * when one of them did not run. Whether they are clean for a seed is its admission's (ogw.md `### admission` 1).
+ * The 3 base checks of the base candidate `commit`, kept in the regress repo with the harness commit of `self`: all of
+ * their files, or none and why when one of them did not run. Whether they are clean for a seed is its admission's
+ * (ogw.md `### admission` 1).
  */
-async function checkBase(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, commit: string, version: string): Promise<{ files: RegressCheckFile[]; failures: string[]; text: string }> {
-  const files: RegressCheckFile[] = [];
+async function checkBase(ctx: Context, repo: string, self: Side, gate: CheckGate, state: string, commit: string, version: string): Promise<{ files: KeptBaseCheck[]; failures: string[]; text: string }> {
+  const files: KeptBaseCheck[] = [];
   for (let i = 1; i <= ADMISSION_CHECKS; i++) {
     const out = join(baseChecksDir(repo, version), `${state}-base-${String(i)}.json`);
     const checked = await gate.run(true, () => sideCheck(ctx, self, { game: stateGame(state), commit, out, checks: null, performance: true, proof: null }));
     if ('error' in checked) return { files: [], failures: [], text: `check ${String(i)}: ${checked.error}` };
-    files.push(checked.file);
+    const kept: KeptBaseCheck = { commit: checked.file.commit, harness: self.commit, checks: checked.file.checks, fixTestProof: checked.file.fixTestProof };
+    await writeJsonAtomic(out, kept);
+    files.push(kept);
   }
   // the evidence folders of the base checks stay out of the regress repo
   for (let i = 1; i <= ADMISSION_CHECKS; i++) await rm(join(baseChecksDir(repo, version), `${state}-base-${String(i)}`), { recursive: true, force: true });
@@ -259,7 +270,7 @@ export async function refreshState(ctx: Context, repo: string, self: Side, gate:
     out.from = await coreVersionAt(ctx, game.root, base);
     out.tag = tag;
     out.base = base;
-    out.baseChecks = (await keptBaseChecks(repo, version, state, base)) ?? [];
+    out.baseChecks = (await keptBaseChecks(repo, version, state, base, self.commit)) ?? [];
     if (out.baseChecks.length === 0) {
       const checked = await checkBase(ctx, repo, self, gate, state, base, version);
       out.baseChecks = checked.files;

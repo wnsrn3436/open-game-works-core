@@ -429,6 +429,53 @@ describe('ogw regress refresh and admission', () => {
     expect(vi.mocked(regressChecks)).toHaveBeenCalledTimes(3);
     expect(sh(ws.regress, 'git', ['log', '-1', '--format=%s']).trim()).toBe('regress seed S11');
   });
+
+  it('keeps in each base check the harness commit that made it, and checks a tagged base again, keeping its tag, for another harness commit', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    bootstrap(ws, commit, { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    const state = join(ws.games, 'ogw-regress-lc');
+    const base = sh(state, 'git', ['rev-parse', 'base-1.0.0']).trim();
+    const kept = (): [string, string][] =>
+      [1, 2, 3].map((k) => {
+        const file = JSON.parse(readFileSync(join(ws.regress, `records/refresh-1.0.0/lc-base-${String(k)}.json`), 'utf8')) as { commit: string; harness: string };
+        return [file.commit, file.harness];
+      });
+    const harnessHead = (): string => sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    const checked = (): string[] => vi.mocked(regressChecks).mock.calls.map((c) => [...(c[3].only ?? ['all'])].join(','));
+    const first = harnessHead();
+    expect(kept()).toEqual([[base, first], [base, first], [base, first]]);
+    // the same harness commit takes the kept base checks
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    expect(checked()).toEqual(['no blocker', 'no blocker', 'no blocker']);
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | base-1.0.0 |');
+    // another harness commit of the same core version checks the tagged base again with its own check code
+    write(ws.harness, 'tools/changed.txt', 'other check code\n');
+    sh(ws.harness, 'git', ['add', '-A']);
+    sh(ws.harness, 'git', ['commit', '-qm', 'check code']);
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    expect(checked()).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
+    expect(sh(state, 'git', ['rev-parse', 'base-1.0.0']).trim()).toBe(base);
+    const second = harnessHead();
+    expect(kept()).toEqual([[base, second], [base, second], [base, second]]);
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | base-1.0.0 |');
+    // ogw regress seed does the same
+    write(ws.harness, 'tools/changed.txt', 'more check code\n');
+    sh(ws.harness, 'git', ['commit', '-qam', 'more check code']);
+    const folder = join(ws.root, 'new-seeds', 'S12');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'seed.json'), JSON.stringify(MANIFEST));
+    writeFileSync(join(folder, 'patch-1.0.0.diff'), patchOf('leak'));
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'seed', folder])).stdout).toBe('seed S12: admitted\n');
+    expect(checked()).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
+    expect(kept().map(([, harness]) => harness)).toEqual(Array<string>(3).fill(harnessHead()));
+    expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
+  });
 });
 
 describe('ogw regress refresh: the order of the admissions', () => {
