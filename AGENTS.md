@@ -12,7 +12,8 @@ A harness for making server and client games of commercial quality, in which AI 
 - What automated checks can verify must be verified by automated checks. Problems are caught at the time the code is written
 - No approximate check is built for a property that a tool cannot judge exactly (e.g. which value a piece of wording states). That rule goes in the document read by the agent that does the work, and into the check targets of the judging agents (hardening agent, review agent)
 - The harness tool does the work that needs no judgement: reading and writing structured files (settings, record, JSON, CSV), counting, calculation, comparison, transcription, random, managing schedules and the number of concurrent runs, state transitions. Agents do only the work that needs judgement
-- Work items that do not wait for each other's results run together
+- Work items that do not wait for each other's results run together, at most the number that their setting allows at a time. A work item waits for another whose result it does not need only for a performance measurement, from before the first instance of the measurement starts until its last instance stops, or for a shared mutable resource (e.g. a checkout, a branch, the worktree list of a repo, the ID registry), through a lock at that resource
+- A change of the harness or of core makes nothing worse than before it: the evidence of the checks, the quality of the games, stability, and the wall time and cost of the loop, the build and the regression suite. A new check that takes time runs beside the work that does not wait for its result
 - The harness holds only what agents use in their work. This saves tokens and reduces what agents forget
 
 ## terms
@@ -179,7 +180,7 @@ Completeness is judged by the five elements below, and all of them are checked b
 ## hardening and build
 
 1. The server hardening agent and the client hardening agent harden based on the contract
-2. When a hardening agent meets a problem that is solved only by editing outside its own folder (`server/` or `client/`), it does not fix it and writes it in the hardening record in `records/`. Within the build command, the work goes back to the loop, the content agent fixes it, then hardening runs again
+2. When a hardening agent meets a problem that is solved only by editing outside its own folder (`server/` or `client/`), or a static check failure that the commit hardening starts from already has, it does not fix it and writes it in the hardening record in `records/`. Within the build command, the work goes back to the loop, the content agent fixes it, then hardening runs again
 3. Loop steps 2 to 4 run once with the hardened code. The DB is PostgreSQL. When one of regression test, static check, no blocker, full flow does not pass, or the judge result is worse than the baseline game, the work goes back to the loop
 4. The game is built
 
@@ -300,6 +301,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - Do not use words that cannot be judged: properly, appropriately, as much as possible, as far as possible, sufficiently, if possible
 - Write only the current design. Do not mention previous designs or what was removed
 - Do not write where a rule came from: surveys, sample counts, the games studied, experiments, ratings. Write the rule and what an agent needs to apply it
+- A commit that changes a rule, a threshold, a count or a time value states in its message the cause it fixes and the evidence for the new rule or value (the reproduced failure, the measurement, the specification)
 - Do not write the same content in two places
 - Do not point to a position within the same document with a free-form pointer: see above, as above, see below, as below, the next section, the previous section
 - `as below` is not a free-form pointer on a line whose next non-empty line starts the list, table or code block that the line introduces. Step numbers and heading names are allowed
