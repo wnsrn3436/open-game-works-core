@@ -17,9 +17,11 @@ import { checkResult, failure, type Evidence } from './evidence.ts';
 import { hostProbe, type HostProbe } from './host-load.ts';
 import { Slots } from './instances.ts';
 import { performanceChecks, platformProfiles } from './performance.ts';
+import { fixTestProofs } from './fix-proof.ts';
 import { regressionTest } from './regression.ts';
 import { rowSimulationCheck } from './row-simulation.ts';
 import { makeTelemetryRuns } from './telemetry-runs.ts';
+import type { FixTestProof } from '../../loop/lib/files.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
 import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
@@ -44,6 +46,7 @@ export interface LoopOutcome {
   commit: string;
   checks: CheckResult[];
   gate: 'pass' | 'fail';
+  fixTestProof: FixTestProof[];
 }
 
 /**
@@ -184,11 +187,20 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const commit = await head(game.root, { env: ctx.env });
   const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
   const set = iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all';
-  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`)
-  const checks = await gameChecks(ctx, game, settings, options, evidence, set, (instance) => makeTelemetryRuns(ctx, game, run, commit, instance));
+  const proofOptions = { godot: options.godot, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...(options.db ? { db: options.db } : {}) };
+  let fixTestProof: FixTestProof[] = [];
+  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the fix
+  // test proof runs beside them, and the performance measurements wait for both
+  const checks = await gameChecks(ctx, game, settings, options, evidence, set, async (instance) => {
+    const proof = fixTestProofs(ctx, game, run, commit, proofOptions).then((proofs) => {
+      fixTestProof = proofs;
+    });
+    const [telemetry] = await Promise.allSettled([makeTelemetryRuns(ctx, game, run, commit, instance), proof]);
+    if (telemetry.status === 'rejected') throw telemetry.reason;
+  });
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
-  await writeJsonAtomic(join(game.root, file), { commit, checks, gate });
+  await writeJsonAtomic(join(game.root, file), { commit, checks, gate, fixTestProof });
   await commitPaths(game.root, [file], `loop ${run.name}: check ${String(run.iteration)}`, { env: ctx.env });
-  return { file, commit, checks, gate };
+  return { file, commit, checks, gate, fixTestProof };
 }

@@ -9,6 +9,7 @@ import {
   isSeverity,
   recordDefects,
   type Defect,
+  type DefectAnswers,
   type Finding,
 } from '../../../../src/commands/loop/lib/defects.ts';
 import type { CheckFile, EvaluateFile, MeasureFile } from '../../../../src/commands/loop/lib/files.ts';
@@ -217,6 +218,52 @@ describe('recordDefects', () => {
     expect(noReport.map((x) => x.status)).toEqual(['open']);
   });
 
+  it('lets a fixed row of a code owner defect that a check did not find wait for confirmation only with a passing fix test proof', () => {
+    const ids = ['pass', 'fail', 'unknown', 'none', 'shown', 'data', 'design', 'resource', 'check', 'server', 'contract', 'hardening'];
+    const defects = ids.map((id) =>
+      d({
+        id,
+        status: 'open',
+        source: id === 'check' ? 'check' : id === 'hardening' ? 'hardening' : 'play',
+        owner: ['data', 'design', 'resource'].includes(id) ? id : id === 'server' ? 'server content' : id === 'contract' ? 'contract' : 'client content',
+      }),
+    );
+    const report = new Map(ids.map((id) => [id, { result: 'fixed', note: id === 'shown' ? 'presentation' : '`client/tests/t.gd::test_a`' }]));
+    const proofs = new Map([['pass', 'pass'], ['fail', 'fail'], ['unknown', 'unknown'], ['server', 'pass']]);
+    const out = recordDefects({ base: defects, findings: [], confirmed: never, report, proofs });
+    expect(Object.fromEntries(out.map((x) => [x.id, x.status]))).toEqual({
+      pass: 'awaiting confirmation',
+      fail: 'open',
+      unknown: 'open',
+      none: 'open',
+      shown: 'awaiting confirmation',
+      data: 'awaiting confirmation',
+      design: 'awaiting confirmation',
+      resource: 'awaiting confirmation',
+      check: 'awaiting confirmation',
+      server: 'awaiting confirmation',
+      contract: 'open',
+      hardening: 'open',
+    });
+    // a reopened defect stays reopened, and one awaiting confirmation keeps waiting
+    const kept = recordDefects({ base: [d({ id: 'r', status: 'reopened', source: 'judge', owner: 'client content' }), d({ id: 'w', status: 'awaiting confirmation', source: 'play', owner: 'client content' })], findings: [], confirmed: never, report: new Map([['r', { result: 'fixed', note: '' }], ['w', { result: 'fixed', note: '' }]]), proofs: new Map() });
+    expect(kept.map((x) => [x.id, x.status])).toEqual([['r', 'reopened'], ['w', 'awaiting confirmation']]);
+  });
+
+  it('opens an awaiting defect that a play agent reproduced, with the answer as evidence, and fixes one only absent', () => {
+    const base = ['r', 'a', 'w'].map((id) => d({ id, source: 'play', status: 'awaiting confirmation', repeatedDefect: 1, evidence: ['e'] }));
+    const answers = new Map<string, DefectAnswers>([
+      ['r', { reproduced: true, absent: true, evidence: ['records/loops/x/play-2-1.md:20', 'cap.jpg'] }],
+      ['a', { reproduced: false, absent: true, evidence: [] }],
+    ]);
+    const out = recordDefects({ base, findings: [], confirmed: (defect) => answers.has(defect.id), report: null, answers });
+    expect(out.map((x) => [x.id, x.status, x.repeatedDefect, x.evidence])).toEqual([
+      ['r', 'open', 2, ['e', 'records/loops/x/play-2-1.md:20', 'cap.jpg']],
+      ['a', 'fixed', 0, ['e']],
+      ['w', 'awaiting confirmation', 1, ['e']],
+    ]);
+  });
+
   it('does not change the base defects', () => {
     const base = [d({ status: 'fixed' })];
     recordDefects({ base, findings: [f({})], confirmed: always, report: null });
@@ -272,7 +319,7 @@ describe('confirmedBy', () => {
       },
     ],
   });
-  const none = { check: null, measure: null, evaluate: null };
+  const none = { check: null, measure: null, evaluate: null, answers: new Map<string, DefectAnswers>() };
   const checkDefect = d({ source: 'check', evidence: ['records/loops/r/check-1.json#performance'] });
   const measureDefect = d({ source: 'check', evidence: ['records/loops/r/measure-1.json#fps'] });
 
@@ -293,22 +340,19 @@ describe('confirmedBy', () => {
     expect(confirmedBy({ ...none, check: check('pass') }, false, measureDefect)).toBe(false);
   });
 
-  it('confirms play and judge defects when one of that source is done, judge defects only in a completeness iteration, hardening defects only by hardening', () => {
-    expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'play' }))).toBe(true);
-    // a confirmation iteration takes only blocker play findings
-    expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'play', severity: 'major' }), true)).toBe(false);
-    expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'play', severity: 'blocker' }), true)).toBe(true);
-    expect(confirmedBy({ ...none, evaluate: evaluate('done', 'done') }, false, d({ source: 'judge', severity: 'minor' }), true)).toBe(true);
-    expect(confirmedBy({ ...none, evaluate: evaluate('failed', 'done') }, false, d({ source: 'play' }))).toBe(false);
-    expect(confirmedBy({ ...none, evaluate: evaluate('failed', 'done') }, false, d({ source: 'judge' }))).toBe(true);
-    expect(confirmedBy({ ...none, evaluate: evaluate('done', 'failed') }, false, d({ source: 'judge' }))).toBe(false);
-    expect(confirmedBy(none, false, d({ source: 'judge' }))).toBe(false);
-    // a fun iteration judges three elements without the reference game or moments: no result for a judge defect
-    const fun = { ...evaluate('done', 'done'), kind: 'fun' as const };
-    expect(confirmedBy({ ...none, evaluate: fun }, false, d({ source: 'judge' }))).toBe(false);
-    expect(confirmedBy({ ...none, evaluate: fun }, false, d({ source: 'play' }))).toBe(true);
+  it('confirms a play or judge defect by a finding of its id or a reproduced or absent answer, not by a done play or judge alone; hardening defects only by hardening', () => {
+    const answered = (answers: Partial<DefectAnswers>): typeof none => ({ ...none, answers: new Map([['a', { reproduced: false, absent: false, evidence: [], ...answers }]]) });
+    for (const source of ['play', 'judge'] as const) {
+      // a play agent that did not reach the defect answers neither
+      expect(confirmedBy({ ...answered({}), evaluate: evaluate('done', 'done') }, false, d({ source }))).toBe(false);
+      expect(confirmedBy(answered({ absent: true }), false, d({ source }))).toBe(true);
+      expect(confirmedBy(answered({ reproduced: true }), false, d({ source }))).toBe(true);
+      expect(confirmedBy(none, false, d({ source }), true)).toBe(true);
+      expect(confirmedBy(answered({ absent: true }), false, d({ source, id: 'b' }))).toBe(false);
+    }
     expect(confirmedBy(none, true, d({ source: 'hardening' }))).toBe(true);
     expect(confirmedBy(none, false, d({ source: 'hardening' }))).toBe(false);
+    expect(confirmedBy(answered({ absent: true }), true, d({ source: 'play' }))).toBe(false);
     expect(confirmedBy({ ...none, check: check('pass') }, true, checkDefect)).toBe(false);
   });
 });

@@ -9,18 +9,22 @@ import {
   evidenceMetrics,
   fillFromSameId,
   incompleteFindings,
+  namedTests,
   recordDefects,
   type Defect,
   type DefectsFile,
+  type DefectAnswers,
   type FindingsFile,
+  type RecordInput,
   type ReportRow,
 } from './defects.ts';
 import { costRows, runAgentJobs } from './cost.ts';
 import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry, type MeasureFile } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
-import { iterationRecords, renderIterationRecord, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
+import { iterationRecords, renderIterationRecord, type IterationRecordData, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
+import { playAnswersOf } from './confirm.ts';
 import { abs, confirmOf, iterationKind, iterationResults, readGameText, readRunJson, runRel, type IterationResults } from './run.ts';
 import type { VariantsFile } from './variants.ts';
 import { harnessHead, harnessLine } from './harness-pin.ts';
@@ -55,7 +59,7 @@ export function readReportRows(report: string): { rows: Map<string, ReportRow>; 
   for (const row of table.rows) {
     const result = cell(row, resultCol);
     if (resultCol >= 0 && !REPORT_RESULTS.includes(result)) errors.push(`\`## defects\` row ${cell(row, idCol)}: result \`${result}\` is not one of ${REPORT_RESULTS.join(', ')}`);
-    rows.set(cell(row, idCol), { result, note: cell(row, noteCol) });
+    rows.set(cell(row, idCol), { result, note: cell(row, noteCol), tests: noteCol < 0 ? [] : namedTests(row.cells[noteCol] ?? '') });
   }
   return { rows, errors };
 }
@@ -82,10 +86,12 @@ async function labelOf(game: GameRepo, run: RunState, hardening: boolean): Promi
 }
 
 /** Results of this record that a confirmation of ogw.md `## loop record` reads. */
-interface Confirmations {
+export interface Confirmations {
   check: CheckFile | null;
   measure: MeasureFile | null;
   evaluate: EvaluateFile | null;
+  /** The answers of the done plays of `evaluate` about the defects to confirm, by defect id. */
+  answers: ReadonlyMap<string, DefectAnswers>;
 }
 
 /** A check defect: a check or metric of its evidence gave a result. */
@@ -98,27 +104,17 @@ function checkConfirmed(results: Confirmations, defect: Defect): boolean {
 }
 
 /**
- * True when this record's confirmation of the defect gave a result (ogw.md `## loop record`). A confirmation iteration
- * (`confirming`) takes only blocker play findings, so for another play defect it gives a result only when this record
- * has a finding of its id (`found`), and like any play confirmation only with a done play. A judge defect is confirmed
- * only by a completeness iteration: a fun judge sees three elements, no reference and no moments.
+ * True when this record's confirmation of the defect gave a result (ogw.md `## loop record`). A play or judge defect is
+ * confirmed by a finding of its id in this record (`found`) or by a play agent that answered `reproduced` or `absent`:
+ * `not reached` is no result, and the judges are not shown defects.
  */
-export function confirmedBy(results: Confirmations, hardening: boolean, defect: Defect, confirming = false, found = false): boolean {
+export function confirmedBy(results: Confirmations, hardening: boolean, defect: Defect, found = false): boolean {
   if (hardening || defect.source === 'hardening') return hardening && defect.source === 'hardening';
-  if (confirming && defect.source === 'play' && defect.severity !== 'blocker' && !found) return false;
   if (defect.source === 'check') return checkConfirmed(results, defect);
-  return defect.source === 'play' ? playConfirmed(results) : judgeConfirmed(results);
+  const answers = results.answers.get(defect.id);
+  return found || answers?.reproduced === true || answers?.absent === true;
 }
 
-function playConfirmed(results: Confirmations): boolean {
-  return results.evaluate?.plays.some((p) => p.status === 'done') ?? false;
-}
-
-/** A judge defect: a done judge of a completeness iteration. */
-function judgeConfirmed(results: Confirmations): boolean {
-  const evaluate = results.evaluate;
-  return evaluate !== null && evaluate.kind !== 'fun' && evaluate.judges.some((j) => j.status === 'done');
-}
 
 async function judgesOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordJudge[]> {
   const out: RecordJudge[] = [];
@@ -182,11 +178,23 @@ function loadResult(item: CheckFile['checks'][number]): string {
   return why === undefined ? item.result : `${item.result} (${why})`;
 }
 
+/** The sections of the iteration record that the check file gives: `## checks`, `## fix test proof` and `## load`. */
+function checkSections(check: CheckFile | null, checkRel: string): Pick<IterationRecordData, 'checks' | 'fixTestProof' | 'load'> {
+  if (check === null) return { checks: [], fixTestProof: [], load: null };
+  // a fun iteration has no performance item, and no `## load`
+  const performanceNotPassed = check.checks.some((c) => c.name === 'performance') && checkResult(check, 'performance') !== 'pass';
+  return {
+    checks: checkNames(check).map((name) => ({ name, result: checkResult(check, name), path: checkRel })),
+    fixTestProof: check.fixTestProof ?? [],
+    load: performanceNotPassed
+      ? check.checks.filter((c) => c.name === 'performance').map((c) => ({ platform: c.platform, result: loadResult(c), hostLoad: c.hostLoad ?? null }))
+      : null,
+  };
+}
+
 async function writeIterationRecord(game: GameRepo, run: RunState, results: IterationResults, defects: Defect[], env: NodeJS.ProcessEnv): Promise<string> {
   const n = String(run.iteration);
   const { checkRel, check, evaluate, measure } = results;
-  // a fun iteration has no performance item, and no `## load`
-  const performanceNotPassed = check !== null && check.checks.some((c) => c.name === 'performance') && checkResult(check, 'performance') !== 'pass';
   const rel = runRel(run, `iteration-${n}.md`);
   const variants = await variantsOf(game, run);
   await writeFileAtomic(abs(game, rel), renderIterationRecord({
@@ -196,15 +204,12 @@ async function writeIterationRecord(game: GameRepo, run: RunState, results: Iter
     kind: kindOf(run, evaluate),
     harness: harnessLine(run, run.iteration, await harnessHead(env)),
     variants,
-    checks: check ? checkNames(check).map((name) => ({ name, result: checkResult(check, name), path: checkRel })) : [],
+    ...checkSections(check, checkRel),
     judges: evaluate ? await judgesOf(game, evaluate) : null,
     votes: votesOf(evaluate),
     plays: evaluate ? await playsOf(game, evaluate) : null,
     defects,
     measurements: measure?.targets ?? null,
-    load: performanceNotPassed
-      ? check.checks.filter((c) => c.name === 'performance').map((c) => ({ platform: c.platform, result: loadResult(c), hostLoad: c.hostLoad ?? null }))
-      : null,
     temporary: await newTemporary(game, run, check?.commit ?? null),
     cost: costRows(await runAgentJobs(env, game.name, run.name, run.iteration), false),
   }));
@@ -221,6 +226,24 @@ export interface RecordResult {
 async function baseDefects(game: GameRepo, defectsRel: string, label: string): Promise<DefectsFile | null> {
   const existing = await readJsonIfExists<DefectsFile>(abs(game, defectsRel));
   return existing && existing.recordedBy === label ? existing.previous : existing;
+}
+
+/**
+ * What this record decides the status changes by (ogw.md `## loop record`): the content agent report with the fix test
+ * proofs of the check file, and the confirmations with the answers of the done plays. A hardening record has neither
+ * report nor iteration results.
+ */
+async function recordInputOf(game: GameRepo, run: RunState, hardening: boolean): Promise<{ results: IterationResults; input: Omit<RecordInput, 'base' | 'findings'> }> {
+  if (hardening) {
+    const none: Confirmations = { check: null, evaluate: null, measure: null, answers: new Map() };
+    return { results: { checkRel: '', check: null, evaluate: null, measure: null }, input: { report: null, confirmed: (defect, found) => confirmedBy(none, true, defect, found) } };
+  }
+  const report = reportRows((await readGameText(game, runRel(run, `content-${String(run.iteration)}.md`))) ?? '');
+  const results = await iterationResults(game, run, run.iteration);
+  const answers = await playAnswersOf(game, results.evaluate);
+  const confirmations: Confirmations = { ...results, answers };
+  const proofs = new Map((results.check?.fixTestProof ?? []).map((p) => [p.id, p.result]));
+  return { results, input: { report, proofs, answers, confirmed: (defect, found) => confirmedBy(confirmations, false, defect, found) } };
 }
 
 /**
@@ -241,15 +264,8 @@ export async function recordFindings(game: GameRepo, run: RunState, hardening: b
       findings: incomplete,
     });
   }
-  const report = hardening ? null : reportRows((await readGameText(game, runRel(run, `content-${String(run.iteration)}.md`))) ?? '');
-  const results: IterationResults = hardening
-    ? { checkRel: '', check: null, evaluate: null, measure: null }
-    : await iterationResults(game, run, run.iteration);
-  const confirming = !hardening && confirmOf(run, run.iteration) !== null;
-  // in a confirmation iteration a finding of the defect's id is a result also for a play defect that is not a blocker
-  const found = new Set(findings.findings.filter((f) => f.drop === null).map((f) => f.id).filter((id): id is string => typeof id === 'string'));
-  const confirmed = (defect: Defect): boolean => confirmedBy(results, hardening, defect, confirming, found.has(defect.id));
-  const defects = recordDefects({ base: base?.defects ?? [], findings: findings.findings, confirmed, report });
+  const { results, input } = await recordInputOf(game, run, hardening);
+  const defects = recordDefects({ ...input, base: base?.defects ?? [], findings: findings.findings });
   const previous = base ? { ...base, previous: null } : null;
   await writeJsonAtomic(abs(game, defectsRel), { defects, previous, recordedBy: label.label } satisfies DefectsFile);
   const record = hardening ? null : await writeIterationRecord(game, run, results, defects, env);

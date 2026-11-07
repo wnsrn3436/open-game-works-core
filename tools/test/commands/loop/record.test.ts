@@ -63,6 +63,12 @@ const JUDGE = [
   '',
 ].join('\n');
 
+/** A play feedback `## defects` section with one row per [id, result]; a capture for `reproduced` and `absent`. */
+function answers(rows: [string, string][]): string {
+  const lines = rows.map(([id, result]) => `| ${id} | ${result} | ${result === 'not reached' ? 'none' : `cap/${id}.jpg`} | seen |`);
+  return ['## defects', '', '| id | result | capture | note |', '|---|---|---|---|', ...lines, ''].join('\n');
+}
+
 const AGENT = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' };
 
 /** A judge entry of `evaluate-<n>.json` with the fields a test does not look at filled in. */
@@ -350,7 +356,8 @@ describe('ogw loop record', () => {
       ['sim-slow', 'minor', 'open'],
       ['low-fps', 'minor', 'open'],
       ['gold', 'minor', 'open'],
-      ['old', 'major', 'fixed'],
+      // no play agent answered about it
+      ['old', 'major', 'awaiting confirmation'],
     ]);
     const record = read(g.root, `${R}/iteration-1.md`);
     expect(record).toContain(`## commit\n\n- instance: ${sha}\n- baseline: base0\n- confirms: none\n- kind: completeness\n`);
@@ -401,19 +408,20 @@ describe('ogw loop record', () => {
     expect(await section(3, null)).toBe('none');
   });
 
-  it('writes the candidate of a confirmation iteration and keeps its non-blocker play defects awaiting confirmation', async () => {
+  it('writes the candidate of a confirmation iteration and decides its play defects of every severity by the answers of the play agents', async () => {
     const { g } = await iterationOne();
     await setRun(g, (run) => {
       run.data.loop = { confirms: [{ iteration: 1, candidate: 0 }] };
     });
     const defect = (id: string, severity: string): object => ({ id, severity, owner: 'data', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
-    write(g.root, `${R}/defects.json`, { defects: [defect('stuck', 'blocker'), defect('slow', 'major')], previous: null, recordedBy: 'iteration-0' });
+    write(g.root, `${R}/defects.json`, { defects: [defect('stuck', 'blocker'), defect('slow', 'major'), defect('odd', 'minor')], previous: null, recordedBy: 'iteration-0' });
+    write(g.root, `${R}/play-1-1.md`, `${FEEDBACK}\n${answers([['stuck', 'not reached'], ['slow', 'absent'], ['odd', 'absent']])}`);
     write(g.root, `${R}/findings-1.json`, { findings: [], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     expect(read(g.root, `${R}/iteration-1.md`)).toContain('- confirms: 0\n');
     const defects = readJsonFile(g.root, `${R}/defects.json`) as DefectsFile;
-    expect(defects.defects.map((d) => [d.id, d.status])).toEqual([['stuck', 'fixed'], ['slow', 'awaiting confirmation']]);
-    // a major defect that comes back as a blocker finding is confirmed open
+    expect(defects.defects.map((d) => [d.id, d.status])).toEqual([['stuck', 'awaiting confirmation'], ['slow', 'fixed'], ['odd', 'fixed']]);
+    // a defect that comes back as a blocker finding is confirmed open, whatever a play agent answered
     write(g.root, `${R}/findings-1.json`, { findings: [{ source: 'play', severity: 'blocker', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: ['e'], id: 'slow', drop: null }], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     const again = readJsonFile(g.root, `${R}/defects.json`) as DefectsFile;
@@ -432,21 +440,55 @@ describe('ogw loop record', () => {
     expect(['chk', 'ply'].map((id) => defects.find((d) => d.id === id)).map((d) => [d?.id, d?.status, d?.repeatedDefect])).toEqual([['chk', 'open', 1], ['ply', 'open', 1]]);
   });
 
-  it('confirms a non-blocker play defect of a confirmation iteration by a judge finding of its id', async () => {
+  it('opens an awaiting play defect by a judge finding of its id, with or without a done play', async () => {
     const { g } = await iterationOne();
-    await setRun(g, (run) => {
-      run.data.loop = { confirms: [{ iteration: 1, candidate: 0 }] };
-    });
-    write(g.root, `${R}/defects.json`, { defects: [{ id: 'slow', severity: 'major', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 }], previous: null, recordedBy: 'iteration-0' });
+    const slow = { id: 'slow', severity: 'major', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 };
+    write(g.root, `${R}/defects.json`, { defects: [slow], previous: null, recordedBy: 'iteration-0' });
     write(g.root, `${R}/findings-1.json`, { findings: [{ source: 'judge', severity: 'major', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: ['e'], id: 'slow', drop: null }], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects.find((d) => d.id === 'slow')).toMatchObject({ status: 'open', repeatedDefect: 1 });
-    // with no done play the play confirmation gives no result, a finding of the id or not
     const evaluate = readJsonFile(g.root, `${R}/evaluate-1.json`) as { plays: { status: string }[] };
     write(g.root, `${R}/evaluate-1.json`, { ...evaluate, plays: evaluate.plays.map((p) => ({ ...p, status: 'failed' })) });
-    write(g.root, `${R}/defects.json`, { defects: [{ id: 'slow', severity: 'major', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 }], previous: null, recordedBy: 'iteration-0' });
+    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
+    expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects.find((d) => d.id === 'slow')).toMatchObject({ status: 'open', repeatedDefect: 1 });
+    // without a finding, a done play that gives no answer about it leaves it waiting
+    write(g.root, `${R}/evaluate-1.json`, evaluate);
+    write(g.root, `${R}/findings-1.json`, { findings: [], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects.find((d) => d.id === 'slow')).toMatchObject({ status: 'awaiting confirmation', repeatedDefect: 0 });
+  });
+
+  it('lets a fixed row wait for confirmation only with the fix test proof of check-<n>.json when it needs one, and writes ## fix test proof', async () => {
+    const { g, sha } = await iterationOne();
+    const open = (id: string, owner: string): object => ({ id, severity: 'major', owner, where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
+    write(g.root, `${R}/defects.json`, { defects: [open('crash', 'client content'), open('flat', 'client content'), open('balance', 'data'), open('nope', 'client content'), open('lost', 'server content')], previous: null, recordedBy: 'iteration-0' });
+    write(g.root, `${R}/content-1.md`, [
+      '## defects', '', '| id | result | note |', '|---|---|---|',
+      '| crash | fixed | `client/tests/a.gd::test_a` |', '| flat | fixed | presentation |', '| balance | fixed | |', '| nope | fixed | `client/tests/b.gd::test_b` |', '| lost | fixed | `server/tests/c.test.ts::c > d` |', '',
+    ].join('\n'));
+    const test = (name: string, result: string): object => ({ name, result, reason: null });
+    write(g.root, `${R}/check-1.json`, {
+      ...checkFile(sha),
+      gate: 'pass',
+      fixTestProof: [
+        { id: 'crash', result: 'pass', reason: null, tests: [test('client/tests/a.gd::test_a', 'fail')] },
+        { id: 'flat', result: 'unknown', reason: 'presentation', tests: [] },
+        { id: 'balance', result: 'unknown', reason: 'owner data', tests: [] },
+        { id: 'nope', result: 'fail', reason: 'the named tests pass on the fix base', tests: [test('client/tests/b.gd::test_b', 'pass')] },
+      ],
+    });
+    write(g.root, `${R}/findings-1.json`, { findings: [], discarded: [] });
+    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
+    const defects = (readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects;
+    // `lost` has no proof in the check file: no pass
+    expect(defects.map((d) => [d.id, d.status])).toEqual([['crash', 'awaiting confirmation'], ['flat', 'awaiting confirmation'], ['balance', 'awaiting confirmation'], ['nope', 'open'], ['lost', 'open']]);
+    expect(read(g.root, `${R}/iteration-1.md`)).toContain(
+      [
+        '## fix test proof', '', '| id | result | reason | tests |', '|---|---|---|---|',
+        '| crash | pass | none | client/tests/a.gd::test_a: fail |', '| flat | unknown | presentation | none |', '| balance | unknown | owner data | none |',
+        '| nope | fail | the named tests pass on the fix base | client/tests/b.gd::test_b: pass |', '', '## measurements',
+      ].join('\n'),
+    );
   });
 
   it('confirms a defect only by its own source, and refuses a dropped finding with an id', async () => {
@@ -494,7 +536,11 @@ describe('ogw loop record', () => {
         d('msr-unknown', 'check', [`${R}/measure-1.json#load`]),
         d('ply-fixed', 'play', ['p']),
         d('ply-found', 'play', ['p']),
+        d('ply-again', 'play', ['p']),
+        d('ply-unreached', 'play', ['p']),
+        d('ply-silent', 'play', ['p']),
         d('jdg', 'judge', ['j']),
+        d('jdg-failed', 'judge', ['j']),
         d('hrd', 'hardening', ['h']),
       ],
       previous: null,
@@ -527,6 +573,9 @@ describe('ogw loop record', () => {
       ...together(),
       measure: `${R}/measure-2.json`,
     });
+    // the play agents answer: the done play counts, the failed one does not
+    write(g.root, `${R}/play-2-1.md`, `## observations\n\nnone\n\n${answers([['ply-silent', 'absent'], ['jdg-failed', 'absent']])}`);
+    write(g.root, `${R}/play-2-2.md`, `## observations\n\nnone\n\n${answers([['ply-fixed', 'absent'], ['ply-again', 'reproduced'], ['ply-unreached', 'not reached'], ['jdg', 'absent'], ['jdg-failed', 'not reached']])}`);
     const found = (id: string, source: string): object => ({ source, severity: 'minor', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: ['e'], id, drop: null });
     write(g.root, `${R}/findings-2.json`, { findings: [found('chk-found', 'check'), found('msr-found', 'check'), found('ply-found', 'play')], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
@@ -540,9 +589,15 @@ describe('ogw loop record', () => {
       ['msr-in', 'fixed', 0],
       ['msr-unknown', 'awaiting confirmation', 0],
       ['ply-fixed', 'fixed', 0],
-      ['jdg', 'awaiting confirmation', 0],
+      ['ply-again', 'open', 1],
+      ['ply-unreached', 'awaiting confirmation', 0],
+      ['ply-silent', 'awaiting confirmation', 0],
+      ['jdg', 'fixed', 0],
+      ['jdg-failed', 'awaiting confirmation', 0],
       ['hrd', 'awaiting confirmation', 0],
     ]);
+    // a reproduced answer points at its row and its capture
+    expect(defects.find((x) => x.id === 'ply-again')?.evidence).toEqual(['p', `${R}/play-2-2.md:10`, 'cap/ply-again.jpg']);
   });
 
   it('writes the load of an unknown performance check with the reason of each unknown item, and makes no defect of it', async () => {

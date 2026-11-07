@@ -39,6 +39,7 @@ import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import { CONFIRMATION_JUDGES, combinedVsBaseline, combinedVsReference, confirmationOutcome, countVotes } from './votes.ts';
 import { MEMORABLE_MOMENT, NAME_FILE, parseGameNames, type Moment, type Reference } from './setup.ts';
+import type { PlayDefect } from './confirm.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
@@ -89,6 +90,8 @@ export interface EvaluatePlan {
   db: 'postgresql' | undefined;
   /** True when `ogw loop input` asked for the judge moment `memorable_moment` in this run. */
   memorableMoment: boolean;
+  /** The defects to confirm, which every play agent gets (`defectsToConfirm`). */
+  defects: PlayDefect[];
   /** Folder of the save fixtures taken from the work branch HEAD (`fixturesAtHead`). */
   fixtureDir?: string;
 }
@@ -147,6 +150,8 @@ export interface JudgingPlan {
    * null when there are none, and the judging makes them. Absent: the judging always makes them.
    */
   takeRuns?: (pair: JudgePair, scenario: SharedScenario) => Promise<PairRuns | null>;
+  /** The defects to confirm that every play agent gets in its input `defects`; absent: none. */
+  playDefects?: PlayDefect[];
 }
 
 /** An instance to start. A start that fails for another reason than a save fixture step ends `ogw loop evaluate`. */
@@ -517,7 +522,7 @@ async function launchPlay(state: State, slot: PlaySlot): Promise<void> {
     slot.entry = { result: '', instance: '', platform: slot.platform, moment: slot.moment?.name ?? null, status: 'failed' };
     return;
   }
-  const input = await inputFile(state, 'play', { instance: slot.instance.id, playGuide: join(slot.instance.root, 'play-guide.md'), moment: slot.moment });
+  const input = await inputFile(state, 'play', { instance: slot.instance.id, playGuide: join(slot.instance.root, 'play-guide.md'), moment: slot.moment, defects: state.plan.playDefects ?? [] });
   await startJob(state, slot, input);
 }
 
@@ -1053,6 +1058,7 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
     db: plan.db,
     ...(plan.fixtureDir === undefined ? {} : { fixtureDir: plan.fixtureDir }),
     site: runSite(plan.game, plan.run),
+    playDefects: plan.defects,
     successOpen: (main) => successPrecondition({ kind: plan.kind, ...together(plan, main) }, (name) => checkResult(plan.check, name)),
     confirmOpen: (main) => together(plan, main).vsBaseline === 'better',
     // the runs `ogw check --loop` made of the same two commits with the same scenario (ogw.md `## check`)

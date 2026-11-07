@@ -91,6 +91,30 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect(fake.calls()).toHaveLength(1);
   });
 
+  it('fails a play agent at once whose feedback does not answer each defect of its input once, with a capture that exists for reproduced and absent', async () => {
+    const ws = makeWorkspace({ resultFixRounds: 2 });
+    const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n' });
+    const defect = (id: string): object => ({ id, where: 'boss', what: 'stuck', seen: [] });
+    writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null, defects: [defect('d1'), defect('d2')] }));
+    const feedback = (rows: string[]): string => ['## observations', '', 'none', '', '## defects', '', '| id | result | capture | note |', '|---|---|---|---|', ...rows, ''].join('\n');
+    const play = async (rows: string[]): Promise<{ code: number; stdout: string; calls: number }> => {
+      const fake = fakeAgentCli(ws, `fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png'); fs.writeFileSync(output, ${JSON.stringify(feedback(rows))});`);
+      const { waited } = await runAgent(ws, ['play', '--game', 'g', '--input', join(ws.root, 'play.json')], fake.env, root);
+      return { ...waited, calls: fake.calls().length };
+    };
+    const output = join(root, 'records/loops/r1/play-1-1.md');
+    const missing = await play(['| d1 | reproduced | captures/shot.png | stuck again |', '| d3 | gone | none | x |']);
+    expect(missing).toMatchObject({ code: 1, calls: 1 });
+    expect(missing.stdout).toContain(`failed: result file: \`## defects\` has no row of defect d2; \`## defects\` row d3: not a defect of the input; \`## defects\` row d3: result \`gone\` is not one of reproduced, absent, not reached\noutput: ${output}\n`);
+    const twice = await play(['| d1 | absent | captures/none.png | fine |', '| d2 | not reached | none | x |', '| d2 | not reached | none | x |']);
+    expect(twice.stdout).toContain('failed: result file: `## defects` has 2 rows of defect d2; `## defects` row d1: absent needs the path of a capture that exists, not `captures/none.png`\n');
+    expect((await play(['| d1 | reproduced | captures/shot.png | stuck again |', '| d2 | not reached | none | never got there |'])).code).toBe(0);
+    expect(readFileSync(output, 'utf8')).toContain(`| d1 | reproduced | ${join(root, 'records/loops/r1/evidence/play-1-1')}/shot.png | stuck again |`);
+    // with no defect to confirm the section is not read
+    writeFileSync(join(ws.root, 'play.json'), JSON.stringify({ instance: 'inst1', playGuide: join(root, 'play-guide.md'), moment: null, defects: [] }));
+    expect((await play([])).code).toBe(0);
+  });
+
   it('runs a judge of ogw judge calibrate without a run, with its result file and captures in the calibration folders', async () => {
     const ws = makeWorkspace();
     const root = makeGame(ws, 'g', { 'settings.json': {}, 'play-guide.md': '# guide\n' });

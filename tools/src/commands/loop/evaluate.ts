@@ -2,9 +2,11 @@ import { expectPositionals, positional, str, type CommandDef } from '../../lib/c
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { runBaseline } from './lib/baseline.ts';
+import { defectsToConfirm } from './lib/confirm.ts';
 import { evaluate } from './lib/evaluate.ts';
 import { gateOf, type CheckFile, type EvaluateFile } from './lib/files.ts';
-import { gameSettings, iterationKind, memorableMomentAsked, openTarget, readRunJson, runRel } from './lib/run.ts';
+import { reportRows } from './lib/record.ts';
+import { gameSettings, iterationKind, memorableMomentAsked, openTarget, readGameText, readRunJson, runRel } from './lib/run.ts';
 import { hypothesisMoments, readJudgeMoments, requireReference } from './lib/setup.ts';
 
 const USAGE = 'ogw loop evaluate <game> [--db postgresql]';
@@ -70,6 +72,7 @@ export const loopEvaluate: CommandDef = {
       settings,
       db,
       memorableMoment: run.kind === 'loop' && memorableMomentAsked(run),
+      defects: await defectsToConfirm(game, run, check, reportRows((await readGameText(game, runRel(run, `content-${n}.md`))) ?? '')),
     });
     const lines = [path, ...outputLines(file)];
     return { text: lines.join('\n'), data: { path, ...file } };

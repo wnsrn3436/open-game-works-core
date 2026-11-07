@@ -5,7 +5,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { isNotFound } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
-import { checkedScriptErrors, engineErrorLines, gutRun } from '../../core/lib/godot.ts';
+import { checkedScriptErrors, engineErrorLines, gutRun, type GutRunResult } from '../../core/lib/godot.ts';
 import { startPostgres } from '../../core/lib/postgres.ts';
 import { runServerTests, serverRunFailures, type ServerTestInputs } from '../../core/lib/server-tests.ts';
 import { importClient } from './engine.ts';
@@ -77,7 +77,7 @@ export interface RegressionDb {
   close(): Promise<void>;
 }
 
-async function regressionDb(ctx: Context, db: 'postgresql' | undefined): Promise<RegressionDb | null> {
+export async function regressionDb(ctx: Context, db: 'postgresql' | undefined): Promise<RegressionDb | null> {
   if (db === undefined) return null;
   const container = await startPostgres(ctx, (await ctx.settings()).tools.postgresql);
   try {
@@ -163,23 +163,16 @@ async function resultFailures(root: string, result: RunResultFile, where: string
   return failures;
 }
 
-/**
- * Client regression test: GUT headless pass of the Godot project `client/` with a `UnitTestCore` test host. The import
- * runs under the import lock; the GUT run gets a `user://` of its own (`godotDataVariable`), so the `release` and test
- * setup of this run and the instances and runs of the same project name do not delete each other's app storage files.
- */
-export async function clientRegression(ctx: Context, root: string, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
-  const project = join(root, 'client');
-  const where = targetWhere(path);
-  if (options.importFailure !== undefined) return [failure(where, options.importFailure)];
-  if (options.imported !== true) {
-    const importFailure = await importClient(ctx, options.godot, root);
-    if (importFailure !== null) return [failure(where, importFailure)];
-  }
-  const timeoutMs = (options.runTimeLimitMs ?? LIMITS.programMs) + LIMITS.shortMs;
-  const ran = await gutRun(ctx, {
+/** The time limit of a client regression test run. */
+export function clientTimeoutMs(options: Pick<ClientRunOptions, 'runTimeLimitMs'>): number {
+  return (options.runTimeLimitMs ?? LIMITS.programMs) + LIMITS.shortMs;
+}
+
+/** The GUT run of the client regression test of `path` in the checkout `root`, whose `client/` is imported. */
+export async function clientGutRun(ctx: Context, root: string, path: string, options: Pick<ClientRunOptions, 'godot' | 'runTimeLimitMs' | 'startTimeLimitMs'>): Promise<GutRunResult> {
+  return gutRun(ctx, {
     godot: options.godot,
-    project,
+    project: join(root, 'client'),
     cwd: root,
     headless: true,
     gut: [
@@ -188,9 +181,25 @@ export async function clientRegression(ctx: Context, root: string, path: string,
       '-gpost_run_script=res://core/unit_test_core/dev/gut_post_run.gd', '-gexit',
     ],
     config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host, ogw_shared_fixture_dir: join(root, 'data', 'fixtures') }),
-    timeoutMs,
+    timeoutMs: clientTimeoutMs(options),
     startLimitMs: options.startTimeLimitMs ?? null,
   });
+}
+
+/**
+ * Client regression test: GUT headless pass of the Godot project `client/` with a `UnitTestCore` test host. The import
+ * runs under the import lock; the GUT run gets a `user://` of its own (`godotDataVariable`), so the `release` and test
+ * setup of this run and the instances and runs of the same project name do not delete each other's app storage files.
+ */
+export async function clientRegression(ctx: Context, root: string, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
+  const where = targetWhere(path);
+  if (options.importFailure !== undefined) return [failure(where, options.importFailure)];
+  if (options.imported !== true) {
+    const importFailure = await importClient(ctx, options.godot, root);
+    if (importFailure !== null) return [failure(where, importFailure)];
+  }
+  const timeoutMs = clientTimeoutMs(options);
+  const ran = await clientGutRun(ctx, root, path, options);
   const result = ran.ran;
   const output = `${result.stdout}${result.stderr}`;
   const received = ran.json as RunResultFile | null;

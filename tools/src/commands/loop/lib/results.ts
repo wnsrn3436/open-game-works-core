@@ -240,9 +240,66 @@ function observationsHeading(lines: readonly string[]): number {
   return lines.findIndex((line) => line.trim() === '## observations');
 }
 
-/** The format errors of a play feedback: without `## observations`, `observations` reads none (ogw.md `### result format`). */
-export function playFeedbackErrors(text: string): string[] {
-  return observationsHeading(text.split(/\r?\n/)) === -1 ? ['`## observations` is missing'] : [];
+/** The `result` of a row of the play feedback `## defects` (`agents/play.md` `## feedback`). */
+export type PlayAnswerResult = 'reproduced' | 'absent' | 'not reached';
+
+export const PLAY_ANSWERS: readonly PlayAnswerResult[] = ['reproduced', 'absent', 'not reached'];
+
+/** A row of the play feedback `## defects`: the answer of a play agent about a defect to confirm. */
+export interface PlayAnswer {
+  id: string;
+  result: string;
+  capture: string;
+  /** 1-based line number of the row in the feedback file. */
+  line: number;
+}
+
+const ANSWER_COLUMNS = ['id', 'result', 'capture'] as const;
+
+/**
+ * The rows of the play feedback `## defects` table (ogw.md `## loop record`), with each way it is not that table in
+ * `errors`; no rows and no errors when the section is missing.
+ */
+export function playAnswers(text: string): { rows: PlayAnswer[]; errors: string[] } {
+  const lines = text.split(/\r?\n/);
+  const heading = lines.findIndex((line) => line.trim() === '## defects');
+  const body = section(text, 'defects');
+  if (heading === -1 || body === null) return { rows: [], errors: ['`## defects` is missing'] };
+  const table = parseTable(body);
+  if (table === null) return { rows: [], errors: [`\`## defects\` has no table with the columns ${ANSWER_COLUMNS.join(', ')}`] };
+  const [idCol, resultCol, captureCol] = ANSWER_COLUMNS.map((name) => column(table, name)) as [number, number, number];
+  if (idCol < 0 || resultCol < 0 || captureCol < 0) return { rows: [], errors: [`\`## defects\` columns missing: it needs ${ANSWER_COLUMNS.join(', ')}`] };
+  const rows = table.rows.map((row) => ({ id: cell(row, idCol), result: cell(row, resultCol), capture: cell(row, captureCol), line: heading + 2 + row.line }));
+  return { rows, errors: [] };
+}
+
+/**
+ * The format errors of a play feedback (ogw.md `### result format`): without `## observations`, `observations` reads
+ * none; when the input has defects to confirm, `## defects` answers each once, with a capture that exists for
+ * `reproduced` and `absent`. `exists` tells whether a capture path, absolute or relative to the feedback folder, exists.
+ */
+export function playFeedbackErrors(text: string, defects: readonly string[] = [], exists: (path: string) => boolean = () => true): string[] {
+  const errors = observationsHeading(text.split(/\r?\n/)) === -1 ? ['`## observations` is missing'] : [];
+  if (defects.length === 0) return errors;
+  const read = playAnswers(text);
+  if (read.errors.length > 0) return [...errors, ...read.errors];
+  for (const id of defects) {
+    const count = read.rows.filter((row) => row.id === id).length;
+    if (count === 0) errors.push(`\`## defects\` has no row of defect ${id}`);
+    if (count > 1) errors.push(`\`## defects\` has ${String(count)} rows of defect ${id}`);
+  }
+  for (const row of read.rows) errors.push(...answerErrors(row, defects, exists));
+  return errors;
+}
+
+/** The format errors of one `## defects` row of a play feedback. */
+function answerErrors(row: PlayAnswer, defects: readonly string[], exists: (path: string) => boolean): string[] {
+  const errors = defects.includes(row.id) ? [] : [`\`## defects\` row ${row.id}: not a defect of the input`];
+  if (!(PLAY_ANSWERS as readonly string[]).includes(row.result)) errors.push(`\`## defects\` row ${row.id}: result \`${row.result}\` is not one of ${PLAY_ANSWERS.join(', ')}`);
+  else if (row.result !== 'not reached' && (row.capture === '' || row.capture === 'none' || !exists(row.capture))) {
+    errors.push(`\`## defects\` row ${row.id}: ${row.result} needs the path of a capture that exists, not \`${row.capture}\``);
+  }
+  return errors;
 }
 
 /** Adds lines at the end of the `## coverage` section; adds the section at the end when it is missing. */

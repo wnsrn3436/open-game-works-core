@@ -39,7 +39,7 @@ vi.mock('../../../src/commands/check/static-api.ts', () => ({ staticCheck: vi.fn
 vi.mock('../../../src/commands/core/api.ts', () => ({ coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
 vi.mock('../../../src/commands/env/api.ts', () => ({ requireEngine: vi.fn() }));
 vi.mock('../../../src/commands/data/api.ts', () => ({ runData: vi.fn() }));
-vi.mock('../../../src/commands/generate/api.ts', () => ({ gameModules: vi.fn(), mergedCoreSettings: vi.fn() }));
+vi.mock('../../../src/commands/generate/api.ts', () => ({ gameModules: vi.fn(), mergedCoreSettings: vi.fn(), generateCheckout: vi.fn() }));
 vi.mock('../../../src/commands/core/lib/postgres.ts', () => ({
   startPostgres: () => Promise.resolve({ id: 'c', createDatabase: (name: string) => Promise.resolve(`postgresql://p/${name}`), remove: () => Promise.resolve() }),
 }));
@@ -432,7 +432,9 @@ describe('ogw check --loop', () => {
     expect(await git(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])).toBe('records/loops/create-1/check-1.json\n');
     expect(await git(root, ['status', '--porcelain', '--', 'records/loops/create-1/check-1.json'])).toBe('');
     expect(file.gate).toBe('pass');
-    expect(Object.keys(file)).toEqual(['commit', 'checks', 'gate']);
+    expect(Object.keys(file)).toEqual(['commit', 'checks', 'gate', 'fixTestProof']);
+    // no content agent report: no fix test proof
+    expect((file as unknown as { fixTestProof: unknown }).fixTestProof).toEqual([]);
     expect(file.checks.map((c) => [c.name, c.platform, c.result])).toEqual([
       ['regression test', null, 'pass'],
       ['static check', null, 'pass'],
@@ -467,6 +469,95 @@ describe('ogw check --loop', () => {
     expect(calls).toContain('set_text_scale 1300');
     // the loop imported client/ before the checks: the static type check does not import again
     expect(staticCheck).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ name: 'g' }), { db: 'postgresql', imported: true });
+  });
+
+  it('runs the tests that the report names for a fixed defect on the fix base, with the changed test files laid over it, and writes the fix test proof', async () => {
+    const R = 'records/loops/create-1';
+    const defect = (id: string, owner: string, source = 'play'): object => ({ id, severity: 'major', owner, where: 'w', what: 'x', why: 'y', evidence: [], source, status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
+    const root = setupGame(ws, {
+      'client/tests/b/test_b.gd': 'func test_b():\n',
+      'client/tests/c/test_c.gd': 'func test_c():\n',
+      'server/limit.json': { max: 3 },
+      [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n',
+      [`${R}/defects.json`]: {
+        defects: ['crash', 'slow', 'old', 'load', 'flat'].map((id) => defect(id, 'client content')).concat([defect('bal', 'data'), defect('ui', 'client content', 'check')]),
+        previous: null,
+        recordedBy: 'iteration-0',
+      },
+    });
+    const base = await openRun(1);
+    // the iteration: the fix of server/limit.json with its test, changed client tests, a client test that does not load on the fix base
+    writeFileSync(join(root, 'client/tests/a/test_a.gd'), 'func test_a():\n\tpass\n');
+    // the iteration has more than one commit: the fix base is not the parent of the checked commit
+    commitAll(root, 'content agent: first fix');
+    writeFileSync(join(root, 'server/limit.json'), JSON.stringify({ max: 5 }));
+    mkdirSync(join(root, 'client/tests/d'), { recursive: true });
+    mkdirSync(join(root, 'server/tests'), { recursive: true });
+    writeFileSync(join(root, 'client/tests/b/test_b.gd'), 'func test_b():\n\tpass\n');
+    writeFileSync(join(root, 'client/tests/d/test_d.gd'), 'func test_d():\n');
+    writeFileSync(join(root, 'server/tests/b.test.ts'), "import { readFileSync } from 'node:fs';\nit('limit', () => { expect(JSON.parse(readFileSync(new URL('../limit.json', import.meta.url), 'utf8')).max).toBe(5); });\n");
+    const rows = [
+      '| crash | fixed | `client/tests/a/test_a.gd::test_a`, `server/tests/b.test.ts::limit` |',
+      '| slow | fixed | `client/tests/b/test_b.gd::test_b` |',
+      '| old | fixed | `client/tests/c/test_c.gd::test_c` |',
+      '| load | fixed | `client/tests/d/test_d.gd::test_d` |',
+      '| flat | fixed | presentation |',
+      '| bal | fixed | |',
+      '| ui | fixed | |',
+      '| gone | fixed | |',
+      '| kept | not done | later |',
+    ];
+    writeFileSync(join(root, `${R}/content-1.md`), ['## defects', '', '| id | result | note |', '|---|---|---|', ...rows, ''].join('\n'));
+    commitAll(root, 'content agent');
+    // the client tests on the fix base: test_a fails there, test_b passes, test_d does not load; on the checked commit all pass
+    const godotDir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
+    const godot = join(godotDir, 'godot');
+    writeFileSync(
+      godot,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const project = args[args.indexOf('--path') + 1];
+if (args.includes('--import')) {
+  fs.mkdirSync(require('node:path').join(project, '.godot'), { recursive: true });
+  process.exit(0);
+}
+const config = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('-gconfig=')).slice(9), 'utf8'));
+const target = (args.find((a) => a.startsWith('-gtest=')) || '').slice(7);
+const onBase = project.includes('/proof-');
+fs.appendFileSync(${JSON.stringify(join(godotDir, 'runs'))}, (onBase ? 'base ' : 'head ') + (target || 'all') + '\\n');
+const put = (path, body) => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
+const results = onBase
+  ? [{ name: 'res://tests/a/test_a.gd::test_a', status: 'fail', message: 'x' }, { name: 'res://tests/b/test_b.gd::test_b', status: 'pass', message: '' }]
+  : [{ name: 'res://tests/a/test_a.gd::test_a', status: 'pass', message: '' }];
+put('/started', { run_id: config.ogw_run_id })
+  .then(() => (onBase && target.endsWith('test_d.gd') ? process.exit(1) : put('/result', { run_id: config.ogw_run_id, kind: 'regression', results, run_failures: [] })))
+  .then(() => process.exit(0));
+`,
+    );
+    chmodSync(godot, 0o755);
+    vi.mocked(requireEngine).mockResolvedValue(godot);
+    serveClient();
+    const run = await ogw(ws, ['check', 'g', '--loop']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const file = JSON.parse(readFileSync(join(root, `${R}/check-1.json`), 'utf8')) as { gate: string; fixTestProof: unknown };
+    expect(file.gate).toBe('pass');
+    const test = (name: string, result: string, reason: string | null = null): object => ({ name, result, reason });
+    expect(file.fixTestProof).toEqual([
+      { id: 'crash', result: 'pass', reason: null, tests: [test('client/tests/a/test_a.gd::test_a', 'fail'), test('server/tests/b.test.ts::limit', 'fail')] },
+      { id: 'slow', result: 'fail', reason: `the named tests pass on ${base.slice(0, 12)}, the code before the fix`, tests: [test('client/tests/b/test_b.gd::test_b', 'pass')] },
+      { id: 'old', result: 'fail', reason: 'no named test in a test file that the commits of the iteration added or changed', tests: [] },
+      { id: 'load', result: 'pass', reason: null, tests: [test('client/tests/d/test_d.gd::test_d', 'fail', 'the run does not report it: the run sent no result (exit code 1)')] },
+      { id: 'flat', result: 'unknown', reason: 'presentation', tests: [] },
+      { id: 'bal', result: 'unknown', reason: 'owner data', tests: [] },
+      { id: 'ui', result: 'unknown', reason: 'source check', tests: [] },
+      { id: 'gone', result: 'unknown', reason: 'not a defect of defects.json', tests: [] },
+    ]);
+    // each named client test file ran alone on the fix base, and the worktree of the fix base is gone
+    const runs = readFileSync(join(godotDir, 'runs'), 'utf8').split('\n').filter((line) => line.startsWith('base '));
+    expect(runs.sort()).toEqual(['base res://tests/a/test_a.gd', 'base res://tests/b/test_b.gd', 'base res://tests/d/test_d.gd']);
+    expect(readdirSync(join(ws.worktrees, 'g')).filter((name) => name.startsWith('proof-'))).toEqual([]);
   });
 
   it('runs only the regression test, the static check and the bot playtest in a fun iteration', async () => {

@@ -284,4 +284,4 @@ When a feature is made, its regression test is written with it. Conventions and 
 - It is forbidden to make a test pass by running it several times, to lengthen sleeps and timeouts, to weaken asserts, and to skip
 - A test checks that a request blocked by an advance check was not sent
 - For each tutorial reward step, when `release` and `init` happen after the success response of the reward `rpc` and before the response of `SaveTutorialProgress`, that step starts again, and with the success response of the reward `rpc` sent again, the step ends and moves to the next step
-- When a defect is fixed, a test that fails before the fix is written first
+- When a defect is fixed, a test that fails before the fix is written first. The content agent names it in the `note` of the `fixed` row of its report (`## report` of [`content`](../../agents/content.md))

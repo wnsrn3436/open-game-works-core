@@ -278,6 +278,8 @@ export interface GutRunResult {
   runId: string;
   json: unknown;
   ran: RunResult;
+  /** The test host got `PUT /started`: the test runner started. */
+  started: boolean;
 }
 
 /**
@@ -297,7 +299,7 @@ export async function gutRun(ctx: Context, gut: GutRun): Promise<GutRunResult> {
     const opened = Date.now();
     const notStarted = (): boolean => startLimit !== null && host.started() === null && Date.now() - opened >= startLimit;
     const ran = await run(gut.godot, args, { cwd: gut.cwd ?? gut.project, env, timeoutMs: gut.timeoutMs, ...(startLimit === null ? {} : { stopWhen: notStarted }) });
-    return { runId, json: host.result(), ran };
+    return { runId, json: host.result(), ran, started: host.started() !== null };
   } finally {
     await host.close();
     await rm(dataDir, { recursive: true, force: true });

@@ -138,4 +138,4 @@ When a handler is made, its regression test is written in `server/tests/` with i
 - Tutorial reward `rpc`: sending the same (tutorial ID value, `step`) again with another request ID gives a success response and leaves the balance as it was
 - Rejection of a request that points to a target of another user, of an out-of-range value, and of input over the `(ogw.v)` upper bound
 - Expected values are calculated from `design.md`, the contract and data
-- When a defect is fixed, a test that fails before the fix is written first
+- When a defect is fixed, a test that fails before the fix is written first. The content agent names it in the `note` of the `fixed` row of its report (`## report` of [`content`](../../agents/content.md))

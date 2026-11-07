@@ -419,7 +419,7 @@ describe('ogw loop evaluate', () => {
     expect(file.plays[2]).toMatchObject({ instance: 'i12', result: `${R}/play-1-4.md` });
     expect(fake.stopped).toContain('i11');
     const playInputs = fake.agents.filter((a) => a.role === 'play').map((a) => a.input);
-    expect(playInputs[0]).toEqual({ instance: 'i9', playGuide: join(g.root, '..', 'instances', 'i9', 'play-guide.md'), moment: null });
+    expect(playInputs[0]).toEqual({ instance: 'i9', playGuide: join(g.root, '..', 'instances', 'i9', 'play-guide.md'), moment: null, defects: [] });
     expect(playInputs.find((p) => p.moment !== null)).toMatchObject({ moment: { name: 'boss', description: 'reach the boss' } });
     expect(read(g.root, `${R}/play-1-1.md`)).toBe('## coverage\n\nunknown: none\ndevice ms: i9\nscenes: lobby\n\n## observations\n\n1 | lobby | tap | ok | fine | none | c.png\n');
     expect(measure.collect.map(([id]) => id).sort()).toEqual(['i10', 'i9']);
@@ -433,6 +433,55 @@ describe('ogw loop evaluate', () => {
     expect(committed).toContain(`${R}/judge-1-4.md`);
     expect(committed).toContain(`${R}/play-1-1.md`);
     expect(committed.some((p) => p.includes('evidence'))).toBe(false);
+  });
+
+  it('gives every play agent the play and judge defects awaiting confirmation after the content agent report, and the judges none', async () => {
+    const defect = (id: string, source: string, status: string, owner = 'client content', evidence: string[] = []): object => ({
+      id, severity: 'major', owner, where: `where ${id}`, what: `what ${id}`, why: 'y', evidence, source, status, refusedReason: null, repeatedDefect: 0, oscillation: 0,
+    });
+    const files = {
+      [`${R}/play-0-1.md`]: '## observations\n\n1200 | boss | dash | stuck on the wall | annoying | major | cap/1.jpg\n',
+      [`${R}/defects.json`]: JSON.stringify({
+        defects: [
+          defect('waits', 'play', 'awaiting confirmation', 'client content', [`${R}/play-0-1.md:3`, 'cap/1.jpg', `${R}/play-0-1.md:9`]),
+          defect('judged', 'judge', 'awaiting confirmation', 'client content', ['i3-1000']),
+          defect('proved', 'play', 'open'),
+          defect('unproved', 'play', 'open'),
+          defect('balance', 'judge', 'reopened', 'data'),
+          defect('again', 'play', 'open'),
+          defect('later', 'play', 'awaiting confirmation'),
+          defect('refuse', 'play', 'awaiting confirmation'),
+          defect('checked', 'check', 'awaiting confirmation'),
+          defect('done', 'play', 'fixed'),
+        ],
+        previous: null,
+        recordedBy: 'iteration-0',
+      }),
+      [`${R}/content-1.md`]: [
+        '## defects', '', '| id | result | note |', '|---|---|---|',
+        '| proved | fixed | `client/tests/a.gd::test_a` |', '| unproved | fixed | `client/tests/b.gd::test_b` |', '| balance | fixed | |', '| again | not reproduced | gone |',
+        '| later | not done | next time |', '| refuse | refused | brief |', '',
+      ].join('\n'),
+    };
+    const { g, head } = await loop({ playInstances: 2, backgroundRetryLimit: 0 }, PASS_ALL, files);
+    const check = readJsonFile(g.root, `${R}/check-1.json`) as Record<string, unknown>;
+    write(g.root, `${R}/check-1.json`, { ...check, commit: head, fixTestProof: [{ id: 'proved', result: 'pass', reason: null, tests: [] }, { id: 'unproved', result: 'fail', reason: 'r', tests: [] }] });
+    commit(g.root);
+    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    const expected = [
+      { id: 'waits', where: 'where waits', what: 'what waits', seen: ['1200 | boss | dash | stuck on the wall | annoying | major | cap/1.jpg'] },
+      { id: 'judged', where: 'where judged', what: 'what judged', seen: [] },
+      { id: 'proved', where: 'where proved', what: 'what proved', seen: [] },
+      { id: 'balance', where: 'where balance', what: 'what balance', seen: [] },
+      { id: 'again', where: 'where again', what: 'what again', seen: [] },
+      { id: 'later', where: 'where later', what: 'what later', seen: [] },
+    ];
+    const plays = fake.agents.filter((a) => a.role === 'play');
+    // the two first-screen plays and the play of the boss moment
+    expect(plays.length).toBeGreaterThanOrEqual(3);
+    for (const play of plays) expect(play.input.defects).toEqual(expected);
+    expect(fake.agents.filter((a) => a.role === 'judge').every((a) => !('defects' in a.input))).toBe(true);
   });
 
   it('retries a failed play agent on a new instance and records failed at the limit', async () => {
