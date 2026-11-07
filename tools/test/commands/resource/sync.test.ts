@@ -167,6 +167,25 @@ describe('ogw resource placeholder and sync', () => {
     expect([app.width, app.height]).toEqual([1024, 1024]);
   });
 
+  it('adds the logo row of each supported language and writes alpha=true in every logo row', async () => {
+    const f = setup({
+      'resource/resources.csv': listCsv([
+        { key: 'image/logo/ko', spec: 'size=600x200;alpha=false', status: 'placeholder' },
+        { key: 'image/logo/fr', spec: 'size=40x20', status: 'placeholder' },
+        { key: 'image/logo_frame', spec: 'size=40x20', status: 'placeholder' },
+      ]),
+      'settings.json': { ...GAME_SETTINGS, baseResolution: [1281, 721], supportedLanguages: ['ko', 'zh-Hans'] },
+    });
+    expect((await ogw(f.ws, ['resource', 'sync', 'g'])).code).toBe(0);
+    expect(rowOf(f.game, 'image/logo/ko')).toMatchObject({ spec: 'size=600x200;alpha=true', status: 'placeholder' });
+    expect(rowOf(f.game, 'image/logo/fr').spec).toBe('size=40x20;alpha=true');
+    expect(rowOf(f.game, 'image/logo_frame').spec).toBe('size=40x20');
+    expect(rowOf(f.game, 'image/logo/zh_hans')).toMatchObject({ spec: 'size=640x240;alpha=true', status: 'placeholder' });
+    const logo = await pixels(join(f.game, 'resource/image/logo/zh_hans.png'));
+    expect([logo.width, logo.height]).toEqual([640, 240]);
+    expect((await ogw(f.ws, ['resource', 'sync', 'g'])).stdout).toBe('no change\n');
+  });
+
   it('draws the last word of the key on a single-color image placeholder', async () => {
     const key = 'icon/ab_9';
     const f = setup({ 'resource/resources.csv': listCsv([{ key, spec: 'size=48x24;alpha=true', status: 'placeholder' }]) });

@@ -14,6 +14,6 @@ export const request: CommandDef = {
     if (pending === (keys.length > 0)) throw new OgwError(`usage: ${this.usage}`);
     const result = await requestResources(game, { keys: pending ? 'pending' : keys, see: list(args, 'see'), base: str(args, 'base') ?? null, retryLimit: (await ctx.settings()).backgroundRetryLimit }, ctx.env);
     const text = [result.path ?? 'no pending resource', ...result.leftOut.map(leftOutLine)].join('\n');
-    return { text, data: { path: result.path, keys: result.keys, leftOut: result.leftOut } };
+    return { text, data: { path: result.path, keys: result.keys, leftOut: result.leftOut.map((l) => l.key) } };
   },
 };

@@ -8,6 +8,7 @@ import { mergedCoreSettings } from '../../generate/api.ts';
 import { catalogEntries, generationMethods, LOGO_PREFIX, type Stage } from '../../generation/api.ts';
 import { processSound, type SoundShape } from './audio.ts';
 import { FileChanges } from './files.ts';
+import { modelProblems } from './glb.ts';
 import { engineOf, gameSettings, lineVoices, sourceLanguageOf, sourceTranslations } from './gamedata.ts';
 import { engineType, rigSceneNames, sceneNodes, spriteFramesFromSheet } from './godot.ts';
 import { alphaBox, coverCropped, crop, decodeRgba, encodePng, fitCentered, type Rgba } from './image.ts';
@@ -128,8 +129,9 @@ function statusProblems(job: Job): string[] {
 function rowProblems(job: Job, methods: readonly string[]): string[] {
   const problems = statusProblems(job);
   const kit = findRow(job.rows, UI_KIT);
-  if ((job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') && kit?.status === 'final' && !job.options.inputs.includes(UI_KIT)) {
-    problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
+  if (job.parsed.type === 'nine_slice' || job.parsed.type === 'icon') {
+    if (kit?.status !== 'final') problems.push(`${UI_KIT} is ${kit ? kit.status : 'not in ' + LIST_PATH}, not final: ${job.parsed.type} keys are made from the final UI kit sheet`);
+    else if (!job.options.inputs.includes(UI_KIT)) problems.push(`--inputs needs ${UI_KIT}: ${job.parsed.type} keys are made from the UI kit sheet`);
   }
   if (!methods.includes(job.options.method)) problems.push(`method ${job.options.method} is not in ogw generation methods for ${job.row.key}: ${methods.join(', ') || 'none'}`);
   for (const key of job.options.inputs) {
@@ -247,6 +249,10 @@ async function typeProblems(job: Job): Promise<string[]> {
     return layoutProblems(await readFrameLayout(job.options.manifest as string), requireAnimations(job.row.key, job.spec));
   }
   if (job.parsed.type === 'rig_animation_2d') return rigProblems(job);
+  if (job.parsed.type === 'model') {
+    const file = job.options.files[0] as string;
+    return modelProblems(await readFile(file), file);
+  }
   return [];
 }
 

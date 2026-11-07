@@ -416,17 +416,16 @@ describe('ogw loop dispatch', () => {
     });
   });
 
-  it('prints and returns the nine_slice keys the pending resource request left out', async () => {
+  it('prints and returns the keys the pending resource request left out, with the reason of each', async () => {
     const g = setupGame();
     await openLoopRun(g);
-    mocks.requestPendingResources.mockResolvedValue({ path: null, leftOut: ['nine_slice/small', 'nine_slice/thin'] });
+    const small = 'the long side of a nine_slice size is under 256';
+    const noKit = 'resource/resources.csv has no image/ui_kit row, which nine_slice and icon keys are made from';
+    mocks.requestPendingResources.mockResolvedValue({ path: null, leftOut: [{ key: 'nine_slice/small', reason: small }, { key: 'icon/coin', reason: noKit }] });
     const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
-    expect(out).toMatchObject({
-      code: 0,
-      stdout: 'left out nine_slice/small: the long side of a nine_slice size is under 256\nleft out nine_slice/thin: the long side of a nine_slice size is under 256\n',
-    });
+    expect(out).toMatchObject({ code: 0, stdout: `left out nine_slice/small: ${small}\nleft out icon/coin: ${noKit}\n` });
     const json = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
-    expect(JSON.parse(json.stdout)).toEqual({ started: [], held: [], installs: [], leftOut: ['nine_slice/small', 'nine_slice/thin'] });
+    expect(JSON.parse(json.stdout)).toEqual({ started: [], held: [], installs: [], leftOut: ['nine_slice/small', 'icon/coin'] });
   });
 
   it('fails for a build run without an environment', async () => {

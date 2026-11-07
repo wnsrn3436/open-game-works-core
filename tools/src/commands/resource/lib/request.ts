@@ -19,17 +19,46 @@ export interface RequestOptions {
   retryLimit: number;
 }
 
+/** A key that `--pending` left out, and why. */
+export interface LeftOut {
+  key: string;
+  reason: string;
+}
+
 export interface RequestResult {
   /** Request file path relative to the checkout; null when `--pending` found nothing. */
   path: string | null;
   keys: string[];
-  /** `nine_slice` keys that `--pending` left out: the long side of their `size` is under 256. */
-  leftOut: string[];
+  /** Keys that `--pending` left out: a `nine_slice` whose long side of `size` is under 256, and a `nine_slice` or `icon` without an `image/ui_kit` row. */
+  leftOut: LeftOut[];
 }
 
 /** The line `ogw resource request --pending` and `ogw loop dispatch` print for a key `--pending` left out. */
-export function leftOutLine(key: string): string {
-  return `left out ${key}: the long side of a nine_slice size is under ${String(MIN_NINE_SLICE_SIDE)}`;
+export function leftOutLine(left: LeftOut): string {
+  return `left out ${left.key}: ${left.reason}`;
+}
+
+/** The UI kit sheet that every `nine_slice` and `icon` key is made from (`resource` `## placeholder resource`). */
+export const UI_KIT = 'image/ui_kit';
+const KIT_TYPES = ['nine_slice', 'icon'];
+const SMALL_REASON = `the long side of a nine_slice size is under ${String(MIN_NINE_SLICE_SIDE)}`;
+const NO_KIT_REASON = `${LIST_PATH} has no ${UI_KIT} row, which nine_slice and icon keys are made from`;
+
+function madeFromKit(key: string): boolean {
+  return KIT_TYPES.includes(parseKey(key)?.type ?? '');
+}
+
+/**
+ * Why the named `nine_slice` and `icon` keys cannot be requested: no `image/ui_kit` row, or a kit that is `placeholder` or
+ * `temporary`, is not a key of the request and is in no request file of this run.
+ */
+function kitProblems(rows: readonly ResourceRow[], keys: readonly string[], written: ReadonlyMap<string, unknown>): string[] {
+  const named = keys.filter(madeFromKit);
+  if (named.length === 0) return [];
+  const kit = findRow(rows, UI_KIT);
+  if (!kit) return named.map((key) => `${key}: ${NO_KIT_REASON}; add it with spec size=1024x1024 and request it with its first nine_slice and icon keys`);
+  if ((kit.status !== 'placeholder' && kit.status !== 'temporary') || keys.includes(UI_KIT) || written.has(UI_KIT)) return [];
+  return named.map((key) => `${key}: ${UI_KIT} is ${kit.status} and in no request of this run; request it in the same request`);
 }
 
 /** Where the run's request files are: a folder relative to the checkout and a file name prefix. */
@@ -149,21 +178,28 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
   const problems = checkRows(rows, options);
   if (problems.length > 0) throw new OgwError(problems.join('\n'));
   const small = (row: ResourceRow): boolean => smallNineSlice(parseKey(row.key)?.type ?? '', row.spec);
+  const written = await writtenKeys(game.root, place);
   let keys: string[];
-  let leftOut: string[] = [];
+  let leftOut: LeftOut[] = [];
   if (options.keys === 'pending') {
-    const written = await writtenKeys(game.root, place);
     const again = (key: string): boolean => {
       const w = written.get(key);
       return w === undefined || (w.finished && w.files <= options.retryLimit);
     };
     const due = rows.filter((r) => r.status === 'placeholder' || (r.status === 'requested' && again(r.key)) || (r.status === 'temporary' && !written.has(r.key)));
-    leftOut = due.filter(small).map((r) => r.key);
-    keys = due.filter((r) => !small(r)).map((r) => r.key);
+    const noKit = findRow(rows, UI_KIT) === undefined;
+    const reasonOf = (row: ResourceRow): string | null => (small(row) ? SMALL_REASON : noKit && madeFromKit(row.key) ? NO_KIT_REASON : null);
+    leftOut = due.flatMap((r) => {
+      const reason = reasonOf(r);
+      return reason === null ? [] : [{ key: r.key, reason }];
+    });
+    keys = due.filter((r) => reasonOf(r) === null).map((r) => r.key);
   } else {
     keys = [...new Set(options.keys)];
     const refused = keys.filter((key) => small(findRow(rows, key) as ResourceRow));
     if (refused.length > 0) throw new OgwError(refused.map((key) => `${key}: the long side of a nine_slice size is ${String(MIN_NINE_SLICE_SIDE)} or more`).join('\n'));
+    const kit = kitProblems(rows, keys, written);
+    if (kit.length > 0) throw new OgwError(kit.join('\n'));
   }
   if (keys.length === 0) return { path: null, keys, leftOut };
   for (const key of keys) {

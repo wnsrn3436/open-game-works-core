@@ -55,6 +55,34 @@ function platformRows(rows: ResourceRow[], settings: GameSettings): void {
   }
 }
 
+/** The logo key of a language tag: `image/logo/<language>`, the tag in lowercase with `-` written as `_` (`resource` `## resource key`). */
+export function logoKey(language: string): string {
+  return `image/logo/${language.toLowerCase().replaceAll('-', '_')}`;
+}
+
+/** `spec` with `alpha=true` in place of another `alpha` item, or added at the end when there is none. */
+export function withAlpha(spec: string): string {
+  const items = spec.split(';').filter((item) => item !== '');
+  const index = items.findIndex((item) => item.startsWith('alpha='));
+  if (index === -1) items.push('alpha=true');
+  else items[index] = 'alpha=true';
+  return items.join(';');
+}
+
+/** Adds the logo row of each supported language when missing, and writes `alpha=true` in the `spec` of every logo row. */
+function logoRows(rows: ResourceRow[], settings: GameSettings): void {
+  const [width, height] = settings.baseResolution as [number, number];
+  for (const language of settings.supportedLanguages ?? []) {
+    const key = logoKey(language);
+    if (findRow(rows, key)) continue;
+    const added = emptyRow(key);
+    added.status = 'placeholder';
+    added.spec = `size=${String(Math.floor(width / 2))}x${String(Math.floor(height / 3))};alpha=true`;
+    rows.push(added);
+  }
+  for (const row of rows) if (row.key.startsWith('image/logo/') && row.key.split('/').length === 3) row.spec = withAlpha(row.spec);
+}
+
 function clearFinal(row: ResourceRow): void {
   row.status = 'placeholder';
   row.method = '';
@@ -189,6 +217,7 @@ export async function runSync(ctx: Context, game: GameRepo, tools: Tools = hostT
   const original = await readList(game.root);
   const rows = original.map((row) => ({ ...row }));
   platformRows(rows, settings);
+  logoRows(rows, settings);
   const problems = textVoices(rows, await lineVoices(game.root), await sourceTranslations(game.root, language), language);
   const c: RowContext = { root: game.root, engine, tools, changes: new FileChanges(), problems };
   for (const row of rows) await syncRow(c, row);

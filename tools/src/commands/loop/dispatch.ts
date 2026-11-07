@@ -175,6 +175,6 @@ export const loopDispatch: CommandDef = {
       ...installs.map(installLine),
       ...leftOut.map(leftOutLine),
     ];
-    return { text: lines.length > 0 ? lines.join('\n') : 'nothing to dispatch', data: { started, held, installs, leftOut } };
+    return { text: lines.length > 0 ? lines.join('\n') : 'nothing to dispatch', data: { started, held, installs, leftOut: leftOut.map((l) => l.key) } };
   },
 };

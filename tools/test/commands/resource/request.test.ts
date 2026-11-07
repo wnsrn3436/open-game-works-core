@@ -7,7 +7,10 @@ import { createContext } from '../../../src/lib/command.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { changeRuns, newRunState, type RunState } from '../../../src/lib/runstate.ts';
 import { ogw, commitAll, sh } from '../../helpers/workspace.ts';
-import { listCsv, makeFixture, rowOf, type Fixture } from './fixture.ts';
+import { listCsv, makeFixture, rowOf, type Fixture, type Row } from './fixture.ts';
+
+/** The final UI kit sheet that a request of `nine_slice` and `icon` keys needs (`resource` `## resource request`). */
+const KIT: Row = { key: 'image/ui_kit', spec: 'size=1024x1024', status: 'final' };
 
 const ROWS = listCsv([
   { key: 'icon/a', spec: 'size=8x8', status: 'placeholder' },
@@ -15,6 +18,7 @@ const ROWS = listCsv([
   { key: 'icon/c', spec: 'size=8x8', status: 'final' },
   { key: 'icon/d', spec: 'size=8x8', status: 'requested' },
   { key: 'scene/x/main', status: 'final' },
+  KIT,
 ]);
 
 function repo(f: Fixture): GameRepo {
@@ -58,10 +62,10 @@ describe('ogw resource request', () => {
     const f = makeFixture({
       'resource/icon/c.png': 'MADE',
       'resource/icon/e.png': 'MADE',
-      'resource/resources.csv': listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=8x8')]),
+      'resource/resources.csv': listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=8x8'), KIT]),
     });
     await openRun(f, {});
-    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=16x16')]));
+    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('icon/c', 'size=8x8'), made('icon/e', 'size=16x16'), KIT]));
     const run = await ogw(f.ws, ['resource', 'request', 'g', 'icon/c', 'icon/e']);
     expect(run.stderr).toBe('');
     expect(rowOf(f.game, 'icon/c')).toMatchObject({ status: 'final', method: 'flux2-klein', license: 'Apache-2.0' });
@@ -73,10 +77,10 @@ describe('ogw resource request', () => {
     const made = (key: string, spec: string): Record<string, string> => ({ key, spec, status: 'final', method: 'moss-sfx', source: 'generated', license: 'Apache-2.0' });
     const f = makeFixture({
       'resource/sfx/hit.wav': 'MADE',
-      'resource/resources.csv': listCsv([made('sfx/hit', 'length=200'), { key: 'icon/f', spec: 'size=8x8', status: 'placeholder' }]),
+      'resource/resources.csv': listCsv([made('sfx/hit', 'length=200'), { key: 'icon/f', spec: 'size=8x8', status: 'placeholder' }, KIT]),
     });
     await openRun(f, {});
-    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('sfx/hit', 'length=200;variants=3'), { key: 'icon/f', spec: 'size=8x8', status: 'placeholder' }]));
+    writeFileSync(join(f.game, 'resource/resources.csv'), listCsv([made('sfx/hit', 'length=200;variants=3'), { key: 'icon/f', spec: 'size=8x8', status: 'placeholder' }, KIT]));
     expect((await ogw(f.ws, ['resource', 'request', 'g', 'icon/f'])).stderr).toBe('');
     // that request committed the whole list, the changed spec of sfx/hit with it
     expect(rowOf(f.game, 'sfx/hit')).toMatchObject({ status: 'final', spec: 'length=200;variants=3' });
@@ -101,6 +105,41 @@ describe('ogw resource request', () => {
     expect(requestFiles(f, 'records/loops/loop-1/resource-requests')).toHaveLength(3);
   });
 
+  it('refuses nine_slice and icon keys without an image/ui_kit row, and with a placeholder or temporary kit outside the request and this run', async () => {
+    const pieces = [{ key: 'icon/coin', spec: 'size=8x8', status: 'placeholder' }, { key: 'nine_slice/panel', spec: 'size=256x256;slice=8,8,8,8', status: 'placeholder' }, { key: 'image/hero', spec: 'size=8x8', status: 'placeholder' }];
+    const none = makeFixture({ 'resource/resources.csv': listCsv(pieces) });
+    await openRun(none, {});
+    const refused = await ogw(none.ws, ['resource', 'request', 'g', 'icon/coin', 'nine_slice/panel', 'image/hero']);
+    const reason = 'resource/resources.csv has no image/ui_kit row, which nine_slice and icon keys are made from; add it with spec size=1024x1024 and request it with its first nine_slice and icon keys';
+    expect(refused).toMatchObject({ code: 1, stderr: `icon/coin: ${reason}\nnine_slice/panel: ${reason}\n` });
+    expect(rowOf(none.game, 'icon/coin').status).toBe('placeholder');
+    expect((await ogw(none.ws, ['resource', 'request', 'g', 'image/hero'])).code).toBe(0);
+    // --pending leaves them out and requests the rest
+    const pending = await ogw(none.ws, ['resource', 'request', 'g', '--pending', '--json']);
+    expect(JSON.parse(pending.stdout)).toMatchObject({ path: null, keys: [], leftOut: ['icon/coin', 'nine_slice/panel'] });
+    expect((await ogw(none.ws, ['resource', 'request', 'g', '--pending'])).stdout).toBe(
+      'no pending resource\nleft out icon/coin: resource/resources.csv has no image/ui_kit row, which nine_slice and icon keys are made from\nleft out nine_slice/panel: resource/resources.csv has no image/ui_kit row, which nine_slice and icon keys are made from\n',
+    );
+
+    for (const status of ['placeholder', 'temporary']) {
+      const f = makeFixture({ 'resource/resources.csv': listCsv([...pieces, { key: 'image/ui_kit', spec: 'size=8x8', status, ...(status === 'temporary' ? { method: 'flux2-klein' } : {}) }]) });
+      await openRun(f, {});
+      const alone = await ogw(f.ws, ['resource', 'request', 'g', 'icon/coin']);
+      expect(alone).toMatchObject({ code: 1, stderr: `icon/coin: image/ui_kit is ${status} and in no request of this run; request it in the same request\n` });
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'image/ui_kit', 'icon/coin'])).code).toBe(0);
+      // the kit is in a request file of this run now: a later key goes alone
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'nine_slice/panel'])).code).toBe(0);
+    }
+    const requested = makeFixture({ 'resource/resources.csv': listCsv([...pieces, { key: 'image/ui_kit', spec: 'size=8x8', status: 'requested' }]) });
+    await openRun(requested, {});
+    expect((await ogw(requested.ws, ['resource', 'request', 'g', 'icon/coin'])).code).toBe(0);
+    // --pending holds a placeholder kit with its pieces in one request
+    const together = makeFixture({ 'resource/resources.csv': listCsv([...pieces, { key: 'image/ui_kit', spec: 'size=8x8', status: 'placeholder' }]) });
+    await openRun(together, {});
+    const both = JSON.parse((await ogw(together.ws, ['resource', 'request', 'g', '--pending', '--json'])).stdout) as { keys: string[]; leftOut: string[] };
+    expect(both).toMatchObject({ keys: ['icon/coin', 'nine_slice/panel', 'image/hero', 'image/ui_kit'], leftOut: [] });
+  });
+
   it('leaves out a nine_slice whose long side is under 256 from --pending and refuses it by name', async () => {
     const f = makeFixture({
       'resource/resources.csv': listCsv([
@@ -108,6 +147,7 @@ describe('ogw resource request', () => {
         { key: 'nine_slice/thin', spec: 'size=255x32;slice=8,8,8,8', status: 'requested' },
         { key: 'nine_slice/edge', spec: 'size=32x256;slice=8,8,8,8', status: 'placeholder' },
         { key: 'nine_slice/wide', spec: 'size=512x64;slice=8,8,8,8', status: 'placeholder' },
+        KIT,
       ]),
     });
     await openRun(f, {});
@@ -124,7 +164,8 @@ describe('ogw resource request', () => {
       stdout: 'no pending resource\nleft out nine_slice/small: the long side of a nine_slice size is under 256\nleft out nine_slice/thin: the long side of a nine_slice size is under 256\n',
     });
     const ctx = createContext({ cwd: f.ws.root, env: f.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    expect(await requestPendingResources(ctx, repo(f))).toEqual({ path: null, leftOut: ['nine_slice/small', 'nine_slice/thin'] });
+    const small = 'the long side of a nine_slice size is under 256';
+    expect(await requestPendingResources(ctx, repo(f))).toEqual({ path: null, leftOut: [{ key: 'nine_slice/small', reason: small }, { key: 'nine_slice/thin', reason: small }] });
     const named = await ogw(f.ws, ['resource', 'request', 'g', 'nine_slice/small', 'nine_slice/thin', 'nine_slice/edge']);
     expect(named).toMatchObject({
       code: 1,
@@ -139,6 +180,7 @@ describe('ogw resource request', () => {
       'resource/resources.csv': listCsv([
         { key: 'icon/t', spec: 'size=8x8', status: 'temporary', method: 'flux2-klein' },
         { key: 'icon/u', spec: 'size=8x8', status: 'temporary', method: 'flux2-klein' },
+        KIT,
       ]),
       'records/loops/loop-1/resource-requests/100.md': '## keys\n\nicon/u\n\n## see\n\nnone\n\n## base\n\nnone\n',
     });
@@ -157,6 +199,7 @@ describe('ogw resource request', () => {
         { key: 'icon/b', spec: 'size=8x8', status: 'requested' },
         { key: 'icon/c', spec: 'size=8x8', status: 'requested' },
         { key: 'icon/d', spec: 'size=8x8', status: 'requested' },
+        KIT,
       ]),
       // icon/a: one finished request. icon/b: one finished and one running request. icon/c: one running request.
       // icon/d: two finished requests, which is backgroundRetryLimit (2) in the test harness settings.

@@ -1,15 +1,15 @@
 import type { Context } from '../../lib/command.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { requestResources } from './lib/request.ts';
+import { requestResources, type LeftOut } from './lib/request.ts';
 
 export { isRequestFileName, leftOutLine, requestFileKeys, requestPlace } from './lib/request.ts';
 import { runSync } from './lib/sync.ts';
 
 /**
  * `ogw resource request <game> --pending`. Returns the request file path, or null when nothing was pending, and the
- * `nine_slice` keys it left out.
+ * keys it left out.
  */
-export async function requestPendingResources(ctx: Context, game: GameRepo): Promise<{ path: string | null; leftOut: string[] }> {
+export async function requestPendingResources(ctx: Context, game: GameRepo): Promise<{ path: string | null; leftOut: LeftOut[] }> {
   const { path, leftOut } = await requestResources(game, { keys: 'pending', see: [], base: null, retryLimit: (await ctx.settings()).backgroundRetryLimit }, ctx.env);
   return { path, leftOut };
 }
