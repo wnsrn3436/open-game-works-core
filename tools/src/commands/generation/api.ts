@@ -5,6 +5,7 @@ import { OgwError } from '../../lib/errors.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { listJobs } from '../../lib/jobs.ts';
 import { toolProgram } from '../env/api.ts';
+import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { installCommand } from './install.ts';
 import { methodDir } from './lib/install.ts';
 import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice, type Stage } from './lib/select.ts';
@@ -19,7 +20,7 @@ export { performanceLeaseBase };
 
 /** Methods a resource key can use and the stage of each, as `ogw generation methods <game> <key>` gives them. */
 export async function generationMethods(ctx: Context, game: GameRepo, resourceKey: string): Promise<MethodChoice[]> {
-  return chooseMethods(ctx, await ctx.settings(), game, resourceKey);
+  return chooseMethods(ctx, await runHarnessSettings(ctx, game), game, resourceKey);
 }
 
 /** Files of a catalog method with path, license, source URL, attribution and character set, as `ogw generation list <method>` gives them. */
@@ -33,7 +34,7 @@ export function catalogEntries(ctx: Context, method: string): Promise<CatalogFil
  */
 export async function blockingMethods(ctx: Context, game: GameRepo, resourceKey: string): Promise<string[]> {
   try {
-    return await uninstalledMethods(ctx, await ctx.settings(), game, resourceKey);
+    return await uninstalledMethods(ctx, await runHarnessSettings(ctx, game), game, resourceKey);
   } catch {
     return [];
   }

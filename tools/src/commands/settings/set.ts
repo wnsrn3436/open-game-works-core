@@ -28,7 +28,7 @@ export const set: CommandDef = {
       const written: { path: string; value: unknown }[] = [];
       for (const [path, value] of [...pairs.filter((p) => !isCoreKey(p)), ...pairs.filter(isCoreKey)]) {
         const current = withValue(ctx, target, next);
-        const segments = await parsePath(current, path, { create: true });
+        const segments = await parsePath(current, path);
         next = setAt(next, segments, value, await containerKinds(current, segments));
         written.push({ path: display(segments), value });
       }

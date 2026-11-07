@@ -17,6 +17,7 @@ import { iterationRecords, type ParsedRecord } from './lib/iteration-record.ts';
 import { document } from './lib/markdown.ts';
 import { abs, blockedLines, coreUpgrade, loopData, openTarget, readRunJson, runRel } from './lib/run.ts';
 import { calibrationHumanLines } from '../judge/api.ts';
+import { runSettingsLines } from './lib/harness-pin.ts';
 
 const USAGE = 'ogw loop end-record <game> [--stopped-by-human] [--human <file>]';
 
@@ -190,6 +191,7 @@ export const loopEndRecord: CommandDef = {
       ['failures', await failuresSection(ctx, game, run)],
       ['human', await humanSection(ctx, game, run, humanFile)],
       ['cost', renderCost(costRows(await runAgentJobs(ctx.env, game.name, run.name, null), true))],
+      ['run settings', runSettingsLines(run).join('\n')],
     ]);
     const rel = runRel(run, 'end.md');
     await writeFileAtomic(abs(game, rel), text);

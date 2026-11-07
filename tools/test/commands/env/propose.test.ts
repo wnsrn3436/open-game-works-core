@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setNet, type RemoteRef } from '../../../src/commands/env/lib/net.ts';
@@ -9,7 +8,8 @@ import { changedParts, proposalParts } from '../../../src/commands/env/propose.t
 import { hostOf, markerFits, WHEEL_PLATFORMS } from '../../../src/commands/env/lib/wheels.ts';
 import { pipRequirements } from '../../../src/commands/generation/lib/install.ts';
 import { NOT_INSTALLED } from '../../../src/commands/generation/measure.ts';
-import { ogw, hostForm, makeWorkspace, realToolsWithout, TEST_HOST_ID, type TestWorkspace } from '../../helpers/workspace.ts';
+import { mergeSettings } from '../../../src/lib/json.ts';
+import { ogw, hostForm, makeWorkspace, realToolsWithout, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeBin, fakeNet, type Route } from './fakes.ts';
 import { installFolderOf, writeInstall } from '../generation/install-folder.ts';
 
@@ -112,22 +112,27 @@ function entry(platform: string, name: string): Record<string, unknown> {
   return { platform, url: `https://files/${name}`, sha256: (file(name).digests as { sha256: string }).sha256 };
 }
 
-/** The entry of another host in `hosts`: no proposal of this host changes it. */
-const OTHER_HOST = { ['f'.repeat(32)]: { name: 'other', maxConcurrentInstances: 6, playInstances: 2, measured: { 'flux2-klein': [{ resolution: 2048, result: 'ok' }] } } };
+interface HostValues {
+  maxConcurrentInstances?: number;
+  playInstances?: number;
+  webSmokeCpuThrottleRate?: number;
+  measured?: Record<string, unknown>;
+}
 
 /**
- * This host's entry after a write of it: the write moved it from `settings.json` (`path`) to `settings.local.json`, and
- * the entry of another host stays in `settings.json`.
+ * The host values of harness settings after a write: `settings.local.json` over `settings.json` (`path`), where the
+ * write put the values it changed, as they are local-scope paths.
  */
-function thisHost(path: string): { name: string; maxConcurrentInstances?: number; playInstances?: number; measured?: Record<string, unknown> } {
-  type Hosts = { hosts: Record<string, ReturnType<typeof thisHost>> };
-  const file = JSON.parse(readFileSync(path, 'utf8')) as Hosts;
-  expect(file.hosts).toEqual(OTHER_HOST);
-  const local = JSON.parse(readFileSync(join(dirname(path), 'settings.local.json'), 'utf8')) as Hosts;
-  expect(Object.keys(local.hosts)).toEqual([TEST_HOST_ID]);
-  const entry = local.hosts[TEST_HOST_ID];
-  if (entry === undefined) throw new Error('no entry of this host');
-  return entry;
+function thisHost(path: string): HostValues {
+  const shared = JSON.parse(readFileSync(path, 'utf8')) as HostValues;
+  const local = JSON.parse(readFileSync(join(dirname(path), 'settings.local.json'), 'utf8')) as HostValues;
+  for (const key of ['maxConcurrentInstances', 'playInstances', 'webSmokeCpuThrottleRate'] as const) {
+    if (local[key] !== undefined) expect(shared[key]).toBeUndefined();
+  }
+  const merged = mergeSettings(shared as Record<string, unknown>, local as Record<string, unknown>) as HostValues;
+  const out: HostValues = {};
+  for (const key of ['maxConcurrentInstances', 'playInstances', 'webSmokeCpuThrottleRate', 'measured'] as const) if (merged[key] !== undefined) Object.assign(out, { [key]: merged[key] });
+  return out;
 }
 
 const METHODS = [
@@ -178,7 +183,7 @@ function compileCalls(uv: string): CompileCall[] {
 }
 
 function setup(): { ws: TestWorkspace; env: NodeJS.ProcessEnv; uv: string } {
-  const ws = makeWorkspace({ tools: realToolsWithout('ffmpeg', 'gdtoolkit'), resourceGeneration: METHODS, hosts: OTHER_HOST });
+  const ws = makeWorkspace({ tools: realToolsWithout('ffmpeg', 'gdtoolkit'), resourceGeneration: METHODS });
   mkdirSync(join(ws.coreImpl, 'client', 'godot'), { recursive: true });
   writeFileSync(join(ws.coreImpl, 'client', 'godot', 'engine.json'), JSON.stringify({ godot: '4.5.1.stable' }));
   // `uv python find --system` names the Python of the method environments (`uv venv`): CPython 3.<OGW_TEST_PY_MINOR or 12>.
@@ -365,7 +370,7 @@ describe('ogw env propose', () => {
     expect(JSON.parse(readFileSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'env-propose.json'), 'utf8'))).toHaveLength(8);
     expect(await ogw(ws, ['env', 'propose', '--apply', 'measured:flux2-klein,nothing'], { env })).toMatchObject({ code: 1, stderr: 'no proposal with id: nothing\n' });
     role.value = 'content';
-    expect(await ogw(ws, ['env', 'propose', '--apply', 'playInstances'], { env })).toMatchObject({ code: 1, stderr: `role content cannot change hosts.${TEST_HOST_ID}.playInstances\n` });
+    expect(await ogw(ws, ['env', 'propose', '--apply', 'playInstances'], { env })).toMatchObject({ code: 1, stderr: 'role content cannot change playInstances\n' });
     expect(readFileSync(settingsPath, 'utf8')).toBe(before);
     role.value = 'lead';
     const run = await ogw(ws, ['env', 'propose', '--apply', 'measured:flux2-klein, maxConcurrentInstances,pin:sprite'], { env });
@@ -374,12 +379,40 @@ describe('ogw env propose', () => {
     expect(Object.keys(after)[0]).toBe('$schema');
     expect(after.maxConcurrentInstances).toBeUndefined();
     expect(thisHost(settingsPath)).toEqual({
-      name: hostname(),
       maxConcurrentInstances: 2,
       measured: { 'flux2-klein': [{ resolution: 512, jobMs: 9, result: 'ok' }, { resolution: 1024, jobMs: 20, result: 'timeout' }], same: [{ durationMs: 1000, jobMs: 5, result: 'ok' }] },
     });
     expect(after.resourceGeneration[0]?.measured).toBeUndefined();
     expect(after.resourceGeneration[3]?.pins).toHaveLength(2);
+  });
+
+  it('proposes webSmokeCpuThrottleRate from the benchmark index of this host and the device of web smoke', async () => {
+    const { ws, env } = setup();
+    const settingsPath = join(ws.harness, 'settings.json');
+    const dir = join(ws.harness, '.git', 'ogw-temp', 'ogw-env');
+    const proposalOf = async (): Promise<{ id: string; path: string; current: unknown; value: unknown; reason: string } | undefined> => {
+      const run = await ogw(ws, ['env', 'propose', '--json'], { env });
+      return (JSON.parse(run.stdout) as { proposals: { id: string; path: string; current: unknown; value: unknown; reason: string }[] }).proposals.find((p) => p.id === 'webSmokeCpuThrottleRate');
+    };
+    expect(await proposalOf()).toBeUndefined();
+    // the device of web smoke has the benchmark index webSmokeDeviceBenchmarkIndex of harness settings (438 in the tests)
+    writeFileSync(join(dir, 'env-benchmark.json'), JSON.stringify({ measuredAt: 1, values: [4300, 4400, 4500, 4390, 4410], index: 4400 }));
+    expect(await proposalOf()).toEqual({
+      id: 'webSmokeCpuThrottleRate',
+      path: 'webSmokeCpuThrottleRate',
+      current: null,
+      value: 10,
+      reason: 'benchmark index 4400 of this host (ogw env benchmark) / webSmokeDeviceBenchmarkIndex 438, rounded',
+    });
+    expect(await ogw(ws, ['env', 'propose', '--apply', 'webSmokeCpuThrottleRate'], { env })).toMatchObject({ code: 0, stdout: 'applied: webSmokeCpuThrottleRate\n' });
+    expect(thisHost(settingsPath).webSmokeCpuThrottleRate).toBe(10);
+    expect(await proposalOf()).toBeUndefined();
+    // a host slower than the device runs without throttle
+    writeFileSync(join(dir, 'env-benchmark.json'), JSON.stringify({ measuredAt: 1, values: [200, 200, 200, 200, 200], index: 200 }));
+    expect(await proposalOf()).toMatchObject({ current: 10, value: 1 });
+    // a result older than the env-check result is from an earlier update env
+    writeFileSync(join(dir, 'env-benchmark.json'), JSON.stringify({ measuredAt: 0, values: [200, 200, 200, 200, 200], index: 200 }));
+    expect(await proposalOf()).toBeUndefined();
   });
 
   it('applies the measured steps of a method whose name has a .', async () => {
@@ -408,7 +441,7 @@ describe('ogw env propose', () => {
     await ogw(ws, ['env', 'propose'], { env });
     const run = await ogw(ws, ['env', 'propose', '--apply', 'measured:same'], { env });
     expect(run.code).toBe(1);
-    expect(run.stderr).toContain(`hosts.${TEST_HOST_ID}.measured.same.0.durationMs`);
+    expect(run.stderr).toContain('measured.same.0.durationMs');
     expect(readFileSync(settingsPath, 'utf8')).toBe(before);
   });
 

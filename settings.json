@@ -51,7 +51,7 @@
   "instanceWaitTimeoutMs": 1800000,
   "jobWaitTimeoutMs": 300000,
   "backgroundRetryLimit": 2,
-  "webSmokeCpuThrottleRate": 4,
+  "webSmokeDeviceBenchmarkIndex": 438,
   "loopStop": {
     "repeatedDefect": 3,
     "oscillation": 2,
@@ -568,7 +568,6 @@
     }
   },
   "webSmokeBootTimeoutMs": 120000,
-  "hosts": {},
   "performanceLeaseWaitTimeoutMs": 1800000,
   "resultFixRounds": 1
 }

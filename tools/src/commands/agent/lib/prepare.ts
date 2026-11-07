@@ -20,7 +20,7 @@ import { TOOLS } from '../../core/lib/tools.ts';
 import { coreSpecDependencies } from './order.ts';
 import { newAgentFolder } from './files.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
-import { AGENT_LOG_FOLDER, FIX_ROUND_ROLES, GAME_ROLES, type AgentMeta } from './meta.ts';
+import { AGENT_LOG_FOLDER, FIX_ROUND_ROLES, GAME_ROLES, jobHarnessSettings, type AgentMeta } from './meta.ts';
 import { preparePlayInput } from './play-input.ts';
 import { agentCli, agentSettings, defaultConfigFolder, type AgentCli, type AgentSession } from './cli-command.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
@@ -122,10 +122,9 @@ function baseMeta(role: Role, input: string, taskInput: string, request: AgentRe
 }
 
 /** The time limit of an agent job: harness settings `loop.playTimeLimitMs` and `loop.judgeTimeLimitMs` for play and judge. */
-async function agentTimeLimitMs(ctx: Context, role: Role): Promise<number> {
+function agentTimeLimitMs(settings: HarnessSettings, role: Role): number {
   if (role !== 'play' && role !== 'judge') return LIMITS.jobMs;
-  const { loop } = await ctx.settings();
-  return role === 'play' ? loop.playTimeLimitMs : loop.judgeTimeLimitMs;
+  return role === 'play' ? settings.loop.playTimeLimitMs : settings.loop.judgeTimeLimitMs;
 }
 
 async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<string> {
@@ -133,9 +132,10 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
   const jobId = id ?? newId();
   // the record holds the run log from its start: a job without one is no agent to `agentContext` and the index of running agents
   meta.runLog = await runLogPath(jobId, ctx.env);
+  const settings = await jobHarnessSettings(ctx, meta);
   // a fix round continues the session of the job (ogw.md `## agent`): a new Claude Code session starts with its id; a new
   // Codex session gets its id from the first run
-  if (meta.session === undefined && FIX_ROUND_ROLES.includes(meta.role) && agentCli(meta.agent ?? agentSettings(await ctx.settings(), meta.role)) === 'claude-code') {
+  if (meta.session === undefined && FIX_ROUND_ROLES.includes(meta.role) && agentCli(meta.agent ?? agentSettings(settings, meta.role)) === 'claude-code') {
     meta.session = { id: randomUUID(), resume: false };
   }
   return startJob({
@@ -143,7 +143,7 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
     cwd: ctx.cwd,
     command: 'agent',
     game: meta.game,
-    timeLimitMs: await agentTimeLimitMs(ctx, meta.role),
+    timeLimitMs: agentTimeLimitMs(settings, meta.role),
     agentJob: caller?.job.id ?? null,
     meta,
     env: ctx.env,
@@ -354,14 +354,14 @@ async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request
     const { branch, baseCommit } = await branchOf(game);
     meta.place = { kind: 'game-worktree', checkout: game.root, worktrees: (await ctx.workspace()).worktrees, branch, baseCommit };
     meta.outputRel = join('records', 'loops', run.name, `content-${String(run.iteration)}-v${String(request.variant)}.md`);
-    meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
+    meta.session = await contentSession(ctx, game, run, meta, await jobHarnessSettings(ctx, meta));
     return launchJob(ctx, meta);
   }
   if (role === 'content') {
     meta.place = { kind: 'checkout', dir: game.root };
     meta.folder = game.root;
     meta.output = join(game.root, 'records', 'loops', run.name, `content-${String(run.iteration)}.md`);
-    meta.session = await contentSession(ctx, game, run, meta, await ctx.settings());
+    meta.session = await contentSession(ctx, game, run, meta, await jobHarnessSettings(ctx, meta));
     return launchJob(ctx, meta);
   }
   const { branch, baseCommit } = await branchOf(game);

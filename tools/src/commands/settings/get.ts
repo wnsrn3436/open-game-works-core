@@ -2,7 +2,7 @@ import { expectPositionals, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { withDefaults } from '../../lib/settings.ts';
 import { display, getAt, isIndex, isPlainObject, mergeSettings, type JsonObject, type Segments } from './lib/json-path.ts';
-import { expand, infoOf } from './lib/schema-nav.ts';
+import { expand, infoOf } from '../../lib/schema-nav.ts';
 import { isGameCoreKey, locatePath, openTarget, parsePath, type Target } from './lib/target.ts';
 
 export interface ResolvedValue {

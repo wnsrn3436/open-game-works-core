@@ -1,5 +1,4 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +8,7 @@ import { mayChange } from '../../../src/commands/settings/lib/change.ts';
 import { agentContext, type AgentContext } from '../../../src/lib/agentctx.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { withGameSettingsLock, type Role } from '../../../src/lib/settings.ts';
-import { ogw, makeGame, makeWorkspace, sh, TEST_HOST_ID, type TestWorkspace } from '../../helpers/workspace.ts';
+import { ogw, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { writeCoreImpl } from './core-impl.ts';
 import { readGameSettingsFile, readHarnessSettingsFile, validGameSettings, writeRelease, type GameSettingsFixture } from './fixtures.ts';
 
@@ -287,9 +286,8 @@ describe('caller role', () => {
 
   it('lets no role change a tool path', async () => {
     const run = await set('harness', 'measured.flux2-klein', '[]');
-    expect(run).toEqual({ code: 1, stdout: '', stderr: `role lead cannot change hosts.${TEST_HOST_ID}.measured (x-owner tool)\n` });
-    const hosts = { [TEST_HOST_ID]: { name: 'h', measured: { 'flux2-klein': [{ result: 'ok' }] } } };
-    expect((await set('harness', 'hosts', JSON.stringify(hosts))).stderr).toBe(`role lead cannot change hosts.${TEST_HOST_ID}.measured (x-owner tool)\n`);
+    expect(run).toEqual({ code: 1, stdout: '', stderr: 'role lead cannot change measured (x-owner tool)\n' });
+    expect((await set('harness', 'measured', JSON.stringify({ 'flux2-klein': [{ result: 'ok' }] }))).stderr).toBe('role lead cannot change measured (x-owner tool)\n');
     const harness = readHarnessSettingsFile(join(ws.harness, 'settings.json'));
     const methods = structuredClone(harness.resourceGeneration);
     methods[0].safetyTimeoutMs = 1234;
@@ -317,16 +315,16 @@ describe('caller role', () => {
 });
 
 describe('writeHarnessSettings', () => {
-  it('writes tool paths only with allowTool, with the name of this host', async () => {
+  it('writes tool paths only with allowTool', async () => {
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const path = join(ws.harness, 'settings.json');
     const harness = readHarnessSettingsFile(path);
-    harness.hosts = { [TEST_HOST_ID]: { name: 'old', measured: { 'flux2-klein': [{ result: 'failed' }] } } };
-    await expect(writeHarnessSettings(ctx, harness)).rejects.toThrow(`role lead cannot change hosts.${TEST_HOST_ID}.measured (x-owner tool)`);
+    harness.measured = { 'flux2-klein': [{ result: 'failed' }] };
+    await expect(writeHarnessSettings(ctx, harness)).rejects.toThrow('role lead cannot change measured (x-owner tool)');
     await writeHarnessSettings(ctx, harness, { allowTool: true });
-    // a host entry is a local-scope path: it goes to settings.local.json
-    expect(readHarnessSettingsFile(path).hosts).toBeUndefined();
-    expect(readHarnessSettingsFile(join(ws.harness, 'settings.local.json')).hosts).toEqual({ [TEST_HOST_ID]: { name: hostname(), measured: { 'flux2-klein': [{ result: 'failed' }] } } });
+    // measured is a local-scope path: it goes to settings.local.json
+    expect(readHarnessSettingsFile(path).measured).toBeUndefined();
+    expect(readHarnessSettingsFile(join(ws.harness, 'settings.local.json')).measured).toEqual({ 'flux2-klein': [{ result: 'failed' }] });
     harness.jobWaitTimeoutMs = -1;
     await expect(writeHarnessSettings(ctx, harness, { allowTool: true })).rejects.toThrow('jobWaitTimeoutMs: must be >= 1');
   });

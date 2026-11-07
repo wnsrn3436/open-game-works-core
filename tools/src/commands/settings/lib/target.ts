@@ -2,12 +2,9 @@ import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { resolveCoreImpl, type GameRepo } from '../../../lib/game.ts';
-import { currentHost, type HostIdentity } from '../../../lib/host.ts';
 import {
   gameSettingsPath,
   harnessSettingsPath,
-  HOST_KEYS,
-  hostEntryId,
   loadSchema,
   mergedHarnessSettings,
   readHarnessSettingsFiles,
@@ -17,7 +14,7 @@ import {
 } from '../../../lib/settings.ts';
 import { coreFiles, coreKeys, matchCoreKey, readObject, type CoreFiles } from './core-files.ts';
 import { isPlainObject, type ContainerKind, type JsonObject, type Segments } from './json-path.ts';
-import { infoOf, isLocalScope, locate, type Located, type SchemaNode } from './schema-nav.ts';
+import { infoOf, isLocalScope, isRunPath, locate, type Located, type SchemaNode } from '../../../lib/schema-nav.ts';
 
 export type TargetKind = 'harness' | 'game' | 'core';
 
@@ -38,10 +35,6 @@ export interface Target {
   coreImpl: string | null;
   /** Core release of game settings `coreVersion`, read once; for the `game` target only. */
   release(): Promise<CoreFiles>;
-  /** This host, whose `hosts` entry holds the host keys of harness settings; for the `harness` target only. */
-  host(): Promise<HostIdentity>;
-  /** The id of this host's entry in the harness settings `hosts` value `hosts` (`hostEntryId`): null when it is empty; for the `harness` target only. */
-  hostEntryId(hosts: unknown): Promise<string | null>;
 }
 
 function releaseOf(ctx: Context, value: JsonObject, game: string): () => Promise<CoreFiles> {
@@ -59,7 +52,6 @@ export function withValue(ctx: Context, target: Target, value: JsonObject): Targ
 }
 
 const noRelease = (): Promise<CoreFiles> => Promise.reject(new OgwError('only game settings have a core release'));
-const noHost = (): Promise<never> => Promise.reject(new OgwError('only harness settings have host values'));
 
 export async function harnessTarget(ctx: Context): Promise<Target> {
   const files = await readHarnessSettingsFiles(ctx.env);
@@ -73,8 +65,6 @@ export async function harnessTarget(ctx: Context): Promise<Target> {
     game: null,
     coreImpl: null,
     release: noRelease,
-    host: () => currentHost(ctx.env),
-    hostEntryId: (hosts) => hostEntryId(hosts, ctx.env),
   };
 }
 
@@ -92,8 +82,6 @@ export async function gameTarget(ctx: Context, name: string): Promise<Target> {
     game,
     coreImpl: null,
     release: releaseOf(ctx, value, game.name),
-    host: noHost,
-    hostEntryId: noHost,
   };
 }
 
@@ -110,8 +98,6 @@ export async function coreTarget(ctx: Context): Promise<Target> {
     game: null,
     coreImpl,
     release: noRelease,
-    host: noHost,
-    hostEntryId: noHost,
   };
 }
 
@@ -178,38 +164,19 @@ function restOf(text: string, key: string, path: string): string[] {
   return text === key ? [] : splitRest(text.slice(key.length + 1), path);
 }
 
-/** True when the path of harness settings starts with a host key (`HOST_KEYS`): its value is in this host's `hosts` entry. */
-export function isHostPath(target: Target, segments: Segments): boolean {
-  return target.kind === 'harness' && (HOST_KEYS as readonly string[]).includes(segments[0] ?? '');
-}
-
-/**
- * `local` when the path of harness settings is a local-scope path (`isLocalScope`), which `ogw settings set` writes to
- * `settings.local.json`; undefined otherwise. A host key path not under `hosts` is a path in this host's entry.
- */
+/** `local` when the path of harness settings is a local-scope path (`isLocalScope`), which `ogw settings set` writes to `settings.local.json`; undefined otherwise. */
 export function scopeOf(target: Target, segments: Segments): 'local' | undefined {
   if (target.kind !== 'harness') return undefined;
-  return isLocalScope(target.schema, isHostPath(target, segments) ? ['hosts', '', ...segments] : segments) ? 'local' : undefined;
+  return isLocalScope(target.schema, segments) ? 'local' : undefined;
 }
 
-export interface PathOptions {
-  /** The path is written with a value: a host key path is under this host's `hosts` entry even when `hosts` is empty. */
-  create?: boolean;
+/** `true` when the path of harness settings is a run path (`isRunPath`), whose value a loop run records; undefined otherwise. */
+export function runOf(target: Target, segments: Segments): true | undefined {
+  return target.kind === 'harness' && isRunPath(target.schema, segments) ? true : undefined;
 }
 
-/**
- * The path in the file: a host key path of harness settings is under `hosts.<this host id>`. When `hosts` is empty and
- * the path is not created, no host has an entry: the host id is not read and the path stays as given, whose schema is
- * the `hosts` entry schema (`locatePath`).
- */
-export async function filePath(target: Target, segments: Segments, options: PathOptions = {}): Promise<string[]> {
-  if (!isHostPath(target, segments)) return [...segments];
-  const id = options.create === true ? (await target.host()).id : await target.hostEntryId(target.value.hosts);
-  return id === null ? [...segments] : ['hosts', id, ...segments];
-}
-
-/** Splits a `.`-joined path. A core settings key is read as one segment. A harness settings host key path is under this host's `hosts` entry (`filePath`). */
-export async function parsePath(target: Target, path: string, options: PathOptions = {}): Promise<string[]> {
+/** Splits a `.`-joined path. A core settings key is read as one segment. */
+export async function parsePath(target: Target, path: string): Promise<string[]> {
   if (target.kind === 'core') {
     const key = keyOf(coreKeys(target.schema), path, path, join(target.coreImpl ?? '', 'settings', 'core-settings.schema.json'));
     return [key, ...restOf(path, key, path)];
@@ -219,7 +186,7 @@ export async function parsePath(target: Target, path: string, options: PathOptio
     const key = keyOf(coreKeys((await target.release()).schema), text, path);
     return ['core', key, ...restOf(text, key, path)];
   }
-  return filePath(target, splitRest(path, path), options);
+  return splitRest(path, path);
 }
 
 function startNodes(target: Target): SchemaNode[] {
@@ -231,12 +198,8 @@ export function isGameCoreKey(target: Target, segments: Segments): boolean {
   return target.kind === 'game' && segments[0] === 'core' && segments.length > 1;
 }
 
-/**
- * Schema nodes and effective `x-owner` of the path. `core.<key>` of game settings uses the release core settings schema.
- * A host key path of harness settings not under `hosts` uses the `hosts` entry schema.
- */
+/** Schema nodes and effective `x-owner` of the path. `core.<key>` of game settings uses the release core settings schema. */
 export async function locatePath(target: Target, segments: Segments): Promise<Located> {
-  if (isHostPath(target, segments)) return locate(startNodes(target), ['hosts', '', ...segments]);
   if (!isGameCoreKey(target, segments)) return locate(startNodes(target), segments);
   const coreSchema = (await target.release()).schema;
   return locate(startNodes(target), segments, (done) => {

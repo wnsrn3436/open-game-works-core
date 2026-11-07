@@ -73,7 +73,7 @@ function fakeInstance(platform: string): InstanceInfo {
 }
 
 async function setup(patch: Record<string, unknown> = {}, extraEnv: NodeJS.ProcessEnv = {}, harness: Record<string, unknown> = {}): Promise<Setup> {
-  const ws = makeWorkspace({ testDevices: [{ platform: 'android', serial: 'emulator-5554' }], ...harness });
+  const ws = makeWorkspace({ testDevices: [{ platform: 'android', serial: 'emulator-5554' }], webSmokeCpuThrottleRate: 4, ...harness });
   const settings = {
     ...gameSettings(),
     buildPlatforms: ['android', 'web'],
@@ -235,6 +235,15 @@ describe('build check helpers', () => {
     await host.close();
   });
 
+  it('gives the value of a script in the page, and fails on an exception', async () => {
+    const s = await setup({}, { FAKE_CHROMIUM_EVAL: JSON.stringify([412.5, { throw: 'Error: boom' }]) });
+    const page = await openHeadless(s.input.ctx, join(s.bin.bin, 'chromium'), 'about:blank', 1);
+    expect(await page.evaluate('1 + 1')).toBe(412.5);
+    await expect(page.evaluate('1 + 1')).rejects.toThrow('page script failed: Error: boom');
+    expect(chromiumCalls(s).find((c) => c.method === 'Runtime.evaluate')).toMatchObject({ params: { expression: '1 + 1', returnByValue: true, awaitPromise: true }, sessionId: 'S1' });
+    await page.close();
+  });
+
   it('marks a crashed page', async () => {
     const s = await setup({}, { FAKE_CHROMIUM_CRASH: '1' });
     const host = await serveFolder(s.ws.root);
@@ -324,6 +333,12 @@ describe('web smoke', () => {
     vi.mocked(toolProgram).mockResolvedValue(null);
     expect(await webSmoke({ ...s.input, env: 'STG' })).toEqual({ check: { name: 'web smoke', result: 'unknown', details: ['web smoke did not run: harness settings tools.chromium is not on this host'] }, loadingMs: null });
     vi.mocked(toolProgram).mockResolvedValue('chromium');
+    // the throttle of this host is measured by update env: without it the check does not run
+    const unmeasured = await setup({}, {}, { webSmokeCpuThrottleRate: null });
+    expect(await webSmoke({ ...unmeasured.input, env: 'STG' })).toEqual({
+      check: { name: 'web smoke', result: 'unknown', details: ['web smoke did not run: harness settings webSmokeCpuThrottleRate has no value: update env has not measured it on this host'] },
+      loadingMs: null,
+    });
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('no instance slot'));
     expect((await webSmoke(s.input))?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: no instance slot'] });
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('not defined: how the runner starts the server process'));

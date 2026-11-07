@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { HARNESS_PINS_KEY } from '../../../src/commands/loop/lib/harness-pin.ts';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { HARNESS_PINS_KEY, runHarnessSettings } from '../../../src/commands/loop/lib/harness-pin.ts';
+import { createContext } from '../../../src/lib/command.ts';
+import { currentRunSettings } from '../../../src/lib/settings.ts';
 import { RUN_LIMITS_KEY } from '../../../src/commands/loop/lib/run-limits.ts';
 import { listRuns } from '../../../src/lib/runstate.ts';
 import { commitAll, ogw } from '../../helpers/workspace.ts';
@@ -30,9 +34,15 @@ function changeHarness(g: TestGame): string {
   return commitAll(g.ws.harness, 'harness change');
 }
 
-/** Records iteration `n` of the run with no findings and an empty check file. */
-async function recordEmpty(g: TestGame, run: string, n: number): Promise<string> {
-  write(g.root, `records/loops/${run}/check-${String(n)}.json`, { commit: 'c', checks: [] });
+/** Writes the settings.local.json of the workspace harness. */
+function writeLocal(g: TestGame, value: Record<string, unknown>): void {
+  writeFileSync(join(g.ws.harness, 'settings.local.json'), JSON.stringify(value));
+}
+
+/** Records iteration `n` of the run with no findings and a check file of `checks` (none by default). */
+async function recordEmpty(g: TestGame, run: string, n: number, checks: string[] = []): Promise<string> {
+  const results = checks.map((name) => ({ name, platform: null, result: 'pass', failures: [], warnings: [] }));
+  write(g.root, `records/loops/${run}/check-${String(n)}.json`, { commit: 'c', checks: results });
   write(g.root, `records/loops/${run}/findings-${String(n)}.json`, { findings: [], discarded: [] });
   expect((await ogw(g.ws, ['loop', 'record', 'g'])).stderr).toBe('');
   return read(g.root, `records/loops/${run}/iteration-${String(n)}.md`);
@@ -45,7 +55,12 @@ describe('ogw loop start limits and harness pin', () => {
     await start(g, '--limit', '2', '--until', String(until));
     const run = await currentRun(g);
     expect(run.data[RUN_LIMITS_KEY]).toEqual({ iterations: 2, until });
-    expect(run.data[HARNESS_PINS_KEY]).toEqual([{ commit: git(g.ws.harness, 'rev-parse', 'HEAD'), iteration: 0 }]);
+    const runSettings = await currentRunSettings(g.ws.env);
+    expect(run.data[HARNESS_PINS_KEY]).toEqual([{ commit: git(g.ws.harness, 'rev-parse', 'HEAD'), iteration: 0, runSettings }]);
+    // the run paths, with the schema defaults filled in, and no criterion
+    expect(runSettings).toMatchObject({ playInstances: 3, imageMethod: 'flux2-klein', agents: { content: { cli: 'claude-code' } }, loop: { funIterations: 3, judgePanel: [], variants: 1 } });
+    expect(Object.keys(runSettings.loop as object).sort()).toEqual(['funIterations', 'judgePanel', 'judgeTimeLimitMs', 'playTimeLimitMs', 'variants']);
+    expect(Object.keys(runSettings).sort()).toEqual(['agents', 'imageMethod', 'loop', 'playInstances']);
     const plain = setupGame();
     await start(plain);
     expect((await currentRun(plain)).data[RUN_LIMITS_KEY]).toEqual({ iterations: null, until: null });
@@ -87,7 +102,8 @@ describe('ogw loop next limits and harness pin', () => {
     expect((await currentRun(g)).iteration).toBe(1);
     const repinned = await ogw(g.ws, ['loop', 'next', 'g', '--repin']);
     expect(repinned).toMatchObject({ code: 0, stdout: `iteration 2\nkind: completeness\nharness: ${changed} (repinned from ${old})\n` });
-    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0 }, { commit: changed, iteration: 2 }]);
+    const runSettings = await currentRunSettings(g.ws.env);
+    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0, runSettings }, { commit: changed, iteration: 2, runSettings }]);
     expect(await recordEmpty(g, run, 2)).toContain(`- harness: ${changed} (repinned from ${old})\n`);
     // the next iteration runs on the new pin without --repin, and its record names no repin
     expect((await ogw(g.ws, ['loop', 'next', 'g'])).code).toBe(0);
@@ -120,6 +136,62 @@ describe('ogw loop next limits and harness pin', () => {
     expect((await ogw(g.ws, ['loop', 'next', 'g', '--repin'])).stdout).toBe('iteration 2\nkind: completeness\n');
     expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toBeUndefined();
     expect(await recordEmpty(g, 'build-stg-0.2.0', 2)).toContain(`- harness: ${git(g.ws.harness, 'rev-parse', 'HEAD')}\n`);
+  });
+});
+
+describe('run settings', () => {
+  it('reads the run paths from the pin while the loop run is open, and repins changed ones with --repin', async () => {
+    const g = setupGame({}, { 'settings.json': { coreVersion: '1.0.0', buildPlatforms: ['android', 'web'], loopIterationLimit: 5 } });
+    const run = await start(g);
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).code).toBe(0);
+    await recordEmpty(g, run, 1, ['regression test', 'static check', 'no blocker', 'full flow']);
+    // a change of local harness settings after the start does not reach the run, and a run path the pin does not hold has no value
+    const judge = { cli: 'codex', model: 'gpt', effort: 'high' };
+    writeLocal(g, { loop: { variants: 3, funIterations: 1, confirmJudge: judge } });
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 2\nkind: fun\nvariants: 1\n');
+    const ctx = createContext({ cwd: g.ws.root, env: g.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const inRun = await runHarnessSettings(ctx, g.repo);
+    expect(inRun.loop.variants).toBe(1);
+    expect(inRun.loop.funIterations).toBe(3);
+    expect(inRun.loop.confirmJudge).toBeUndefined();
+    expect((await ctx.settings()).loop).toMatchObject({ variants: 3, confirmJudge: judge });
+    await recordEmpty(g, run, 2);
+    // the iteration kind follows the funIterations of the pin: a second fun iteration in a row
+    expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 3\nkind: fun\nvariants: 1\n');
+    await recordEmpty(g, run, 3);
+    // with --repin the iteration it starts reads them: one fun iteration in a row is the most
+    const repinned = await ogw(g.ws, ['loop', 'next', 'g', '--repin']);
+    expect(repinned).toMatchObject({ code: 0, stdout: 'iteration 4\nkind: completeness\nrun settings: loop.funIterations, loop.confirmJudge.cli, loop.confirmJudge.model, loop.confirmJudge.effort, loop.variants (repinned)\n' });
+    const pins = (await currentRun(g)).data[HARNESS_PINS_KEY] as { iteration: number; runSettings: { loop: { variants: number } } }[];
+    expect(pins.map((p) => [p.iteration, p.runSettings.loop.variants])).toEqual([[0, 1], [4, 3]]);
+    expect((await runHarnessSettings(ctx, g.repo)).loop).toMatchObject({ variants: 3, confirmJudge: judge });
+    // the harness commit did not change: the iteration record names no repin
+    expect(await recordEmpty(g, run, 4)).toContain(`- harness: ${git(g.ws.harness, 'rev-parse', 'HEAD')}\n\n## variants`);
+    // the loop end record lists the run settings of each pin that changed them
+    expect((await ogw(g.ws, ['loop', 'end-record', 'g', '--stopped-by-human'])).stderr).toBe('');
+    const end = read(g.root, `records/loops/${run}/end.md`);
+    const section = end.slice(end.indexOf('## run settings'));
+    expect(section).toContain('\n- iteration 0:\n  - agents.content.cli: "claude-code"\n');
+    expect(section).toContain('\n  - loop.variants: 1\n');
+    expect(section).toMatch(/\n- iteration 4:\n {2}- loop\.funIterations: 1\n {2}- loop\.confirmJudge\.cli: "codex"\n {2}- loop\.confirmJudge\.model: "gpt"\n {2}- loop\.confirmJudge\.effort: "high"\n {2}- loop\.variants: 3\n$/);
+  });
+
+  it('reads harness settings in a build run and once the run is closed', async () => {
+    const g = setupGame();
+    // a build run has no pin: run settings in its state are not read
+    await openBuildRun(g, { iteration: 0, data: { [HARNESS_PINS_KEY]: [{ commit: 'c', iteration: 0, runSettings: { loop: { variants: 1 } } }] } });
+    writeLocal(g, { loop: { variants: 4 } });
+    const ctx = createContext({ cwd: g.ws.root, env: g.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    expect((await runHarnessSettings(ctx, g.repo)).loop.variants).toBe(4);
+    const loop = setupGame();
+    await start(loop);
+    writeLocal(loop, { loop: { variants: 4 } });
+    const loopCtx = createContext({ cwd: loop.ws.root, env: loop.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    expect((await runHarnessSettings(loopCtx, loop.repo)).loop.variants).toBe(1);
+    await setRun(loop, (r) => {
+      r.closedAt = Date.now();
+    });
+    expect((await runHarnessSettings(loopCtx, loop.repo)).loop.variants).toBe(4);
   });
 });
 
@@ -200,7 +272,8 @@ describe('ogw loop resume limits and harness pin', () => {
   async function pinnedRun(iteration: number): Promise<{ g: TestGame; old: string }> {
     const g = setupGame();
     const old = git(g.ws.harness, 'rev-parse', 'HEAD');
-    await openLoopRun(g, { iteration, data: { [HARNESS_PINS_KEY]: [{ commit: old, iteration: 0 }], [RUN_LIMITS_KEY]: { iterations: null, until: 9_000_000_000_000 } } });
+    const runSettings = await currentRunSettings(g.ws.env);
+    await openLoopRun(g, { iteration, data: { [HARNESS_PINS_KEY]: [{ commit: old, iteration: 0, runSettings }], [RUN_LIMITS_KEY]: { iterations: null, until: 9_000_000_000_000 } } });
     git(g.root, 'checkout', '-q', 'main');
     return { g, old };
   }
@@ -222,15 +295,25 @@ describe('ogw loop resume limits and harness pin', () => {
     const changed = changeHarness(g);
     const out = await ogw(g.ws, ['loop', 'resume', 'g', '--repin']);
     expect(out.stdout).toBe(`harness: ${changed} (repinned from ${old}), counts for iteration 1\nchecked out loop/update-1\nnothing to sync\nresume at: iteration 1 1\n`);
-    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0 }, { commit: changed, iteration: 1 }]);
+    const runSettings = await currentRunSettings(g.ws.env);
+    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0, runSettings }, { commit: changed, iteration: 1, runSettings }]);
     // the iteration record exists: the repin counts for the next iteration
     write(g.root, `${R}/iteration-1.md`, 'r');
     commit(g.root);
     const later = changeHarness(g);
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).toContain(`harness: ${later} (repinned from ${changed}), counts for iteration 2\n`);
-    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0 }, { commit: changed, iteration: 1 }, { commit: later, iteration: 2 }]);
-    // --repin on the pinned commit changes nothing
+    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([
+      { commit: old, iteration: 0, runSettings },
+      { commit: changed, iteration: 1, runSettings },
+      { commit: later, iteration: 2, runSettings },
+    ]);
+    // --repin on the pinned commit and run settings changes nothing
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).not.toContain('repinned');
+    // run settings that changed are repinned without a harness change, and without --repin they stay
+    writeLocal(g, { agents: { play: { model: 'claude-haiku-5-5' } } });
+    expect((await ogw(g.ws, ['loop', 'resume', 'g'])).stdout).not.toContain('repinned');
+    expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).toContain('run settings: agents.play.model (repinned), counts for iteration 2\n');
+    expect(((await currentRun(g)).data[HARNESS_PINS_KEY] as unknown[]).length).toBe(4);
   });
 
   it('refuses a repin for the current iteration to a harness HEAD of another core, with the output of ogw loop next', async () => {
@@ -272,7 +355,8 @@ describe('ogw loop resume limits and harness pin', () => {
     const out = await ogw(g.ws, ['loop', 'resume', 'g', '--repin']);
     expect(out.code).toBe(0);
     expect(out.stdout).toContain(`harness: ${changed} (repinned from ${old}), counts for iteration 2\n`);
-    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0 }, { commit: changed, iteration: 2 }]);
+    const runSettings = await currentRunSettings(g.ws.env);
+    expect((await currentRun(g)).data[HARNESS_PINS_KEY]).toEqual([{ commit: old, iteration: 0, runSettings }, { commit: changed, iteration: 2, runSettings }]);
     const next = await ogw(g.ws, ['loop', 'next', 'g']);
     expect(next.code).toBe(1);
     expect(next.stderr).toContain('g uses core 1.0.0, and the specs of this harness are of core 99.0.0');

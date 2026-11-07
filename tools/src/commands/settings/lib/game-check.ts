@@ -7,7 +7,7 @@ import { hasSigning, signingRequired } from '../../build/lib/signing-method.ts';
 import { loadSchema, schemaPath, withDefaults, type GameSettings } from '../../../lib/settings.ts';
 import { coreFiles, matchCoreKey, type CoreFiles, type SettingsConstraint } from './core-files.ts';
 import { getAt, isPlainObject, mergeSettings, type JsonObject } from './json-path.ts';
-import { isBuildStage } from './schema-nav.ts';
+import { isBuildStage } from '../../../lib/schema-nav.ts';
 import { schemaIssues, type Issue } from './validate.ts';
 
 export const ENVIRONMENTS = ['DEV', 'STG', 'PROD'] as const;

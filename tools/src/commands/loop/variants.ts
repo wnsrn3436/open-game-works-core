@@ -4,6 +4,7 @@ import { currentBranch, statusLines } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { removeVariantLeftovers } from './lib/agent-worktrees.ts';
 import { runBaseline } from './lib/baseline.ts';
+import { harnessSettingsOfRun } from './lib/harness-pin.ts';
 import { failWhenContentRunning, runJobs } from './lib/jobs.ts';
 import { abs, confirmOf, iterationKind, openTarget, runFileExists, runRel } from './lib/run.ts';
 import { runVariants } from './lib/variants.ts';
@@ -26,7 +27,7 @@ export const loopVariants: CommandDef = {
     const n = run.iteration;
     if (n === 0) throw new OgwError(`run ${run.name} has not started an iteration; run ogw loop next first`);
     if (iterationKind(run, n) !== 'fun' || confirmOf(run, n) !== null) throw new OgwError(`iteration ${String(n)} is not a fun iteration; call the content agent`);
-    const settings = await ctx.settings();
+    const settings = await harnessSettingsOfRun(ctx, run);
     if (settings.loop.variants < 2) throw new OgwError(`harness settings loop.variants is ${String(settings.loop.variants)}; call the content agent`);
     if (!runFileExists(game, run, `content-input-${String(n)}.md`)) throw new OgwError(`${runRel(run, `content-input-${String(n)}.md`)} is missing; run ogw loop input ${game.name} content first`);
     if (runFileExists(game, run, `content-${String(n)}.md`)) throw new OgwError(`${runRel(run, `content-${String(n)}.md`)} exists: the content agent of iteration ${String(n)} has ended`);

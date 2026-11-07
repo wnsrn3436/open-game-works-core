@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 import { OgwError } from '../../../lib/errors.ts';
-import { isPlainObject, mergeSettings, type JsonObject } from '../../../lib/json.ts';
+import { isPlainObject, mergeSettings, valueUnits, type JsonObject } from '../../../lib/json.ts';
 import type { HarnessSettingsFiles } from '../../../lib/settings.ts';
 import { display, getAt, setAt, unsetAt, type Segments } from './json-path.ts';
-import { isLocalScope } from './schema-nav.ts';
+import { isLocalScope } from '../../../lib/schema-nav.ts';
 
 /**
  * The paths whose value differs between `before` and `after`, as the units the merge of the two harness settings files
@@ -27,33 +27,39 @@ function without(value: JsonObject, segments: Segments): JsonObject {
   return unsetAt(value, segments) ?? value;
 }
 
+/** `without` that also removes the objects of the path that it leaves empty: `settings.local.json` keeps no empty object. */
+function withoutPruned(value: JsonObject, segments: Segments): JsonObject {
+  let out = without(value, segments);
+  for (let n = segments.length - 1; n >= 1; n--) {
+    const parent = getAt(out, segments.slice(0, n));
+    if (!isPlainObject(parent) || Object.keys(parent).length > 0) break;
+    out = without(out, segments.slice(0, n));
+  }
+  return out;
+}
+
 /**
  * The two files `settings.json` and `settings.local.json` that hold harness settings `next`, from the files `files`
- * now hold. A changed local-scope path (`isLocalScope`) and a changed path `settings.local.json` already holds are
- * written to `settings.local.json`, every other changed path to `settings.json`, and a removed value is removed from
- * both files. When the write changes this host's `hosts` entry (`hostId`) and `settings.json` still holds that entry,
- * the entry moves to `settings.local.json` in the same write. Another host's entry in `settings.json` stays. Fails
- * when the merged files would not be `next`.
+ * now hold. A changed local-scope path (`isLocalScope`) is written to `settings.local.json`, every other changed path
+ * to `settings.json`, and a removed value is removed from both files. A path that `settings.local.json` holds and that
+ * is not local-scope moves to `settings.json` with its value in `next` (AGENTS.md `## settings`). Fails when the merged
+ * files would not be `next`.
  */
-export function routeHarnessWrite(schema: JsonObject, files: HarnessSettingsFiles, hostId: string | null, next: JsonObject): HarnessSettingsFiles {
+export function routeHarnessWrite(schema: JsonObject, files: HarnessSettingsFiles, next: JsonObject): HarnessSettingsFiles {
   let shared = files.shared;
   let local = files.local ?? {};
   const units = changedUnits(mergeSettings(shared, local), next);
-  const sharedHosts = isPlainObject(shared.hosts) ? shared.hosts : {};
-  if (hostId !== null && Object.hasOwn(sharedHosts, hostId) && units.some((u) => u[0] === 'hosts' && (u.length === 1 || u[1] === hostId))) {
-    const entry = ['hosts', hostId];
-    local = setAt(local, entry, mergeSettings(sharedHosts[hostId], getAt(local, entry) ?? {}), objectParents);
-    shared = without(shared, entry);
-  }
-  for (const unit of units) {
+  const outside = valueUnits(local).filter((unit) => !isLocalScope(schema, unit));
+  for (const unit of [...units, ...outside]) {
     const value = getAt(next, unit);
     if (value === undefined) {
       shared = without(shared, unit);
-      local = without(local, unit);
-    } else if (isLocalScope(schema, unit) || getAt(local, unit) !== undefined) {
+      local = withoutPruned(local, unit);
+    } else if (isLocalScope(schema, unit)) {
       local = setAt(local, unit, value, objectParents);
     } else {
       shared = setAt(shared, unit, value, objectParents);
+      local = withoutPruned(local, unit);
     }
   }
   const merged = mergeSettings(shared, local);

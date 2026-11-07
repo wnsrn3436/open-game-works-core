@@ -1,4 +1,5 @@
 import { expectPositionals, positional, type CommandDef } from '../../lib/command.ts';
+import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { chooseMethods, IMAGE_METHOD, stageText, type MethodChoice } from './lib/select.ts';
 
 export function choiceText(choice: MethodChoice): string {
@@ -16,7 +17,7 @@ export const methodsCommand: CommandDef = {
   async run(ctx, args) {
     expectPositionals(args, 2, 2, this.usage);
     const game = await ctx.game(positional(args, 0, 'game'));
-    const choices = await chooseMethods(ctx, await ctx.settings(), game, positional(args, 1, 'resource key'));
+    const choices = await chooseMethods(ctx, await runHarnessSettings(ctx, game), game, positional(args, 1, 'resource key'));
     return { text: choices.length === 0 ? 'none' : choices.map(choiceText).join('\n'), data: { methods: choices } };
   },
 };

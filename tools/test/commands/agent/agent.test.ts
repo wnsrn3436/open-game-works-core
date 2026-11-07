@@ -13,6 +13,7 @@ import { cliEntry } from '../../../src/lib/paths.ts';
 import { privateTempDir } from '../../../src/lib/secret-files.ts';
 import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/launch.ts';
 import { agentCliCommand, agentResumeCommand } from '../../../src/commands/agent/lib/cli-command.ts';
+import { jobHarnessSettings } from '../../../src/commands/agent/lib/meta.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
 import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, noUsage, readRunLog, RESULT, runAgent, WRITE_OUTPUT } from './helpers.ts';
@@ -251,6 +252,22 @@ describe('ogw agent: content', () => {
     // a new session: the session totals are those of the job
     expect(meta.sessionUsage).toEqual({ inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411 });
     expect(await readRunLog(ws, id)).toEqual({ runs: [], usage });
+  });
+
+  it('runs with the agent CLI, model and effort of the run settings of the open loop run, not of a later change of settings.local.json', async () => {
+    const ws = makeWorkspace();
+    const pinned = { agents: { content: { cli: 'claude-code', model: 'claude-pinned', effort: 'low' } }, loop: { playTimeLimitMs: 70_000 } };
+    const { root } = await gameWithRun(ws, { 'in.md': 'x' }, { data: { 'harness pins': [{ commit: 'c', iteration: 0, runSettings: pinned }] } });
+    writeFileSync(join(ws.harness, 'settings.local.json'), JSON.stringify({ agents: { content: { model: 'claude-later', effort: 'max' } } }));
+    const fake = fakeAgentCli(ws, `console.log('no usage'); ${WRITE_OUTPUT}`);
+    const { id, waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
+    expect(waited.code).toBe(0);
+    expect((await readJob(id, ws.env)).meta.usage).toEqual(noUsage('claude-pinned', 'low'));
+    expect(fake.calls()[0]?.argv).toEqual(expect.arrayContaining(['claude-pinned']));
+    // the time limit of a play job is that of the run settings, and a job of no game reads harness settings
+    const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    expect((await jobHarnessSettings(ctx, { game: 'g' })).loop.playTimeLimitMs).toBe(70_000);
+    expect((await jobHarnessSettings(ctx, { game: null })).agents.content?.model).toBe('claude-later');
   });
 
   it('records null usage for a CLI that printed none, and the job does not fail for it', async () => {

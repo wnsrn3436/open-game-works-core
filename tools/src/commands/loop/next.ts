@@ -8,7 +8,8 @@ import { gameSettings, iterationKind, loopData, openTarget, type LoopData } from
 import type { RunState } from '../../lib/runstate.ts';
 import { gameCoreVersion } from '../core/api.ts';
 import { requireHarnessCore } from '../core/lib/harness-core.ts';
-import { harnessHead, pinHarness, pinnedHarness, requirePinned } from './lib/harness-pin.ts';
+import type { JsonObject } from '../../lib/json.ts';
+import { currentPinSettings, harnessHead, harnessSettingsOfRun, pinHarness, repinLines, requirePinned, type Repin } from './lib/harness-pin.ts';
 import { iterationLimit, iterationLimitLine } from './lib/run-limits.ts';
 
 const USAGE = 'ogw loop next <game> [--repin]';
@@ -34,30 +35,23 @@ export function nextKind(run: RunState, records: readonly ParsedRecord[], n: num
   return fun >= funIterations ? 'completeness' : 'fun';
 }
 
-interface Repin {
-  from: string;
-  to: string;
-}
-
 /**
  * The checks of ogw.md `## loop next` before a loop run raises the number: the iteration limit of the run, and the
- * pinned harness commit against the harness repo HEAD (`harness`), which `repin` pins for the new iteration instead.
- * Returns the repin that changed the pinned commit.
+ * pinned harness commit against the harness repo HEAD (`harness`). With the run settings of harness settings
+ * (`repin`), it repins for the new iteration instead. Returns what the repin changed.
  */
-function checkLoopStart(open: RunState, loopIterationLimit: number, harness: string | null, repin: boolean): Repin | null {
+function checkLoopStart(open: RunState, loopIterationLimit: number, harness: string | null, repin: JsonObject | null): Repin | null {
   if (open.kind !== 'loop') return null;
   const reached = iterationLimit(open, loopIterationLimit);
   if (open.iteration >= reached.limit) {
     throw new OgwError(iterationLimitLine(open.iteration, reached), 1, { iteration: open.iteration, limit: reached.limit, by: reached.by });
   }
   if (harness === null) return null;
-  if (!repin) {
+  if (repin === null) {
     requirePinned(open, harness);
     return null;
   }
-  const pinned = pinnedHarness(open);
-  pinHarness(open, harness, open.iteration + 1);
-  return pinned !== null && pinned !== harness ? { from: pinned, to: harness } : null;
+  return pinHarness(open, harness, repin, open.iteration + 1);
 }
 
 /** True when the verdict of iteration `n` has `success blocked by` (ogw.md `## loop verdict`). */
@@ -80,31 +74,36 @@ export const loopNext: CommandDef = {
     // the content agent of the iteration reads the specs of this harness
     await requireHarnessCore(ctx, game.name, await gameCoreVersion(game));
     const limit = Number((await gameSettings(ctx, game)).loopIterationLimit);
-    const funIterations = (await ctx.settings()).loop.funIterations;
     const records = await iterationRecords(game, run);
     const harness = run.kind === 'loop' ? await harnessHead(ctx.env) : null;
+    const repinTo = harness !== null && flag(args, 'repin') ? await currentPinSettings(ctx) : null;
     // The checks read the run inside the run file lock, so concurrent calls cannot pass the limit or set the reference twice.
     const started = await changeOpenRun(game, async (open) => {
       // the iteration runs on the pinned harness commit; a repin counts for the iteration it starts
-      const repinned = checkLoopStart(open, limit, harness, flag(args, 'repin'));
+      const repinned = checkLoopStart(open, limit, harness, repinTo);
+      // the iteration reads the run settings of the pin that counts for it
+      const settings = await harnessSettingsOfRun(ctx, open);
       if (open.kind === 'loop' && open.iteration === 0) open.referenceCommit = await revParse(game.root, open.branch, { env: ctx.env });
       // After a `confirm` verdict the new iteration confirms the candidate iteration (ogw.md `## loop verdict`).
       const data = open.kind === 'loop' ? loopData(open) : null;
       const confirming = data !== null && data.verdict?.reason === 'confirm' && data.verdict.iteration === open.iteration;
       const candidate = confirming ? (data.confirms.find((c) => c.iteration === open.iteration)?.candidate ?? open.iteration) : null;
-      const kind = nextKind(open, records.filter((r) => r.iteration <= open.iteration), open.iteration + 1, candidate !== null, funIterations, blockedAt(data, open.iteration));
+      const kind = nextKind(open, records.filter((r) => r.iteration <= open.iteration), open.iteration + 1, candidate !== null, settings.loop.funIterations, blockedAt(data, open.iteration));
       open.iteration++;
       if (data !== null && candidate !== null) data.confirms.push({ iteration: open.iteration, candidate });
       if (data !== null) data.kinds = [...data.kinds.filter((k) => k.iteration !== open.iteration), { iteration: open.iteration, kind }];
-      return { iteration: open.iteration, confirms: candidate, kind, repinned };
+      const variants = open.kind === 'loop' && kind === 'fun' ? settings.loop.variants : null;
+      return { iteration: open.iteration, confirms: candidate, kind, repinned, variants };
     });
-    const { iteration, confirms, kind, repinned } = started;
+    const { iteration, confirms, kind, repinned, variants } = started;
     const lines = [
       `iteration ${String(iteration)}`,
       ...(confirms === null ? [] : [`confirms iteration ${String(confirms)}`]),
       `kind: ${kind}`,
-      ...(repinned === null ? [] : [`harness: ${repinned.to} (repinned from ${repinned.from})`]),
+      ...(variants === null ? [] : [`variants: ${String(variants)}`]),
+      ...repinLines(repinned),
     ];
-    return { text: lines.join('\n'), data: { run: run.name, iteration, confirms, kind, repinned } };
+    const repinData = repinned?.commit ?? null;
+    return { text: lines.join('\n'), data: { run: run.name, iteration, confirms, kind, repinned: repinData, runSettingsRepinned: repinned?.units ?? [], variants } };
   },
 };

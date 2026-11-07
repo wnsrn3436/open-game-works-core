@@ -5,7 +5,7 @@ import { loadSchema, schemaPath, withDefaults } from '../../../lib/settings.ts';
 import { ALWAYS_MODULES, compareBytes } from '../../generate/lib/core-spec.ts';
 import { coreFiles, type CoreFiles } from '../../settings/lib/core-files.ts';
 import { addedLeaves, display, getAt, isPlainObject, type JsonObject } from '../../settings/lib/json-path.ts';
-import { child, infoOf, type SchemaNode } from '../../settings/lib/schema-nav.ts';
+import { child, infoOf, type SchemaNode } from '../../../lib/schema-nav.ts';
 import { coreSettingMeanings } from './setting-meanings.ts';
 
 /** Group of the values that a human reads first (`game-setup` 10). */

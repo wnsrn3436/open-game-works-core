@@ -17,7 +17,7 @@
     "resourceGeneration",
     "backgroundRetryLimit",
     "resultFixRounds",
-    "webSmokeCpuThrottleRate",
+    "webSmokeDeviceBenchmarkIndex",
     "webSmokeBootTimeoutMs",
     "loopStop",
     "loop",
@@ -39,6 +39,7 @@
     },
     "agents": {
       "x-scope": "local",
+      "x-run": true,
       "description": "Agent CLI, model and effort per role. The lead agent is not here, because it is a session that a human started",
       "type": "object",
       "additionalProperties": false,
@@ -83,15 +84,78 @@
         }
       }
     },
-    "hosts": {
+    "maxConcurrentInstances": {
       "x-scope": "local",
-      "description": "Values that differ per host. The key is the host id, and `## host` of [ogw](../tools/ogw.md) defines the host id",
+      "description": "The maximum number of instances started concurrently on this host. The `host-env` skill sets the value. When it is missing, there is no measured value, and the `ogw` commands that start instances, other than `ogw instance measure`, fail without starting an instance",
+      "type": "integer",
+      "minimum": 2
+    },
+    "instanceMeasureLimit": {
+      "x-scope": "local",
+      "description": "The largest number of concurrent instances `ogw instance measure` tries on this host, so that the measured value, and the `maxConcurrentInstances` it proposes, is at most this. The `host-env` skill asks the human for it before it measures",
+      "type": "integer",
+      "minimum": 2,
+      "default": 8
+    },
+    "playInstances": {
+      "x-scope": "local",
+      "x-run": true,
+      "description": "The number of instances that play agents play in parallel on this host each iteration",
+      "type": "integer",
+      "minimum": 1,
+      "default": 3
+    },
+    "reviewRunConcurrency": {
+      "x-scope": "local",
+      "description": "The maximum number of review agent jobs, core agent jobs and core test jobs that all `ogw review run` jobs running on this host run together",
+      "type": "integer",
+      "minimum": 1,
+      "default": 12
+    },
+    "testDevices": {
+      "x-scope": "local",
+      "description": "The android devices connected to this host that build-time check `device performance` uses for android builds",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "serial"
+        ],
+        "properties": {
+          "platform": {
+            "enum": [
+              "android"
+            ]
+          },
+          "serial": {
+            "description": "The device serial that adb devices outputs. An emulator also works",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "imageMethod": {
+      "x-scope": "local",
+      "x-run": true,
+      "description": "The method that makes the image types of a game whose images no method has made yet (`## method` of [production](../skills/resource/production.md)). The name of a `resourceGeneration` method whose `resourceTypes` has `image`. The `host-env` skill sets it with the human",
+      "type": "string",
+      "minLength": 1,
+      "default": "flux2-klein"
+    },
+    "measured": {
+      "x-scope": "local",
+      "x-run": true,
+      "description": "Results per method and per stage that `ogw generation measure` measured on this host. The key is the method `name` of `resourceGeneration`. Stages go from the lowest, and stop at the stage that fails or exceeds the safety limit. A method that is not present is a method not measured on this host. Only `ogw env propose --apply` writes it",
       "type": "object",
-      "propertyNames": {
-        "pattern": "^[0-9a-f]{32}$"
-      },
+      "x-owner": "tool",
       "additionalProperties": {
-        "$ref": "#/$defs/host"
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/measuredStage"
+        }
       }
     },
     "instanceWaitTimeoutMs": {
@@ -175,18 +239,23 @@
       "minimum": 0
     },
     "webSmokeCpuThrottleRate": {
-      "description": "The CPU throttle factor that build-time checks `web smoke`, `repeat test` and `soak test` apply to the headless browser. It is the `rate` of Chrome DevTools Protocol `Emulation.setCPUThrottlingRate`. 1 is no throttle",
+      "x-scope": "local",
+      "description": "The CPU throttle factor that build-time checks `web smoke`, `repeat test` and `soak test` apply to the headless browser on this host, so that the page runs at the speed of the device of `webSmokeDeviceBenchmarkIndex`. It is the `rate` of Chrome DevTools Protocol `Emulation.setCPUThrottlingRate`, which slows the CPU by that factor relative to this host. 1 is no throttle. The `host-env` skill sets it with revision `webSmokeCpuThrottleRate` of `ogw env propose`. When it is missing, these checks are `unknown`",
+      "type": "integer",
+      "minimum": 1
+    },
+    "webSmokeDeviceBenchmarkIndex": {
+      "description": "The benchmark index (`## env benchmark` of [ogw](../tools/ogw.md)) of the device that build-time checks `web smoke`, `repeat test` and `soak test` model",
       "type": "integer",
       "minimum": 1
     },
     "webSmokeBootTimeoutMs": {
-      "description": "In build-time checks `web smoke`, `repeat test` and `soak test`, the time limit from opening the page until `boot_stage` of the client becomes `Done`",
+      "description": "In build-time checks `web smoke`, `repeat test` and `soak test`, the time limit from opening the page until `boot_stage` of the client becomes `Done`, with the CPU throttle of `webSmokeCpuThrottleRate`, so that it is a time on the device of `webSmokeDeviceBenchmarkIndex`",
       "type": "integer",
       "minimum": 1
     },
     "loopStop": {
       "description": "Values of the loop stop judgement. `## loop verdict` of `tools/ogw.md` defines their meaning",
-      "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -220,7 +289,6 @@
     },
     "loop": {
       "description": "Values of the loop iteration kinds and the step 4 judges. `## loop next`, `## loop variants` and `## loop evaluate` of `tools/ogw.md` define their meaning",
-      "x-scope": "local",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -235,6 +303,8 @@
       ],
       "properties": {
         "funIterations": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "The number of fun iterations in a row after which the next iteration is a completeness iteration",
           "type": "integer",
           "minimum": 1
@@ -245,6 +315,8 @@
           "minimum": 2
         },
         "judgePanel": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "Agent CLI, model and effort of the step 4 judges in turn, each item for two judges in a row so that it judges both side assignments. Every item judges only when `judgeVotes` is at least twice the number of items. Empty: every judge uses `agents.judge`",
           "type": "array",
           "items": {
@@ -252,19 +324,27 @@
           }
         },
         "confirmJudge": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "Agent CLI, model and effort of the judges of the confirmation pair, which a `better` of a fun iteration has to pass, and of the success confirmation judges. Absent: no confirmation pair, and the success confirmation judges use the agent CLI, model and effort of the first step 4 judge",
           "$ref": "#/$defs/agent"
         },
         "confirmFallback": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "Agent CLI, model and effort that a judge running with `confirmJudge` runs with once more when its agent CLI output shows that the usage limit or the rate limit was hit. Absent: no fallback",
           "$ref": "#/$defs/agent"
         },
         "variants": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "The number of variant agents that `ogw loop variants` starts in a fun iteration. 1: the lead agent calls one content agent",
           "type": "integer",
           "minimum": 1
         },
         "playTimeLimitMs": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "The time limit of one play agent job. A job that reaches it is stopped and counts as failed",
           "type": "integer",
           "minimum": 60000
@@ -280,6 +360,8 @@
           "minimum": 10000
         },
         "judgeTimeLimitMs": {
+          "x-scope": "local",
+          "x-run": true,
           "description": "The time limit of one judge agent job, step 4, confirmation pair, success confirmation, variant and calibration judges alike. A job that reaches it is stopped and counts as failed",
           "type": "integer",
           "minimum": 60000
@@ -460,83 +542,6 @@
         },
         "effort": {
           "type": "string"
-        }
-      }
-    },
-    "host": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name"
-      ],
-      "properties": {
-        "name": {
-          "description": "The host name of that host. It is the name by which a human recognizes the host",
-          "type": "string"
-        },
-        "maxConcurrentInstances": {
-          "description": "The maximum number of instances started concurrently on this host. The `host-env` skill sets the value. When it is missing, there is no measured value, and the `ogw` commands that start instances, other than `ogw instance measure`, fail without starting an instance",
-          "type": "integer",
-          "minimum": 2
-        },
-        "instanceMeasureLimit": {
-          "description": "The largest number of concurrent instances `ogw instance measure` tries on this host, so that the measured value, and the `maxConcurrentInstances` it proposes, is at most this. The `host-env` skill asks the human for it before it measures",
-          "type": "integer",
-          "minimum": 2,
-          "default": 8
-        },
-        "playInstances": {
-          "description": "The number of instances that play agents play in parallel on this host each iteration",
-          "type": "integer",
-          "minimum": 1,
-          "default": 3
-        },
-        "reviewRunConcurrency": {
-          "description": "The maximum number of review agent jobs, core agent jobs and core test jobs that all `ogw review run` jobs running on this host run together",
-          "type": "integer",
-          "minimum": 1,
-          "default": 12
-        },
-        "testDevices": {
-          "description": "The android devices connected to this host that build-time check `device performance` uses for android builds",
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "platform",
-              "serial"
-            ],
-            "properties": {
-              "platform": {
-                "enum": [
-                  "android"
-                ]
-              },
-              "serial": {
-                "description": "The device serial that adb devices outputs. An emulator also works",
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          }
-        },
-        "imageMethod": {
-          "description": "The method that makes the image types of a game whose images no method has made yet (`## method` of [production](../skills/resource/production.md)). The name of a `resourceGeneration` method whose `resourceTypes` has `image`. The `host-env` skill sets it with the human",
-          "type": "string",
-          "minLength": 1,
-          "default": "flux2-klein"
-        },
-        "measured": {
-          "description": "Results per method and per stage that `ogw generation measure` measured on this host. The key is the method `name` of `resourceGeneration`. Stages go from the lowest, and stop at the stage that fails or exceeds the safety limit. A method that is not present is a method not measured on this host. Only `ogw env propose --apply` writes it",
-          "type": "object",
-          "x-owner": "tool",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/measuredStage"
-            }
-          }
         }
       }
     },

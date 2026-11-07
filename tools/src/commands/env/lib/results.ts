@@ -218,8 +218,16 @@ export interface InstanceMeasureResult {
   targets: InstanceMeasureTarget[];
 }
 
+/** The result of `ogw env benchmark`: the benchmark indexes it measured and their median, the benchmark index of this host. */
+export interface BenchmarkResult {
+  measuredAt: number;
+  values: number[];
+  index: number;
+}
+
 export interface EnvResults {
   'env-check': EnvCheckResult;
+  'env-benchmark': BenchmarkResult;
   'generation-install': GenerationInstallResult;
   'generation-measure': GenerationMeasureResult;
   'instance-measure': InstanceMeasureResult;

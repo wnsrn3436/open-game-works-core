@@ -940,7 +940,7 @@ describe('ogw loop end-record', () => {
     await openLoopRun(g, { iteration: 2 });
     await addAgentJobs(g);
     expect((await ogw(g.ws, ['loop', 'end-record', 'g', '--stopped-by-human'])).code).toBe(0);
-    expect(read(g.root, `${R}/end.md`).split('## cost\n\n')[1]).toBe(
+    expect(read(g.root, `${R}/end.md`).split('## cost\n\n')[1]?.split('\n## run settings\n')[0]).toBe(
       [
         '| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |',
         '|---|---|---|---|---|---|---|---|',
@@ -1009,6 +1009,7 @@ describe('ogw loop end-record', () => {
         '## human', '', '- needs human: speed (decision: d)', '- core proposal: records/core-proposals/9-x.md', '- license unknown: icon/a',
         '- skipped core version: 1.3.0', '- banned word list missing: ko', '- judge calibration: never run (ogw judge calibrate g; labels: 0, added with ogw judge label g)', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
         '## cost', '', 'none', '',
+        '## run settings', '', 'none', '',
       ].join('\n'),
     );
     expect(git(g.root, 'log', '-1', '--name-only', '--format=')).toBe(`${R}/end.md`);

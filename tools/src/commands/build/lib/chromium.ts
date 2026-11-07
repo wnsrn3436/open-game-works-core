@@ -18,6 +18,8 @@ export interface HeadlessPage {
   ended(): string | null;
   /** Unix ms right before `Page.navigate` was sent. */
   openedAt: number;
+  /** The value of the script `expression` in the page (`Runtime.evaluate`, JSON values only); throws on an exception. */
+  evaluate(expression: string): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -161,6 +163,7 @@ class Page implements HeadlessPage {
   private readonly browser: ChildProcess;
   private readonly profile: string;
   cdp: Cdp | null = null;
+  sessionId: string | null = null;
 
   constructor(browser: ChildProcess, profile: string) {
     this.browser = browser;
@@ -181,6 +184,14 @@ class Page implements HeadlessPage {
     return this.reason;
   }
 
+  async evaluate(expression: string): Promise<unknown> {
+    if (this.cdp === null || this.sessionId === null) throw new OgwError('the page is not open');
+    const answer = await this.cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, this.sessionId);
+    const thrown = answer.exceptionDetails;
+    if (isObject(thrown)) throw new OgwError(`page script failed: ${String((isObject(thrown.exception) ? thrown.exception.description : undefined) ?? thrown.text)}`);
+    return isObject(answer.result) ? answer.result.value : undefined;
+  }
+
   async close(): Promise<void> {
     this.end('closed');
     this.cdp?.close();
@@ -193,6 +204,7 @@ async function attach(page: Page, cdp: Cdp, url: string, cpuThrottleRate: number
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
   if (typeof sessionId !== 'string') throw new OgwError('DevTools Target.attachToTarget gave no sessionId');
+  page.sessionId = sessionId;
   cdp.on('Runtime.consoleAPICalled', (params, from) => {
     if (from === sessionId) page.console.push(consoleText(params));
   });

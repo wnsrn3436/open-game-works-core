@@ -82,26 +82,17 @@ export function useGitOnlyHarness(): void {
 /** The host id of every test (`OGW_HOST_ID`, set by tmp-setup.ts). */
 export const TEST_HOST_ID = '0123456789abcdef0123456789abcdef';
 
-const HOST_KEYS = ['maxConcurrentInstances', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'imageMethod'];
-
 /**
- * Harness settings in the file form: top-level host keys (`maxConcurrentInstances`, `playInstances`, `reviewRunConcurrency`, `testDevices`) and
- * method `measured` move into the `hosts` entry of `TEST_HOST_ID`, where ogw reads this host's values. A null
- * `maxConcurrentInstances` is a value not measured, so it is left out.
+ * Harness settings in the file form: the method `measured` steps move to the top-level `measured`, where ogw reads
+ * them. A null `maxConcurrentInstances` or `webSmokeCpuThrottleRate` is a value not measured, so it is left out.
  */
 export function hostForm(settings: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  const hosts = { ...((settings.hosts ?? {}) as Record<string, Record<string, unknown>>) };
-  const entry: Record<string, unknown> = { name: 'test-host', ...(hosts[TEST_HOST_ID] ?? {}) };
   for (const [key, value] of Object.entries(settings)) {
-    if (key === 'hosts') continue;
-    if (HOST_KEYS.includes(key)) {
-      if (value !== null) entry[key] = value;
-    } else {
-      out[key] = value;
-    }
+    if ((key === 'maxConcurrentInstances' || key === 'webSmokeCpuThrottleRate') && value === null) continue;
+    out[key] = value;
   }
-  const measured: Record<string, unknown> = { ...((entry.measured ?? {}) as Record<string, unknown>) };
+  const measured: Record<string, unknown> = { ...((out.measured ?? {}) as Record<string, unknown>) };
   if (Array.isArray(settings.resourceGeneration)) {
     out.resourceGeneration = (settings.resourceGeneration as Record<string, unknown>[]).map((method) => {
       const { measured: steps, ...rest } = method;
@@ -109,9 +100,7 @@ export function hostForm(settings: Record<string, unknown>): Record<string, unkn
       return rest;
     });
   }
-  if (Object.keys(measured).length > 0) entry.measured = measured;
-  if (Object.keys(entry).length > 1) hosts[TEST_HOST_ID] = entry;
-  if (Object.keys(hosts).length > 0) out.hosts = hosts;
+  if (Object.keys(measured).length > 0) out.measured = measured;
   return out;
 }
 
@@ -125,7 +114,7 @@ export function realToolsWithout(...names: string[]): Record<string, unknown> {
  * The harness settings keys the tests take from the real settings: the pins `update env` keeps current. Every other
  * key comes from `harness-settings.json` next to this file, so a value the human changes does not change a test.
  */
-export const REAL_SETTINGS_KEYS: readonly string[] = ['$schema', 'tools', 'resourceGeneration', 'hosts'];
+export const REAL_SETTINGS_KEYS: readonly string[] = ['$schema', 'tools', 'resourceGeneration'];
 
 /** The fixed harness settings of the tests: every key of the real settings outside `REAL_SETTINGS_KEYS`. */
 export function testSettings(): Record<string, unknown> {
@@ -167,9 +156,8 @@ export function makeWorkspace(settingsPatch: Record<string, unknown> = {}): Test
   const harness = join(root, 'open-game-works-core');
   const template = workspaceTemplates();
   cpSync(template.harness, harness, { recursive: true });
-  // the host entries of the real settings belong to the hosts that ran update env, not to the test host
   const real = JSON.parse(readFileSync(join(realHarness, 'settings.json'), 'utf8')) as Record<string, unknown>;
-  const pins = Object.fromEntries(REAL_SETTINGS_KEYS.filter((key) => key !== 'hosts' && key in real).map((key) => [key, real[key]]));
+  const pins = Object.fromEntries(REAL_SETTINGS_KEYS.filter((key) => key in real).map((key) => [key, real[key]]));
   writeFileSync(join(harness, 'settings.json'), `${JSON.stringify(hostForm({ ...pins, ...testSettings(), ...settingsPatch }), null, 2)}\n`);
   sh(harness, 'git', ['add', '--all']);
   sh(harness, 'git', ['commit', '--quiet', '-m', 'harness']);

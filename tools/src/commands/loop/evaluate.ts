@@ -4,6 +4,7 @@ import { LIMITS } from '../../lib/limits.ts';
 import { runBaseline } from './lib/baseline.ts';
 import { defectsToConfirm } from './lib/confirm.ts';
 import { evaluate } from './lib/evaluate.ts';
+import { harnessSettingsOfRun } from './lib/harness-pin.ts';
 import { gateOf, type CheckFile, type EvaluateFile } from './lib/files.ts';
 import { reportRows } from './lib/record.ts';
 import { gameSettings, iterationKind, memorableMomentAsked, openTarget, readGameText, readRunJson, runRel } from './lib/run.ts';
@@ -51,7 +52,7 @@ export const loopEvaluate: CommandDef = {
     const reference = await requireReference(game);
     const platforms = (await gameSettings(ctx, game)).buildPlatforms ?? [];
     if (platforms.length === 0) throw new OgwError('game settings buildPlatforms is empty');
-    const settings = await ctx.settings();
+    const settings = await harnessSettingsOfRun(ctx, run);
     const kind = iterationKind(run, run.iteration);
     const { file, path } = await evaluate(ctx, {
       game,

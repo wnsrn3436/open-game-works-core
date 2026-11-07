@@ -1,15 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { hostname } from 'node:os';
 import { OgwError } from './errors.ts';
 import { LIMITS } from './limits.ts';
 import { runOk } from './proc.ts';
-
-/** This host as harness settings `hosts` keys it: the host id and the readable `name`. */
-export interface HostIdentity {
-  id: string;
-  name: string;
-}
 
 export interface HostIdOptions {
   platform?: NodeJS.Platform;
@@ -74,8 +67,8 @@ export async function resolveHostId(options: HostIdOptions = {}): Promise<string
 /** Host ids by `OGW_HOST_ID` (empty for the OS identifier), read once per process. */
 const cache = new Map<string, Promise<string>>();
 
-/** This host: its id (`resolveHostId`, read once per process) and its host name. */
-export async function currentHost(env: NodeJS.ProcessEnv = process.env): Promise<HostIdentity> {
+/** The host id of this host (`resolveHostId`), read once per process: the key of its host items (ogw.md `## host`). */
+export async function hostId(env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const key = env.OGW_HOST_ID ?? '';
   let id = cache.get(key);
   if (id === undefined) {
@@ -83,5 +76,5 @@ export async function currentHost(env: NodeJS.ProcessEnv = process.env): Promise
     cache.set(key, id);
     id.catch(() => cache.delete(key));
   }
-  return { id: await id, name: hostname() };
+  return id;
 }

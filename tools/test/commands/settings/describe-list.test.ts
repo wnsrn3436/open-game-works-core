@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coreRelease } from '../../../src/commands/core/api.ts';
-import { firstSentence } from '../../../src/commands/settings/lib/schema-nav.ts';
+import { firstSentence } from '../../../src/lib/schema-nav.ts';
 import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 import { writeCoreImpl } from './core-impl.ts';
 import { schemaDescription, validGameSettings, writeRelease, type GameSettingsFixture } from './fixtures.ts';
@@ -77,7 +77,6 @@ describe('ogw settings describe', () => {
 
   it('describes harness and core targets', async () => {
     const measured = await describeCmd('harness', 'measured.flux2-klein');
-    // `hosts` is empty: no host has an entry, so the path is not under one
     expect(measured.stdout).toContain('path: measured.flux2-klein\n');
     expect(measured.stdout).toContain('x-owner: tool\n');
     expect(measured.stdout).toContain('type: array\n');
@@ -98,6 +97,7 @@ describe('ogw settings describe', () => {
       itemProperties: [],
       xOwner: null,
       xScope: null,
+      xRun: null,
     });
   });
 
@@ -140,11 +140,11 @@ describe('ogw settings list', () => {
     expect(lines).toContain('$schema');
     expect(lines.some((l) => l.startsWith('paths.coreImpl'))).toBe(true);
     expect(lines.some((l) => l.startsWith('resourceGeneration.'))).toBe(false);
-    const host = (keys: string[]): string => firstSentence(schemaDescription(harnessSchema, '$defs', 'host', 'properties', ...keys));
-    expect(lines).toContain(`maxConcurrentInstances: ${host(['maxConcurrentInstances'])}`);
-    expect(lines).toContain(`playInstances: ${host(['playInstances'])}`);
-    expect(lines).toContain(`measured: ${host(['measured'])}`);
-    expect(lines.some((l) => l.startsWith('name'))).toBe(false);
+    const top = (key: string): string => firstSentence(schemaDescription(harnessSchema, 'properties', key));
+    expect(lines).toContain(`maxConcurrentInstances: ${top('maxConcurrentInstances')}`);
+    expect(lines).toContain(`playInstances: ${top('playInstances')}`);
+    expect(lines).toContain(`measured: ${top('measured')}`);
+    expect(lines.some((l) => l.startsWith('name') || l.startsWith('hosts'))).toBe(false);
     const tool = JSON.parse((await ogw(ws, ['settings', 'list', 'harness', '--owner', 'tool', '--json'])).stdout) as { paths: { path: string }[] };
     expect(tool.paths.map((p) => p.path)).toEqual(['measured']);
   });

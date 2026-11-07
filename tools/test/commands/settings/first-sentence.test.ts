@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstSentence } from '../../../src/commands/settings/lib/schema-nav.ts';
+import { firstSentence } from '../../../src/lib/schema-nav.ts';
 
 describe('firstSentence', () => {
   it('ends at the first "." before white space that does not end an abbreviation', () => {

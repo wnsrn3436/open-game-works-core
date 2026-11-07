@@ -1,25 +1,17 @@
 import { expectPositionals, flag, str, type CommandDef, type Context } from '../../lib/command.ts';
-import { HOST_KEYS } from '../../lib/settings.ts';
 import { gameIssues } from './lib/game-check.ts';
 import { display } from './lib/json-path.ts';
-import { child, firstSentence, infoOf, propertyNames, propertyPaths, type SchemaNode } from './lib/schema-nav.ts';
-import { locatePath, openTarget, parsePath, scopeOf, type Target } from './lib/target.ts';
+import { child, firstSentence, infoOf, propertyNames, propertyPaths, type SchemaNode } from '../../lib/schema-nav.ts';
+import { locatePath, openTarget, parsePath, runOf, scopeOf, type Target } from './lib/target.ts';
 import { schemaIssues } from './lib/validate.ts';
 
 function nodesOf(schema: Record<string, unknown>): SchemaNode[] {
   return [{ node: schema, root: schema }];
 }
 
-/** Paths of the values of one `hosts` entry, as the harness settings paths that read them for this host. */
-function hostKeyPaths(target: Target): string[][] {
-  const entry = child(child(nodesOf(target.schema), 'hosts'), 'host');
-  return propertyPaths(entry).filter((path) => (HOST_KEYS as readonly string[]).includes(path[0] as string));
-}
-
-/** Property paths of the target schema; for harness settings, also the host keys; for game settings with `coreVersion`, also `core.<core settings key>`. */
+/** Property paths of the target schema; for game settings with `coreVersion`, also `core.<core settings key>`. */
 async function schemaPaths(target: Target): Promise<string[][]> {
   const paths = propertyPaths(nodesOf(target.schema));
-  if (target.kind === 'harness') paths.push(...hostKeyPaths(target));
   if (target.kind !== 'game' || typeof target.value.coreVersion !== 'string') return paths;
   const core = nodesOf((await target.release()).schema);
   for (const key of propertyNames(core)) {
@@ -45,7 +37,7 @@ export const list: CommandDef = {
     expectPositionals({ ...args, positionals: rest }, 0, 0, this.usage);
     const owner = str(args, 'owner');
     const paths = flag(args, 'missing') ? await missingPaths(ctx, target) : await schemaPaths(target);
-    const rows: { path: string; description: string; xOwner: string | null; xScope: string | null }[] = [];
+    const rows: { path: string; description: string; xOwner: string | null; xScope: string | null; xRun: true | null }[] = [];
     for (const segments of paths) {
       const located = await locatePath(target, segments);
       if (owner !== undefined && located.owner !== owner) continue;
@@ -54,6 +46,7 @@ export const list: CommandDef = {
         description: firstSentence(infoOf(located.nodes).description),
         xOwner: located.owner ?? null,
         xScope: scopeOf(target, segments) ?? null,
+        xRun: runOf(target, segments) ?? null,
       });
     }
     return {

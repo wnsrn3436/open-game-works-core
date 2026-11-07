@@ -13,7 +13,7 @@ import { column, parseTable, section, sectionText, unquote } from './lib/markdow
 import { gameSettings } from './lib/run.ts';
 import { ART_DIRECTION_FILE, NAME_FILE, REFERENCE_FILE, SETUP_REQUEST, artDirectionGaps, readGameNames, requireReference } from './lib/setup.ts';
 import { requireSupportedCore } from '../core/lib/harness-core.ts';
-import { HARNESS_PINS_KEY, harnessHead, type HarnessPin } from './lib/harness-pin.ts';
+import { currentPinSettings, HARNESS_PINS_KEY, harnessHead, type HarnessPin } from './lib/harness-pin.ts';
 import { givenLimits, LIMIT_OPTIONS, RUN_LIMITS_KEY, type RunLimits } from './lib/run-limits.ts';
 import { gameSettingsAt } from '../build/lib/buildrun.ts';
 import { refuseWhileCalibrating } from '../judge/api.ts';
@@ -114,8 +114,8 @@ export const loopStart: CommandDef = {
     if (tokenMissing !== null) throw new OgwError(tokenMissing);
     const origin = (await currentBranch(game.root, { env: ctx.env })) ?? (await head(game.root, { env: ctx.env }));
     const stdin = await ctx.stdin();
-    // the run works on this harness commit until a repin (ogw.md `## loop next`)
-    const pins: HarnessPin[] = [{ commit: await harnessHead(ctx.env), iteration: 0 }];
+    // the run works on this harness commit and these run settings until a repin (ogw.md `## loop start`)
+    const pins: HarnessPin[] = [{ commit: await harnessHead(ctx.env), iteration: 0, runSettings: await currentPinSettings(ctx) }];
     const name = `${command}-${String(Date.now())}`;
     const branch = `loop/${name}`;
     // The run is registered under the run file lock before any git change, so a concurrent start fails before it touches git.

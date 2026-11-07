@@ -1,4 +1,4 @@
-import { isIndex, isPlainObject, type JsonObject, type Segments } from './json-path.ts';
+import { isIndex, isPlainObject, type JsonObject, type Segments } from './json.ts';
 
 /** A schema node and the document its local `$ref`s resolve against. */
 export interface SchemaNode {
@@ -100,7 +100,7 @@ export function ownerOf(nodes: readonly SchemaNode[]): string | undefined {
 }
 
 /** Whether a node on the path (after `$ref` and `allOf`) declares `keyword` with `value`. */
-function declaredOnPath(schema: JsonObject, segments: readonly string[], keyword: string, value: string): boolean {
+function declaredOnPath(schema: JsonObject, segments: readonly string[], keyword: string, value: unknown): boolean {
   let nodes: SchemaNode[] = [{ node: schema, root: schema }];
   for (const segment of segments) {
     nodes = child(nodes, segment);
@@ -124,6 +124,34 @@ export function isBuildStage(schema: JsonObject, segments: readonly string[]): b
  */
 export function isLocalScope(schema: JsonObject, segments: readonly string[]): boolean {
   return declaredOnPath(schema, segments, 'x-scope', 'local');
+}
+
+/**
+ * Whether a harness settings path is a run path: a node on the path (after `$ref` and `allOf`) declares `x-run`
+ * `true`. A loop run records its value (AGENTS.md `## settings`).
+ */
+export function isRunPath(schema: JsonObject, segments: readonly string[]): boolean {
+  return declaredOnPath(schema, segments, 'x-run', true);
+}
+
+/** Whether one of the nodes (after `$ref` and `allOf`) declares `keyword` with `value`. */
+function declares(nodes: readonly SchemaNode[], keyword: string, value: unknown): boolean {
+  return nodes.some((start) => expand(start).some(({ node }) => node[keyword] === value));
+}
+
+/** The run paths of a harness settings schema: the paths of the nodes that declare `x-run` `true`, not those below them. */
+export function runPaths(schema: JsonObject): string[][] {
+  const out: string[][] = [];
+  const walk = (nodes: SchemaNode[], prefix: string[], depth: number): void => {
+    if (depth > MAX_DEPTH) return;
+    for (const name of propertyNames(nodes)) {
+      const below = child(nodes, name);
+      if (declares(below, 'x-run', true)) out.push([...prefix, name]);
+      else walk(below, [...prefix, name], depth + 1);
+    }
+  };
+  walk([{ node: schema, root: schema }], [], 0);
+  return out;
 }
 
 export interface Located {

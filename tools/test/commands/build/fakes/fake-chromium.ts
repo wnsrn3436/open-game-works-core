@@ -2,7 +2,8 @@
 // Page.navigate fetches the page (the fake web export holds the launch values JSON) and starts the fake client.
 // FAKE_DIR/chromium.jsonl gets the calls. FAKE_CHROMIUM_CONSOLE (JSON list) is sent as console calls;
 // FAKE_CHROMIUM_CRASH crashes the page after the navigation; FAKE_CHROMIUM_EXIT ends the browser at once;
-// FAKE_CHROMIUM_THROTTLE_ERROR refuses the CPU throttle; FAKE_CHROMIUM_NAV_ERROR fails the navigation.
+// FAKE_CHROMIUM_THROTTLE_ERROR refuses the CPU throttle; FAKE_CHROMIUM_NAV_ERROR fails the navigation. about:blank opens without a
+// fetch. Runtime.evaluate gives the items of FAKE_CHROMIUM_EVAL (JSON list) in turn, an item `{"throw": <text>}` as an exception.
 import { spawn } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
@@ -34,6 +35,10 @@ async function navigate(socket: WebSocket, url: string, reply: (result: unknown)
     reply({ frameId: 'F1', errorText: 'net::ERR_CONNECTION_REFUSED' });
     return;
   }
+  if (url === 'about:blank') {
+    reply({ frameId: 'F1' });
+    return;
+  }
   const response = await fetch(url);
   const text = await response.text();
   const folder = await fetch(new URL('/', url));
@@ -57,6 +62,16 @@ async function navigate(socket: WebSocket, url: string, reply: (result: unknown)
   }
 }
 
+let evaluated = 0;
+
+/** The answer of the next `Runtime.evaluate`: the next item of FAKE_CHROMIUM_EVAL. */
+function evaluateAnswer(): unknown {
+  const items = JSON.parse(env.FAKE_CHROMIUM_EVAL ?? '[]') as unknown[];
+  const item = items[evaluated++];
+  if (typeof item === 'object' && item !== null && 'throw' in item) return { result: { type: 'object' }, exceptionDetails: { text: 'Uncaught', exception: { description: String(item.throw) } } };
+  return item === undefined ? { result: { type: 'undefined' } } : { result: { type: typeof item, value: item } };
+}
+
 function handle(socket: WebSocket, message: Message): void {
   const { id, method, params, sessionId } = message;
   log({ method, params, sessionId });
@@ -68,6 +83,7 @@ function handle(socket: WebSocket, message: Message): void {
   else if (method === 'Emulation.setCPUThrottlingRate' && env.FAKE_CHROMIUM_THROTTLE_ERROR) {
     socket.send(JSON.stringify({ id, error: { code: -32000, message: 'no throttle' }, sessionId }));
   } else if (method === 'Page.navigate') void navigate(socket, String(params.url), reply);
+  else if (method === 'Runtime.evaluate') reply(evaluateAnswer());
   else reply({});
 }
 

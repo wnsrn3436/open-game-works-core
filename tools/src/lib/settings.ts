@@ -4,10 +4,11 @@ import { join, resolve } from 'node:path';
 import { OgwError } from './errors.ts';
 import { readJson, readJsonIfExists } from './fsx.ts';
 import { checkoutLock } from './git.ts';
-import { currentHost } from './host.ts';
-import { isPlainObject, mergeSettings, type JsonObject } from './json.ts';
+import { hostId } from './host.ts';
+import { isPlainObject, mergeSettings, valueUnits, type JsonObject } from './json.ts';
 import { withLock } from './lock.ts';
 import { harnessRoot, workspaceRoot } from './paths.ts';
+import { isLocalScope, runPaths } from './schema-nav.ts';
 
 export type Role =
   | 'content'
@@ -86,7 +87,7 @@ export interface GenerationMethod {
   provider?: 'codex' | 'grok';
   pins?: GenerationPin[];
   license?: string;
-  /** This host's `hosts.<id>.measured.<name>` (`loadHarnessSettings`); the file has no `measured` on a method. */
+  /** Harness settings `measured.<name>` (`loadHarnessSettings`); the files have no `measured` on a method. */
   measured?: MeasuredStep[];
   [key: string]: unknown;
 }
@@ -96,26 +97,11 @@ export interface TestDevice {
   serial: string;
 }
 
-/** One entry of harness settings `hosts`: the values of one host (schema `$defs/host`). */
-export interface HostSettings {
-  name: string;
-  maxConcurrentInstances?: number;
-  instanceMeasureLimit?: number;
-  playInstances?: number;
-  reviewRunConcurrency?: number;
-  testDevices?: TestDevice[];
-  imageMethod?: string;
-  measured?: Record<string, MeasuredStep[]>;
-}
-
-/** Keys of `HostSettings` that hold a value of the host; `ogw settings` reads them as top-level harness settings paths. */
-export const HOST_KEYS = ['maxConcurrentInstances', 'instanceMeasureLimit', 'playInstances', 'reviewRunConcurrency', 'testDevices', 'imageMethod', 'measured'] as const;
-
 /**
- * Harness settings as commands use them: the file with this host's `hosts` entry in place of `hosts`.
- * `maxConcurrentInstances` is null when this host has no measured value, `instanceMeasureLimit`, `playInstances` and `reviewRunConcurrency` are
- * the schema defaults when this host has none, `imageMethod` is the schema default when this host has none, and each
- * method has this host's `measured` steps.
+ * Harness settings as commands use them: the merged files with `measured` on the methods. `maxConcurrentInstances` and
+ * `webSmokeCpuThrottleRate` are null when this host has no measured value, `instanceMeasureLimit`, `playInstances`,
+ * `reviewRunConcurrency` and `imageMethod` are the schema defaults when the files have none, and each method has the
+ * `measured` steps of its name.
  */
 export interface HarnessSettings {
   humanLanguage: string;
@@ -132,7 +118,8 @@ export interface HarnessSettings {
   backgroundRetryLimit: number;
   /** The most fix rounds of one `ogw agent` job (ogw.md `### result format` of `## agent`). */
   resultFixRounds: number;
-  webSmokeCpuThrottleRate: number;
+  webSmokeCpuThrottleRate: number | null;
+  webSmokeDeviceBenchmarkIndex: number;
   webSmokeBootTimeoutMs: number;
   loopStop: { repeatedDefect: number; oscillation: number; plateau: number; successJudges: number };
   loop: {
@@ -212,6 +199,8 @@ export function localHarnessSettingsPath(env: NodeJS.ProcessEnv = process.env): 
 export interface HarnessSettingsFiles {
   shared: JsonObject;
   local: JsonObject | null;
+  /** True when the files on disk hold host items (ogw.md `## host`), which these values took in: a write writes both files. */
+  rewrite?: boolean;
 }
 
 function asObject(path: string, value: unknown): JsonObject {
@@ -219,11 +208,48 @@ function asObject(path: string, value: unknown): JsonObject {
   return value;
 }
 
+function hostItems(file: JsonObject | null): JsonObject | null {
+  if (file === null || !Object.hasOwn(file, 'hosts')) return null;
+  return isPlainObject(file.hosts) ? file.hosts : {};
+}
+
+function withoutHosts(file: JsonObject): JsonObject {
+  const copy = { ...file };
+  Reflect.deleteProperty(copy, 'hosts');
+  return copy;
+}
+
+/**
+ * The files with the host items of this host taken in (ogw.md `## host`): the item of `settings.local.json` merged over
+ * that of `settings.json`, without `name`, merged under the top-level values of `settings.local.json`, and no `hosts`
+ * in either file. The host id is read only when a file holds a host item.
+ */
+export async function withHostItems(files: HarnessSettingsFiles, env: NodeJS.ProcessEnv = process.env): Promise<HarnessSettingsFiles> {
+  const sharedItems = hostItems(files.shared);
+  const localItems = hostItems(files.local);
+  if (sharedItems === null && localItems === null) return files;
+  let item: JsonObject = {};
+  if (Object.keys(sharedItems ?? {}).length + Object.keys(localItems ?? {}).length > 0) {
+    const id = await hostId(env);
+    const own = (items: JsonObject | null): JsonObject => (isPlainObject(items?.[id]) ? items[id] : {});
+    item = mergeSettings(own(sharedItems), own(localItems));
+    Reflect.deleteProperty(item, 'name');
+  }
+  const local = mergeSettings(item, withoutHosts(files.local ?? {}));
+  return { shared: withoutHosts(files.shared), local: files.local === null && Object.keys(local).length === 0 ? null : local, rewrite: true };
+}
+
+/** The two files of harness settings, with the host items of this host taken in (`withHostItems`). */
 export async function readHarnessSettingsFiles(env: NodeJS.ProcessEnv = process.env): Promise<HarnessSettingsFiles> {
   const sharedPath = harnessSettingsPath(env);
   const localPath = localHarnessSettingsPath(env);
   const local = await readJsonIfExists(localPath);
-  return { shared: asObject(sharedPath, await readJson(sharedPath)), local: local === null ? null : asObject(localPath, local) };
+  return withHostItems({ shared: asObject(sharedPath, await readJson(sharedPath)), local: local === null ? null : asObject(localPath, local) }, env);
+}
+
+/** The units (`valueUnits`) of `settings.local.json` that are not local-scope paths, which it does not hold (AGENTS.md `## settings`). */
+export function nonLocalUnits(schema: JsonObject, local: JsonObject | null): string[][] {
+  return local === null ? [] : valueUnits(local).filter((unit) => !isLocalScope(schema, unit));
 }
 
 /** Harness settings as one value: `settings.local.json` over `settings.json` (objects merge key by key, arrays and other values are replaced). */
@@ -235,76 +261,133 @@ export function schemaPath(name: 'harness-settings' | 'game-settings', env: Node
   return join(harnessRoot(env), 'schemas', `${name}.schema.json`);
 }
 
-/** The harness settings file: harness-wide values and `hosts`. */
-export type HarnessSettingsFile = Omit<HarnessSettings, 'maxConcurrentInstances' | 'instanceMeasureLimit' | 'playInstances' | 'reviewRunConcurrency' | 'testDevices' | 'imageMethod'> & {
-  hosts?: Record<string, HostSettings>;
+/** Harness settings as the merged files hold them: `measured` at the top level, and no schema default filled in. */
+export type HarnessSettingsFile = Omit<
+  HarnessSettings,
+  'maxConcurrentInstances' | 'instanceMeasureLimit' | 'playInstances' | 'reviewRunConcurrency' | 'imageMethod' | 'webSmokeCpuThrottleRate'
+> & {
+  maxConcurrentInstances?: number;
+  instanceMeasureLimit?: number;
+  playInstances?: number;
+  reviewRunConcurrency?: number;
+  imageMethod?: string;
+  webSmokeCpuThrottleRate?: number;
+  measured?: Record<string, MeasuredStep[]>;
 };
 
-/** The schema defaults of the `$defs/host` values that have one. */
-export interface HostDefaults {
+/** The schema defaults of the local-scope values that have one. */
+export interface LocalDefaults {
   instanceMeasureLimit: number;
   playInstances: number;
   reviewRunConcurrency: number;
   imageMethod: string;
 }
 
-function hostDefault<T extends 'number' | 'string'>(schema: unknown, key: keyof HostDefaults, type: T): T extends 'number' ? number : string {
-  const properties = (schema as { $defs?: { host?: { properties?: Record<string, { default?: unknown }> } } }).$defs?.host?.properties;
+function localDefault<T extends 'number' | 'string'>(schema: unknown, key: keyof LocalDefaults, type: T): T extends 'number' ? number : string {
+  const properties = (schema as { properties?: Record<string, { default?: unknown }> }).properties;
   const value = properties?.[key]?.default;
-  if (typeof value !== type) throw new OgwError(`harness settings schema $defs.host.properties.${key} has no default`);
+  if (typeof value !== type) throw new OgwError(`harness settings schema properties.${key} has no default`);
   return value as T extends 'number' ? number : string;
 }
 
-/** The schema defaults of the host values of harness settings schema `schema`. */
-export function hostDefaults(schema: unknown): HostDefaults {
+/** The schema defaults of the local-scope values of harness settings schema `schema` that have one. */
+export function localDefaults(schema: unknown): LocalDefaults {
   return {
-    instanceMeasureLimit: hostDefault(schema, 'instanceMeasureLimit', 'number'),
-    playInstances: hostDefault(schema, 'playInstances', 'number'),
-    reviewRunConcurrency: hostDefault(schema, 'reviewRunConcurrency', 'number'),
-    imageMethod: hostDefault(schema, 'imageMethod', 'string'),
+    instanceMeasureLimit: localDefault(schema, 'instanceMeasureLimit', 'number'),
+    playInstances: localDefault(schema, 'playInstances', 'number'),
+    reviewRunConcurrency: localDefault(schema, 'reviewRunConcurrency', 'number'),
+    imageMethod: localDefault(schema, 'imageMethod', 'string'),
   };
 }
 
-/** Harness settings with the values of `host` (an entry of `hosts`, or undefined when this host has none). */
-export function withHostValues(file: HarnessSettingsFile, host: HostSettings | undefined, defaults: HostDefaults): HarnessSettings {
+/** Harness settings as commands use them (`HarnessSettings`) from the merged files. */
+export function harnessSettingsOf(file: HarnessSettingsFile, defaults: LocalDefaults): HarnessSettings {
+  const measured = file.measured;
   const settings: HarnessSettings = {
     ...file,
-    maxConcurrentInstances: host?.maxConcurrentInstances ?? null,
-    instanceMeasureLimit: host?.instanceMeasureLimit ?? defaults.instanceMeasureLimit,
-    playInstances: host?.playInstances ?? defaults.playInstances,
-    reviewRunConcurrency: host?.reviewRunConcurrency ?? defaults.reviewRunConcurrency,
-    imageMethod: host?.imageMethod ?? defaults.imageMethod,
+    maxConcurrentInstances: file.maxConcurrentInstances ?? null,
+    instanceMeasureLimit: file.instanceMeasureLimit ?? defaults.instanceMeasureLimit,
+    playInstances: file.playInstances ?? defaults.playInstances,
+    reviewRunConcurrency: file.reviewRunConcurrency ?? defaults.reviewRunConcurrency,
+    imageMethod: file.imageMethod ?? defaults.imageMethod,
+    webSmokeCpuThrottleRate: file.webSmokeCpuThrottleRate ?? null,
     resourceGeneration: file.resourceGeneration.map((inFile) => {
       const method = { ...inFile };
       Reflect.deleteProperty(method, 'measured');
-      const steps = host?.measured?.[method.name];
+      const steps = measured?.[method.name];
       return steps === undefined ? method : { ...method, measured: steps };
     }),
   };
-  Reflect.deleteProperty(settings, 'hosts');
-  if (host?.testDevices === undefined) Reflect.deleteProperty(settings, 'testDevices');
-  else settings.testDevices = host.testDevices;
+  Reflect.deleteProperty(settings, 'measured');
   return settings;
 }
 
-/**
- * The id under which harness settings `hosts` holds this host's entry, or null when `hosts` is missing or empty: then no
- * host has an entry and the host id is not read ([ogw](../../ogw.md) `## host`).
- */
-export async function hostEntryId(hosts: unknown, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  if (typeof hosts !== 'object' || hosts === null || Object.keys(hosts).length === 0) return null;
-  return (await currentHost(env)).id;
+function valueAt(value: unknown, path: readonly string[]): unknown {
+  let current = value;
+  for (const segment of path) current = isPlainObject(current) ? current[segment] : undefined;
+  return current;
+}
+
+/** `root` with `value` at the object path `path`, or without the path when `value` is undefined. */
+function withValueAt(root: JsonObject, path: readonly string[], value: unknown): JsonObject {
+  const [head, ...rest] = path;
+  if (head === undefined) return root;
+  const out = { ...root };
+  if (rest.length > 0) out[head] = withValueAt(isPlainObject(out[head]) ? out[head] : {}, rest, value);
+  else if (value === undefined) Reflect.deleteProperty(out, head);
+  else out[head] = structuredClone(value);
+  return out;
 }
 
 /**
- * Harness settings with this host's values: local harness settings merged over `settings.json`. The host id is read
- * only when `hosts` has an entry (`hostEntryId`).
+ * The run settings of the merged harness settings `merged` (ogw.md `## loop start`): the values that `merged`, with
+ * the schema defaults filled in, holds at the run paths of `schema`.
  */
-export async function loadHarnessSettings(env: NodeJS.ProcessEnv = process.env): Promise<HarnessSettings> {
-  const file = mergedHarnessSettings(await readHarnessSettingsFiles(env)) as unknown as HarnessSettingsFile;
-  const id = await hostEntryId(file.hosts, env);
-  const host = id === null ? undefined : file.hosts?.[id];
-  return withHostValues(file, host, hostDefaults(await readJson(schemaPath('harness-settings', env))));
+export function runSettingsOf(schema: JsonObject, merged: JsonObject): JsonObject {
+  const filled = withDefaults(schema, merged);
+  let out: JsonObject = {};
+  for (const path of runPaths(schema)) {
+    const value = valueAt(filled, path);
+    if (value !== undefined) out = withValueAt(out, path, value);
+  }
+  return out;
+}
+
+/** `merged` whose run paths hold the values of the run settings `run`: a run path that `run` does not hold has no value. */
+export function withRunSettings(schema: JsonObject, merged: JsonObject, run: JsonObject): JsonObject {
+  let out = merged;
+  for (const path of runPaths(schema)) out = withValueAt(out, path, valueAt(run, path));
+  return out;
+}
+
+/** The merged harness settings; fails when `settings.local.json` holds a path that is not local-scope (AGENTS.md `## settings`). */
+async function mergedChecked(schema: JsonObject, env: NodeJS.ProcessEnv): Promise<JsonObject> {
+  const files = await readHarnessSettingsFiles(env);
+  const outside = nonLocalUnits(schema, files.local).map((unit) => unit.join('.'));
+  if (outside.length > 0) {
+    const which = outside.length === 1 ? 'is not a local-scope path' : 'are not local-scope paths';
+    throw new OgwError(
+      `settings.local.json holds ${outside.join(', ')}, which ${which}: set the value that applies on every host with ogw settings set ${outside[0] as string} <JSON value>, which moves the paths that are not local-scope to settings.json`,
+    );
+  }
+  return mergedHarnessSettings(files);
+}
+
+/** The run settings of harness settings now (`runSettingsOf`), which a pin records (ogw.md `## loop start`). */
+export async function currentRunSettings(env: NodeJS.ProcessEnv = process.env): Promise<JsonObject> {
+  const schema = (await loadSchema(schemaPath('harness-settings', env))) as JsonObject;
+  return runSettingsOf(schema, await mergedChecked(schema, env));
+}
+
+/**
+ * Harness settings: local harness settings merged over `settings.json`, with the host items of this host taken in
+ * (ogw.md `## host`). With `run`, the run paths hold the values of those run settings (ogw.md `## loop start`).
+ */
+export async function loadHarnessSettings(env: NodeJS.ProcessEnv = process.env, run?: JsonObject): Promise<HarnessSettings> {
+  const schema = (await loadSchema(schemaPath('harness-settings', env))) as JsonObject;
+  const merged = await mergedChecked(schema, env);
+  const file = (run === undefined ? merged : withRunSettings(schema, merged, run)) as unknown as HarnessSettingsFile;
+  return harnessSettingsOf(file, localDefaults(schema));
 }
 
 export function workspaceFrom(settings: HarnessSettings, env: NodeJS.ProcessEnv = process.env): Workspace {
@@ -343,6 +426,7 @@ function newAjv(useDefaults: boolean): Ajv2020 {
   ajv.addKeyword({ keyword: 'x-owner', schemaType: 'string' });
   ajv.addKeyword({ keyword: 'x-stage', schemaType: 'string' });
   ajv.addKeyword({ keyword: 'x-scope', schemaType: 'string' });
+  ajv.addKeyword({ keyword: 'x-run', schemaType: 'boolean' });
   return ajv;
 }
 

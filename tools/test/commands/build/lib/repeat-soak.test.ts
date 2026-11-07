@@ -80,7 +80,7 @@ interface Setup {
 }
 
 async function setup(harness: Record<string, unknown> = {}): Promise<Setup> {
-  const ws = makeWorkspace({ maxConcurrentInstances: 2, ...harness });
+  const ws = makeWorkspace({ maxConcurrentInstances: 2, webSmokeCpuThrottleRate: 4, ...harness });
   const settings = { ...gameSettings(), buildPlatforms: ['web'], targetFps: 60 };
   const dir = setupGame(ws, 'g', settings, { 'client/dev/bot/scenario.json': SCENARIO, 'client/project.godot': '[application]\n\nconfig/name="G"\n', 'resource/app_icon/main.png': 'png', 'client/core/web/service-worker.js': 'const CACHE_VERSION = "___GODOT_VERSION___";\n' });
   commit(dir, 'client');
@@ -246,6 +246,14 @@ describe('repeat test', () => {
     expect(await repeatTest({ ...s.input, env: 'PROD' })).toBeNull();
     vi.mocked(toolProgram).mockResolvedValue(null);
     expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'unknown', details: ['repeat test did not run: harness settings tools.chromium is not on this host'] });
+  });
+
+  it('does not run repeat test and soak test while this host has no webSmokeCpuThrottleRate', async () => {
+    const s = await setup({ webSmokeCpuThrottleRate: null });
+    const reason = 'harness settings webSmokeCpuThrottleRate has no value: update env has not measured it on this host';
+    expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'unknown', details: [`repeat test did not run: ${reason}`] });
+    expect(await soakTest(s.input)).toEqual({ name: 'soak test', result: 'unknown', details: [`soak test did not run: ${reason}`] });
+    expect(vi.mocked(startInstance)).not.toHaveBeenCalled();
   });
 
   it('makes the check exports of one workspace one at a time', async () => {
@@ -422,7 +430,7 @@ describe('soak test', () => {
     };
     const page = (ended: () => string | null, console: () => string[] = () => []) => ({ get console() {
       return console();
-    }, ended, openedAt: 0, close: () => Promise.resolve() });
+    }, ended, openedAt: 0, evaluate: () => Promise.resolve(undefined), close: () => Promise.resolve() });
     const bound = { targetFps: 60, refreshHz: null, levels: null };
     const bot = { command: 'f.bot_next_input', args: [] };
     client(5);

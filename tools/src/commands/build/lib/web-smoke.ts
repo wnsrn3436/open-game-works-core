@@ -86,6 +86,7 @@ export async function webRunSettings(ctx: Context): Promise<WebRun | string> {
   const chromium = await toolProgram(ctx, 'chromium');
   if (chromium === null) return 'harness settings tools.chromium is not on this host';
   const { webSmokeCpuThrottleRate: rate, webSmokeBootTimeoutMs: bootLimitMs } = await ctx.settings();
+  if (rate === null) return 'harness settings webSmokeCpuThrottleRate has no value: update env has not measured it on this host';
   return { chromium, rate, bootLimitMs };
 }
 

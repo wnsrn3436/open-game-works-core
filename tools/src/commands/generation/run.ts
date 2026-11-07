@@ -9,6 +9,7 @@ import { isInside } from '../../lib/paths.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
 import type { GenerationMethod } from '../../lib/settings.ts';
 import { dataDir } from '../env/lib/host.ts';
+import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { methodDir, methodMarker, withMethodLock } from './lib/install.ts';
 import { withGenerationLease } from './lib/lease.ts';
 import { IMAGE_METHOD, keyChoices, keySpec, type Stage } from './lib/select.ts';
@@ -31,8 +32,9 @@ async function stageFor(
   gameName: string,
   key: string,
 ): Promise<{ stage: Stage | null; spec: { size: [number, number] | null; lengthMs: number | null; loop: boolean } }> {
-  const settings = await ctx.settings();
-  const keyed = await keySpec(await ctx.game(gameName), key);
+  const game = await ctx.game(gameName);
+  const settings = await runHarnessSettings(ctx, game);
+  const keyed = await keySpec(game, key);
   const { spec } = keyed;
   const choices = await keyChoices(ctx, settings, key, keyed);
   const sizes = { size: spec.size, lengthMs: spec.lengthMs, loop: spec.loop };

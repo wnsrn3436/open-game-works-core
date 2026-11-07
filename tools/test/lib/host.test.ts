@@ -1,8 +1,8 @@
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { hostname, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { currentHost, resolveHostId } from '../../src/lib/host.ts';
+import { hostId, resolveHostId } from '../../src/lib/host.ts';
 
 /** An env whose PATH has only a folder with `name` printing `stdout`, without `OGW_HOST_ID`. */
 function fakeProgram(name: string, stdout: string, code = 0): NodeJS.ProcessEnv {
@@ -49,7 +49,7 @@ describe('resolveHostId', () => {
     expect(await resolveHostId({ platform: 'freebsd', env: { ...env, OGW_HOST_ID: 'ABCDEF01-2345-6789-ABCD-EF0123456789' } })).toBe('abcdef0123456789abcdef0123456789');
   });
 
-  it('gives the host name next to the id', async () => {
-    expect(await currentHost({ OGW_HOST_ID: 'ffffffffffffffffffffffffffffffff' })).toEqual({ id: 'ffffffffffffffffffffffffffffffff', name: hostname() });
+  it('gives the host id of this host', async () => {
+    expect(await hostId({ OGW_HOST_ID: 'ffffffffffffffffffffffffffffffff' })).toBe('ffffffffffffffffffffffffffffffff');
   });
 });

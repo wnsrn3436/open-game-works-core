@@ -6,7 +6,7 @@ import { coreRelease } from '../../../src/commands/core/api.ts';
 import { coreFiles, coreKeys, implConstraints, matchCoreKey } from '../../../src/commands/settings/lib/core-files.ts';
 import { constraintIssues } from '../../../src/commands/settings/lib/game-check.ts';
 import { addedLeaves, changedPaths, getAt, mergeSettings, setAt, unsetAt } from '../../../src/commands/settings/lib/json-path.ts';
-import { child, expand, infoOf, locate, ownerOf, propertyPaths, type SchemaNode } from '../../../src/commands/settings/lib/schema-nav.ts';
+import { child, expand, infoOf, locate, ownerOf, propertyPaths, type SchemaNode } from '../../../src/lib/schema-nav.ts';
 import { SCOPES } from '../../../src/commands/settings/lib/target.ts';
 import { pointerPath, schemaIssues } from '../../../src/commands/settings/lib/validate.ts';
 import { createContext } from '../../../src/lib/command.ts';

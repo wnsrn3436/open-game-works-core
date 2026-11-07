@@ -35,6 +35,7 @@ import {
 } from './lib/records.ts';
 
 export type { ExternalClient, TestScreen } from './lib/records.ts';
+import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { launchSupervisor } from './lib/spawn.ts';
 import { FixtureError } from './lib/steps.ts';
 import { START_LIMIT_MS } from './lib/supervisor.ts';
@@ -323,9 +324,10 @@ function checkOptions(options: InstanceOptions): void {
 
 async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks): Promise<InstanceInfo> {
   checkOptions(options);
-  const settings = await ctx.settings();
-  const max = options.ignoreConcurrencyLimit === true ? Number.POSITIVE_INFINITY : concurrencyLimit(settings);
   const game = await gameOf(ctx, options);
+  // an instance of a game repo is started with the run settings of its open loop run (ogw.md `## loop start`)
+  const settings = options.root === undefined ? await runHarnessSettings(ctx, game) : await ctx.settings();
+  const max = options.ignoreConcurrencyLimit === true ? Number.POSITIVE_INFINITY : concurrencyLimit(settings);
   const id = options.id ?? newId();
   if (options.id !== undefined) {
     checkInstanceId(id);

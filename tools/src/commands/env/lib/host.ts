@@ -23,7 +23,7 @@ export function hostPlatform(env: NodeJS.ProcessEnv): HostPlatform | null {
 
 
 /** Result files `ogw env propose` reads: `ogw-env/<name>.json` in the temp folder of ogw (`privateTempDir`). */
-export type EnvResultName = 'env-check' | 'generation-install' | 'generation-measure' | 'instance-measure';
+export type EnvResultName = 'env-check' | 'env-benchmark' | 'generation-install' | 'generation-measure' | 'instance-measure';
 
 export async function envResultPath(env: NodeJS.ProcessEnv, name: EnvResultName): Promise<string> {
   return privateTempPath('ogw-env', `${name}.json`, env);

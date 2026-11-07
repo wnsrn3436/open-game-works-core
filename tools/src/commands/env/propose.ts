@@ -4,7 +4,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { readJsonIfExists, writeJsonAtomic } from '../../lib/fsx.ts';
 import { writeHarnessSettings } from '../settings/api.ts';
 import { isPlainObject, setAt } from '../settings/lib/json-path.ts';
-import { containerKinds, filePath, harnessTarget } from '../settings/lib/target.ts';
+import { containerKinds, harnessTarget } from '../settings/lib/target.ts';
 import { computeNotices, computeProposals, proposalSegments, readInputs, shownProposalsPath, type Proposal } from './lib/proposals.ts';
 
 /** The part of a proposal the human accepts, as JSON. */
@@ -77,10 +77,7 @@ async function apply(ctx: Context, ids: string[]): Promise<string[]> {
   const target = await harnessTarget(ctx);
   let next = target.value;
   for (const { parts } of proposalParts(chosen)) {
-    for (const part of parts) {
-      const segments = await filePath(target, part.segments, { create: true });
-      next = setAt(next, segments, part.value, await containerKinds(target, segments));
-    }
+    for (const part of parts) next = setAt(next, part.segments, part.value, await containerKinds(target, part.segments));
   }
   await writeHarnessSettings(ctx, next, { allowTool: true });
   return ids;

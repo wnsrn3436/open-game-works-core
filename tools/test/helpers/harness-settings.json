@@ -52,7 +52,7 @@
   "jobWaitTimeoutMs": 300000,
   "backgroundRetryLimit": 2,
   "resultFixRounds": 1,
-  "webSmokeCpuThrottleRate": 4,
+  "webSmokeDeviceBenchmarkIndex": 438,
   "loopStop": {
     "repeatedDefect": 3,
     "oscillation": 2,
@@ -66,7 +66,6 @@
     "variants": 1,
     "playTimeLimitMs": 2700000,
     "playBudgetMs": 900000,
-    "judgeInstanceBudgetMs": 240000,
     "judgeInstanceBudgetMs": 240000,
     "judgeTimeLimitMs": 3600000
   },

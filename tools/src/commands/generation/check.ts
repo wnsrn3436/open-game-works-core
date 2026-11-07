@@ -7,6 +7,7 @@ import { loadSchema, schemaPath, type HarnessSettings } from '../../lib/settings
 import type { Context } from '../../lib/command.ts';
 import { exists } from '../../lib/fsx.ts';
 import { providerCliChecks } from '../env/lib/hostcheck.ts';
+import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { LIST_PATH, readList } from '../resource/lib/list.ts';
 import { emptySpec } from '../resource/lib/spec.ts';
 import { gameImageMethod, IMAGE_METHOD, IMAGE_TYPES, LOGOTYPE_METHOD, methodChoices, takesTemporary } from './lib/select.ts';
@@ -128,7 +129,7 @@ export const checkCommand: CommandDef = {
     const unknown = types.filter((t) => !known.includes(t));
     if (unknown.length > 0) throw new OgwError(`not a resource type of harness settings schema resourceTypes: ${unknown.join(', ')}`);
     const counts = parseCounts(str(args, 'counts'), types);
-    const settings = await ctx.settings();
+    const settings = await runHarnessSettings(ctx, game);
     const list = exists(join(game.root, LIST_PATH)) ? await readList(game.root) : [];
     const imageMethod = gameImageMethod(settings, list);
     const rows = types.map((t) => typeRow(t, settings.resourceGeneration, counts.get(t) ?? null, IMAGE_TYPES.includes(t) ? imageTypeMakers(t, imageMethod, settings.resourceGeneration) : undefined));

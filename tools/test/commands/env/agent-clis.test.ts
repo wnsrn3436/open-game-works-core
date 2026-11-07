@@ -246,7 +246,7 @@ describe('env check: version', () => {
       cliVersions: [version('codex', '0.164.0', '0.167.0', true), version('claude-code', '2.1.319', '2.1.319', false), version('claude-code', '2.1.1', null, null)],
     } as unknown as EnvCheckResult;
     const ctx = context(ws, env);
-    const notices = await computeNotices(ctx, { settings: await ctx.settings(), check, install: null, measure: null, instances: null });
+    const notices = await computeNotices(ctx, { settings: await ctx.settings(), check, install: null, measure: null, instances: null, benchmark: null });
     expect(notices.filter((n) => n.id === 'agent-cli-version')).toEqual([
       {
         id: 'agent-cli-version',

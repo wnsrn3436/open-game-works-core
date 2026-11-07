@@ -16,6 +16,7 @@ import { methodMarker, pinSecretAction, pipRequirements } from '../../generation
 import { NOT_INSTALLED } from '../../generation/measure.ts';
 import { net, remoteCommit, requestJson } from './net.ts';
 import { parseRequirement, parseVersion, compareVersions, isPrerelease } from './pep440.ts';
+import { throttleRate } from './benchmark.ts';
 import { envResultPath, type HostPlatform } from './host.ts';
 import { agentCliLabel, agentCliUsers, loginTokenError, loginTokenState, readEnvResult, type EnvResults, type MeasuredRun, type ProviderCliCheck } from './results.ts';
 import { FIRST_PYTHON_MINOR, hostOf, markerFits, normalizeName, pinEntries, Pypi, resolveWheels, WHEEL_PLATFORMS, type PypiFile, type PypiProject, type ResolvedWheel } from './wheels.ts';
@@ -40,6 +41,7 @@ interface Inputs {
   install: EnvResults['generation-install'] | null;
   measure: EnvResults['generation-measure'] | null;
   instances: EnvResults['instance-measure'] | null;
+  benchmark: EnvResults['env-benchmark'] | null;
 }
 
 /** The proposals the last `ogw env propose` showed, next to the result files it reads. */
@@ -61,6 +63,7 @@ export async function readInputs(ctx: Context): Promise<Inputs> {
     install: thisRun(await readEnvResult(ctx, 'generation-install'), (r) => r.installedAt),
     measure: thisRun(await readEnvResult(ctx, 'generation-measure'), (r) => r.measuredAt),
     instances: thisRun(await readEnvResult(ctx, 'instance-measure'), (r) => r.measuredAt),
+    benchmark: thisRun(await readEnvResult(ctx, 'env-benchmark'), (r) => r.measuredAt),
   };
 }
 
@@ -118,6 +121,16 @@ function instanceProposals(inputs: Inputs): Proposal[] {
     proposals.push({ id: 'playInstances', path: 'playInstances', current: inputs.settings.playInstances, value: min, reason: 'smaller than playInstances: the smallest instance count measured by ogw instance measure' });
   }
   return proposals;
+}
+
+/** Revision `webSmokeCpuThrottleRate` (ogw.md `## env propose`): the benchmark index of this host against the device web smoke models. */
+function throttleProposal(inputs: Inputs): Proposal[] {
+  if (inputs.benchmark === null) return [];
+  const device = inputs.settings.webSmokeDeviceBenchmarkIndex;
+  const value = throttleRate(inputs.benchmark.index, device);
+  if (value === inputs.settings.webSmokeCpuThrottleRate) return [];
+  const reason = `benchmark index ${String(inputs.benchmark.index)} of this host (ogw env benchmark) / webSmokeDeviceBenchmarkIndex ${String(device)}, rounded`;
+  return [{ id: 'webSmokeCpuThrottleRate', path: 'webSmokeCpuThrottleRate', current: inputs.settings.webSmokeCpuThrottleRate, value, reason }];
 }
 
 const REGISTRY = 'https://registry-1.docker.io/v2/library/postgres';
@@ -655,6 +668,7 @@ export async function computeProposals(ctx: Context, inputs: Inputs, only?: Read
   return [
     ...measuredProposals(inputs),
     ...instanceProposals(inputs),
+    ...throttleProposal(inputs),
     ...(wanted('tools.postgresql') ? await postgresProposal(inputs) : []),
     ...(await pinProposals(ctx, pypi, inputs, wanted)),
     ...(await sha256Proposals(ctx, inputs)),

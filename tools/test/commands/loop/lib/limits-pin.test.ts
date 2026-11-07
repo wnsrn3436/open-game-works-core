@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Defect, DefectsFile } from '../../../../src/commands/loop/lib/defects.ts';
-import { harnessLine, harnessPins, pinHarness, pinnedHarness, requirePinned } from '../../../../src/commands/loop/lib/harness-pin.ts';
+import { changedRunUnits, harnessLine, harnessPins, pinHarness, pinnedHarness, pinnedRunSettings, repinLines, requirePinned, runSettingsLines } from '../../../../src/commands/loop/lib/harness-pin.ts';
 import type { ParsedRecord } from '../../../../src/commands/loop/lib/iteration-record.ts';
 import { givenLimits, iterationLimit, LIMIT_OPTIONS, runLimits, setRunLimits } from '../../../../src/commands/loop/lib/run-limits.ts';
 import { blockingDefects, verdict, type VerdictInput } from '../../../../src/commands/loop/lib/verdict.ts';
@@ -149,16 +149,18 @@ describe('run limits', () => {
 });
 
 describe('harness pin', () => {
+  const S = { loop: { funIterations: 3 } };
+
   it('writes the pinned commit of each iteration and the repin in the iteration it counts for', () => {
     const run = loopRun();
     expect(pinnedHarness(run)).toBeNull();
     // a run without a pin (a build run) writes the harness repo HEAD
     expect(harnessLine(run, 1, 'head')).toBe('head');
-    pinHarness(run, 'old', 0);
+    pinHarness(run, 'old', S, 0);
     expect(harnessLine(run, 1, 'head')).toBe('old');
-    pinHarness(run, 'new', 2);
-    pinHarness(run, 'new', 3);
-    expect(harnessPins(run)).toEqual([{ commit: 'old', iteration: 0 }, { commit: 'new', iteration: 2 }]);
+    pinHarness(run, 'new', S, 2);
+    pinHarness(run, 'new', S, 3);
+    expect(harnessPins(run)).toEqual([{ commit: 'old', iteration: 0, runSettings: S }, { commit: 'new', iteration: 2, runSettings: S }]);
     expect(pinnedHarness(run)).toBe('new');
     expect([1, 2, 3].map((n) => harnessLine(run, n, 'head'))).toEqual(['old', 'new (repinned from old)', 'new']);
   });
@@ -166,10 +168,46 @@ describe('harness pin', () => {
   it('fails naming both commits while the harness repo HEAD is not the pinned commit', () => {
     const run = loopRun();
     requirePinned(run, 'any');
-    pinHarness(run, 'old', 0);
+    pinHarness(run, 'old', S, 0);
     requirePinned(run, 'old');
     expect(() => {
       requirePinned(run, 'new');
     }).toThrow('harness repo HEAD new is not the pinned harness commit old of run update-1: give --repin to pin new');
+  });
+
+  it('repins run settings that changed under the same commit, naming the units that changed', () => {
+    const run = loopRun();
+    const first = { agents: { content: { model: 'a', effort: 'high' } }, loop: { funIterations: 3, judgePanel: [] } };
+    expect(pinHarness(run, 'c', first, 0)).toEqual({ commit: null, units: [] });
+    expect(pinnedRunSettings(run)).toEqual(first);
+    expect(pinHarness(run, 'c', structuredClone(first), 2)).toBeNull();
+    const second = { agents: { content: { model: 'b', effort: 'high' } }, loop: { funIterations: 3, judgePanel: [{ model: 'm', effort: 'e' }], confirmJudge: { model: 'x', effort: 'y' } } };
+    const repin = pinHarness(run, 'c', second, 2);
+    expect(repin).toEqual({ commit: null, units: ['agents.content.model', 'loop.judgePanel', 'loop.confirmJudge.model', 'loop.confirmJudge.effort'] });
+    expect(repinLines(repin, ', counts for iteration 2')).toEqual(['run settings: agents.content.model, loop.judgePanel, loop.confirmJudge.model, loop.confirmJudge.effort (repinned), counts for iteration 2']);
+    expect(pinnedRunSettings(run)).toEqual(second);
+    // the harness commit of the iteration did not change
+    expect(harnessLine(run, 2, 'head')).toBe('c');
+    const third = pinHarness(run, 'd', { agents: second.agents, loop: { funIterations: 3, judgePanel: second.loop.judgePanel } }, 3);
+    expect(repinLines(third)).toEqual(['harness: d (repinned from c)', 'run settings: loop.confirmJudge.model, loop.confirmJudge.effort (repinned)']);
+    expect(changedRunUnits({ a: [1] }, { a: [1, 2], b: 1 })).toEqual([['a'], ['b']]);
+    expect(changedRunUnits(null, { a: { b: 1 } })).toEqual([['a', 'b']]);
+  });
+
+  it('gives the run settings of each pin that changed them for the loop end record', () => {
+    const run = loopRun();
+    expect(runSettingsLines(run)).toEqual([]);
+    pinHarness(run, 'old', { playInstances: 3, loop: { judgePanel: [], variants: 1 } }, 0);
+    pinHarness(run, 'new', { playInstances: 3, loop: { judgePanel: [], variants: 1 } }, 2);
+    pinHarness(run, 'new', { playInstances: 2, loop: { judgePanel: [] } }, 4);
+    expect(runSettingsLines(run)).toEqual([
+      '- iteration 0:',
+      '  - playInstances: 3',
+      '  - loop.judgePanel: []',
+      '  - loop.variants: 1',
+      '- iteration 4:',
+      '  - playInstances: 2',
+      '  - loop.variants: none',
+    ]);
   });
 });

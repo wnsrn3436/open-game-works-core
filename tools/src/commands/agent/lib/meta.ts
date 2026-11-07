@@ -2,7 +2,9 @@ import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists } from '../../../lib/fsx.ts';
 import { jobsDir, readJob, updateJob, type JobRecord } from '../../../lib/jobs.ts';
-import type { AgentSettings, Role } from '../../../lib/settings.ts';
+import type { Context } from '../../../lib/command.ts';
+import type { AgentSettings, HarnessSettings, Role } from '../../../lib/settings.ts';
+import { runHarnessSettings } from '../../loop/lib/harness-pin.ts';
 import type { AgentSession } from './cli-command.ts';
 import type { AgentUsage, SessionUsage } from './usage.ts';
 
@@ -106,6 +108,14 @@ export interface AgentMeta {
   /** A job with a session: the token counts and cost of the session that the usage line of its last run printed. */
   sessionUsage?: SessionUsage;
   [key: string]: unknown;
+}
+
+/**
+ * Harness settings of an agent job: for a job of a game, with the run settings of the open loop run of that game
+ * (ogw.md `## loop start`).
+ */
+export async function jobHarnessSettings(ctx: Context, meta: Pick<AgentMeta, 'game'>): Promise<HarnessSettings> {
+  return typeof meta.game === 'string' ? runHarnessSettings(ctx, await ctx.game(meta.game)) : ctx.settings();
 }
 
 /** The agent CLI, model and effort of the job: its own, else harness settings `agents.<role>`. */

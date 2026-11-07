@@ -52,7 +52,7 @@ export interface HarnessSettingsFixture {
   [key: string]: unknown;
   jobWaitTimeoutMs: number;
   resourceGeneration: [Record<string, unknown>, ...Record<string, unknown>[]];
-  hosts?: Record<string, Record<string, unknown>>;
+  measured?: Record<string, unknown>;
 }
 
 export function readHarnessSettingsFile(path: string): HarnessSettingsFixture {

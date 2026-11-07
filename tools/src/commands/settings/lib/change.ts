@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
-import { hostDefaults, localHarnessSettingsPath, type HarnessSettingsFiles, type Role } from '../../../lib/settings.ts';
+import { localDefaults, localHarnessSettingsPath, type HarnessSettingsFiles, type Role } from '../../../lib/settings.ts';
 import { callerRole } from '../api.ts';
 import { implConstraints } from './core-files.ts';
 import { constraintIssues, gameIssues } from './game-check.ts';
@@ -63,42 +63,18 @@ export async function permissionIssues(ctx: Context, target: Target, next: JsonO
   return lines;
 }
 
-/** `next` with the readable `name` of this host's `hosts` entry, when harness settings `next` has that entry. */
-async function withHostName(target: Target, next: JsonObject): Promise<JsonObject> {
-  const hosts = next.hosts;
-  if (target.kind !== 'harness' || !isPlainObject(hosts)) return next;
-  const id = await target.hostEntryId(hosts);
-  if (id === null) return next;
-  const entry = hosts[id];
-  const { name } = await target.host();
-  if (!isPlainObject(entry) || entry.name === name) return next;
-  return { ...next, hosts: { ...hosts, [id]: { ...entry, name } } };
-}
-
 /**
- * The condition of harness settings `imageMethod`: the value each host takes, as `loadHarnessSettings` gives it (the
- * value of its `hosts` entry, else the schema default), is the `name` of a `resourceGeneration` method whose
- * `resourceTypes` has `image`. The hosts are every `hosts` entry and this host, also when it has no entry or `hosts`
- * is empty.
+ * The condition of harness settings `imageMethod`: the value, or the schema default when there is none, is the `name`
+ * of a `resourceGeneration` method whose `resourceTypes` has `image`.
  */
-async function imageMethodIssues(target: Target, value: JsonObject): Promise<Issue[]> {
-  const hosts = isPlainObject(value.hosts) ? value.hosts : {};
-  const id = await target.hostEntryId(value.hosts);
+function imageMethodIssues(target: Target, value: JsonObject): Issue[] {
   const methods = Array.isArray(value.resourceGeneration) ? value.resourceGeneration : [];
   const makesImage = (name: string): boolean =>
     name !== LOGOTYPE_METHOD && methods.some((m) => isPlainObject(m) && m.name === name && Array.isArray(m.resourceTypes) && m.resourceTypes.includes('image'));
-  const fallback = hostDefaults(target.schema).imageMethod;
-  const taken: { path: string; name: unknown }[] = Object.entries(hosts).map(([entryId, entry]) => {
-    const own = isPlainObject(entry) ? entry.imageMethod : undefined;
-    const path = display(['hosts', entryId, 'imageMethod']);
-    return own === undefined ? { path: `${path} (schema default)`, name: fallback } : { path, name: own };
-  });
-  // this host without an entry, or without a host id while hosts is empty, takes the schema default
-  if (id === null || !(id in hosts)) taken.push({ path: 'imageMethod (schema default)', name: fallback });
+  const taken = value.imageMethod === undefined ? { path: 'imageMethod (schema default)', name: localDefaults(target.schema).imageMethod } : { path: 'imageMethod', name: value.imageMethod };
   // a value that is not a string is a schema issue
-  return taken
-    .filter((t): t is { path: string; name: string } => typeof t.name === 'string' && !makesImage(t.name))
-    .map((t) => ({ message: `${t.path}: ${t.name} is not the name of a resourceGeneration method whose resourceTypes has image` }));
+  if (typeof taken.name !== 'string' || makesImage(taken.name)) return [];
+  return [{ message: `${taken.path}: ${taken.name} is not the name of a resourceGeneration method whose resourceTypes has image` }];
 }
 
 /**
@@ -108,7 +84,7 @@ async function imageMethodIssues(target: Target, value: JsonObject): Promise<Iss
 export async function settingsIssues(ctx: Context, target: Target, value: JsonObject): Promise<Issue[]> {
   if (target.kind === 'game') return gameIssues(ctx, target.game?.name ?? 'the game', value, true, 'build');
   const issues = schemaIssues(target.schema, value);
-  if (target.kind === 'harness') issues.push(...(await imageMethodIssues(target, value)));
+  if (target.kind === 'harness') issues.push(...imageMethodIssues(target, value));
   if (target.kind === 'core' && target.coreImpl !== null) {
     // core settings are filled one key at a time: a constraint counts once both of its keys have a value
     // (`ogw core release` checks that every constraint of an implemented side has both)
@@ -119,29 +95,28 @@ export async function settingsIssues(ctx: Context, target: Target, value: JsonOb
 }
 
 /**
- * Writes the two harness settings files that hold `value` (`routeHarnessWrite`): only a file whose value changes, and
- * `settings.local.json` first, so a stop between the writes leaves a moved host entry in both files, where the local
- * one is used.
+ * Writes the two harness settings files that hold `value` (`routeHarnessWrite`): a file whose value changes, or both
+ * when the files on disk hold host items (`rewrite`), and `settings.local.json` first, so a stop between the writes
+ * leaves the host values in `settings.local.json`, where they are read.
  */
 async function writeHarnessFiles(ctx: Context, target: Target, files: HarnessSettingsFiles, value: JsonObject): Promise<void> {
-  const next = routeHarnessWrite(target.schema, files, await target.hostEntryId(value.hosts), value);
-  if (next.local !== null && !isDeepStrictEqual(next.local, files.local)) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), next.local);
-  if (!isDeepStrictEqual(next.shared, files.shared)) await writeJsonAtomic(target.file, next.shared);
+  const next = routeHarnessWrite(target.schema, files, value);
+  const rewrite = files.rewrite === true;
+  if (next.local !== null && (rewrite || !isDeepStrictEqual(next.local, files.local))) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), next.local);
+  if (rewrite || !isDeepStrictEqual(next.shared, files.shared)) await writeJsonAtomic(target.file, next.shared);
 }
 
 /**
- * Writes `next` to the target file when the caller may change every changed path and the result
- * passes. The tool keeps the `name` of this host's harness settings `hosts` entry. A missing required value blocks only when it is the path being unset, because settings are
- * filled one value at a time (`game-setup` 4). Harness settings `next` is the merged value, and is written to its two
- * files (`writeHarnessFiles`).
+ * Writes `next` to the target file when the caller may change every changed path and the result passes. A missing
+ * required value blocks only when it is the path being unset, because settings are filled one value at a time
+ * (`game-setup` 4). Harness settings `next` is the merged value, and is written to its two files (`writeHarnessFiles`).
  */
 export async function writeChecked(ctx: Context, target: Target, next: JsonObject, options: WriteOptions = {}): Promise<void> {
   const denied = await permissionIssues(ctx, target, next, options.allowTool === true);
   if (denied.length > 0) throw new OgwError(denied.join('\n'), 1, { errors: denied });
-  const value = await withHostName(target, next);
-  const issues = await settingsIssues(ctx, target, value);
+  const issues = await settingsIssues(ctx, target, next);
   const blocking = issues.filter((i) => i.missing === undefined || i.missing === options.unsetPath).map((i) => i.message);
   if (blocking.length > 0) throw new OgwError(blocking.join('\n'), 1, { errors: blocking });
-  if (target.files === null) await writeJsonAtomic(target.file, value);
-  else await writeHarnessFiles(ctx, target, target.files, value);
+  if (target.files === null) await writeJsonAtomic(target.file, next);
+  else await writeHarnessFiles(ctx, target, target.files, next);
 }

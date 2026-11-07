@@ -1,6 +1,7 @@
 import { expectPositionals, flag, positional, type CommandArgs, type CommandDef, type Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import type { GameRepo } from '../../lib/game.ts';
+import type { JsonObject } from '../../lib/json.ts';
 import { git, revParse, showFile, statusLines, tagExists } from '../../lib/git.ts';
 import { waitJob } from '../../lib/jobs.ts';
 import { changeOpenRun, requireOpenRun, type RunState } from '../../lib/runstate.ts';
@@ -10,7 +11,7 @@ import { gameCoreVersionAt } from '../core/api.ts';
 import { requireHarnessCore } from '../core/lib/harness-core.ts';
 import { listInstances, stopInstance } from '../instance/api.ts';
 import { removeVariantLeftovers } from './lib/agent-worktrees.ts';
-import { harnessHead, pinHarness, pinnedHarness, requirePinned } from './lib/harness-pin.ts';
+import { currentPinSettings, harnessHead, pinHarness, pinnedHarness, repinLines, requirePinned } from './lib/harness-pin.ts';
 import { givenLimits, LIMIT_OPTIONS, runLimits, setRunLimits } from './lib/run-limits.ts';
 import { roleOf, runJobs } from './lib/jobs.ts';
 import { mergeBranchMerged } from './lib/merge-branch.ts';
@@ -52,6 +53,27 @@ async function checkoutRunBranch(game: GameRepo, run: RunState): Promise<string[
   return notes;
 }
 
+/** A repin of `ogw loop resume --repin`: the harness repo HEAD, the run settings, and the iteration the repin counts for. */
+interface ResumeRepin {
+  harness: string;
+  runSettings: JsonObject;
+  counts: number;
+}
+
+/**
+ * The repin of step 3 of ogw.md `## loop resume`, checked by step 2: it counts for the iteration whose loop iteration
+ * record is written next, and a change of the harness commit for the current iteration needs the core version of the
+ * game.
+ */
+async function resumeRepin(ctx: Context, game: GameRepo, run: RunState, harness: string): Promise<ResumeRepin> {
+  const n = run.iteration;
+  const recorded = n >= 1 && (await showFile(game.root, run.branch, runRel(run, `iteration-${String(n)}.md`))) !== null;
+  const counts = n >= 1 && !recorded ? n : n + 1;
+  // no `ogw loop next` checks the core version for the current iteration, whose content agent reads the specs of the new pin
+  if (counts === n && pinnedHarness(run) !== harness) await requireHarnessCore(ctx, game.name, await gameCoreVersionAt(game, run.branch));
+  return { harness, runSettings: await currentPinSettings(ctx), counts };
+}
+
 /**
  * Steps 2 and 3 of ogw.md `## loop resume`: fails, changing nothing, on a limit it refuses, a harness repo HEAD that is
  * not the pinned harness commit without `--repin`, or a repin for the current iteration to a harness whose core version
@@ -65,19 +87,10 @@ async function pinAndLimit(ctx: Context, game: GameRepo, run: RunState, args: Co
   const harness = run.kind === 'loop' ? await harnessHead(ctx.env) : null;
   const repin = flag(args, 'repin');
   if (harness !== null && !repin) requirePinned(run, harness);
-  // a repin counts for the iteration whose loop iteration record is written next
-  const n = run.iteration;
-  const recorded = n >= 1 && (await showFile(game.root, run.branch, runRel(run, `iteration-${String(n)}.md`))) !== null;
-  const counts = n >= 1 && !recorded ? n : n + 1;
-  // no `ogw loop next` checks the core version for the current iteration, whose content agent reads the specs of the new pin
-  if (harness !== null && repin && counts === n && pinnedHarness(run) !== harness) {
-    await requireHarnessCore(ctx, game.name, await gameCoreVersionAt(game, run.branch));
-  }
+  const pin = harness !== null && repin ? await resumeRepin(ctx, game, run, harness) : null;
   return changeOpenRun(game, (open) => {
     const notes: string[] = [];
-    const pinned = pinnedHarness(open);
-    if (harness !== null && repin) pinHarness(open, harness, counts);
-    if (pinned !== null && pinnedHarness(open) !== pinned) notes.push(`harness: ${String(harness)} (repinned from ${pinned}), counts for iteration ${String(counts)}`);
+    if (pin !== null) notes.push(...repinLines(pinHarness(open, pin.harness, pin.runSettings, pin.counts), `, counts for iteration ${String(pin.counts)}`));
     if (given.iterations !== undefined || given.until !== undefined) {
       setRunLimits(open, given);
       const limits = runLimits(open);

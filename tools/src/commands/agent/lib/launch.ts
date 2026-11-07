@@ -44,7 +44,7 @@ import {
   type CliCommand,
 } from './cli-command.ts';
 import { AGENT_TEMP_FOLDER, agentFolderPrefix, move, osTempFolder } from './files.ts';
-import { AGENT_LOG_FOLDER, agentCliLog, changeAgentMeta, FIX_ROUND_ROLES, jobAgentSettings, readAgentJob, type AgentMeta } from './meta.ts';
+import { AGENT_LOG_FOLDER, agentCliLog, changeAgentMeta, FIX_ROUND_ROLES, jobAgentSettings, jobHarnessSettings, readAgentJob, type AgentMeta } from './meta.ts';
 import { buildPrompt } from './prompt.ts';
 import { instancesDir } from '../../instance/lib/records.ts';
 import { stopInstancesOfAgent } from '../../instance/api.ts';
@@ -682,7 +682,7 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   if (!exists(meta.runLog)) await writeJsonAtomic(meta.runLog, { runs: [] });
   // the folder of the result file is there before the agent writes the file
   await mkdir(dirname(meta.output), { recursive: true });
-  const settings = await ctx.settings();
+  const settings = await jobHarnessSettings(ctx, meta);
   const ws = await ctx.workspace();
   const prompt = await buildPrompt(ws.harness, meta.role, { input: meta.agentInput, output: meta.output, run: meta.run, iteration: meta.iteration });
   const logPath = await agentCliLog(id, ctx.env);

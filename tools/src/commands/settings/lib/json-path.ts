@@ -1,16 +1,7 @@
 import { OgwError } from '../../../lib/errors.ts';
-import { isPlainObject, type JsonObject } from '../../../lib/json.ts';
+import { isIndex, isPlainObject, type JsonObject, type Segments } from '../../../lib/json.ts';
 
-/** A settings path split into keys. A core settings key is one segment although it holds `.`. */
-export type Segments = readonly string[];
-
-export { isPlainObject, mergeSettings, type JsonObject } from '../../../lib/json.ts';
-
-const INDEX = /^(0|[1-9][0-9]*)$/;
-
-export function isIndex(segment: string): boolean {
-  return INDEX.test(segment);
-}
+export { isIndex, isPlainObject, mergeSettings, type JsonObject, type Segments } from '../../../lib/json.ts';
 
 export function display(segments: Segments): string {
   return segments.join('.');
