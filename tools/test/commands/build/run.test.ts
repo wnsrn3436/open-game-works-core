@@ -6,6 +6,8 @@ import type { BuildRunResult } from '../../../src/commands/build/lib/buildrun.ts
 import { devicePerformance } from '../../../src/commands/build/lib/device-performance.ts';
 import { buildBundle, buildPlatforms } from '../../../src/commands/build/lib/platform.ts';
 import { saveSchemaCheck } from '../../../src/commands/build/lib/saveschema.ts';
+import { repeatTest } from '../../../src/commands/build/lib/repeat-test.ts';
+import { soakTest } from '../../../src/commands/build/lib/soak-test.ts';
 import { webSmoke } from '../../../src/commands/build/lib/web-smoke.ts';
 import { placeholderFailures } from '../../../src/commands/check/api.ts';
 import { staticCheck } from '../../../src/commands/check/static-api.ts';
@@ -28,6 +30,8 @@ vi.mock('../../../src/commands/build/lib/web-smoke.ts', async (orig) => {
   const real = await orig<typeof import('../../../src/commands/build/lib/web-smoke.ts')>();
   return { ...real, webSmoke: vi.fn(real.webSmoke) };
 });
+vi.mock('../../../src/commands/build/lib/repeat-test.ts', async (orig) => ({ ...(await orig<object>()), repeatTest: vi.fn() }));
+vi.mock('../../../src/commands/build/lib/soak-test.ts', async (orig) => ({ ...(await orig<object>()), soakTest: vi.fn() }));
 vi.mock('../../../src/commands/build/lib/device-performance.ts', async (orig) => {
   const real = await orig<typeof import('../../../src/commands/build/lib/device-performance.ts')>();
   return { ...real, devicePerformance: vi.fn(real.devicePerformance) };
@@ -62,6 +66,9 @@ function fakeData(): void {
 }
 
 beforeEach(() => {
+  // the web checks after web smoke pass; their own tests run them
+  vi.mocked(repeatTest).mockImplementation((input) => Promise.resolve(input.platforms.includes('web') && input.env !== 'PROD' ? { name: 'repeat test', result: 'pass', details: [] } : null));
+  vi.mocked(soakTest).mockImplementation((input) => Promise.resolve(input.platforms.includes('web') && input.env !== 'PROD' ? { name: 'soak test', result: 'pass', details: [] } : null));
   vi.mocked(staticCheck).mockResolvedValue({ name: 'static check', platform: null, result: 'pass', failures: [], warnings: [] });
   vi.mocked(placeholderFailures).mockResolvedValue([]);
   vi.mocked(runContract).mockResolvedValue({ exitCode: 0, violations: [], stderr: '' });
@@ -205,8 +212,12 @@ describe('build run', () => {
     expect(result(dir, 'dev-0.1.0').checks.filter((c) => c.result === 'fail')).toEqual([]);
     expect([out.code, out.stderr]).toEqual([0, '']);
     const r = result(dir, 'dev-0.1.0');
-    // a build without android has no device performance check
-    expect(r.checks.at(-1)).toEqual({ name: 'web smoke', result: 'warn', details: ['no blocker: step 2: softlock'] });
+    // a build without android has no device performance check; repeat test and soak test follow web smoke
+    expect(r.checks.slice(-3)).toEqual([
+      { name: 'web smoke', result: 'warn', details: ['no blocker: step 2: softlock'] },
+      { name: 'repeat test', result: 'pass', details: [] },
+      { name: 'soak test', result: 'pass', details: [] },
+    ]);
     expect(r.checks.some((c) => c.name === 'device performance')).toBe(false);
     expect(r.webSmokeLoadingMs).toBe(1234);
     expect(out.stdout).toContain('check web smoke: warn\n  no blocker: step 2: softlock');
@@ -222,6 +233,40 @@ describe('build run', () => {
     const failed = await ogw(stg, ['build', 'run', 'g'], { env: second.env });
     expect(failed.code).toBe(1);
     expect(result(second.dir, 'stg-0.2.0')).toMatchObject({ webSmokeLoadingMs: 900, artifacts: [] });
+    expect(buildPlatforms).not.toHaveBeenCalled();
+  });
+
+  it('runs web smoke, repeat test and soak test one after the other; their DEV warning and unknown do not block, a STG failure does', async () => {
+    const ws = makeWorkspace();
+    const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
+    (environments.DEV as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
+    const { dir, env } = prepare(ws, { buildPlatforms: ['web'], environments });
+    await openBuildRun(ws, dir, { platforms: ['web'] });
+    const order: string[] = [];
+    // each check gives the event loop a turn between its start and its end: a check started beside it would start in that turn
+    const traced = <T>(name: string, value: T) => async (): Promise<T> => {
+      order.push(`${name} start`);
+      await new Promise((resolve) => setImmediate(resolve));
+      order.push(`${name} end`);
+      return value;
+    };
+    vi.mocked(webSmoke).mockImplementationOnce(traced('web smoke', { check: { name: 'web smoke', result: 'pass', details: [] }, loadingMs: 10 }));
+    vi.mocked(repeatTest).mockImplementationOnce(traced('repeat test', { name: 'repeat test', result: 'warn', details: ['1 of 36 runs failed: crash 1, softlock 0, error log 0, failed goal 0, other 0'] }));
+    vi.mocked(soakTest).mockImplementationOnce(traced('soak test', { name: 'soak test', result: 'unknown', details: ['window 3: no static_memory_bytes reading'] }));
+    const out = await ogw(ws, ['build', 'run', 'g'], { env });
+    expect([out.code, out.stderr]).toEqual([0, '']);
+    expect(order).toEqual(['web smoke start', 'web smoke end', 'repeat test start', 'repeat test end', 'soak test start', 'soak test end']);
+    expect(result(dir, 'dev-0.1.0').checks.slice(-2).map((c) => `${c.name}:${c.result}`)).toEqual(['repeat test:warn', 'soak test:unknown']);
+    expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'DEV', version: '0.1.0', exportVersion: '0.1.0', platforms: ['web'] });
+
+    vi.mocked(buildPlatforms).mockClear();
+    const stg = makeWorkspace();
+    const second = prepare(stg, { buildPlatforms: ['web'] });
+    await openBuildRun(stg, second.dir, { env: 'STG', version: '0.2.0', platforms: ['web'] });
+    vi.mocked(soakTest).mockResolvedValueOnce({ name: 'soak test', result: 'fail', details: ['tick 42: softlock {"kind":"NoResponse"}'] });
+    const failed = await ogw(stg, ['build', 'run', 'g'], { env: second.env });
+    expect(failed.code).toBe(1);
+    expect(failed.stdout).toContain('check soak test: fail\n  tick 42: softlock {"kind":"NoResponse"}');
     expect(buildPlatforms).not.toHaveBeenCalled();
   });
 

@@ -845,7 +845,7 @@ What a bundle patch build holds and writes.
 - When these rules are broken or the bundle has code, the `bundle` check blocks it
 - When it carries data, it holds all client table binaries of `client/build/data/` and the translation binary of each language
 - The result files go in `builds/<env>-<version>/patch/`: bundle files, data files and `patch.json`. `patch.json` is the target app version item of deploy list `patches` (`data_version`, `data_files`, `translation_files`, `bundle_files`), and its format follows [`game-update`](../skills/server-core/modules/game-update.md). When it does not carry data, `data_files` and `translation_files` are empty lists and `data_version` is the client data version of the target app version tag commit
-- A bundle patch build also runs checks `device performance` and `web smoke`
+- A bundle patch build also runs checks `device performance`, `web smoke`, `repeat test` and `soak test`
 
 ## godot build
 
@@ -894,7 +894,7 @@ How the harness tool builds with the Godot engine. The signing key table and wha
   - ios: PNG without an alpha channel. `icons/icon_1024x1024`(1024), `icons/app_store_1024x1024`(1024), `icons/settings_58x58`(58), `icons/settings_87x87`(87), `icons/notification_40x40`(40), `icons/notification_60x60`(60), `icons/notification_76x76`(76), `icons/notification_114x114`(114), `icons/spotlight_80x80`(80), `icons/spotlight_120x120`(120), `icons/iphone_120x120`(120), `icons/iphone_180x180`(180), `icons/ipad_152x152`(152), `icons/ipad_167x167`(167), `icons/ios_128x128`(128), `icons/ios_136x136`(136), `icons/ios_192x192`(192). `icons/icon_1024x1024_dark` and `icons/icon_1024x1024_tinted` are left empty
   - macos: `application/icon`(1024)
   - windows: `application/icon`(256, `.ico`)
-- `generated/launch_values.json` is written only for the exports of checks `device performance` and `web smoke`. The preset of those exports is the DEV preset with `generated/launch_values.json` removed from `exclude_filter`
+- `generated/launch_values.json` is written only for the check exports of `### client checks`. The preset of those exports is the DEV preset with `generated/launch_values.json` removed from `exclude_filter`
 
 #### platform
 
@@ -951,10 +951,10 @@ A key name below is a key of the signing key table.
 
 ### client checks
 
-Checks `device performance` and `web smoke` start a check instance and make a check export.
+Checks `device performance`, `web smoke` and `soak test` start a check instance and make a check export, and check `repeat test` does so once per run.
 
 - check instance: an instance started with the runner, without clients other than bot clients. The DB is SQLite. The runner starts the bot client of that instance on the host
-- check export: an export in the build workspace with the DEV preset of the platform (`android-dev`, `web-dev`) without `generated/build_info.json`. The export version is the build's version, and for a bundle patch build, the target app version. Before the export, writes into `generated/launch_values.json` `OGW_SERVER_URL` (`http://127.0.0.1:<instance server port>`), `OGW_INSTANCE_ID` (the instance ID of the check instance), `OGW_AUTOMATION_PORT` and `OGW_AUTOMATION_TOKEN` set by the runner, `OGW_PLATFORM` (the platform), `OGW_DEV_ACCESS` with the dev access value the runner gave the instance server of the check instance, and `OGW_DEV_ACCOUNT` with the dev account the runner set. It is not an artifact. When the check ends, on success or failure, deletes it and `generated/launch_values.json`
+- check export: an export in the build workspace with the DEV preset of the platform (`android-dev`, `web-dev`) without `generated/build_info.json`. The export version is the build's version, and for a bundle patch build, the target app version. Before the export, writes into `generated/launch_values.json` `OGW_SERVER_URL` (`http://127.0.0.1:<instance server port>`), `OGW_INSTANCE_ID` (the instance ID of the check instance), `OGW_AUTOMATION_PORT` and `OGW_AUTOMATION_TOKEN` set by the runner, `OGW_PLATFORM` (the platform), `OGW_DEV_ACCESS` with the dev access value the runner gave the instance server of the check instance, and `OGW_DEV_ACCOUNT` with the dev account the runner set. It is not an artifact. When the check ends, on success or failure, deletes it and `generated/launch_values.json`. The check exports of the runs of check `repeat test` are made one at a time in one build workspace, and each is deleted when its run ends
 
 ### device performance
 
@@ -975,6 +975,31 @@ Checks `device performance` and `web smoke` start a check instance and make a ch
 3. Serves the export folder over HTTP on a free port of `127.0.0.1`, applies the CPU throttle of harness settings `webSmokeCpuThrottleRate` to the headless browser of harness settings `tools.chromium`, and opens `index.html` of that folder
 4. When the client connects to the automation channel, runs the bot playtest of the `client-content` skill and judges no blocker and full flow. Browser console output counts as client output. The ms from opening the page until `boot_stage` becomes `Done` goes into the result. When `boot_stage` does not become `Done` within harness settings `webSmokeBootTimeoutMs` from opening the page, no blocker and full flow are `fail`
 5. When it ends, closes the browser and stops the instance
+
+### repeat test
+
+`ogw build run` does check `repeat test` of a DEV or STG web build in the order below, after check `web smoke` has ended. Each run plays the bot playtest scenario as a new user, and 36 runs without a failed run show at 95% confidence that fewer than 8% of runs fail (0.92^36 < 0.05). 36 is a fixed value of the check, not a setting.
+
+1. Starts 36 runs, at most harness settings `maxConcurrentInstances` at a time. A run starts its own check instance, makes its own check export, and does `### web smoke` 3 to 5 with them. The DB of the check instance and the browser profile of the page are new, so the run starts as a new user with a new save. The server makes the random seed of each request with secure random and writes it to the `request` log, so each run has other seeds and its server log holds them
+2. A run is `fail` when its no blocker or full flow is `fail`, `unknown` when neither is `fail` and one is `unknown` or when the run could not run to the end (e.g. its instance, export or browser did not start), and `pass` otherwise
+3. The kind of a failed run is the first of the following that its first failure matches: `crash` (the page, the browser or the server process ended), `softlock` (`state.softlock` is not `null`, or a step or the boot did not end within its time limit), `error log` (an error level line in the browser console or the server log), `failed goal` (full flow is `fail` and no blocker is not: the goal is not `true` after the last step, or a `save` step failed), `other` (any other no blocker failure)
+4. The check is `fail` when a run failed, `unknown` when no run failed and a run is `unknown`, and `pass` otherwise. Its first line is `<failed runs> of 36 runs failed: crash <n>, softlock <n>, error log <n>, failed goal <n>, other <n>`, followed by one line per run that is not `pass`: `run <n>: ` and the first line that check `web smoke` would give for that run, or `did not run: <reason>` for a run that an instance, export or browser error stopped. The browser console and the server log of each run that is not `pass` go in `builds/<env>-<version>/repeat-test/run-<n>/`
+
+### soak test
+
+`ogw build run` does check `soak test` of a DEV or STG web build in the order below, after check `repeat test` has ended, so that the runs of other checks do not change its frame intervals. One session plays the bot playtest scenario and then 45 minutes of cycles of bot play and idle, and the tool watches it for blockers, memory growth and frame degradation. The counts, times and limits of this section are fixed values of the check, not settings.
+
+1. Does `### web smoke` 1 to 4. When its no blocker or full flow is not `pass`, the result is that of `web smoke`, and 2 and 3 are not done
+2. Reads a tick (`get_state`, then `get_stats`, as `## performance` does) every 1000 ms, 2700 ticks (45 minutes), counted from 0. Each 150 ticks are a cycle: at tick 0 of a cycle the tool sends `clear_telemetry`, during ticks 0 to 119 of the cycle the bot plays, and during ticks 120 to 149 no input goes in. The bot is the command of the last `auto` step of the scenario, called with its arguments, and the input command it returns is put in as an `auto` step does, with the same gap between inputs. When the scenario has no `auto` step, no input goes in
+   - After each tick, the tool checks the blockers of the bot playtest (`## bot playtest` of [`client-content`](../skills/client-content/SKILL.md)): the page, the browser or the server process ended, an error level line in the browser console or the server log, `state.boot_stage` `Halted`, `state.invariant_failures` not empty, `state.softlock` not `null`, and a command (a tick request, `clear_telemetry`, the bot command or its input command) that returned `ok` `false`. A blocker ends the session, and the check is `fail` with the line `tick <n>: <blocker>`. A request that fails without a blocker, or a bot command that returns neither `null` nor an input command, ends the session, and the check is `unknown`
+3. Judges the ticks. Each 300 ticks (two cycles) are a window: window 0 is the warm-up, in which the caches and pools of what the cycles use fill, and windows 1 to 8 are the measured windows. Each measured window has two values
+   - memory floor: the smallest `static_memory_bytes` of `get_stats` of the ticks of the window. A tick whose value is not a positive number has no memory reading
+   - hitch ratio: the hitch ratio of `## performance` of the kept frame intervals of the ticks of the window, with the refresh rate left out, as the headless browser draws to no display. A tick is kept as `## performance` keeps it
+   - trend of the 8 values of one kind in window order, v_1 to v_8: S is the number of pairs i < j with v_j > v_i minus the number of pairs with v_j < v_i, p is the share of the 40320 orders of 8 distinct values whose S is at least that S, and the slope is the median of (v_j − v_i) / (j − i) over the 28 pairs i < j (the mean of the two middle values). The trend rises when p < 0.05; for 8 distinct values, when S is at least 16
+   - memory leak: the memory floor trend rises, and the memory floor of window 8 plus 288 slopes (24 hours of windows) is at least 2048 MiB, the WebAssembly memory maximum of a Godot web export with threads. Such a leak fills that memory within one day of play
+   - frame degradation: the hitch ratio trend rises, and 7 slopes (its rise from window 1 to window 8) are at least 10 ms/s, the hitch ratio at which players see the game hitch
+4. The check is `fail` with a blocker, a memory leak (the line `memory floor rises <slope> MiB per window (p <p>) and reaches 2048 MiB <hours> hours after window 8`) or frame degradation (the line `hitch ratio rises <7 slopes> ms/s from window 1 to window 8 (p <p>)`). Otherwise it is `unknown` when the session ended before its last tick, when a measured window has no memory reading, or when the kept frame intervals of a measured window add up to less than 10 s or a kept tick of it has no `frame_intervals_ms` array of numbers; its lines say which. Otherwise it is `pass`. The window values, the two p values and the two slopes go in `builds/<env>-<version>/soak-test/samples.json`, and the browser console and the server log beside it
+5. Does `### web smoke` 5
 
 ## resource placeholder
 

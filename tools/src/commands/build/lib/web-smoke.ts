@@ -1,7 +1,8 @@
 import { dirname } from 'node:path';
+import type { Context } from '../../../lib/command.ts';
 import type { CheckResult } from '../../check/api.ts';
 import { judge, readScenario } from '../../check/lib/bot-playtest.ts';
-import { checkResult, failure, writeEvidence } from '../../check/lib/evidence.ts';
+import { checkResult, failure, writeEvidence, type Evidence } from '../../check/lib/evidence.ts';
 import { instanceServerLog } from '../../check/lib/instance-probe.ts';
 import { clientErrorLines } from '../../check/lib/logs.ts';
 import { runScenario, type Scenario } from '../../check/lib/scenario.ts';
@@ -45,15 +46,19 @@ function both(where: string, message: string, unknown: boolean, evidence: (strin
   return [checkResult('no blocker', null, [failure(where, message, evidence)], unknown), checkResult('full flow', null, [failure(where, message, evidence)], unknown)];
 }
 
-async function smoke(
+/**
+ * `### web smoke` 4 on an open page: waits for `boot_stage` `Done`, runs the scenario and judges no blocker and full flow;
+ * the browser console and the server log go into `evidence`.
+ */
+export async function webScenario(
   input: ClientCheckInput,
   instance: InstanceInfo,
   page: HeadlessPage,
   scenario: Scenario,
   bootLimitMs: number,
+  evidence: Evidence,
 ): Promise<{ results: [CheckResult, CheckResult]; loadingMs: number | null }> {
   const { ctx } = input;
-  const evidence = evidenceOf(input, 'web-smoke');
   const blocker = pageBlocker(page);
   const logs = async (): Promise<(string | null)[]> => [
     await writeEvidence(evidence, 'console.log', `${page.console.join('\n')}\n`),
@@ -70,6 +75,35 @@ async function smoke(
   return { results: judge(outcome, scenario.steps.length, await logs()), loadingMs: boot.at - page.openedAt };
 }
 
+/** The harness settings of `### web smoke` 3 and 4, or the reason the browser cannot run. */
+export interface WebRun {
+  chromium: string;
+  rate: number;
+  bootLimitMs: number;
+}
+
+export async function webRunSettings(ctx: Context): Promise<WebRun | string> {
+  const chromium = await toolProgram(ctx, 'chromium');
+  if (chromium === null) return 'harness settings tools.chromium is not on this host';
+  const { webSmokeCpuThrottleRate: rate, webSmokeBootTimeoutMs: bootLimitMs } = await ctx.settings();
+  return { chromium, rate, bootLimitMs };
+}
+
+/** `### web smoke` 3 and 5 around `use`: serves the export folder, opens its `index.html` with the CPU throttle, then closes both. */
+export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, use: (page: HeadlessPage) => Promise<T>): Promise<T> {
+  const host = await serveFolder(dirname(file));
+  try {
+    const page = await openHeadless(ctx, run.chromium, `${host.url}/index.html`, run.rate);
+    try {
+      return await use(page);
+    } finally {
+      await page.close();
+    }
+  } finally {
+    await host.close();
+  }
+}
+
 /** Check `web smoke` (`build` `## build-time check`, ogw.md `### web smoke`). Null when the build has no web platform. */
 export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult | null> {
   if (!input.platforms.includes('web')) return null;
@@ -77,24 +111,15 @@ export async function webSmoke(input: ClientCheckInput): Promise<WebSmokeResult 
   const scenario = await readScenario(input.game.root);
   if (typeof scenario === 'string') return { check: buildCheckOf(NAME, input.env, both('client/dev/bot/scenario.json:1', scenario, false)), loadingMs: null };
   try {
-    const chromium = await toolProgram(ctx, 'chromium');
-    if (chromium === null) return { check: didNotRun(NAME, 'harness settings tools.chromium is not on this host'), loadingMs: null };
-    const { webSmokeCpuThrottleRate: rate, webSmokeBootTimeoutMs: bootLimitMs } = await ctx.settings();
+    const run = await webRunSettings(ctx);
+    if (typeof run === 'string') return { check: didNotRun(NAME, run), loadingMs: null };
     return await withCheckInstance(ctx, input.game, 'web', (instance, external) =>
-      withCheckExport(input, 'web', launchValuesOf(instance, external, 'web'), async (file) => {
-        const host = await serveFolder(dirname(file));
-        try {
-          const page = await openHeadless(ctx, chromium, `${host.url}/index.html`, rate);
-          try {
-            const { results, loadingMs } = await smoke(input, instance, page, scenario, bootLimitMs);
-            return { check: ranToEnd(NAME, buildCheckOf(NAME, input.env, results)), loadingMs };
-          } finally {
-            await page.close();
-          }
-        } finally {
-          await host.close();
-        }
-      }),
+      withCheckExport(input, 'web', launchValuesOf(instance, external, 'web'), (file) =>
+        withWebPage(ctx, run, file, async (page) => {
+          const { results, loadingMs } = await webScenario(input, instance, page, scenario, run.bootLimitMs, evidenceOf(input, 'web-smoke'));
+          return { check: ranToEnd(NAME, buildCheckOf(NAME, input.env, results)), loadingMs };
+        }),
+      ),
     );
   } catch (error) {
     return { check: didNotRun(NAME, error), loadingMs: null };

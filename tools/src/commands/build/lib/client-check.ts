@@ -109,6 +109,41 @@ export function launchValuesOf(instance: InstanceInfo, external: ExternalClient,
 }
 
 /**
+ * Makes a check export with these launch values into `.ogw-check/<name>/` of the build workspace and returns its output
+ * file. Exports run one at a time: a call waits for the export before it.
+ */
+export type CheckExporter = (platform: 'android' | 'web', values: LaunchValues, name: string) => Promise<string>;
+
+/**
+ * One build workspace of the build branch HEAD for the check exports of `use` (ogw.md `### client checks`). The exports
+ * and `generated/launch_values.json` are deleted when `use` ends, whatever its result.
+ */
+export async function withCheckWorkspace<T>(input: ClientCheckInput, use: (exportFor: CheckExporter) => Promise<T>): Promise<T> {
+  const { ctx, game } = input;
+  const engine = input.settings.engine ?? 'godot';
+  if (engine !== 'godot') throw new OgwError(`not defined: the check export of engine ${engine}`);
+  const head = await revParse(game.root, 'HEAD');
+  if (head === null) throw new OgwError('the build branch has no commit');
+  return withCommitCheckout(ctx, game, head, async (repo) => {
+    let last: Promise<unknown> = Promise.resolve();
+    const exportFor: CheckExporter = (platform, values, name) => {
+      const dir = join(repo.root, '.ogw-check', name);
+      const build = { game, env: 'DEV' as const, version: input.exportVersion, platforms: [platform], settings: input.settings, outDir: dir, iosPrivacy: [], privacyManifest: null };
+      // the exports share the checkout and its `generated/launch_values.json`: one after the other
+      const made = last.then(() => godotCheckExport(ctx, build, platform, repo.root, dir, values));
+      last = made.catch(() => undefined);
+      return made;
+    };
+    try {
+      return await use(exportFor);
+    } finally {
+      await rm(join(repo.root, '.ogw-check'), { recursive: true, force: true });
+      await rm(join(repo.root, 'client', 'generated', 'launch_values.json'), { force: true });
+    }
+  });
+}
+
+/**
  * The DEV export of the build branch HEAD in a build workspace, then `use` on the output file. The export
  * and `generated/launch_values.json` are deleted when `use` ends, whatever its result.
  */
@@ -118,21 +153,7 @@ export async function withCheckExport<T>(
   values: LaunchValues,
   use: (file: string) => Promise<T>,
 ): Promise<T> {
-  const { ctx, game } = input;
-  const engine = input.settings.engine ?? 'godot';
-  if (engine !== 'godot') throw new OgwError(`not defined: the check export of engine ${engine}`);
-  const head = await revParse(game.root, 'HEAD');
-  if (head === null) throw new OgwError('the build branch has no commit');
-  return withCommitCheckout(ctx, game, head, async (repo) => {
-    const dir = join(repo.root, '.ogw-check', platform);
-    const build = { game, env: 'DEV' as const, version: input.exportVersion, platforms: [platform], settings: input.settings, outDir: dir, iosPrivacy: [], privacyManifest: null };
-    try {
-      return await use(await godotCheckExport(ctx, build, platform, repo.root, dir, values));
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-      await rm(join(repo.root, 'client', 'generated', 'launch_values.json'), { force: true });
-    }
-  });
+  return withCheckWorkspace(input, async (exportFor) => use(await exportFor(platform, values, platform)));
 }
 
 export type BootOutcome = { kind: 'done'; at: number } | { kind: 'blocker'; message: string } | { kind: 'timeout'; message: string };

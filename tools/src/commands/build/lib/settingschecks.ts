@@ -45,7 +45,7 @@ export interface CheckWithHuman {
 }
 
 /** Checks that only warn in a DEV build (`build` `## build-time check`). */
-export const DEV_WARN_ONLY = new Set(['banned word', 'placeholder', 'license', 'privacy', 'device performance', 'web smoke']);
+export const DEV_WARN_ONLY = new Set(['banned word', 'placeholder', 'license', 'privacy', 'device performance', 'web smoke', 'repeat test', 'soak test']);
 
 export function outcome(name: string, env: Env, details: string[]): CheckOutcome {
   if (details.length === 0) return 'pass';

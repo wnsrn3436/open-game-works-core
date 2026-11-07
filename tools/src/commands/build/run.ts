@@ -17,6 +17,8 @@ import { settingsCheckInput } from './lib/inputs.ts';
 import { type ClientCheckInput } from './lib/client-check.ts';
 import { devicePerformance } from './lib/device-performance.ts';
 import { webSmoke } from './lib/web-smoke.ts';
+import { repeatTest } from './lib/repeat-test.ts';
+import { soakTest } from './lib/soak-test.ts';
 import { buildTagName, buildTags, lastProdTag, tagCommit, type BuildTag } from './lib/names.ts';
 import { nativePluginProblems } from './lib/native-plugins.ts';
 import { buildBundle, buildPlatforms, type Artifact } from './lib/platform.ts';
@@ -69,16 +71,27 @@ async function bundleHasData(b: Build, versions: DataVersions | null): Promise<b
   return app.client !== versions.client || app.server !== versions.server;
 }
 
-/** Check `device performance` and `web smoke`, at the same time. */
+/**
+ * Checks `web smoke`, `repeat test` and `soak test` one after the other, so that the runs of one do not load the host
+ * of the next (ogw.md `### repeat test`, `### soak test`).
+ */
+async function webChecks(input: ClientCheckInput): Promise<{ checks: BuildCheck[]; loadingMs: number | null }> {
+  const web = await webSmoke(input);
+  const repeat = await repeatTest(input);
+  const soak = await soakTest(input);
+  return { checks: [web?.check, repeat, soak].filter((c): c is BuildCheck => c !== null && c !== undefined), loadingMs: web?.loadingMs ?? null };
+}
+
+/** Check `device performance` beside the web checks. */
 async function clientChecks(b: Build): Promise<{ checks: CheckWithHuman[]; loadingMs: number | null }> {
   const input: ClientCheckInput = {
     ctx: b.ctx, game: b.game, env: b.open.env, version: b.open.version, exportVersion: b.open.run.bundleFor ?? b.open.version, settings: b.settings, platforms: b.platforms,
   };
-  const [device, web] = await Promise.all([devicePerformance(input), webSmoke(input)]);
+  const [device, web] = await Promise.all([devicePerformance(input), webChecks(input)]);
   const checks: CheckWithHuman[] = [];
   if (device) checks.push({ check: device, human: null });
-  if (web) checks.push({ check: web.check, human: null });
-  return { checks, loadingMs: web?.loadingMs ?? null };
+  for (const check of web.checks) checks.push({ check, human: null });
+  return { checks, loadingMs: web.loadingMs };
 }
 
 interface PreBuild {

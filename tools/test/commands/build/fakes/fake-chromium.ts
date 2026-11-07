@@ -39,7 +39,9 @@ async function navigate(socket: WebSocket, url: string, reply: (result: unknown)
   const folder = await fetch(new URL('/', url));
   const post = await fetch(url, { method: 'POST' });
   log({ page: url, status: response.status, type: response.headers.get('content-type'), root: folder.status, post: post.status });
-  const values = join(dir, 'page-launch-values.json');
+  writeFileSync(join(dir, 'page-launch-values.json'), text);
+  // the client of this page reads a file of its own: pages of other browsers open at the same time write theirs
+  const values = join(dir, `page-launch-values-${String(process.pid)}.json`);
   writeFileSync(values, text);
   spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'fake-launch.ts'), values], { stdio: 'ignore', env });
   reply({ frameId: 'F1' });
