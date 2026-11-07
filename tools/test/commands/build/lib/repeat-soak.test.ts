@@ -31,7 +31,7 @@ import { automationRequest } from '../../../../src/commands/instance/automation.
 import { ClientChannel } from '../../../../src/commands/instance/lib/channel.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import { makeWorkspace, type TestWorkspace } from '../../../helpers/workspace.ts';
-import { commit, fakeBin, gameRepo, gameSettings, setupGame, write } from '../helpers.ts';
+import { commit, fakeBin, gameRepo, gameSettings, git, setupGame, write } from '../helpers.ts';
 
 vi.mock('node:fs/promises', async (orig) => {
   const real = await orig<typeof import('node:fs/promises')>();
@@ -267,6 +267,27 @@ describe('repeat test', () => {
     expect(await repeatTest({ ...s.input, env: 'PROD' })).toBeNull();
     vi.mocked(toolProgram).mockResolvedValue(null);
     expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'unknown', details: ['repeat test did not run: harness settings tools.chromium is not on this host'] });
+  });
+
+  it('runs its check instances and check workspace in the checkout of the input when it is not the game repo checkout (the late checks of a DEV build)', async () => {
+    const s = await setup();
+    repeatPlan.runs = 1;
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
+    const checkout = join(s.ws.root, 'late-checkout');
+    git(s.dir, 'worktree', 'add', '--quiet', '--detach', checkout, 'HEAD');
+    // the game repo checkout moves on: the check workspace is made of the HEAD of the given checkout
+    write(s.dir, 'notes.txt', 'later');
+    commit(s.dir, 'later');
+    const real = await vi.importActual<typeof import('../../../../src/commands/build/lib/godot.ts')>('../../../../src/commands/build/lib/godot.ts');
+    const heads: string[] = [];
+    vi.mocked(godotCheckPrepare).mockImplementation(async (...args) => {
+      heads.push(git(args[3], 'rev-parse', 'HEAD'));
+      return real.godotCheckPrepare(...args);
+    });
+    expect(await repeatTest({ ...s.input, checkout })).toEqual({ name: 'repeat test', result: 'pass', details: [] });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', root: checkout });
+    expect(heads).toEqual([git(checkout, 'rev-parse', 'HEAD')]);
+    expect(heads[0]).not.toBe(git(s.dir, 'rev-parse', 'HEAD'));
   });
 
   it('does not run repeat test and soak test while this host has no webSmokeCpuThrottleRate', async () => {

@@ -41,6 +41,16 @@ export interface ClientCheckInput {
   platforms: string[];
   /** The check workspaces the checks of one build run share; a check without them makes its own. */
   workspaces?: CheckWorkspaces;
+  /**
+   * The checkout the checks read the scenario from, make the check workspaces of (its HEAD) and run the check instances
+   * in: a worktree of the build commit for the late checks of a DEV build; the game repo checkout when absent.
+   */
+  checkout?: string;
+}
+
+/** The checkout of the checks of `input`. */
+export function checkoutOf(input: ClientCheckInput): string {
+  return input.checkout ?? input.game.root;
 }
 
 /**
@@ -82,14 +92,19 @@ export function ranToEnd(name: string, check: BuildCheck): BuildCheck {
   return { name, result: 'unknown', details: check.details.map((line) => `${name} did not run to the end: ${line}`) };
 }
 
-/** Runs `work` on an instance without a client that is not a bot client, whose automation channel `main` waits for an outside client. */
+/**
+ * Runs `work` on an instance without a client that is not a bot client, whose automation channel `main` waits for an
+ * outside client. It runs in `root` when given (`ClientCheckInput.checkout`), in the game repo checkout otherwise.
+ */
 export async function withCheckInstance<T>(
   ctx: Context,
   game: GameRepo,
   platform: string,
   work: (instance: InstanceInfo, external: ExternalClient) => Promise<T>,
+  root?: string,
 ): Promise<T> {
-  const instance = await startInstance(ctx, { game: game.name, client: 'none', externalClient: true, platform });
+  const where = root === undefined || root === game.root ? {} : { root };
+  const instance = await startInstance(ctx, { game: game.name, client: 'none', externalClient: true, platform, ...where });
   try {
     if (instance.external === null) throw new OgwError(`instance ${instance.id} has no automation channel for the client`);
     return await work(instance, instance.external);
@@ -191,7 +206,7 @@ export class CheckWorkspaces {
     const { ctx, game } = this.input;
     const engine = this.input.settings.engine ?? 'godot';
     if (engine !== 'godot') throw new OgwError(`not defined: the check export of engine ${engine}`);
-    const head = await revParse(game.root, 'HEAD');
+    const head = await revParse(checkoutOf(this.input), 'HEAD');
     if (head === null) throw new OgwError('the build branch has no commit');
     const repo = await addCommitCheckout(ctx, game, head, (path) => this.roots.push(path));
     return { root: repo.root, prepared: await godotCheckPrepare(ctx, this.build(platform, repo.root), platform, repo.root) };

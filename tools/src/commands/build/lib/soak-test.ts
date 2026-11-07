@@ -11,7 +11,7 @@ import { isRecord } from '../../check/lib/scenario-form.ts';
 import { automationRequest, type AutomationResponse } from '../../instance/automation.ts';
 import type { BuildCheck } from './buildrun.ts';
 import type { HeadlessPage } from './chromium.ts';
-import { buildCheckOf, clientCheckTiming, didNotRun, evidenceOf, launchValuesOf, ranToEnd, withCheckCopy, withCheckInstance, type ClientCheckInput } from './client-check.ts';
+import { buildCheckOf, checkoutOf, clientCheckTiming, didNotRun, evidenceOf, launchValuesOf, ranToEnd, withCheckCopy, withCheckInstance, type ClientCheckInput } from './client-check.ts';
 import { outcome } from './settingschecks.ts';
 import { pageBlocker, webRunSettings, webScenario, withWebPage } from './web-smoke.ts';
 
@@ -372,7 +372,7 @@ async function soakOn(input: ClientCheckInput, id: string, page: HeadlessPage, s
 export async function soakTest(input: ClientCheckInput): Promise<BuildCheck | null> {
   if (!input.platforms.includes('web') || input.env === 'PROD') return null;
   const { ctx } = input;
-  const scenario = await readScenario(input.game.root);
+  const scenario = await readScenario(checkoutOf(input));
   if (typeof scenario === 'string') {
     const where = failure('client/dev/bot/scenario.json:1', scenario);
     return buildCheckOf(NAME, input.env, [checkResult('no blocker', null, [where]), checkResult('full flow', null, [where])]);
@@ -388,7 +388,7 @@ export async function soakTest(input: ClientCheckInput): Promise<BuildCheck | nu
           const smoke = ranToEnd(NAME, buildCheckOf(NAME, input.env, results));
           return smoke.result === 'pass' ? soakOn(input, instance.id, page, scenario, evidence) : smoke;
         }),
-      ),
+      checkoutOf(input)),
     );
   } catch (error) {
     return didNotRun(NAME, error);

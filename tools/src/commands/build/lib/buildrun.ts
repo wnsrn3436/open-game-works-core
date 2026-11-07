@@ -127,4 +127,29 @@ export interface BuildRunResult {
   coreSchema: { last: number | null; current: number | null } | null;
   /** Match wait ms (`build` `## deploy` PROD 3), or null. */
   matchWaitMs: number | null;
+  /**
+   * DEV build: the checks that run after the platform build in the late checks job (ogw.md `## build run`), the job, and
+   * the commit they check; absent or null when there are none.
+   */
+  lateChecks?: LateChecks | null;
 }
+
+/** The late checks of a DEV build: their names, the `ogw build late` job that runs them, and the build commit. */
+export interface LateChecks {
+  names: string[];
+  job: string;
+  commit: string;
+}
+
+/** `builds/<env>-<version>/late-checks.json` written by `ogw build late`. */
+export interface LateChecksResult {
+  commit: string;
+  checks: BuildCheck[];
+}
+
+export function lateChecksFile(game: GameRepo, env: Env, version: string): string {
+  return join(buildDir(game, env, version), 'late-checks.json');
+}
+
+/** Checks that `ogw build run` of a DEV build leaves to the late checks job: they only warn in a DEV build. */
+export const LATE_CHECKS = ['repeat test', 'soak test'] as const;

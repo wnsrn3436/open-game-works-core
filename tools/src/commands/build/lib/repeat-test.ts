@@ -6,7 +6,7 @@ import { checkResult, failure } from '../../check/lib/evidence.ts';
 import { Slots } from '../../check/lib/instances.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import type { BuildCheck } from './buildrun.ts';
-import { buildCheckOf, didNotRun, evidenceOf, launchValuesOf, withCheckCopy, withCheckInstance, withWorkspacesOf, type ClientCheckInput } from './client-check.ts';
+import { buildCheckOf, checkoutOf, didNotRun, evidenceOf, launchValuesOf, withCheckCopy, withCheckInstance, withWorkspacesOf, type ClientCheckInput } from './client-check.ts';
 import { outcome } from './settingschecks.ts';
 import { webRunSettings, webScenario, withWebPage, type WebRun } from './web-smoke.ts';
 
@@ -70,7 +70,7 @@ async function oneRun(input: ClientCheckInput, scenario: Scenario, run: WebRun, 
       withCheckInstance(ctx, input.game, 'web', async (instance, external) => {
         const file = await exportWith(launchValuesOf(instance, external, 'web'));
         return withWebPage(ctx, run, file, async (page) => runOf(input.env, (await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence)).results));
-      }));
+      }, checkoutOf(input)));
     if (repeat.result === 'pass') await rm(join(evidence.root, evidence.dir ?? ''), { recursive: true, force: true });
     return repeat;
   } catch (error) {
@@ -90,7 +90,7 @@ async function oneRun(input: ClientCheckInput, scenario: Scenario, run: WebRun, 
 export async function repeatTest(input: ClientCheckInput): Promise<BuildCheck | null> {
   if (!input.platforms.includes('web') || input.env === 'PROD') return null;
   const { ctx } = input;
-  const scenario = await readScenario(input.game.root);
+  const scenario = await readScenario(checkoutOf(input));
   if (typeof scenario === 'string') {
     const where = failure('client/dev/bot/scenario.json:1', scenario);
     return buildCheckOf(NAME, input.env, [checkResult('no blocker', null, [where]), checkResult('full flow', null, [where])]);

@@ -13,6 +13,7 @@ import { openHeadless, type HeadlessPage } from './chromium.ts';
 import {
   atGate,
   buildCheckOf,
+  checkoutOf,
   clientCheckTiming,
   didNotRun,
   ranToEnd,
@@ -115,7 +116,7 @@ export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, us
 export async function webSmoke(input: ClientCheckInput, gate: MeasureGate = NO_GATE): Promise<WebSmokeResult | null> {
   if (!input.platforms.includes('web')) return null;
   const { ctx } = input;
-  const scenario = await readScenario(input.game.root);
+  const scenario = await readScenario(checkoutOf(input));
   if (typeof scenario === 'string') return { check: buildCheckOf(NAME, input.env, both('client/dev/bot/scenario.json:1', scenario, false)), loadingMs: null };
   try {
     const run = await webRunSettings(ctx);
