@@ -154,8 +154,11 @@ function checkedBytes(text: string): number {
   return Buffer.byteLength(text.slice(0, text.lastIndexOf('\n') + 1));
 }
 
-/** The first `error` line in the client's log files after the cursor, moving the cursor past the checked lines. */
-async function clientLogError(ctx: Context, id: string, client: ClientRef, cursor: LogCursor): Promise<string | undefined> {
+/**
+ * The first `error` line in the client's log files after the cursor (`line`), or, without one, where the cursor of that
+ * client goes past the checked lines (`next`). It does not move the cursor.
+ */
+async function clientLogError(ctx: Context, id: string, client: ClientRef, cursor: LogCursor): Promise<{ line: string } | { next: Map<string, number> }> {
   const seen = cursor.clients.get(client) ?? new Map<string, number>();
   const files = await clientLogFiles(ctx, id, client, seen);
   const next = new Map<string, number>();
@@ -166,32 +169,40 @@ async function clientLogError(ctx: Context, id: string, client: ClientRef, curso
     const start = offset ?? (whole.length < from ? 0 : from);
     const fresh = offset === null ? whole.subarray(start).toString() : content;
     const line = clientErrorLines(fresh)[0];
-    if (line !== undefined) return line;
+    if (line !== undefined) return { line };
     next.set(path, start + checkedBytes(fresh));
   }
-  cursor.clients.set(client, next);
-  return undefined;
+  return { next };
 }
 
 /**
  * A blocker from the processes and logs of the instance, or null. With a cursor, only log lines after it are read.
- * Throws `ClientLogUnreadable` when a client log or the server log could not be read.
+ * Throws `ClientLogUnreadable` when a client log or the server log could not be read. The logs of the clients and the
+ * server are read together; they are judged in that order, as reading them one after another would, and the cursor
+ * moves past only the lines that order checked.
  */
 export async function processBlocker(ctx: Context, id: string, cursor: LogCursor = new LogCursor()): Promise<string | null> {
   const processes = await instanceProcesses(ctx, id);
   if (!processes.server) return 'server process ended';
   const ended = processes.clients.find((client) => !client.alive);
   if (ended) return `client process ${ended.client} ended`;
-  for (const { client } of processes.clients) {
-    const line = await clientLogError(ctx, id, client, cursor);
-    if (line !== undefined) return `client ${client} error log: ${line}`;
+  const [clients, server] = await Promise.all([
+    Promise.allSettled(processes.clients.map(({ client }) => clientLogError(ctx, id, client, cursor))),
+    instanceServerLog(ctx, id, cursor.server).then(
+      (text) => ({ text }),
+      (error: unknown) => ({ error }),
+    ),
+  ]);
+  for (const [i, { client }] of processes.clients.entries()) {
+    const read = clients[i] as PromiseSettledResult<{ line: string } | { next: Map<string, number> }>;
+    if (read.status === 'rejected') throw read.reason;
+    if ('line' in read.value) return `client ${client} error log: ${read.value.line}`;
+    cursor.clients.set(client, read.value.next);
   }
-  const server = await instanceServerLog(ctx, id, cursor.server).catch((error: unknown) => {
-    throw new ClientLogUnreadable(`the server log could not be read: ${(error as Error).message}`);
-  });
-  const lines = serverErrorLines(server);
+  if ('error' in server) throw new ClientLogUnreadable(`the server log could not be read: ${(server.error as Error).message}`);
+  const lines = serverErrorLines(server.text);
   if (lines[0] !== undefined) return `server error log: ${lines[0]}`;
-  cursor.server += checkedBytes(server);
+  cursor.server += checkedBytes(server.text);
   return null;
 }
 

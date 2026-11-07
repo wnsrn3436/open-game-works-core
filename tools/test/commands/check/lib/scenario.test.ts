@@ -211,6 +211,35 @@ describe('processBlocker', () => {
     expect(fresh.clients.get('main')).toEqual(new Map([['log/log_3.txt', Buffer.byteLength(log1)]]));
   });
 
+  it('reads the logs of the clients and the server together, and judges and moves the cursor in that order', async () => {
+    vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }, { client: 'opponent_1', alive: true }] });
+    const spans: { what: string; start: number; end: number }[] = [];
+    const slow = async <T>(what: string, value: T): Promise<T> => {
+      const start = performance.now();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      spans.push({ what, start, end: performance.now() });
+      return value;
+    };
+    const logs: Record<string, string> = { main: '1\tinfo\tnet\tok\t\n', opponent_1: '1\terror\tnet\tboom\t\n' };
+    vi.mocked(automationRequest).mockImplementation((_c, _id, command, _args, who) => slow(`client ${String(who)}`, command === 'extract_logs' ? ok([{ path: 'a', content: logs[String(who)] }]) : ok(null)));
+    vi.mocked(instanceServerLog).mockImplementation(() => slow('server', '{"level":"error","message":"late"}\n'));
+    const cursor = new LogCursor();
+    expect(await processBlocker(ctx, 'i1', cursor)).toBe('client opponent_1 error log: 1\terror\tnet\tboom\t');
+    // the three reads ran at once
+    expect(spans).toHaveLength(3);
+    expect(Math.max(...spans.map((s) => s.start))).toBeLessThan(Math.min(...spans.map((s) => s.end)));
+    // main was checked before the opponent's error, the server log was not
+    expect(cursor.clients.get('main')).toEqual(new Map([['a', Buffer.byteLength(logs.main ?? '')]]));
+    expect(cursor.clients.has('opponent_1')).toBe(false);
+    expect(cursor.server).toBe(0);
+    logs.opponent_1 = '1\tinfo\tnet\tok\t\n';
+    expect(await processBlocker(ctx, 'i1', new LogCursor())).toBe('server error log: {"level":"error","message":"late"}');
+    // an earlier client's error comes before a later client's unreadable log
+    logs.main = '1\terror\tnet\tfirst\t\n';
+    vi.mocked(automationRequest).mockImplementation((_c, _id, _command, _args, who) => (who === 'main' ? slow('main', ok([{ path: 'a', content: logs.main }])) : Promise.reject(new Error('gone'))));
+    expect(await processBlocker(ctx, 'i1', new LogCursor())).toBe('client main error log: 1\terror\tnet\tfirst\t');
+  });
+
   it('with a cursor, asks extract_logs for each file from its checked byte offset and reads only what the client sends', async () => {
     const cursor = new LogCursor();
     const first = '1\tinfo\tnet\té\t\n';
