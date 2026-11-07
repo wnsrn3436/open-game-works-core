@@ -56,11 +56,18 @@ export function folderHolds(where: string, files: readonly string[]): boolean {
 }
 
 /**
- * The game repo pre-commit hook: `ogw meta sync <game> --staged`, then the static check.
- * A failure whose `where` points at a staged file, and an absence failure whose `where` `<folder>:1` holds a staged
- * file, block the commit. meta sync, the staged file list and the static check's read of the staged changes use the
- * index of the commit; the rest of the static check runs without the repo variables of the hook, so its temporary
- * worktrees use their own index.
+ * The failures of a static check that block a commit of `files`: a failure whose `where` points at one of the files,
+ * and an absence failure whose `where` `<folder>:1` holds one of them.
+ */
+export function blockingFailures(detail: StaticCheckDetail, files: readonly string[]): CheckFailure[] {
+  return detail.result.failures.filter((failure) => pointsAt(failure.where, files) || (detail.absent.includes(failure) && folderHolds(failure.where, files)));
+}
+
+/**
+ * The game repo pre-commit hook: `ogw meta sync <game> --staged`, then the static check, whose `blockingFailures` for
+ * the staged files block the commit. meta sync, the staged file list and the static check's read of the staged changes
+ * use the index of the commit; the rest of the static check runs without the repo variables of the hook, so its
+ * temporary worktrees use their own index.
  */
 export async function runPreCommit(io: CliIo, gameName: string, deps: PreCommitDeps): Promise<number> {
   const envs = hookEnvs(io.cwd, io.env);
@@ -72,10 +79,7 @@ export async function runPreCommit(io: CliIo, gameName: string, deps: PreCommitD
   }
   const game = await ctx.game(gameName);
   const staged = await stagedPaths(game.root, { env: envs.checkout });
-  const { result, absent } = await deps.staticCheck(ctx, game, { stagedEnv: envs.checkout });
-  const blocking: CheckFailure[] = result.failures.filter(
-    (failure) => pointsAt(failure.where, staged) || (absent.includes(failure) && folderHolds(failure.where, staged)),
-  );
+  const blocking = blockingFailures(await deps.staticCheck(ctx, game, { stagedEnv: envs.checkout }), staged);
   for (const failure of blocking) ctx.log(`${failure.where}: ${failure.message}`);
   return blocking.length > 0 ? 1 : 0;
 }

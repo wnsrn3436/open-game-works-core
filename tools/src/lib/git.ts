@@ -145,6 +145,12 @@ export async function commitPaths(
   return head(cwd, options);
 }
 
+/** The paths that commit `rev` changed against its parent (every path of a root commit), without rename detection. */
+export async function commitChangedPaths(cwd: string, rev: string, options: GitOptions = {}): Promise<string[]> {
+  const out = await git(cwd, ['diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', '--no-renames', rev], options);
+  return out.split('\0').filter((path) => path !== '');
+}
+
 /**
  * Sets the index entries of `paths` and of every path the HEAD commit changed to HEAD's content. A commit with a
  * pathspec gives the pre-commit hook a temporary index, so what the hook stages or reverts (`ogw meta sync
@@ -152,8 +158,7 @@ export async function commitPaths(
  * change the hook reverted.
  */
 async function indexAsHead(cwd: string, paths: readonly string[], options: GitOptions): Promise<void> {
-  const changed = await git(cwd, ['diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', '--no-renames', 'HEAD'], options);
-  const literal = changed.split('\0').filter((path) => path !== '').map((path) => `:(literal)${path}`);
+  const literal = (await commitChangedPaths(cwd, 'HEAD', options)).map((path) => `:(literal)${path}`);
   const input = [...paths, ...literal].join('\0');
   await git(cwd, ['reset', '--quiet', 'HEAD', '--pathspec-from-file=-', '--pathspec-file-nul'], { ...options, input });
 }

@@ -4,17 +4,21 @@ import { expectPositionals, flag, positional, str, type CommandDef, type Context
 import { OgwError } from '../../lib/errors.ts';
 import { readJson, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { commitPaths, git, listTags } from '../../lib/git.ts';
+import { commitChangedPaths, commitPaths, git, listTags } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { changeOpenRun, openRun } from '../../lib/runstate.ts';
 import { gameSettingsPath, withGameSettingsLock, type GameSettings } from '../../lib/settings.ts';
 import { installEngines } from '../env/api.ts';
 import { lastProdTagName } from '../build/lib/names.ts';
 import { callContractTool, contractPrevious, runContract, type ContractRun } from '../contract/api.ts';
+import { staticCheckDetail, type StaticCheckDetail } from '../check/static-api.ts';
 import { GENERATED_FOLDERS } from '../check/static/generated-diff.ts';
 import { runData } from '../data/api.ts';
+import { blockingFailures } from '../game/lib/pre-commit.ts';
 import { generateCheckout } from '../generate/api.ts';
 import { CORE_UPGRADE_KEY } from '../loop/lib/api.ts';
+import { gameProject, sourceOf } from '../meta/lib/project.ts';
+import { syncStaged } from '../meta/sync.ts';
 import { fetchCoreRelease, gameCoreVersion, publishedRelease, releasedProposals, remoteReleaseVersions } from './api.ts';
 import { compareSubjects } from './lib/github.ts';
 import { releaseTag } from './lib/version.ts';
@@ -131,10 +135,11 @@ async function restoreToolOutputs(game: GameRepo, folders: readonly string[], st
  * Fetches the release, changes `coreVersion`, installs engines, runs `ogw generate`, the data tool and the contract tool
  * in the order `generated diff` regenerates, and commits `settings.json` with what they wrote or removed. A data check
  * error or a contract violation does not stop it: the content agent fixes it after the upgrade. A data tool run with
- * errors writes no generation target, and the rows it put in `data/` stay out of the commit, where the hook would refuse
- * their errors: the next `ogw data` puts them in again. When a step after the
- * `settings.json` write fails, `coreVersion` goes back to `from`, `ogw generate` runs again with it, and what the tools
- * wrote and the refused commit staged goes back to HEAD.
+ * errors writes no generation target, and the rows it put in `data/` stay out of the commit, so that it holds no row with
+ * an error: the next `ogw data` puts them in again. The commit runs the meta sync of the pre-commit hook on its staged
+ * files, takes the meta files that sync stages for them, and skips the hook (`tools/ogw.md` `## core upgrade`). When a
+ * step after the `settings.json` write fails, `coreVersion` goes back to `from`, `ogw generate` runs again with it, and
+ * what the tools wrote and the failed commit staged goes back to HEAD.
  */
 async function applyVersion(ctx: Context, game: GameRepo, from: string, version: string): Promise<string | null> {
   const before = await changedPaths(game.root);
@@ -169,7 +174,12 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
     const generated = [...new Set([...applied.written, ...applied.removed])].filter((p) => p !== 'settings.json' && changed.has(p));
     const fromTools = [...changed].filter(underFolders(TOOL_OUTPUTS));
     paths = ['settings.json', ...new Set([...generated, ...fromTools])].sort();
-    return await commitPaths(game.root, paths, `core upgrade: ${from} -> ${version}`, { env: ctx.env });
+    // the hook's meta sync, on the staged files of the commit: the meta files of other staged sources stay out of it
+    await git(game.root, ['add', '--all', '--', ...paths], { env: ctx.env });
+    const sources = new Set(paths);
+    const meta = (await syncStaged(ctx, await gameProject(ctx, game.name), ctx.env)).staged.filter((path) => sources.has(sourceOf(path)));
+    paths = [...new Set([...paths, ...meta])].sort();
+    return await commitPaths(game.root, paths, `core upgrade: ${from} -> ${version}`, { env: ctx.env, noVerify: true });
   } catch (error) {
     // only `coreVersion` goes back, on the current content: a value written meanwhile under the lock stays
     await setCoreVersion(from);
@@ -182,6 +192,23 @@ async function applyVersion(ctx: Context, game: GameRepo, from: string, version:
     }
     throw error;
   }
+}
+
+/**
+ * Prints, as the hook prints them, the failures of the static check of the upgraded checkout that the pre-commit hook
+ * would refuse the upgrade commit for, for the content agent to fix after the upgrade. A static check that cannot run
+ * prints its reason, and the upgrade stays committed.
+ */
+async function printHookFailures(ctx: Context, game: GameRepo, commit: string): Promise<void> {
+  const files = await commitChangedPaths(game.root, commit, { env: ctx.env });
+  let detail: StaticCheckDetail;
+  try {
+    detail = await staticCheckDetail(ctx, game, { stagedEnv: ctx.env });
+  } catch (error) {
+    ctx.log(`static check of the upgraded checkout could not run: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  for (const failure of blockingFailures(detail, files)) ctx.log(`${failure.where}: ${failure.message}`);
 }
 
 /** First lines of the commits `ogw` makes for agent records, review lists and releases: not changes of core. */
@@ -235,6 +262,7 @@ export const upgradeCommand: CommandDef = {
         open.data[CORE_UPGRADE_KEY] = record;
       });
     }
+    if (commit !== null) await printHookFailures(ctx, game, commit);
     const lines = [`coreVersion: ${from} -> ${approved}`];
     if (choice.skipped.length > 0) lines.push(`skipped: ${choice.skipped.join(', ')}`);
     return { text: lines.join('\n'), data: { from, version: approved, skipped: choice.skipped, commit } };

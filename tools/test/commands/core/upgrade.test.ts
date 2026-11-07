@@ -1,17 +1,23 @@
-import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { staticCheckDetail, type StaticCheckDetail } from '../../../src/commands/check/static-api.ts';
 import { writeTgz } from '../../../src/commands/core/lib/archive.ts';
-import { installEngines } from '../../../src/commands/env/api.ts';
+import { installEngines, requireEngine } from '../../../src/commands/env/api.ts';
 import { runData } from '../../../src/commands/data/api.ts';
 import { generateCheckout } from '../../../src/commands/generate/api.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { changeRuns, listRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { ogw, commitAll, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
-import { specJson } from '../generate/helpers.ts';
+import { fakeProgram, specJson, storedZip } from '../generate/helpers.ts';
 import { fakeGh, readJsonFile, sha256, writeFiles } from './helpers.ts';
 
-vi.mock('../../../src/commands/env/api.ts', () => ({ installEngines: vi.fn(() => Promise.resolve()) }));
+vi.mock('../../../src/commands/env/api.ts', () => ({ installEngines: vi.fn(() => Promise.resolve()), requireEngine: vi.fn() }));
+vi.mock('../../../src/commands/check/static-api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/commands/check/static-api.ts')>()),
+  staticCheckDetail: vi.fn(),
+}));
 vi.mock('../../../src/commands/data/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/data/api.ts')>()),
   runData: vi.fn(),
@@ -58,13 +64,26 @@ const tables = path.join(opt('--game'), 'server', 'generated', 'data', 'game_dat
 fs.writeFileSync(path.join(out, 'core_contract.gd'), proto + (fs.existsSync(tables) ? ' ' + fs.readFileSync(tables, 'utf8') : ''));
 `;
 
-/** A release folder with a contract tool whose base proto holds `proto`. */
+/**
+ * A fake Godot whose `--import` writes a `.uid` for each `.gd` of the project that has none, as Godot does, and fails
+ * while `<godot>.fail` exists.
+ */
+const IMPORT = `
+if [ -f "$0.fail" ]; then echo "import broke" >&2; exit 3; fi
+proj="$3"
+find "$proj" -path "$proj/addons" -prune -o -path "$proj/.godot" -prune -o -name '*.gd' -print | while read f; do [ -f "$f.uid" ] || echo uid > "$f.uid"; done
+`;
+
+let godot = '';
+
+/** A release folder with a contract tool whose base proto holds `proto`, and the Godot client whose `engine.json` meta sync reads. */
 async function release(ws: TestWorkspace, version: string, proto: string, coreSettings: Record<string, unknown>): Promise<string> {
   const src = join(ws.root, `src-${version}`);
   writeFiles(src, { 'bin/contract-tool.js': CONTRACT_TOOL, 'proto/ogw/core.proto': proto });
   const dir = join(ws.root, `remote-${version}`);
   await writeTgz(join(dir, 'contract-tool.tgz'), src, ['bin/contract-tool.js', 'proto/ogw/core.proto']);
   writeFiles(dir, { 'core-settings.json': coreSettings, 'core-spec.json': specJson(version) });
+  writeFileSync(join(dir, 'client-godot.zip'), storedZip({ 'engine.json': JSON.stringify({ godot: '4.5.1.stable' }) }));
   const assets: Record<string, string> = {};
   for (const name of readdirSync(dir)) assets[name] = sha256(readFileSync(join(dir, name)));
   writeFiles(dir, { 'manifest.json': { version, assets, coreSchemaVersion: 1 } });
@@ -82,7 +101,19 @@ function toolLog(path: string): ToolCall[] {
   return readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as ToolCall);
 }
 
+/** A static check result with `failures` at `where`, of which the `absent` ones are absence failures. */
+function staticResult(failures: { where: string; message: string; absent?: true }[]): StaticCheckDetail {
+  const all = failures.map(({ where, message }) => ({ where, message, evidence: [] }));
+  return {
+    result: { name: 'static check', platform: null, result: all.length > 0 ? 'fail' : 'pass', failures: all, warnings: [] },
+    absent: all.filter((_f, i) => failures[i]?.absent === true),
+  };
+}
+
 beforeEach(() => {
+  godot = fakeProgram(mkdtempSync(join(tmpdir(), 'ogw-godot-')), 'godot', IMPORT);
+  vi.mocked(requireEngine).mockReset().mockResolvedValue(godot);
+  vi.mocked(staticCheckDetail).mockReset().mockResolvedValue(staticResult([]));
   vi.mocked(installEngines).mockReset().mockResolvedValue(undefined);
   vi.mocked(generateCheckout).mockReset().mockImplementation(generateWrites);
   vi.mocked(runData).mockReset().mockResolvedValue({ exitCode: 0, lines: [], stderr: '' });
@@ -119,8 +150,14 @@ describe('ogw core upgrade', () => {
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.2.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.2.0\n' });
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.2.0', engine: 'godot' });
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual(['core upgrade: 1.0.0 -> 1.2.0', '', 'client/generated/contract/core_contract.gd', 'generated.txt', 'settings.json']);
+    // the meta sync of the hook gives the new script of the commit its meta file
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual([
+      'core upgrade: 1.0.0 -> 1.2.0', '', 'client/generated/contract/core_contract.gd', 'client/generated/contract/core_contract.gd.uid', 'generated.txt', 'settings.json',
+    ]);
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([' M records/request.md', '?? lead.md', '?? notes.txt']);
+    // a game with no static check failure prints none
+    expect(staticCheckDetail).toHaveBeenCalledTimes(1);
+    expect(run.stderr).not.toMatch(/^(settings\.json|client\/)/m);
     expect(readdirSync(ws.coreReleases)).toContain('1.2.0');
     expect(installEngines).toHaveBeenCalledTimes(1);
     expect(vi.mocked(installEngines).mock.calls[0]?.[1]).toBe('g');
@@ -256,11 +293,11 @@ describe('ogw core upgrade', () => {
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
-  it('runs the data tool, then the contract tool on what it wrote, and commits their output, so that a base proto change passes the pre-commit hook', async () => {
+  it('runs the data tool, then the contract tool on what it wrote, and commits their output, so that the commit holds the contract code of the new data', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
     const dir = makeGame(ws, 'g', {
-      'settings.json': { coreVersion: '1.0.0' },
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
       'client/generated/contract/core_contract.gd': 'old proto',
       'server/generated/data/game_data.proto': 'old tables',
       'data/translations/en.csv': 'old hash',
@@ -269,13 +306,11 @@ describe('ogw core upgrade', () => {
       writeFiles(game.root, { 'server/generated/data/game_data.proto': 'new tables', 'data/translations/en.csv': 'new hash' });
       return Promise.resolve({ exitCode: 0, lines: [], stderr: '' });
     });
-    const hook = join(dir, '.git', 'hooks', 'pre-commit');
-    // The check of the real hook: what `client/core` reads and `generated diff` compares is staged, from the new data.
-    writeFileSync(hook, '#!/bin/sh\ngit show :client/generated/contract/core_contract.gd | grep -q "new proto new tables"\n');
-    chmodSync(hook, 0o755);
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
     expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toEqual(expect.arrayContaining(['client/generated/contract/core_contract.gd', 'server/generated/data/game_data.proto', 'data/translations/en.csv']));
+    // what `client/core` reads and `generated diff` compares is committed, from the new data
+    expect(sh(dir, 'git', ['show', 'HEAD:client/generated/contract/core_contract.gd'])).toBe('new proto new tables');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
@@ -283,8 +318,9 @@ describe('ogw core upgrade', () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
     const dir = makeGame(ws, 'g', {
-      'settings.json': { coreVersion: '1.0.0' },
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
       'client/generated/contract/core_contract.gd': 'old proto',
+      'client/generated/contract/core_contract.gd.uid': 'uid',
       'server/generated/data/game_data.proto': 'old tables',
       'data/system/reserved_id.csv': 'key,id\n',
     });
@@ -299,14 +335,12 @@ describe('ogw core upgrade', () => {
       writeFiles(game.root, { 'data/system/reserved_id.csv': 'key,id\n[iap_grant_mail],\n', 'data/made.csv': 'made' });
       return Promise.resolve({ exitCode: 1, lines: [{ level: 'ERROR', code: 'empty_required', where: 'data/system/reserved_id.csv:2:3', message: '[iap_grant_mail]', text }], stderr: '' });
     });
-    const hook = join(dir, '.git', 'hooks', 'pre-commit');
-    // The real hook refuses an error at a staged file.
-    writeFileSync(hook, '#!/bin/sh\nif git diff --cached --name-only | grep -q "^data/"; then echo refused >&2; exit 1; fi\n');
-    chmodSync(hook, 0o755);
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
     expect(run.stderr).toContain(text);
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n')).toContain('client/generated/contract/core_contract.gd');
+    const committed = sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n');
+    expect(committed).toContain('client/generated/contract/core_contract.gd');
+    expect(committed.filter((path) => path.startsWith('data/'))).toEqual([]);
     expect(sh(dir, 'git', ['show', 'HEAD:client/generated/core_settings.json'])).toBe('new settings');
     expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('new proto old tables');
     expect(readFileSync(join(dir, 'data/system/reserved_id.csv'), 'utf8')).toBe('key,id\n');
@@ -316,11 +350,80 @@ describe('ogw core upgrade', () => {
   it('prints a contract violation and goes on with the contract code of HEAD, which writes no file', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto RULE', {}) });
-    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto' });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0', engine: 'godot' }, 'client/generated/contract/core_contract.gd': 'old proto' });
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
     expect(run.stderr).toContain('contract/service.proto:2:1 ERROR rule');
     expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('old proto');
+  });
+
+  it('commits content that the pre-commit hook refuses, with the meta files of a new core script, and prints the failures the hook would refuse it for', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot', supportedLanguages: ['en', 'ko'] },
+      'client/core/log_core/log_core.gd': 'class_name LogCore\n',
+      'client/core/log_core/log_core.gd.uid': 'uid://log',
+      'client/features/play/play.gd': 'class_name Play\n',
+      'client/features/play/play.gd.uid': 'uid://play',
+    });
+    // the hook of a game made before the rules of the new core: its static check refuses the content of the upgrade
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\necho "settings.json:1: game settings owner: refused" >&2\nexit 1\n');
+    chmodSync(hook, 0o755);
+    // a script the lead agent staged meanwhile stays out of the commit, with the meta file the sync stages for it
+    writeFiles(dir, { 'client/features/lead/lead.gd': 'class_name Lead\n' });
+    sh(dir, 'git', ['add', 'client/features/lead/lead.gd']);
+    vi.mocked(generateCheckout).mockImplementationOnce(async (c, game) => {
+      writeFiles(game.root, { 'client/core/new_core/new_core.gd': 'class_name NewCore\n' });
+      const applied = await generateWrites(c, game);
+      return { ...applied, written: [...applied.written, 'client/core/new_core/new_core.gd'] };
+    });
+    let checked = '';
+    vi.mocked(staticCheckDetail).mockImplementationOnce((_c, game) => {
+      checked = sh(game.root, 'git', ['log', '-1', '--format=%s']).trim();
+      return Promise.resolve(staticResult([
+        { where: 'settings.json:1', message: 'game settings owner: ogw game check: uiCheckScreens.0.pixelRatio: missing' },
+        { where: 'settings.json:4', message: 'option entry: no `BootstrapCore.request_restart` call in client content code' },
+        { where: 'client/core/new_core:1', message: 'an absence failure in a folder of the commit', absent: true },
+        { where: 'client/core/new_core:1', message: 'a failure at a folder of the commit' },
+        { where: 'client/features:1', message: 'option entry: no `AuthCore.open_terms_document` call in client content code', absent: true },
+        { where: 'client/features/play/play.gd:1', message: 'a failure at a file the commit does not change' },
+      ]));
+    });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual([
+      'core upgrade: 1.0.0 -> 1.1.0',
+      '',
+      'client/core/new_core/new_core.gd',
+      'client/core/new_core/new_core.gd.uid',
+      'client/generated/contract/core_contract.gd',
+      'client/generated/contract/core_contract.gd.uid',
+      'generated.txt',
+      'settings.json',
+    ]);
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['A  client/features/lead/lead.gd', 'A  client/features/lead/lead.gd.uid']);
+    // the static check of the hook ran on the upgraded checkout, and what the hook would refuse the commit for is printed
+    expect(checked).toBe('core upgrade: 1.0.0 -> 1.1.0');
+    expect(run.stderr.split('\n').filter((line) => /^(settings\.json|client\/)/.test(line))).toEqual([
+      'settings.json:1: game settings owner: ogw game check: uiCheckScreens.0.pixelRatio: missing',
+      'settings.json:4: option entry: no `BootstrapCore.request_restart` call in client content code',
+      'client/core/new_core:1: an absence failure in a folder of the commit',
+    ]);
+  });
+
+  it('stays committed and prints the reason when the static check of the upgraded checkout cannot run', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0', engine: 'godot' } });
+    vi.mocked(staticCheckDetail).mockRejectedValueOnce(new Error('godot 4.5.1.stable is not installed'));
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
+    expect(run.stderr).toContain('static check of the upgraded checkout could not run: godot 4.5.1.stable is not installed\n');
+    expect(sh(dir, 'git', ['log', '-1', '--format=%s']).trim()).toBe('core upgrade: 1.0.0 -> 1.1.0');
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.1.0', engine: 'godot' });
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
   it('changes nothing when what it regenerates from has uncommitted changes', async () => {
@@ -338,17 +441,20 @@ describe('ogw core upgrade', () => {
     expect(generateCheckout).not.toHaveBeenCalled();
   });
 
-  it('puts back settings.json, what the tools wrote and the index when the pre-commit hook refuses the commit', async () => {
+  it('puts back settings.json, what the tools wrote and the index when the meta sync of the commit fails', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
-    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'client/generated/contract/core_contract.gd': 'old proto', 'generated.txt': 'generated 1.0.0' });
-    const hook = join(dir, '.git', 'hooks', 'pre-commit');
-    writeFileSync(hook, '#!/bin/sh\necho refused >&2\nexit 1\n');
-    chmodSync(hook, 0o755);
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
+      'client/generated/contract/core_contract.gd': 'old proto',
+      'client/generated/contract/core_contract.gd.uid': 'uid',
+      'generated.txt': 'generated 1.0.0',
+    });
+    writeFileSync(`${godot}.fail`, '');
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run.code).toBe(1);
-    expect(run.stderr).toContain('refused');
-    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0' });
+    expect(run.stderr).toContain('godot --import failed (3): import broke');
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0', engine: 'godot' });
     expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('old proto');
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
     // a file the tools made that HEAD does not have goes too
@@ -358,6 +464,7 @@ describe('ogw core upgrade', () => {
     });
     expect((await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } })).code).toBe(1);
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
+    expect(staticCheckDetail).not.toHaveBeenCalled();
   });
 
   it('on a failure puts back only coreVersion, and keeps a game settings value written while the upgrade ran', async () => {
@@ -451,7 +558,7 @@ describe('ogw core upgrade', () => {
       'v1.1.0': await release(ws, '1.1.0', 'RULE', {}),
       'v1.2.0': await release(ws, '1.2.0', 'RULE BREAK', {}),
     });
-    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' }, 'server/generated/contract/contract_version': '1\n' });
+    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0', engine: 'godot' }, 'server/generated/contract/contract_version': '1\n' });
     sh(dir, 'git', ['tag', 'prod-1.0.0']);
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: log } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\nskipped: 1.2.0\n' });

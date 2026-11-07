@@ -157,22 +157,42 @@ async function restage(project: MetaProject, staged: readonly string[], env: Nod
   return { staged: [...plan.add, ...plan.drop].sort(), reverted: plan.reverted };
 }
 
+/** What a sync of the staged files did, as checkout-relative paths. */
+export interface StagedSync {
+  /** Whether `godot --import` ran. */
+  imported: boolean;
+  /** Meta files deleted because their source file is gone. */
+  removed: string[];
+  /** Meta files staged or removed from the index with their staged source. */
+  staged: string[];
+  /** Meta files put back to HEAD because their source has no staged change. */
+  reverted: string[];
+}
+
+/**
+ * `ogw meta sync <game|core> --staged` (ogw.md `## meta sync`) on the index that `env` names: the sync of the pre-commit
+ * hook, and of the commit of `ogw core upgrade`, which skips the hook.
+ */
+export async function syncStaged(ctx: Context, project: MetaProject, env: NodeJS.ProcessEnv): Promise<StagedSync> {
+  const staged = await stagedPaths(project.repo, { env });
+  // only a staged engine resource needs an import; the meta files are lined up with their sources on every commit
+  const imported = staged.some((path) => isEngineResource(project, path));
+  if (imported) await importProject(ctx, project);
+  const removed = await removeOrphanMeta(project);
+  return { imported, removed, ...(await restage(project, staged, env)) };
+}
+
 export const sync: CommandDef = {
   name: ['meta', 'sync'],
   usage: 'ogw meta sync <game|core> --staged',
   options: { staged: { type: 'boolean' } },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, this.usage);
-    // the pre-commit hook's sync of the commit's staged files is the only sync (ogw.md `## meta sync`)
+    // the sync of a commit's staged files is the only sync (ogw.md `## meta sync`)
     if (!flag(args, 'staged')) throw new OgwError(`usage: ${this.usage}`);
     const target = positional(args, 0, 'game or core');
     const project = target === 'core' ? await coreProject(ctx) : await gameProject(ctx, target);
-    const staged = await stagedPaths(project.repo, { env: ctx.env });
-    // only a staged engine resource needs an import; the meta files are lined up with their sources on every commit
-    const imported = staged.some((path) => isEngineResource(project, path));
-    if (imported) await importProject(ctx, project);
-    const removed = await removeOrphanMeta(project);
-    const changes = await restage(project, staged, ctx.env);
+    const { imported, removed, ...changes } = await syncStaged(ctx, project, ctx.env);
     const lines = [
       ...removed.map((path) => `removed ${path}`),
       ...changes.staged.map((path) => `staged ${path}`),
