@@ -11,6 +11,7 @@ import { runCall, STANDARD_JOBS, standardImage, type CallInput, type StandardJob
 import { PROVIDER_PROMPT } from '../../../src/commands/generation/measure.ts';
 import { createContext, type Context } from '../../../src/lib/command.ts';
 import { withMethodLock } from '../../../src/commands/generation/lib/install.ts';
+import { installFolder, installFolderOf, writeInstall, type MethodLike } from './install-folder.ts';
 import type { GenerationMethod, HarnessSettings } from '../../../src/lib/settings.ts';
 import { LIMITS } from '../../../src/lib/limits.ts';
 import { withWriterWithin } from '../../../src/lib/rwlock.ts';
@@ -91,7 +92,7 @@ describe.runIf(process.platform === 'darwin')('ogw generation measure', () => {
     expect(flux?.steps[0]?.maxMemoryBytes).toBeGreaterThan(0);
     expect(flux?.steps[0]?.jobMs).toBeGreaterThanOrEqual(0);
     const out = flux?.steps[1]?.output as string;
-    expect(out).toBe(join(ws.root, '.ogw', 'generation', 'flux2-klein', 'measure', '1024', 'out'));
+    expect(out).toBe(join(await installFolderOf(ws, 'flux2-klein', env), 'measure', '1024', 'out'));
     expect(readFileSync(join(out, 'result.txt'), 'utf8')).toBe('1024|fixed prompt|1');
     expect(readFileSync(join(out, '..', 'input.png')).subarray(1, 4).toString()).toBe('PNG');
     expect(result.methods['moss-sfx']?.steps.map((s) => [s.durationMs, s.result])).toEqual([[1000, 'timeout']]);
@@ -420,7 +421,7 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     setJob('audio', job(3));
     expect((await ogw(ws, [...args, '--out', join(ws.root, 'o2')], { env })).code).toBe(1);
     const temp = realpathSync(join(ws.harness, '.git', 'ogw-temp'));
-    const dir = join(ws.root, '.ogw', 'generation', 'audio');
+    const dir = await installFolderOf(ws, 'audio', env);
     for (const [i, file] of prompts.entries()) {
       expect(readFileSync(join(ws.root, `o${String(i + 1)}`, 'seen.txt'), 'utf8')).toBe('a knight');
       expect(dirname(dirname(file))).toBe(temp);
@@ -517,13 +518,9 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
   });
 });
 
-/** Writes the install marker of a method so it counts as installed from its pins. */
-function installed(ws: TestWorkspace, method: Record<string, unknown>, patch: Record<string, unknown> = {}): void {
-  const dir = join(ws.root, '.ogw', 'generation', method.name as string);
-  mkdirSync(dir, { recursive: true });
-  // `ffmpeg: null` matches a workspace without tools.ffmpeg installed.
-  const marker = { name: method.name, pins: JSON.stringify(method.pins ?? []), git: [], hf: [], files: null, python: null, cli: null, skill: null, ffmpeg: null, ...patch };
-  writeFileSync(join(dir, 'installed.json'), JSON.stringify(marker));
+/** Writes the install marker of a method into its install folder so it counts as installed from its pins. */
+async function installed(ws: TestWorkspace, method: Record<string, unknown>, patch: Record<string, unknown> = {}): Promise<void> {
+  await writeInstall(ws, method as MethodLike, patch);
 }
 
 /** A provider CLI that logs its arguments; `FAKE_MODE` fail exits 3, sleep sleeps, else it writes the `--out` image. */
@@ -546,7 +543,7 @@ function providerCli(ws: TestWorkspace): string {
   return file;
 }
 
-function external(name: string, provider?: string): Record<string, unknown> {
+function external(name: string, provider?: string): MethodLike {
   return {
     name,
     kind: 'external-service',
@@ -577,18 +574,18 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
   it('calls only the allowed external-service methods, with the provider CLI and no cost', async () => {
     const { ws, env } = workspace([external('codex-gen', 'codex'), external('grok-gen', 'grok'), external('keyed'), external('missing', 'codex')]);
     const cli = providerCli(ws);
-    installed(ws, external('codex-gen', 'codex'), { cli });
-    installed(ws, external('grok-gen', 'grok'), { cli });
+    await installed(ws, external('codex-gen', 'codex'), { cli });
+    await installed(ws, external('grok-gen', 'grok'), { cli });
     const run = await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen,keyed,missing', '--json'], { env });
     expect(run.code).toBe(0);
     const result = JSON.parse(run.stdout) as Measured;
-    const out = join(ws.root, '.ogw', 'generation', 'codex-gen', 'measure', 'single', 'out');
+    const out = join(await installFolder(ws, external('codex-gen', 'codex')), 'measure', 'single', 'out');
     expect(result.methods['codex-gen']).toEqual({
       kind: 'external-service',
       steps: [{ result: 'ok', maxMemoryBytes: null, output: out, blocked: [], jobMs: expect.any(Number) as number, costUsd: 0 }],
       error: null,
     });
-    const prompt = join(ws.root, '.ogw', 'generation', 'codex-gen', 'measure', 'single', 'prompt.txt');
+    const prompt = join(await installFolder(ws, external('codex-gen', 'codex')), 'measure', 'single', 'prompt.txt');
     expect(readFileSync(join(ws.root, 'cli-args.txt'), 'utf8')).toBe(`gen --provider codex --prompt-file ${prompt} --out ${join(out, 'image.png')} --transparent\n`);
     expect(readFileSync(prompt, 'utf8')).toBe(PROVIDER_PROMPT);
     expect(PROVIDER_PROMPT).toBe('A small red apple game item, centered, front view.');
@@ -601,8 +598,8 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
 
   it('keeps the earlier item of a method that a run does not call, and writes not called for one without an item', async () => {
     const { ws, env } = workspace([external('codex-gen', 'codex'), external('grok-gen', 'grok')]);
-    installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
-    installed(ws, external('grok-gen', 'grok'), { cli: providerCli(ws) });
+    await installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
+    await installed(ws, external('grok-gen', 'grok'), { cli: providerCli(ws) });
     const earlier = { kind: 'external-service', steps: [{ result: 'ok', maxMemoryBytes: null, output: null, blocked: [], jobMs: 5, costUsd: 0 }], error: null };
     writeMeasure(ws, { 'codex-gen': earlier });
     const run = await ogw(ws, ['generation', 'measure'], { env });
@@ -613,14 +610,14 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     // a call replaces the kept item, and a later run that does not call it keeps the new one
     await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen'], { env });
     const called = readMeasure(ws).methods['codex-gen'];
-    expect(called?.steps[0]?.output).toBe(join(ws.root, '.ogw', 'generation', 'codex-gen', 'measure', 'single', 'out'));
+    expect(called?.steps[0]?.output).toBe(join(await installFolder(ws, external('codex-gen', 'codex')), 'measure', 'single', 'out'));
     await ogw(ws, ['generation', 'measure', 'codex-gen'], { env });
     expect(readMeasure(ws).methods['codex-gen']).toEqual(called);
   });
 
   it('keeps no earlier item without a stage, and no earlier item of a method the run calls or cannot call', async () => {
     const { ws, env } = workspace([external('codex-gen', 'codex'), external('gone', 'codex'), external('keyed')]);
-    installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
+    await installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
     const stage = { kind: 'external-service', steps: [{ result: 'ok', maxMemoryBytes: null, output: null, blocked: [], jobMs: 5, costUsd: 0 }], error: null };
     const stageless = { kind: 'external-service', steps: [], error: 'not installed as pinned: run ogw generation install' };
     writeMeasure(ws, { 'codex-gen': stageless, gone: stage, keyed: stage });
@@ -637,7 +634,7 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
 
   it('records a failed or timed out provider call', async () => {
     const { ws, env } = workspace([external('codex-gen', 'codex')]);
-    installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
+    await installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws) });
     const measure = async (mode: string): Promise<Record<string, unknown> | undefined> =>
       (JSON.parse((await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen', '--json'], { env: { ...env, FAKE_MODE: mode } })).stdout) as Measured).methods['codex-gen']?.steps[0];
     // the last 20 lines of the call's stderr go to `error`, on failed and on timeout
@@ -649,7 +646,7 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     expect(slow).toMatchObject({ result: 'timeout', error: 'waiting for the provider' });
     expect(slow).not.toHaveProperty('detail');
     // a failure without program output says why in `detail`
-    const out = join(ws.root, '.ogw', 'generation', 'codex-gen', 'measure', 'single', 'out');
+    const out = join(await installFolder(ws, external('codex-gen', 'codex')), 'measure', 'single', 'out');
     expect(await measure('noimage')).toMatchObject({ result: 'failed', detail: `${join(out, 'image.png')} was not written` });
     expect(await measure('silent')).toMatchObject({ result: 'failed', detail: 'exited with code 4' });
     const text = await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen'], { env: { ...env, FAKE_MODE: 'fail' } });
@@ -669,7 +666,7 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     const flux = (measured: unknown[]): Record<string, unknown> => ({ name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins: [], measured });
     const okRun = workspace([flux([{ resolution: 512, result: 'ok' }]), rig]);
     const result = JSON.parse((await ogw(okRun.ws, ['generation', 'measure', '--json'], { env: okRun.env })).stdout) as Measured;
-    const work = join(okRun.ws.root, '.ogw', 'generation', 'rig-2d', 'measure', 'single');
+    const work = join(await installFolder(okRun.ws, rig, okRun.env), 'measure', 'single');
     expect(result.methods['rig-2d']).toEqual({ kind: 'procedural', steps: [{ result: 'ok', maxMemoryBytes: null, output: work, blocked: [], jobMs: expect.any(Number) as number }], error: null });
     expect(existsSync(join(work, 'mesh', 'arm.mesh.json'))).toBe(true);
     expect(existsSync(join(work, 'split', 'rig-split.json'))).toBe(true);
@@ -733,13 +730,13 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     const flux = { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', pins: [], measured: [{ resolution: 512, result: 'ok' }] };
     const { ws, env } = workspace([flux, rig]);
     const ctx = createContext({ cwd: ws.root, env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    const work = join(ws.root, '.ogw', 'generation', 'rig-2d', 'measure', 'single');
+    const work = join(await installFolder(ws, rig, env), 'measure', 'single');
     let release = (): void => undefined;
     let acquired = (): void => undefined;
     const held = new Promise<void>((resolve) => {
       acquired = resolve;
     });
-    const holding = withMethodLock(ctx, 'rig-2d', () => {
+    const holding = withMethodLock(ctx, rig as unknown as Parameters<typeof withMethodLock>[1], () => {
       acquired();
       return new Promise<void>((resolve) => {
         release = resolve;

@@ -75,7 +75,7 @@ const BLENDER_SCRIPT = [
 
 const DEVICE = 'device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"';
 
-/** Python drivers by name, which the tool writes into `<method folder>/drivers/` (`driverFile`). */
+/** Python drivers by name, which the tool writes into `<install folder>/drivers/` (`driverFile`). */
 export const DRIVERS: Record<string, string> = {
   rembg: [
     'import sys',
@@ -312,7 +312,7 @@ async function driver(input: CallInput, name: string): Promise<string> {
 }
 
 /**
- * Environment of a local-model call: `HOME` in the method folder, the Hugging Face cache there with every
+ * Environment of a local-model call: `HOME` in the install folder of the method, the Hugging Face cache there with every
  * hf pin linked as `models--<org>--<name>/snapshots/<revision>`, offline Hugging Face, and the first git
  * pin checkout on `PYTHONPATH`.
  */
@@ -606,7 +606,7 @@ export async function runCall(
   outputs?: readonly string[],
 ): Promise<MeasuredRun> {
   const outs = outsOf(out);
-  const dir = await methodDir(ctx, method.name);
+  const dir = await methodDir(ctx, method);
   const started = Date.now();
   const blocked: string[] = [];
   let maxMemoryBytes: number | null = null;
@@ -630,14 +630,14 @@ export async function runCall(
   return { jobMs: Date.now() - started, result, maxMemoryBytes, output: outs[0] as string, blocked, ...(error === null ? {} : { error }) };
 }
 
-/** Runs one stage of the standard test job of a method under the lock of the method folder. */
+/** Runs one stage of the standard test job of a method under the lock of the install folder of the method. */
 export function runStandardStage(ctx: Context, method: GenerationMethod, stage: StageValues): Promise<MeasuredRun> {
-  return withMethodLock(ctx, method.name, () => runStandardStageLocked(ctx, method, stage));
+  return withMethodLock(ctx, method, () => runStandardStageLocked(ctx, method, stage));
 }
 
 async function runStandardStageLocked(ctx: Context, method: GenerationMethod, stage: StageValues): Promise<MeasuredRun> {
   const job = standardJob(method.name);
-  const dir = await methodDir(ctx, method.name);
+  const dir = await methodDir(ctx, method);
   const label = [stage.resolution, stage.durationMs].filter((v) => v !== undefined).join('-') || 'single';
   const work = join(dir, 'measure', label);
   await rm(work, { recursive: true, force: true });

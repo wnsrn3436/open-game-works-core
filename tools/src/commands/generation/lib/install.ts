@@ -1,5 +1,5 @@
-import { chmod, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { chmod, copyFile, link, mkdir, readdir, readFile, realpath, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { gitRaw } from '../../../lib/git.ts';
@@ -16,7 +16,7 @@ import { net, requestJson } from '../../env/lib/net.ts';
 import type { InstallEntry } from '../../env/lib/results.ts';
 import { byteCompare } from '../../../lib/order.ts';
 
-/** `installed.json` of a generation method folder, written last. */
+/** `installed.json` of the install folder of a generation method, written last. */
 export interface MethodMarker {
   name: string;
   /** JSON of the method `pins` the folder was installed from. */
@@ -33,49 +33,90 @@ export interface MethodMarker {
   cli: string | null;
   /** `SKILL.md` of the git repository of a `provider` external-service. */
   skill: string | null;
-  /** The `tools.ffmpeg` program whose folder the `cli` puts at the front of PATH. */
+  /** The real path of the `tools.ffmpeg` program whose folder the `cli` puts at the front of PATH. */
   ffmpeg?: string | null;
 }
 
-export async function methodDir(ctx: Context, name: string): Promise<string> {
-  return join(await dataDir(ctx), 'generation', safeSegment(name));
+/** The real path of `path`: of its deepest existing folder, with the rest of the path after it. */
+async function realPathOf(path: string): Promise<string> {
+  const real = await realpath(path).catch(() => null);
+  if (real !== null) return real;
+  const parent = dirname(path);
+  return parent === path ? path : join(await realPathOf(parent), basename(path));
 }
 
-/**
- * True when the marker was installed from these pins. An hf `sha256` added after the install that equals the
- * SHA-256 of the files the install got keeps the install, so the `sha256:<method>` proposal does not download again.
- */
-export function installedFrom(marker: MethodMarker, pins: readonly GenerationPin[]): boolean {
-  if (marker.pins === JSON.stringify(pins)) return true;
-  let hf = 0;
-  const beforeAdded = pins.map((pin) => {
-    if (pin.kind !== 'hf') return pin;
-    const digest = marker.hf[hf++]?.sha256;
-    if (pin.sha256 === undefined || pin.sha256 !== digest) return pin;
+/** `.ogw/generation/` of the workspace root by its real path (ogw.md `## generation install`). */
+async function generationDir(ctx: Context): Promise<string> {
+  return realPathOf(join(await dataDir(ctx), 'generation'));
+}
+
+/** The `tools.ffmpeg` program a method's `cli` puts on PATH, by its real path: for a method with `provider`, else null. */
+async function cliFfmpeg(ctx: Context, method: GenerationMethod): Promise<string | null> {
+  if (method.provider === undefined) return null;
+  const program = await toolProgram(ctx, 'ffmpeg');
+  return program === null ? null : realPathOf(program);
+}
+
+/** The pins with the `sha256` of each hf pin left out: an hf `sha256` checks the files, it does not choose them. */
+function withoutHfSha256(pins: readonly GenerationPin[]): GenerationPin[] {
+  return pins.map((pin) => {
+    if (pin.kind !== 'hf' || pin.sha256 === undefined) return pin;
     const rest: GenerationPin = { ...pin };
     delete rest.sha256;
     return rest;
   });
-  return marker.pins === JSON.stringify(beforeAdded);
+}
+
+/** The install key of a method on this checkout (ogw.md `## generation install`). */
+export async function installKey(ctx: Context, method: GenerationMethod): Promise<string> {
+  const identity = JSON.stringify({ pins: withoutHfSha256(method.pins ?? []), ffmpeg: await cliFfmpeg(ctx, method) });
+  return sha256Text(identity).slice(0, 16);
+}
+
+/** The install folder of a method on this checkout: `.ogw/generation/<method>/<install key>/` by its real path. */
+export async function methodDir(ctx: Context, method: GenerationMethod): Promise<string> {
+  return join(await generationDir(ctx), safeSegment(method.name), await installKey(ctx, method));
+}
+
+/** Each hf pin of `pins` with a `sha256` that differs from the SHA-256 of the files of that pin the install of `marker` got. */
+function hfDigestMismatches(marker: MethodMarker, pins: readonly GenerationPin[]): { pin: GenerationPin; digest: string | undefined; dir: string | undefined }[] {
+  let hf = 0;
+  return pins.flatMap((pin) => {
+    if (pin.kind !== 'hf') return [];
+    const got = marker.hf[hf++];
+    return pin.sha256 !== undefined && pin.sha256 !== got?.sha256 ? [{ pin, digest: got?.sha256, dir: got?.dir }] : [];
+  });
 }
 
 /**
- * The method's install marker when it was installed from its current pins and, for a `provider` method, its
- * `cli` puts the currently installed `tools.ffmpeg` on PATH.
+ * True when the marker was installed from these pins: the pins are the same with every hf `sha256` left out, and each hf
+ * `sha256` of these pins is the SHA-256 of the files the install got. So an hf `sha256` added after the install, as the
+ * `sha256:<method>` proposal adds it, keeps the install.
  */
+export function installedFrom(marker: MethodMarker, pins: readonly GenerationPin[]): boolean {
+  let pinned: unknown;
+  try {
+    pinned = JSON.parse(marker.pins);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(pinned) || JSON.stringify(withoutHfSha256(pinned as GenerationPin[])) !== JSON.stringify(withoutHfSha256(pins))) return false;
+  return hfDigestMismatches(marker, pins).length === 0;
+}
+
+/** The method's install marker, when its install folder on this checkout holds an install of its current pins. */
 export async function methodMarker(ctx: Context, method: GenerationMethod): Promise<MethodMarker | null> {
-  const marker = await readJsonIfExists<MethodMarker>(join(await methodDir(ctx, method.name), 'installed.json'));
-  if (!marker || !installedFrom(marker, method.pins ?? [])) return null;
-  if (marker.cli !== null && marker.ffmpeg !== (await toolProgram(ctx, 'ffmpeg'))) return null;
+  const marker = await readJsonIfExists<MethodMarker>(join(await methodDir(ctx, method), 'installed.json')).catch(() => null);
+  if (!marker || marker.name !== method.name || !installedFrom(marker, method.pins ?? [])) return null;
   return marker;
 }
 
 /**
- * Runs `fn` under the lock of the method folder. `generation install` holds it while it empties and refills the
- * folder; `generation run` and `generation measure` hold it while a call uses the folder.
+ * Runs `fn` under the lock of the method's install folder. `generation install` holds it while it empties and refills
+ * the folder; `generation run` and `generation measure` hold it while a call uses the folder.
  */
-export async function withMethodLock<T>(ctx: Context, name: string, fn: () => Promise<T>): Promise<T> {
-  return withLock(installLockPath(await methodDir(ctx, name)), fn, LIMITS.jobMs);
+export async function withMethodLock<T>(ctx: Context, method: GenerationMethod, fn: () => Promise<T>): Promise<T> {
+  return withLock(installLockPath(await methodDir(ctx, method)), fn, LIMITS.jobMs);
 }
 
 /** True for the kinds `generation install` downloads pins for. */
@@ -201,11 +242,23 @@ async function reuseFile(from: string, to: string, expected: string): Promise<bo
 }
 
 /**
+ * Puts at `to` the file `from` of another install when its SHA-256 is `expected`: a hard link, or a copy when no hard
+ * link can be made. The other install keeps its file. True when put.
+ */
+async function linkFile(from: string, to: string, expected: string): Promise<boolean> {
+  if (!exists(from) || (await sha256File(from)) !== expected) return false;
+  await mkdir(dirname(to), { recursive: true });
+  await rm(to, { force: true });
+  await link(from, to).catch(() => copyFile(from, to));
+  return true;
+}
+
+/**
  * Downloads the wanted files of an hf pin. Files without an LFS SHA-256 (small text files) come first, so a pin whose
  * SHA-256 cannot match fails before any large file is downloaded; each LFS file is checked against its published
- * SHA-256 as soon as it arrives. An LFS file in the folder `reuse` whose SHA-256 is the published one is moved into
- * place instead of downloaded; its other files at the paths of wanted files are removed. `lfs` receives the path of
- * each LFS file in place whose SHA-256 is the published one.
+ * SHA-256 as soon as it arrives. An LFS file whose SHA-256 is the published one is taken instead of downloaded: from
+ * the folder `reuse.kept` (moved; its other files at the paths of wanted files are removed), else from a folder of
+ * `reuse.others` (linked). `lfs` receives the path of each LFS file in place whose SHA-256 is the published one.
  */
 async function downloadHfFiles(
   pin: GenerationPin,
@@ -214,7 +267,7 @@ async function downloadHfFiles(
   headers: Record<string, string> | undefined,
   wanted: readonly string[],
   info: HfInfo,
-  reuse: string | null,
+  reuse: HfReuse,
   lfs: string[],
 ): Promise<{ path: string; sha256: string }[]> {
   const published = new Map((info.siblings ?? []).flatMap((s) => (s.lfs?.sha256 === undefined ? [] : [[s.rfilename, s.lfs.sha256] as const])));
@@ -224,12 +277,12 @@ async function downloadHfFiles(
   const fetchFile = async (path: string): Promise<void> => {
     const file = join(dir, path);
     const expected = published.get(path);
-    if (expected !== undefined && reuse !== null && (await reuseFile(join(reuse, path), file, expected))) {
+    if (expected !== undefined && (await takeReused(reuse, path, file, expected))) {
       entries.push({ path, sha256: expected });
       lfs.push(path);
       return;
     }
-    if (reuse !== null) await rm(join(reuse, path), { force: true });
+    if (reuse.kept !== null) await rm(join(reuse.kept, path), { force: true });
     await net().download(`https://huggingface.co/${pin.source}/resolve/${revision}/${path.split('/').map(encodeURIComponent).join('/')}`, file, headers);
     const sha256 = await sha256File(file);
     if (expected !== undefined && sha256 !== expected) {
@@ -249,7 +302,23 @@ async function downloadHfFiles(
   return entries;
 }
 
-async function installHf(pin: GenerationPin, dir: string, token: string | null, reuse: string | null, lfs: string[]): Promise<MethodMarker['hf'][number]> {
+/**
+ * Where an install takes the LFS files of an hf pin from instead of downloading them: `kept`, the `.reuse/<pin index>`
+ * folder a failed install of the same install folder kept (moved), and `others`, the folders of that pin of other installs
+ * of the method (linked).
+ */
+interface HfReuse {
+  kept: string | null;
+  others: readonly string[];
+}
+
+async function takeReused(reuse: HfReuse, path: string, to: string, expected: string): Promise<boolean> {
+  if (reuse.kept !== null && (await reuseFile(join(reuse.kept, path), to, expected))) return true;
+  for (const folder of reuse.others) if (await linkFile(join(folder, path), to, expected)) return true;
+  return false;
+}
+
+async function installHf(pin: GenerationPin, dir: string, token: string | null, reuse: HfReuse, lfs: string[]): Promise<MethodMarker['hf'][number]> {
   if (pin.revision === undefined) throw new InstallFailure(`hf pin ${pin.source} has no revision`);
   const headers = token === null ? undefined : { Authorization: `Bearer ${token}` };
   const info = await hfInfo(pin, pin.revision, headers);
@@ -314,8 +383,8 @@ export function cliWrapper(ffmpegDir: string, target: string, windows: boolean):
   return `#!/bin/sh\nPATH=${sh(ffmpegDir)}:"$PATH"\nexport PATH\nexec ${sh(target)} "$@"\n`;
 }
 
-async function providerCli(ctx: Context, dir: string, gitDir: string, venv: string): Promise<{ cli: string; skill: string; ffmpeg: string }> {
-  const ffmpeg = await toolProgram(ctx, 'ffmpeg');
+async function providerCli(ctx: Context, method: GenerationMethod, dir: string, gitDir: string, venv: string): Promise<{ cli: string; skill: string; ffmpeg: string }> {
+  const ffmpeg = await cliFfmpeg(ctx, method);
   if (ffmpeg === null) throw new InstallFailure('tools.ffmpeg is not installed');
   const script = projectScript(await readFile(join(gitDir, 'pyproject.toml'), 'utf8').catch(() => ''));
   const skill = exists(join(gitDir, 'SKILL.md')) ? join(gitDir, 'SKILL.md') : await findFile(gitDir, (name, rel) => name === 'SKILL.md' && !rel.startsWith('.git/'));
@@ -335,8 +404,18 @@ interface Downloaded {
   files: string | null;
 }
 
-/** `reuse`: the `.reuse` folder of each hf pin index. `lfs` receives, by hf pin index, the checked LFS files in place. */
-async function downloadPins(ctx: Context, method: GenerationMethod, dir: string, reuse: ReadonlyMap<number, string>, lfs: Map<number, string[]>): Promise<Downloaded> {
+/**
+ * `reuse`: the `.reuse` folder of each hf pin index; `others`: the folders of each hf pin index in other installs of the
+ * method. `lfs` receives, by hf pin index, the checked LFS files in place.
+ */
+async function downloadPins(
+  ctx: Context,
+  method: GenerationMethod,
+  dir: string,
+  reuse: ReadonlyMap<number, string>,
+  others: ReadonlyMap<number, readonly string[]>,
+  lfs: Map<number, string[]>,
+): Promise<Downloaded> {
   const got: Downloaded = { git: [], hf: [], pip: [], files: null };
   for (const [index, pin] of (method.pins ?? []).entries()) {
     if (pin.kind === 'git') got.git.push(await installGit(pin, join(dir, 'git', String(index)), ctx.env));
@@ -345,7 +424,7 @@ async function downloadPins(ctx: Context, method: GenerationMethod, dir: string,
       const token = pin.secret === undefined ? null : ctx.secrets.get(harnessSecretService(pin.secret));
       const checked: string[] = [];
       lfs.set(index, checked);
-      got.hf.push(await installHf(pin, join(dir, 'hf', String(index)), token, reuse.get(index) ?? null, checked));
+      got.hf.push(await installHf(pin, join(dir, 'hf', String(index)), token, { kept: reuse.get(index) ?? null, others: others.get(index) ?? [] }, checked));
     }
     else if (pin.kind === 'pip') got.pip.push(...pipRequirements(pin.source));
     else {
@@ -364,7 +443,7 @@ async function installDownloaded(ctx: Context, method: GenerationMethod, dir: st
     if (gitDir === undefined) throw new InstallFailure('a provider method needs a git pin');
     const { venv, python } = await makeVenv(ctx, dir);
     await runOk('uv', ['pip', 'install', '--quiet', '--no-deps', '--python', python, gitDir, ...got.pip], options);
-    return { ...marker, python, ...(await providerCli(ctx, dir, gitDir, venv)) };
+    return { ...marker, python, ...(await providerCli(ctx, method, dir, gitDir, venv)) };
   }
   // A local-model call runs its git checkout from PYTHONPATH with the method's Python (`tools/ogw.md` `## generation call`).
   if (got.pip.length > 0 || (method.kind === 'local-model' && got.git.length > 0)) {
@@ -376,12 +455,29 @@ async function installDownloaded(ctx: Context, method: GenerationMethod, dir: st
 }
 
 /**
- * Installs the pins of one method into `.ogw/generation/<method>/` under the lock of the method folder. Reuses the
- * LFS files of the hf pins of the previous install, or of the hf files a failed install kept, with the same `source`
- * and `revision` (`keepHfFolders`). When it fails, keeps only the downloaded hf files (`keepHfFiles`).
+ * Installs the pins of one method into its install folder (`methodDir`) under the lock of that folder. Reuses the LFS
+ * files of the hf pins with the same `source` and `revision`: of the previous install of the folder or of the hf files
+ * a failed install kept (`keepHfFolders`), and of other installs of the method (`otherInstallHf`). When it fails, keeps
+ * only the downloaded hf files (`keepHfFiles`).
  */
 export function installMethod(ctx: Context, method: GenerationMethod): Promise<InstallEntry> {
-  return withMethodLock(ctx, method.name, () => installMethodLocked(ctx, method));
+  return withMethodLock(ctx, method, () => installMethodLocked(ctx, method));
+}
+
+/**
+ * The failure of an install into a folder whose install got hf files with another SHA-256 than the pinned one: that
+ * install is kept as it is (ogw.md `## generation install`). Null when the folder holds no such install.
+ */
+async function digestConflict(dir: string, pins: readonly GenerationPin[]): Promise<InstallEntry | null> {
+  const marker = await readJsonIfExists<MethodMarker>(join(dir, 'installed.json')).catch(() => null);
+  if (marker === null || !Array.isArray(marker.hf)) return null;
+  const pinned = previousPinsOf(marker);
+  if (JSON.stringify(withoutHfSha256(pinned)) !== JSON.stringify(withoutHfSha256(pins))) return null;
+  const differs = hfDigestMismatches(marker, pins);
+  if (differs.length === 0) return null;
+  const mismatches = differs.map((d) => ({ what: d.pin.source, path: d.dir ?? dir, expected: d.pin.sha256 as string, actual: d.digest ?? '' }));
+  const named = differs.map((d) => `hf ${d.pin.source} sha256 ${String(d.pin.sha256)}, installed ${d.digest ?? 'none'}`).join('; ');
+  return { installed: false, reason: `${dir} holds an install whose hf files have another SHA-256 than the pin (${named}); it is kept as it is`, mismatches };
 }
 
 async function installMethodLocked(ctx: Context, method: GenerationMethod): Promise<InstallEntry> {
@@ -390,14 +486,17 @@ async function installMethodLocked(ctx: Context, method: GenerationMethod): Prom
   if (unpinned) return { installed: false, reason: `git pin ${unpinned.source} has no revision`, mismatches: [] };
   const locked = missingPinSecret(ctx, method);
   if (locked) return { installed: false, reason: `harness secret ${String(locked.secret)} of hf pin ${locked.source} is not in the host secret store: ${pinSecretAction(locked)}`, mismatches: [] };
-  const dir = await methodDir(ctx, method.name);
+  const dir = await methodDir(ctx, method);
   const pins = method.pins ?? [];
+  const conflict = await digestConflict(dir, pins);
+  if (conflict !== null) return conflict;
+  const others = await otherInstallHf(method, dir, pins);
   const reuse = await keepHfFolders(dir, pins);
   const lfs = new Map<number, string[]>();
   return refillFolder(
     dir,
     async () => {
-      const marker = await installDownloaded(ctx, method, dir, await downloadPins(ctx, method, dir, reuse, lfs));
+      const marker = await installDownloaded(ctx, method, dir, await downloadPins(ctx, method, dir, reuse, others, lfs));
       await rm(join(dir, REUSE), { recursive: true, force: true });
       return marker;
     },
@@ -407,7 +506,7 @@ async function installMethodLocked(ctx: Context, method: GenerationMethod): Prom
 }
 
 /**
- * Folder in the method folder that holds hf files for the next install: the folder `<pin index>` of each hf pin, and
+ * Folder in the install folder that holds hf files for the next install: the folder `<pin index>` of each hf pin, and
  * `pins.json` (`{ pins }` as in the marker) naming the pins those indexes are of.
  */
 const REUSE = '.reuse';
@@ -466,6 +565,30 @@ async function keepHfFiles(dir: string, pins: readonly GenerationPin[], lfs: Rea
   if ((await readdir(keep).catch(() => [])).every((name) => name === REUSE_PINS)) return false;
   await writeJsonAtomic(join(keep, REUSE_PINS), { pins: JSON.stringify(pins) });
   return true;
+}
+
+/**
+ * The hf folders of the other installs of the method that each hf pin of `pins` can take its LFS files from, by pin
+ * index: `hf/<i>/` of `.ogw/generation/<method>/` and of each folder in it other than the install folder `dir`, whose
+ * `installed.json` names the method and whose pin `<i>` is an hf pin with the same `source` and `revision`.
+ */
+async function otherInstallHf(method: GenerationMethod, dir: string, pins: readonly GenerationPin[]): Promise<Map<number, string[]>> {
+  const methodFolder = dirname(dir);
+  const folders = [methodFolder, ...(await readdir(methodFolder, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory()).map((e) => join(methodFolder, e.name))];
+  const found = new Map<number, string[]>();
+  for (const folder of folders) {
+    if (folder === dir) continue;
+    const marker = await readJsonIfExists<MethodMarker>(join(folder, 'installed.json')).catch(() => null);
+    if (marker?.name !== method.name) continue;
+    const theirs = previousPinsOf(marker);
+    for (const [index, pin] of pins.entries()) {
+      if (pin.kind !== 'hf' || pin.revision === undefined) continue;
+      for (const [i, other] of theirs.entries()) {
+        if (other.kind === 'hf' && other.source === pin.source && other.revision === pin.revision) found.set(index, [...(found.get(index) ?? []), join(folder, 'hf', String(i))]);
+      }
+    }
+  }
+  return found;
 }
 
 function previousPinsOf(marker: { pins?: unknown } | null): GenerationPin[] {

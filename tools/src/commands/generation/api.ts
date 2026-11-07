@@ -6,6 +6,7 @@ import type { GameRepo } from '../../lib/game.ts';
 import { listJobs } from '../../lib/jobs.ts';
 import { toolProgram } from '../env/api.ts';
 import { installCommand } from './install.ts';
+import { methodDir } from './lib/install.ts';
 import { chooseMethods, LOGO_PREFIX, LOGOTYPE_METHOD, uninstalledMethods, type MethodChoice, type Stage } from './lib/select.ts';
 import { performanceLeaseBase } from './lib/lease.ts';
 import { catalogEntries as listCatalog, type CatalogFile } from './list.ts';
@@ -39,18 +40,21 @@ export async function blockingMethods(ctx: Context, game: GameRepo, resourceKey:
 }
 
 /**
- * The job that installs `method`: a running `ogw generation install` job of that method or of every method, else a new
- * background job of `ogw generation install <method>`. Returns the job id and its argv. Fails for a method with
- * `provider` while `tools.ffmpeg` is not installed: its `cli` puts that program on PATH, and only the install of every
- * method installs `tools`.
+ * The job that installs `method`: a running `ogw generation install` job whose job record names the install folder of
+ * that method on this checkout (ogw.md `## generation install`), else a new background job of
+ * `ogw generation install <method>`. Returns the job id and its argv. Fails for a method with `provider` while
+ * `tools.ffmpeg` is not installed: its `cli` puts that program on PATH, and only the install of every method installs
+ * `tools`.
  */
 export async function installMethodJob(ctx: Context, method: string): Promise<{ job: string; argv: string[] }> {
+  const pinned = (await ctx.settings()).resourceGeneration.find((m) => m.name === method);
+  if (pinned === undefined) throw new OgwError(`no method ${method} in harness settings resourceGeneration`);
+  const folder = await methodDir(ctx, pinned);
   const running = (await listJobs(ctx.env)).find(
-    (job) => job.status === 'running' && job.command === 'generation install' && (job.argv.length === 2 || job.argv[2] === method),
+    (job) => job.status === 'running' && job.command === 'generation install' && (job.meta.installs as Record<string, unknown> | undefined)?.[method] === folder,
   );
   if (running) return { job: running.id, argv: running.argv };
-  const provider = (await ctx.settings()).resourceGeneration.find((m) => m.name === method)?.provider !== undefined;
-  if (provider && (await toolProgram(ctx, 'ffmpeg')) === null) throw new OgwError('tools.ffmpeg is not installed: ogw generation install installs it');
+  if (pinned.provider !== undefined && (await toolProgram(ctx, 'ffmpeg')) === null) throw new OgwError('tools.ffmpeg is not installed: ogw generation install installs it');
   const started = await startBackground(ctx, installCommand, { positionals: [method], values: {}, raw: [method] }, null);
   return { job: (started.data as { job: string }).job, argv: ['generation', 'install', method] };
 }

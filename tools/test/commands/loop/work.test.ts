@@ -6,6 +6,7 @@ import { translationLanguages, unmergedLanguages } from '../../../src/commands/l
 import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write, type TestGame } from './helpers.ts';
+import { settingsMethod, writeInstall } from '../generation/install-folder.ts';
 
 const MEMORABLE = (request: string): string =>
   `- judge moment \`memorable_moment\`: add the line \`\`- \`memorable_moment\`: <description>\`\` to \`## judge moments\` of \`${request}\`, where <description> is` +
@@ -347,8 +348,8 @@ describe('ogw loop dispatch', () => {
     return { g, file: (name) => join(g.root, dir, name) };
   }
 
-  function installed(g: TestGame, method: string): void {
-    write(join(g.ws.root, '.ogw', 'generation', method), 'installed.json', { name: method, pins: JSON.stringify(PINS), git: [], hf: [], files: null, python: null, cli: null, skill: null });
+  async function installed(g: TestGame, method: string): Promise<void> {
+    await writeInstall(g.ws, settingsMethod(g.ws, method));
   }
 
   it('holds a request file whose keys need methods not installed on this host while their install runs, once per run', async () => {
@@ -373,8 +374,8 @@ describe('ogw loop dispatch', () => {
     expect((await ogw(g.ws, ['loop', 'dispatch', 'g'])).stdout).toContain(`held ${file('100.md')}`);
     expect(mocks.installMethodJob).toHaveBeenCalledTimes(2);
     // once installed, the held files go to resource sub-agents
-    installed(g, 'sprite');
-    installed(g, 'audio');
+    await installed(g, 'sprite');
+    await installed(g, 'audio');
     const json = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
     const data = JSON.parse(json.stdout) as { started: { input: string }[]; held: unknown[]; installs: unknown[] };
     expect(data.started.map((s) => s.input)).toEqual([file('100.md'), file('300.md')]);
@@ -394,7 +395,7 @@ describe('ogw loop dispatch', () => {
         j.exitCode = 1;
       }, g.ws.env);
     }
-    installed(g, 'audio');
+    await installed(g, 'audio');
     const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
     const sprite = installs.find((i) => i.method === 'sprite')?.job ?? '';
     expect(out).toMatchObject({
@@ -406,7 +407,7 @@ describe('ogw loop dispatch', () => {
 
   it('gives the file to a sub-agent when the install job does not start', async () => {
     const { g, file } = await heldGame();
-    installed(g, 'audio');
+    await installed(g, 'audio');
     mocks.installMethodJob.mockRejectedValue(new Error('no room\nmore'));
     const out = await ogw(g.ws, ['loop', 'dispatch', 'g']);
     expect(out).toMatchObject({

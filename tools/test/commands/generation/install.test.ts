@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toolProgram } from '../../../src/commands/env/api.ts';
@@ -8,8 +8,11 @@ import { cliWrapper, globMatch, hfDigest, installedFrom, pipRequirements, projec
 import { loadSchema, validateAgainst } from '../../../src/lib/settings.ts';
 import { sourceUrl } from '../../../src/commands/generation/list.ts';
 import { createContext } from '../../../src/lib/command.ts';
+import { writeJsonAtomic } from '../../../src/lib/fsx.ts';
+import { jobPaths, readJob, type JobRecord } from '../../../src/lib/jobs.ts';
 import { commitAll, ogw, gitInit, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeBin, fakeNet } from '../env/fakes.ts';
+import { installFolder, type MethodLike } from './install-folder.ts';
 
 const REV = 'c'.repeat(40);
 
@@ -70,6 +73,7 @@ const UV = [
   '  for a in "$@"; do echo "arg<$a>" >> "$OGW_TEST_LOG"; done',
   '  for a in "$@"; do case "$a" in *gdtoolkit*.whl) touch "$(dirname "$6")/gdlint";; esac; done',
   '  for a in "$@"; do case "$a" in *fail-install*) exit 3;; esac; done',
+  '  if [ -n "$OGW_TEST_UV_FAIL" ]; then exit 3; fi',
   'fi',
 ].join('\n');
 
@@ -88,6 +92,11 @@ afterEach(() => {
   setNet(null);
 });
 
+/** The methods of the harness settings of `ws`. */
+function settingsMethods(ws: TestWorkspace): MethodLike[] {
+  return (JSON.parse(readFileSync(join(ws.harness, 'settings.json'), 'utf8')) as { resourceGeneration: MethodLike[] }).resourceGeneration;
+}
+
 describe('ogw generation install', () => {
   it('installs catalog, local-model and provider methods and tools as pinned, and records the result', async () => {
     const base = makeWorkspace();
@@ -101,8 +110,7 @@ describe('ogw generation install', () => {
     const hfFiles: Record<string, string> = { 'a.json': '{}', 'sub/b.bin': 'bbb' };
     const hfSha = hfDigest(Object.entries(hfFiles).map(([path, body]) => ({ path, sha256: sha(body) })));
     const patch = 'diff --git a/patched.txt b/patched.txt\n--- a/patched.txt\n+++ b/patched.txt\n@@ -1 +1 @@\n-old\n+new\n';
-    const { ws, env, log } = workspace({
-      resourceGeneration: [
+    const methods: MethodLike[] = [
         { name: 'font-catalog', kind: 'catalog', resourceTypes: ['font'], safetyTimeoutMs: 1000, pins: [{ kind: 'git', source: fonts.dir, revision: fonts.commit, files: 'ofl/notosans,apache/x' }] },
         {
           name: 'img',
@@ -130,7 +138,9 @@ describe('ogw generation install', () => {
         },
         { name: 'ext', kind: 'external-service', resourceTypes: ['image'], model: 'm-1', secret: 'extKey', safetyTimeoutMs: 1000, license: 'X' },
         { name: 'proc', kind: 'procedural', resourceTypes: ['shader'], safetyTimeoutMs: 1000, license: 'X' },
-      ],
+      ];
+    const { ws, env, log } = workspace({
+      resourceGeneration: methods,
       tools: {
         blender: { version: '5.2.2', downloads: [{ platform: 'macos-arm64', url: 'https://dl/blender.tar.gz', sha256: sha(blenderTar) }] },
         placeholderFont: { version: 'Noto Sans KR x', downloads: [{ platform: 'any', url: 'https://dl/Noto%5Bw%5D.ttf', sha256: sha('ttf') }] },
@@ -175,24 +185,27 @@ describe('ogw generation install', () => {
     expect(run.code).toBe(1);
     expect(net.calls).not.toContain(`GET https://huggingface.co/org/model/resolve/${REV}/big.bin`);
 
-    const gen = join(ws.root, '.ogw', 'generation');
-    expect(existsSync(join(gen, 'font-catalog', 'git', '0', 'ofl', 'notosans', 'NotoSans[wght].ttf'))).toBe(true);
-    expect(existsSync(join(gen, 'font-catalog', 'git', '0', 'ofl', 'other'))).toBe(false);
-    expect(readFileSync(join(gen, 'img', 'hf', '1', 'sub', 'b.bin'), 'utf8')).toBe('bbb');
-    expect(readFileSync(join(gen, 'img', 'files', 'birefnet-general.onnx'), 'utf8')).toBe('onnx');
-    expect(readFileSync(join(gen, 'sprite', 'git', '0', 'patched.txt'), 'utf8')).toBe('new\n');
-    const marker = JSON.parse(readFileSync(join(gen, 'sprite', 'installed.json'), 'utf8')) as { cli: string; skill: string };
-    expect(marker.skill).toBe(join(gen, 'sprite', 'git', '0', 'skill', 'SKILL.md'));
-    expect(marker.cli).toBe(join(gen, 'sprite', 'bin', 'sprite-gen'));
+    const folder = async (name: string): Promise<string> => installFolder(ws, methods.find((m) => m.name === name) as MethodLike, env);
+    const [fontsDir, imgDir, spriteDir] = [await folder('font-catalog'), await folder('img'), await folder('sprite')];
+    // `.ogw/generation/<method>/<install key>/`
+    expect(fontsDir).toMatch(new RegExp(`^${join(ws.root, '.ogw', 'generation', 'font-catalog')}/[0-9a-f]{16}$`));
+    expect(existsSync(join(fontsDir, 'git', '0', 'ofl', 'notosans', 'NotoSans[wght].ttf'))).toBe(true);
+    expect(existsSync(join(fontsDir, 'git', '0', 'ofl', 'other'))).toBe(false);
+    expect(readFileSync(join(imgDir, 'hf', '1', 'sub', 'b.bin'), 'utf8')).toBe('bbb');
+    expect(readFileSync(join(imgDir, 'files', 'birefnet-general.onnx'), 'utf8')).toBe('onnx');
+    expect(readFileSync(join(spriteDir, 'git', '0', 'patched.txt'), 'utf8')).toBe('new\n');
+    const marker = JSON.parse(readFileSync(join(spriteDir, 'installed.json'), 'utf8')) as { cli: string; skill: string };
+    expect(marker.skill).toBe(join(spriteDir, 'git', '0', 'skill', 'SKILL.md'));
+    expect(marker.cli).toBe(join(spriteDir, 'bin', 'sprite-gen'));
     const wrapper = readFileSync(marker.cli, 'utf8');
     expect(wrapper).toContain(`PATH='${join(ws.root, '.ogw', 'tools', 'ffmpeg', '7', 'download')}':"$PATH"`);
-    expect(wrapper).toContain(`exec '${join(gen, 'sprite', 'venv', 'bin', 'sprite-gen')}' "$@"`);
+    expect(wrapper).toContain(`exec '${join(spriteDir, 'venv', 'bin', 'sprite-gen')}' "$@"`);
 
     const calls = readFileSync(log, 'utf8');
-    expect(calls).toContain(`uv pip install --quiet --python ${join(gen, 'img', 'venv', 'bin', 'python')} mflux==0.20.0 rembg[cpu,cli]==2.0.85 torch==2.9.0`);
+    expect(calls).toContain(`uv pip install --quiet --python ${join(imgDir, 'venv', 'bin', 'python')} mflux==0.20.0 rembg[cpu,cli]==2.0.85 torch==2.9.0`);
     // each requirement is one argument, with its extras and marker
     expect(calls).toContain("arg<rembg[cpu,cli]==2.0.85>\narg<torch==2.9.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'>\n");
-    expect(calls).toContain(`uv pip install --quiet --no-deps --python ${join(gen, 'sprite', 'venv', 'bin', 'python')} ${join(gen, 'sprite', 'git', '0')}`);
+    expect(calls).toContain(`uv pip install --quiet --no-deps --python ${join(spriteDir, 'venv', 'bin', 'python')} ${join(spriteDir, 'git', '0')}`);
     expect(calls).toContain('--no-deps --python');
     const gdtoolkit = join(ws.root, '.ogw', 'tools', 'gdtoolkit', '4.3.4');
     expect(calls).toContain(`uv venv --quiet --python 3.12 ${join(gdtoolkit, 'venv')}`);
@@ -233,14 +246,18 @@ describe('ogw generation install', () => {
     expect(Object.keys(merged.methods)).toEqual(['font-catalog', 'img', 'sprite', 'ext', 'proc']);
     expect(merged.tools.blender).toMatchObject({ installed: true });
 
-    // A new tools.ffmpeg makes the provider method install again, so its CLI puts the new ffmpeg on PATH.
+    // A new tools.ffmpeg is another install key: the provider method installs into a new install folder whose CLI puts
+    // the new ffmpeg on PATH, and the install folder of the earlier ffmpeg stays as it is.
     const settingsFile = join(ws.harness, 'settings.json');
     const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { tools: Record<string, unknown> };
     settings.tools.ffmpeg = { version: '8', downloads: [{ platform: 'macos-arm64', url: 'https://dl/ffmpeg8', sha256: sha(ffmpegScript('libvorbis')) }] };
     writeFileSync(settingsFile, JSON.stringify(settings));
     expect((await ogw(ws, ['generation', 'install'], { env })).stdout).toContain('method sprite: installed');
-    const again = JSON.parse(readFileSync(join(gen, 'sprite', 'installed.json'), 'utf8')) as { cli: string };
+    const spriteAgain = await folder('sprite');
+    expect(spriteAgain).not.toBe(spriteDir);
+    const again = JSON.parse(readFileSync(join(spriteAgain, 'installed.json'), 'utf8')) as { cli: string };
     expect(readFileSync(again.cli, 'utf8')).toContain(`PATH='${join(ws.root, '.ogw', 'tools', 'ffmpeg', '8', 'download')}':"$PATH"`);
+    expect(readFileSync(marker.cli, 'utf8')).toBe(wrapper);
   });
 
   it('fails methods whose pins are not met and leaves no method folder', async () => {
@@ -317,7 +334,7 @@ describe('ogw generation install', () => {
     expect(reason('noffmpeg')).toBe('tools.ffmpeg is not installed');
     expect(reason('nogitprovider')).toBe('a provider method needs a git pin');
     expect(reason('pipfail')).toContain('uv pip install');
-    for (const name of Object.keys(result.methods)) expect(existsSync(join(ws.root, '.ogw', 'generation', name))).toBe(false);
+    for (const method of settingsMethods(ws)) expect(existsSync(await installFolder(ws, method, env)), method.name).toBe(false);
     expect(result.tools.blender).toMatchObject({ installed: false, reason: 'no download for this host' });
     expect(result.tools.placeholderFont).toMatchObject({ installed: false, reason: 'SHA-256 differs from the pin' });
     expect(result.tools.chromium).toMatchObject({ installed: false });
@@ -354,16 +371,18 @@ describe('ogw generation install', () => {
       }),
     );
     for (const name of ['music', 'cat']) expect(await ogw(ws, ['generation', 'install', name], { env })).toMatchObject({ code: 0, stdout: expect.stringContaining(`method ${name}: installed`) as unknown });
-    const gen = join(ws.root, '.ogw', 'generation');
-    expect(readFileSync(log, 'utf8')).toBe(`uv venv --quiet ${join(gen, 'music', 'venv')}\n`);
-    const music = JSON.parse(readFileSync(join(gen, 'music', 'installed.json'), 'utf8')) as MethodMarker;
-    expect(music.python).toBe(join(gen, 'music', 'venv', 'bin', 'python'));
-    expect(music.git).toEqual([{ source: repo.dir, dir: join(gen, 'music', 'git', '0'), revision: repo.commit }]);
+    const [musicDir, catDir] = settingsMethods(ws).map((m) => installFolder(ws, m, env));
+    const musicFolder = (await musicDir) as string;
+    const catFolder = (await catDir) as string;
+    expect(readFileSync(log, 'utf8')).toBe(`uv venv --quiet ${join(musicFolder, 'venv')}\n`);
+    const music = JSON.parse(readFileSync(join(musicFolder, 'installed.json'), 'utf8')) as MethodMarker;
+    expect(music.python).toBe(join(musicFolder, 'venv', 'bin', 'python'));
+    expect(music.git).toEqual([{ source: repo.dir, dir: join(musicFolder, 'git', '0'), revision: repo.commit }]);
     // Without `files` the hf pin gets the whole repository.
-    expect(readFileSync(join(gen, 'music', 'hf', '1', 'ckpts', 'b.bin'), 'utf8')).toBe('b');
-    const cat = JSON.parse(readFileSync(join(gen, 'cat', 'installed.json'), 'utf8')) as MethodMarker;
+    expect(readFileSync(join(musicFolder, 'hf', '1', 'ckpts', 'b.bin'), 'utf8')).toBe('b');
+    const cat = JSON.parse(readFileSync(join(catFolder, 'installed.json'), 'utf8')) as MethodMarker;
     expect(cat.python).toBeNull();
-    expect(existsSync(join(gen, 'cat', 'venv'))).toBe(false);
+    expect(existsSync(join(catFolder, 'venv'))).toBe(false);
   });
 
   it('checks an hf pin SHA-256 with the published LFS SHA-256 before downloading the LFS files, and each LFS file as it arrives', async () => {
@@ -395,7 +414,7 @@ describe('ogw generation install', () => {
     expect(reasons.good).toBe('installed');
   });
 
-  it('keeps the LFS files of an hf pin whose source and revision are unchanged when other pins change', async () => {
+  it('takes the LFS files of an hf pin from another install of the method with the same source and revision, and keeps that install', async () => {
     const REV2 = 'd'.repeat(40);
     const hf = (revision: string): Record<string, unknown> => ({ kind: 'hf', source: 'o/m', revision });
     const { ws, env } = workspace({ resourceGeneration: [{ name: 'm', kind: 'local-model', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins: [hf(REV)] }] });
@@ -410,64 +429,73 @@ describe('ogw generation install', () => {
     });
     setNet(net);
     const settingsFile = join(ws.harness, 'settings.json');
-    const install = async (pins: Record<string, unknown>[]): Promise<{ installed: boolean; reason: string | null }> => {
+    const method = (pins: Record<string, unknown>[]): MethodLike => ({ name: 'm', kind: 'local-model', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins });
+    const install = async (pins: Record<string, unknown>[], extra: NodeJS.ProcessEnv = {}): Promise<{ installed: boolean; reason: string | null }> => {
       const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { resourceGeneration: { pins: unknown[] }[] };
       (settings.resourceGeneration[0] as { pins: unknown[] }).pins = pins;
       writeFileSync(settingsFile, JSON.stringify(settings));
-      const run = await ogw(ws, ['generation', 'install', 'm', '--json'], { env });
+      const run = await ogw(ws, ['generation', 'install', 'm', '--json'], { env: { ...env, ...extra } });
       return (JSON.parse(run.stdout) as { methods: Record<string, { installed: boolean; reason: string | null }> }).methods.m as { installed: boolean; reason: string | null };
     };
     const gets = (revision: string, path: string): number => net.calls.filter((c) => c === `GET https://huggingface.co/o/m/resolve/${revision}/${path}`).length;
-    const dir = join(ws.root, '.ogw', 'generation', 'm');
-    const files = (): string[] => sh(dir, 'find', ['.', '-type', 'f']).split('\n').filter((f) => f !== '').sort();
+    const folder = (pins: Record<string, unknown>[]): Promise<string> => installFolder(ws, method(pins), env);
+    const files = (dir: string): string[] => sh(dir, 'find', ['.', '-type', 'f']).split('\n').filter((f) => f !== '').sort();
+    /** Puts another file at `path`, so that the file another install links to stays as it is. */
+    const replace = (path: string, body: string): void => {
+      rmSync(path);
+      writeFileSync(path, body);
+    };
 
+    const first = await folder([hf(REV)]);
     expect(await install([hf(REV)])).toMatchObject({ installed: true });
     expect([gets(REV, 'w/big.bin'), gets(REV, 'a.json')]).toEqual([1, 1]);
-    const fresh = files();
+    const fresh = files(first);
 
-    // A pip pin added before the hf pin: the LFS file moves to the new pin index without a download; the small file is downloaded again.
-    mkdirSync(join(dir, 'home'), { recursive: true });
-    writeFileSync(join(dir, 'home', 'stray'), 'x');
-    writeFileSync(join(dir, 'hf', '0', 'stray.txt'), 'x');
-    expect(await install([{ kind: 'pip', source: 'x==1' }, hf(REV)])).toMatchObject({ installed: true });
+    // Other pins are another install folder: the LFS file comes from the first install without a download, the small
+    // file is downloaded again, and the first install keeps every file.
+    const withPip = [{ kind: 'pip', source: 'x==1' }, hf(REV)];
+    const second = await folder(withPip);
+    expect(second).not.toBe(first);
+    expect(await install(withPip)).toMatchObject({ installed: true });
     expect([gets(REV, 'w/big.bin'), gets(REV, 'a.json')]).toEqual([1, 2]);
-    expect(readFileSync(join(dir, 'hf', '1', 'w', 'big.bin'), 'utf8')).toBe('big');
-    // the folder is as a fresh install leaves it: no file of the earlier install, no reuse folder
-    expect(files()).toEqual([...fresh.map((f) => f.replace('./hf/0/', './hf/1/')), './venv/bin/python'].sort());
-    const marker = JSON.parse(readFileSync(join(dir, 'installed.json'), 'utf8')) as MethodMarker;
-    expect(marker.pins).toBe(JSON.stringify([{ kind: 'pip', source: 'x==1' }, hf(REV)]));
+    expect(readFileSync(join(second, 'hf', '1', 'w', 'big.bin'), 'utf8')).toBe('big');
+    expect(files(second)).toEqual([...fresh.map((f) => f.replace('./hf/0/', './hf/1/')), './venv/bin/python'].sort());
+    expect(files(first)).toEqual(fresh);
+    expect(readFileSync(join(first, 'hf', '0', 'w', 'big.bin'), 'utf8')).toBe('big');
+    const marker = JSON.parse(readFileSync(join(second, 'installed.json'), 'utf8')) as MethodMarker;
+    expect(marker.pins).toBe(JSON.stringify(withPip));
 
-    // A kept file whose SHA-256 differs from the published one is downloaded again.
-    writeFileSync(join(dir, 'hf', '1', 'w', 'big.bin'), 'tampered');
-    expect(await install([{ kind: 'pip', source: 'x==2' }, hf(REV)])).toMatchObject({ installed: true });
+    // A file of another install whose SHA-256 differs from the published one is not taken: the file is downloaded again.
+    replace(join(first, 'hf', '0', 'w', 'big.bin'), 'tampered');
+    replace(join(second, 'hf', '1', 'w', 'big.bin'), 'tampered');
+    const third = [{ kind: 'pip', source: 'x==2' }, hf(REV)];
+    expect(await install(third)).toMatchObject({ installed: true });
     expect(gets(REV, 'w/big.bin')).toBe(2);
-    expect(readFileSync(join(dir, 'hf', '1', 'w', 'big.bin'), 'utf8')).toBe('big');
+    expect(readFileSync(join(await folder(third), 'hf', '1', 'w', 'big.bin'), 'utf8')).toBe('big');
 
-    // A pip step that fails after the hf download keeps only the checked LFS files, under `.reuse`, and no marker.
-    expect(await install([{ kind: 'pip', source: 'fail-install==1' }, hf(REV)])).toMatchObject({ installed: false });
+    // An install that fails after the hf download keeps only the checked LFS files of its folder, under `.reuse`, and no
+    // marker; the next install of that folder takes them from there and leaves no `.reuse`.
+    const later = [{ kind: 'pip', source: 'y==1' }, hf(REV)];
+    const laterDir = await folder(later);
+    expect(await install(later, { OGW_TEST_UV_FAIL: '1' })).toMatchObject({ installed: false });
     expect(gets(REV, 'w/big.bin')).toBe(2);
-    expect(files()).toEqual(['./.reuse/1/w/big.bin', './.reuse/pins.json']);
-    // A second failure keeps them again without downloading the LFS file.
-    expect(await install([{ kind: 'pip', source: 'fail-install==2' }, hf(REV)])).toMatchObject({ installed: false });
+    expect(files(laterDir)).toEqual(['./.reuse/1/w/big.bin', './.reuse/pins.json']);
+    for (const dir of [first, second, await folder(third)]) rmSync(dir, { recursive: true });
+    expect(await install(later)).toMatchObject({ installed: true });
     expect(gets(REV, 'w/big.bin')).toBe(2);
-    expect(files()).toEqual(['./.reuse/1/w/big.bin', './.reuse/pins.json']);
-    // The next install reuses them at the new pin index and leaves no `.reuse`.
-    expect(await install([hf(REV)])).toMatchObject({ installed: true });
-    expect(gets(REV, 'w/big.bin')).toBe(2);
-    expect(readFileSync(join(dir, 'hf', '0', 'w', 'big.bin'), 'utf8')).toBe('big');
-    expect(files()).toEqual(fresh);
+    expect(readFileSync(join(laterDir, 'hf', '1', 'w', 'big.bin'), 'utf8')).toBe('big');
+    expect(files(laterDir).some((f) => f.startsWith('./.reuse/'))).toBe(false);
 
-    // A failed install whose hf pins got nothing leaves no folder.
-    expect(await install([{ kind: 'pip', source: 'fail-install==1' }])).toMatchObject({ installed: false });
-    expect(existsSync(dir)).toBe(false);
-    expect(await install([hf(REV)])).toMatchObject({ installed: true });
-    expect(gets(REV, 'w/big.bin')).toBe(3);
+    // A failed install whose hf pins got nothing leaves no install folder.
+    const failing = [{ kind: 'pip', source: 'fail-install==1' }];
+    expect(await install(failing)).toMatchObject({ installed: false });
+    expect(existsSync(await folder(failing))).toBe(false);
 
     // A changed revision downloads every file.
     expect(await install([hf(REV2)])).toMatchObject({ installed: true });
     expect([gets(REV2, 'w/big.bin'), gets(REV2, 'a.json')]).toEqual([1, 1]);
-    expect(gets(REV, 'w/big.bin')).toBe(3);
-    expect(files()).toEqual(fresh);
+    expect(gets(REV, 'w/big.bin')).toBe(2);
+    expect(files(await folder([hf(REV2)]))).toEqual(fresh);
   });
 
   it('sends the token of an hf pin secret, installs an hf pin without sha256 and records its SHA-256', async () => {
@@ -490,23 +518,41 @@ describe('ogw generation install', () => {
     const run = await ogw(ws, ['generation', 'install', 'm3d'], { env });
     expect(run).toMatchObject({ code: 0, stdout: expect.stringContaining('method m3d: installed') as unknown });
     expect(run.stdout).not.toContain('hf_token');
-    const dir = join(ws.root, '.ogw', 'generation', 'm3d');
+    const dir = await installFolder(ws, method, env);
     expect(readFileSync(join(dir, 'hf', '0', 'model.safetensors'), 'utf8')).toBe('weights');
     expect(existsSync(join(dir, 'hf', '0', 'README.md'))).toBe(false);
     const marker = JSON.parse(readFileSync(join(dir, 'installed.json'), 'utf8')) as MethodMarker;
     expect(marker.hf).toEqual([{ source: DINO, dir: join(dir, 'hf', '0'), sha256: digest }]);
 
-    // The sha256 the install got, added to the pin, keeps the install; another sha256 does not.
+    // The sha256 the install got, added to the pin, keeps the install in the same install folder; another sha256 fails,
+    // naming both values, and changes nothing in that folder.
     const calls = net.calls.length;
     const settingsFile = join(ws.harness, 'settings.json');
-    const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { resourceGeneration: { pins: Record<string, unknown>[] }[] };
-    (settings.resourceGeneration[0] as { pins: Record<string, unknown>[] }).pins = [{ ...pin, sha256: digest }];
-    writeFileSync(settingsFile, JSON.stringify(settings));
+    const pinsOf = (pins: Record<string, unknown>[]): void => {
+      const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { resourceGeneration: { pins: Record<string, unknown>[] }[] };
+      (settings.resourceGeneration[0] as { pins: Record<string, unknown>[] }).pins = pins;
+      writeFileSync(settingsFile, JSON.stringify(settings));
+    };
+    pinsOf([{ ...pin, sha256: digest }]);
+    expect(await installFolder(ws, { ...method, pins: [{ ...pin, sha256: digest }] }, env)).toBe(dir);
     expect((await ogw(ws, ['generation', 'install', 'm3d'], { env })).code).toBe(0);
     expect(net.calls.length).toBe(calls);
-    expect(installedFrom(marker, [{ ...pin, sha256: 'f'.repeat(64) } as never])).toBe(false);
+    const wrong = 'f'.repeat(64);
+    pinsOf([{ ...pin, sha256: wrong }]);
+    const before = sh(dir, 'find', ['.', '-type', 'f']);
+    const refused = JSON.parse((await ogw(ws, ['generation', 'install', 'm3d', '--json'], { env })).stdout) as { methods: Record<string, { installed: boolean; reason: string; mismatches: unknown[] }> };
+    expect(refused.methods.m3d).toMatchObject({
+      installed: false,
+      reason: `${dir} holds an install whose hf files have another SHA-256 than the pin (hf ${DINO} sha256 ${wrong}, installed ${digest}); it is kept as it is`,
+      mismatches: [{ what: DINO, path: join(dir, 'hf', '0'), expected: wrong, actual: digest }],
+    });
+    expect(net.calls.length).toBe(calls);
+    expect(sh(dir, 'find', ['.', '-type', 'f'])).toBe(before);
+    expect(installedFrom(marker, [{ ...pin, sha256: wrong } as never])).toBe(false);
     expect(installedFrom(marker, [{ ...pin, files: '*', sha256: digest } as never])).toBe(false);
     expect(installedFrom(marker, [pin as never])).toBe(true);
+    // an install whose pins had the sha256 is also the install of the pins without it
+    expect(installedFrom({ ...marker, pins: JSON.stringify([{ ...pin, sha256: digest }]) }, [pin as never])).toBe(true);
   });
 
   it('fails an hf pin whose secret is missing or whose token is refused', async () => {
@@ -528,7 +574,7 @@ describe('ogw generation install', () => {
     const refused = await ogw(ws, ['generation', 'install', 'm3d', '--json'], { env });
     const entry = (JSON.parse(refused.stdout) as { methods: Record<string, Record<string, unknown>> }).methods.m3d;
     expect(entry).toEqual({ kind: 'local-model', installed: false, reason: `hf facebook/gated answered 403 to the token in harness secret huggingface: ${action}`, mismatches: [] });
-    expect(existsSync(join(ws.root, '.ogw', 'generation', 'm3d'))).toBe(false);
+    expect(existsSync(await installFolder(ws, settingsMethods(ws)[0] as MethodLike, env))).toBe(false);
   });
 
   it('waits for the method folder lock and keeps the result entries of installs that run together', async () => {
@@ -540,7 +586,8 @@ describe('ogw generation install', () => {
     const held = new Promise<void>((resolve) => {
       acquired = resolve;
     });
-    const holding = withMethodLock(ctx, 'p1', () => {
+    const p1 = settingsMethods(ws).find((m) => m.name === 'p1') as unknown as Parameters<typeof withMethodLock>[1];
+    const holding = withMethodLock(ctx, p1, () => {
       acquired();
       return new Promise<void>((resolve) => {
         release = resolve;
@@ -550,7 +597,7 @@ describe('ogw generation install', () => {
     const first = ogw(ws, ['generation', 'install', 'p1'], { env });
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(readFileSync(log, 'utf8')).toBe('');
-    expect(existsSync(join(ws.root, '.ogw', 'generation', 'p1'))).toBe(false);
+    expect(existsSync(await installFolder(ws, p1 as unknown as MethodLike, env))).toBe(false);
     const second = ogw(ws, ['generation', 'install', 'p2'], { env });
     release();
     await holding;
@@ -558,6 +605,15 @@ describe('ogw generation install', () => {
     expect(readFileSync(log, 'utf8')).toContain('p1==1');
     const result = JSON.parse(readFileSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'generation-install.json'), 'utf8')) as { methods: Record<string, unknown> };
     expect(Object.keys(result.methods).sort()).toEqual(['p1', 'p2']);
+  });
+
+  it('records the install folder of each method in the job record of its job before it installs that method', async () => {
+    const pip = (name: string): MethodLike => ({ name, kind: 'local-model', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins: [{ kind: 'pip', source: `${name}==1` }] });
+    const { ws, env } = workspace({ resourceGeneration: [pip('p1'), pip('p2')], tools: { postgresql: { tag: '18.6', digest: `sha256:${'d'.repeat(64)}` } } });
+    const record: JobRecord = { id: 'mwinstall1', argv: ['generation', 'install', 'p2'], cwd: ws.root, command: 'generation install', game: null, startedAt: 1, endedAt: null, status: 'running', exitCode: null, supervisorPid: null, pid: null, timeLimitMs: 1000, agentJob: null, summary: null, meta: {} };
+    await writeJsonAtomic((await jobPaths(record.id, env)).record, record);
+    expect((await ogw(ws, ['generation', 'install', 'p2'], { env: { ...env, OGW_JOB_ID: record.id } })).code).toBe(0);
+    expect((await readJob(record.id, env)).meta.installs).toEqual({ p2: await installFolder(ws, pip('p2'), env) });
   });
 
   it('refuses an unknown method', async () => {
@@ -584,7 +640,7 @@ describe('ogw generation list', () => {
     ];
     const method = { name: 'cat', kind: 'catalog', resourceTypes: ['font', 'sfx'], safetyTimeoutMs: 1, license: 'CC0-1.0', attribution: 'by someone', pins };
     const { ws, env } = workspace({ resourceGeneration: [method] });
-    const dir = join(ws.root, '.ogw', 'generation', 'cat');
+    const dir = await installFolder(ws, method, env);
     const git = join(dir, 'git', '0');
     const fonts = fontRepo(ws);
     mkdirSync(join(dir, 'git'), { recursive: true });

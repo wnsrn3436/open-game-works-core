@@ -160,7 +160,7 @@ export const runCommand: CommandDef = {
     const job = standardJob(name);
     const notInstalled = `method ${name} is not installed as pinned on this host: the update env command installs it`;
     if (!(await methodMarker(ctx, method))) throw new OgwError(notInstalled);
-    const dir = await methodDir(ctx, name);
+    const dir = await methodDir(ctx, method);
     for (const item of items) await mkdir(item.out, { recursive: true });
     const batch = str(args, 'batch') !== undefined;
     const outcome = await withLock(
@@ -168,7 +168,7 @@ export const runCommand: CommandDef = {
       // The lease keeps the calls off the host while `ogw check` measures performance (ogw.md `### performance lease`).
       // The method lock keeps `generation install` from emptying the folder while the call uses it.
       () => withGenerationLease(ctx, () =>
-        withMethodLock(ctx, name, async () => {
+        withMethodLock(ctx, method, async () => {
           const marker = await methodMarker(ctx, method);
           if (!marker) throw new OgwError(notInstalled);
           // the prompt copies are temp files of ogw (`tools/ogw.md` `## temp folder`); the call's TMPDIR is emptied after it

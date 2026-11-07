@@ -11,6 +11,7 @@ import { pipRequirements } from '../../../src/commands/generation/lib/install.ts
 import { NOT_INSTALLED } from '../../../src/commands/generation/measure.ts';
 import { ogw, hostForm, makeWorkspace, realToolsWithout, TEST_HOST_ID, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeBin, fakeNet, type Route } from './fakes.ts';
+import { installFolderOf, writeInstall } from '../generation/install-folder.ts';
 
 const role = vi.hoisted(() => ({ value: 'lead' }));
 vi.mock('../../../src/lib/agentctx.ts', async (actual) => ({
@@ -586,14 +587,15 @@ describe('ogw env propose', () => {
       { name: 'absent', kind: 'local-model', resourceTypes: ['model'], safetyTimeoutMs: 1, license: 'X', pins: lone },
     ];
     writeFileSync(settingsPath, JSON.stringify(hostForm(settings)));
-    const marker = (name: string, from: unknown[], hf: { source: string; sha256: string }[]): void => {
-      const dir = join(ws.root, '.ogw', 'generation', name);
+    const marker = async (name: string, from: unknown[], hf: { source: string; sha256: string }[]): Promise<void> => {
+      const dir = await installFolderOf(ws, name, env);
       mkdirSync(dir, { recursive: true });
       const entries = hf.map((h, i) => ({ ...h, dir: join(dir, 'hf', String(i)) }));
       writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name, pins: JSON.stringify(from), git: [], hf: entries, files: null, python: null, cli: null, skill: null }));
     };
-    marker('m3d', pins, [{ source: 'o/gated', sha256: D1 }, { source: 'o/pinned', sha256: D2 }]);
-    marker('stale', [{ ...lone[0], files: 'other' }], [{ source: 'o/lone', sha256: D1 }]);
+    await marker('m3d', pins, [{ source: 'o/gated', sha256: D1 }, { source: 'o/pinned', sha256: D2 }]);
+    // an install of other pins, in the install folder of the current pins
+    await marker('stale', [{ ...lone[0], files: 'other' }], [{ source: 'o/lone', sha256: D1 }]);
     const check = JSON.parse(readFileSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'env-check.json'), 'utf8')) as Record<string, unknown>;
     check.agentLoginToken = { needed: true, stored: false };
     check.pinSecrets = [
@@ -688,7 +690,7 @@ describe('ogw env propose', () => {
     const pins = [git, hf];
     settings.resourceGeneration = [...METHODS.slice(0, 3), { name: 'm3d', kind: 'local-model', resourceTypes: ['model'], safetyTimeoutMs: 1, license: 'X', pins }];
     writeFileSync(settingsPath, JSON.stringify(hostForm(settings)));
-    const dir = join(ws.root, '.ogw', 'generation', 'm3d');
+    const dir = await installFolderOf(ws, 'm3d', env);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name: 'm3d', pins: JSON.stringify(pins), git: [], hf: [{ source: 'o/m', dir: join(dir, 'hf', '1'), sha256: D1 }], files: null, python: null, cli: null, skill: null }));
     const resultDir = join(ws.harness, '.git', 'ogw-temp', 'ogw-env');
@@ -771,9 +773,7 @@ describe('ogw env propose', () => {
   it('reads the result file a generation measure of one method merged: the measured method and the kept ones', async () => {
     const { ws, env } = setup();
     const cat = METHODS[4] as { name: string; pins: unknown };
-    mkdirSync(join(ws.root, '.ogw', 'generation', cat.name), { recursive: true });
-    const marker = { name: cat.name, pins: JSON.stringify(cat.pins), git: [], hf: [], files: null, python: null, cli: null, skill: null, ffmpeg: null };
-    writeFileSync(join(ws.root, '.ogw', 'generation', cat.name, 'installed.json'), JSON.stringify(marker));
+    await writeInstall(ws, cat, {}, env);
     expect((await ogw(ws, ['generation', 'measure', 'cat'], { env })).code).toBe(0);
     const run = JSON.parse((await ogw(ws, ['env', 'propose', '--json'], { env })).stdout) as { proposals: { id: string; value: unknown }[] };
     expect(run.proposals.filter((p) => p.id.startsWith('measured:')).map((p) => [p.id, p.value])).toEqual([

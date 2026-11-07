@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { STANDARD_JOBS, standardImage, type StandardJob } from '../../../src/commands/generation/lib/standard.ts';
 import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
+import { installFolder, writeInstall } from './install-folder.ts';
 
 const IMAGE_TYPES = ['image', 'icon'];
 const ZIT = { name: 'z-image-turbo', kind: 'local-model', resourceTypes: IMAGE_TYPES, safetyTimeoutMs: 20_000, license: 'Apache-2.0', pins: [], measured: [{ resolution: 512, result: 'ok' }, { resolution: 1024, result: 'ok' }] };
@@ -53,10 +54,10 @@ function script(file: string, lines: string[]): void {
 /**
  * Installs z-image-turbo with a fake isolated environment: `mflux-generate-z-image-turbo` writes its `--output` and
  * logs its arguments to `mflux-args.txt` next to it, and its `python` runs the rembg driver as a copy of the image to
- * `image-alpha.png` that logs `U2NET_HOME` to `u2net.txt`. Returns the method folder.
+ * `image-alpha.png` that logs `U2NET_HOME` to `u2net.txt`. Returns its install folder.
  */
-function installFakeZImage(ws: TestWorkspace): string {
-  const dir = join(ws.root, '.ogw', 'generation', 'z-image-turbo');
+async function installFakeZImage(ws: TestWorkspace): Promise<string> {
+  const dir = await installFolder(ws, ZIT);
   const bin = join(dir, 'venv', 'bin');
   for (const folder of [bin, join(dir, 'hf', '0'), join(dir, 'files')]) mkdirSync(folder, { recursive: true });
   script(join(bin, 'mflux-generate-z-image-turbo'), [
@@ -73,16 +74,10 @@ function installFakeZImage(ws: TestWorkspace): string {
   return dir;
 }
 
-function installMarker(ws: TestWorkspace, name: string): void {
-  const dir = join(ws.root, '.ogw', 'generation', name);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'installed.json'), JSON.stringify({ name, pins: '[]', git: [], hf: [], files: null, python: null, cli: null, skill: null }));
-}
-
 describe.runIf(process.platform === 'darwin')('z-image-turbo', () => {
   it('measures each standard stage with the seed of the standard test task, 8-bit quantization and 9 steps', async () => {
     const { ws, env } = workspace([FLUX, ZIT]);
-    const dir = installFakeZImage(ws);
+    const dir = await installFakeZImage(ws);
     const run = await ogw(ws, ['generation', 'measure', 'z-image-turbo', '--json'], { env });
     expect(run.code).toBe(0);
     const result = JSON.parse(run.stdout) as { methods: Record<string, { steps: { resolution?: number; result: string; output: string }[]; error: string | null }> };
@@ -103,7 +98,7 @@ describe.runIf(process.platform === 'darwin')('z-image-turbo', () => {
 
   it('draws a key of a game whose image method it is from text, with the stage that generation methods gives and no seed', async () => {
     const { ws, env } = workspace([FLUX, ZIT]);
-    const dir = installFakeZImage(ws);
+    const dir = await installFakeZImage(ws);
     const prompt = join(ws.root, 'prompt.txt');
     writeFileSync(prompt, 'a knight');
     const out = join(ws.root, 'out');
@@ -118,7 +113,7 @@ describe.runIf(process.platform === 'darwin')('z-image-turbo', () => {
 
   it('refuses an image to edit, alone or as one item of a batch, and makes nothing for it', async () => {
     const { ws, env } = workspace([FLUX, ZIT]);
-    installFakeZImage(ws);
+    await installFakeZImage(ws);
     const prompt = join(ws.root, 'prompt.txt');
     writeFileSync(prompt, 'a knight');
     writeFileSync(join(ws.root, 'ref.png'), standardImage(4));
@@ -144,8 +139,8 @@ describe.runIf(process.platform === 'darwin')('z-image-turbo', () => {
   it('lets flux2-klein make the reference edits of its game, a logo included, and is not called without a usable flux2-klein', async () => {
     fakeFlux();
     const { ws, env } = workspace([FLUX, ZIT, LOGOTYPE, FONTS]);
-    installFakeZImage(ws);
-    installMarker(ws, 'flux2-klein');
+    await installFakeZImage(ws);
+    await writeInstall(ws, FLUX);
     const prompt = join(ws.root, 'prompt.txt');
     writeFileSync(prompt, 'the logo');
     writeFileSync(join(ws.root, 'lettering.png'), standardImage(4));
@@ -157,7 +152,7 @@ describe.runIf(process.platform === 'darwin')('z-image-turbo', () => {
     expect(await edit('image/hero', 'hero')).toBe(0);
     expect(readFileSync(join(ws.root, 'hero', 'flux.txt'), 'utf8')).toBe('512|1');
     const unusable = workspace([{ ...FLUX, measured: [{ resolution: 512, result: 'failed' }] }, ZIT]);
-    installFakeZImage(unusable.ws);
+    await installFakeZImage(unusable.ws);
     const refused = await ogw(unusable.ws, ['generation', 'run', 'z-image-turbo', '--game', 'g', '--key', 'image/hero', '--prompt', prompt, '--out', join(unusable.ws.root, 'o')], { env: unusable.env });
     expect(refused).toMatchObject({ code: 1, stderr: 'method z-image-turbo is not in ogw generation methods g image/hero\n' });
   });

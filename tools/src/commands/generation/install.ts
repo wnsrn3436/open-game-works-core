@@ -2,17 +2,28 @@ import { expectPositionals, type CommandDef, type Context } from '../../lib/comm
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { withLock } from '../../lib/lock.ts';
-import type { HarnessSettings } from '../../lib/settings.ts';
+import { updateJob } from '../../lib/jobs.ts';
+import type { GenerationMethod, HarnessSettings } from '../../lib/settings.ts';
 import { envResultPath } from '../env/lib/host.ts';
 import { readEnvResult, writeEnvResult, type GenerationInstallResult, type InstallEntry } from '../env/lib/results.ts';
 import { installTool, postgresPresent, pullPostgres, TOOL_NAMES } from '../env/lib/tools.ts';
-import { hasPins, installMethod, missingPinSecret, missingSecret } from './lib/install.ts';
+import { hasPins, installMethod, methodDir, missingPinSecret, missingSecret } from './lib/install.ts';
+
+/** Records in the job record of this `generation install` job the install folder of the method it installs next (ogw.md `## generation install`). */
+async function recordInstallFolder(ctx: Context, method: GenerationMethod): Promise<void> {
+  if (ctx.jobId === null) return;
+  const folder = await methodDir(ctx, method);
+  await updateJob(ctx.jobId, (job) => {
+    job.meta.installs = { ...((job.meta.installs ?? {}) as Record<string, string>), [method.name]: folder };
+  }, ctx.env);
+}
 
 async function installMethods(ctx: Context, settings: HarnessSettings, only: string | null): Promise<GenerationInstallResult['methods']> {
   const methods: GenerationInstallResult['methods'] = {};
   for (const method of settings.resourceGeneration) {
     if (only !== null && method.name !== only) continue;
     const methodSecret = missingSecret(ctx, method);
+    if (hasPins(method)) await recordInstallFolder(ctx, method);
     const entry: InstallEntry = hasPins(method)
       ? await installMethod(ctx, method)
       : { installed: methodSecret === null, reason: methodSecret === null ? null : `secret ${methodSecret} is not in the host secret store`, mismatches: [] };

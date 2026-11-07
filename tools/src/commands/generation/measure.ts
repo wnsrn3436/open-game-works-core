@@ -41,17 +41,17 @@ async function measureStages(ctx: Context, method: GenerationMethod): Promise<Me
 
 /**
  * `rig-2d`: `ok` when `flux2-klein` has an `ok` stage and the rig tools pass the fixed fixture, which is made in the
- * method folder under its lock.
+ * install folder of the method under its lock.
  */
-async function measureRig(ctx: Context, settings: HarnessSettings, done: Results): Promise<MeasuredRun> {
+async function measureRig(ctx: Context, rig: GenerationMethod, settings: HarnessSettings, done: Results): Promise<MeasuredRun> {
   const measured = done[IMAGE_METHOD];
   const imageSteps = measured && measured.error === null ? measured.steps : (settings.resourceGeneration.find((m) => m.name === IMAGE_METHOD)?.measured ?? []);
   if (!imageSteps.some((s) => s.result === 'ok')) return step('failed', { detail: `${IMAGE_METHOD} has no ok stage` });
-  return withMethodLock(ctx, RIG_METHOD, () => measureRigFixture(ctx, settings));
+  return withMethodLock(ctx, rig, () => measureRigFixture(ctx, rig, settings));
 }
 
-async function measureRigFixture(ctx: Context, settings: HarnessSettings): Promise<MeasuredRun> {
-  const work = join(await methodDir(ctx, RIG_METHOD), 'measure', 'single');
+async function measureRigFixture(ctx: Context, rig: GenerationMethod, settings: HarnessSettings): Promise<MeasuredRun> {
+  const work = join(await methodDir(ctx, rig), 'measure', 'single');
   const started = Date.now();
   const problem = await rigFixtureProblem(work, settings);
   const extra = { jobMs: Date.now() - started, output: work, ...(problem === null ? {} : { detail: problem }) };
@@ -60,17 +60,17 @@ async function measureRigFixture(ctx: Context, settings: HarnessSettings): Promi
 
 /**
  * A `provider` external-service: one `gen` call of the method's CLI with the provider, outside the sandbox,
- * under the lock of the method folder.
+ * under the lock of the install folder of the method.
  */
 function measureProvider(ctx: Context, method: GenerationMethod): Promise<MethodResult> {
-  return withMethodLock(ctx, method.name, () => measureProviderLocked(ctx, method));
+  return withMethodLock(ctx, method, () => measureProviderLocked(ctx, method));
 }
 
 async function measureProviderLocked(ctx: Context, method: GenerationMethod): Promise<MethodResult> {
   const base = { kind: method.kind, steps: [] as MeasuredRun[] };
   const marker = await methodMarker(ctx, method);
   if (!marker?.cli) return { ...base, error: NOT_INSTALLED };
-  const work = join(await methodDir(ctx, method.name), 'measure', 'single');
+  const work = join(await methodDir(ctx, method), 'measure', 'single');
   await rm(work, { recursive: true, force: true });
   const out = join(work, 'out');
   await mkdir(out, { recursive: true });
@@ -107,7 +107,7 @@ export async function measureMethod(ctx: Context, method: GenerationMethod, allo
   }
   if (method.kind === 'external-service') return measureExternal(ctx, method, allow);
   try {
-    if (method.kind === 'procedural' && method.name === RIG_METHOD) return { ...base, steps: [await measureRig(ctx, await ctx.settings(), done)], error: null };
+    if (method.kind === 'procedural' && method.name === RIG_METHOD) return { ...base, steps: [await measureRig(ctx, method, await ctx.settings(), done)], error: null };
     if (method.kind === 'procedural' && method.name !== 'blender') return { ...base, steps: [step('ok')], error: null };
     if (method.kind === 'local-model' && !(await methodMarker(ctx, method))) {
       standardJob(method.name);

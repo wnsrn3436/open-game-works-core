@@ -5,6 +5,7 @@ import { STANDARD_JOBS } from '../../../src/commands/generation/lib/standard.ts'
 import { fpsSampling } from '../../../src/commands/check/lib/performance.ts';
 import { firstCount, measureHost, nextCount } from '../../../src/commands/instance/measure.ts';
 import { ogw, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
+import { installFolderOf } from '../generation/install-folder.ts';
 
 interface State {
   versions: string[];
@@ -321,7 +322,7 @@ describe('ogw instance measure', () => {
       );
       const run = await ogw(ws, ['instance', 'measure'], { env });
       expect(run.stdout).toContain('generation load job: heavy\n');
-      expect(readFileSync(join(ws.root, '.ogw', 'generation', 'heavy', 'measure', '8', 'out', 'r'), 'utf8')).toBe('8\n');
+      expect(readFileSync(join(await installFolderOf(ws, 'heavy', env), 'measure', '8', 'out', 'r'), 'utf8')).toBe('8\n');
       // a load job run that fails ends the measure without a result
       STANDARD_JOBS.heavy = { ...STANDARD_JOBS.heavy, call: () => Promise.resolve({ cmd: '/bin/sh', args: ['-c', 'echo out of memory >&2; exit 1'] }) };
       rmSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'instance-measure.json'));
