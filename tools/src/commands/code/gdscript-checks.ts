@@ -5,6 +5,7 @@ import { OgwError } from '../../lib/errors.ts';
 import { exists, filesUnder, writeFileAtomic } from '../../lib/fsx.ts';
 import { commonDir } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
+import { FILE_IO, inOrder, pooled } from '../../lib/pool.ts';
 import { harnessRoot } from '../../lib/paths.ts';
 import { run } from '../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../lib/secret-files.ts';
@@ -109,21 +110,6 @@ export function godotErrors(output: string, path: string, exitCode: number | nul
  */
 const PARALLEL = 4;
 
-/** `fn` of each item, at most `size` at once; a finished one starts the next, and the results keep the items' order. */
-async function inPool<T, R>(items: readonly T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const i = next;
-      next += 1;
-      out[i] = await fn(items[i] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(size, items.length)) }, worker));
-  return out;
-}
-
 /** A Godot project inside a checkout. */
 export interface GodotProject {
   /** Checkout root. */
@@ -157,11 +143,12 @@ async function passedCheckFile(godot: string, dir: string, files: readonly strin
   const hash = createHash('sha256');
   const binary = await stat(godot);
   hash.update(`${godot}\0${String(binary.size)}\0${String(binary.mtimeMs)}\0${[...files].sort().join('\0')}\0`);
-  for (const path of (await filesUnder(dir, '')).filter((p) => !p.startsWith('.godot/')).sort()) {
+  // the reads of the next files run while the hash takes the files in order
+  await inOrder((await filesUnder(dir, '')).filter((p) => !p.startsWith('.godot/')).sort(), FILE_IO, (path) => readFile(join(dir, path)), (content, path) => {
     hash.update(`${path}\0`);
-    hash.update(await readFile(join(dir, path)));
+    hash.update(content);
     hash.update('\0');
-  }
+  });
   const folder = join(await commonDir(harnessRoot(env), { env }), 'ogw-cache', 'godot-type-check');
   await mkdir(folder, { recursive: true });
   return join(folder, hash.digest('hex'));
@@ -181,7 +168,7 @@ async function checkScripts(godot: string, project: GodotProject, dir: string, f
 }
 
 async function checkEachFile(godot: string, project: GodotProject, dir: string, files: readonly string[], env: NodeJS.ProcessEnv): Promise<GdError[]> {
-  const results = await inPool(files, PARALLEL, async (path) => {
+  const results = await pooled(files, PARALLEL, async (path) => {
     const res = `res://${path.slice(project.folder.length + 1)}`;
     const r = await run(godot, ['--headless', '--path', dir, '--check-only', '--script', res], { cwd: dir, env, timeoutMs: LIMITS.programMs });
     if (r.timedOut) return [{ path, line: 1, message: 'godot --check-only timed out' }];

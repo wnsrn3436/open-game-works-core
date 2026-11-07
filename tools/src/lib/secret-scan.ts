@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { whenNotFound } from './fsx.ts';
+import { FILE_IO, pooled } from './pool.ts';
 
 /** A value the build-time check `secret` looks for. */
 export interface Needle {
@@ -32,15 +33,17 @@ export function needleHits(where: string, bytes: Buffer, needles: readonly Needl
   return needles.flatMap((needle) => hitLines(bytes, needle.value).map((line) => `${where}:${String(line)}: ${needle.label}`));
 }
 
-/** Build-time check `secret` on files below `root`: every regular file, whatever its size, is searched. */
+/**
+ * Build-time check `secret` on files below `root`: every regular file, whatever its size, is searched. Files are read
+ * several at a time, and the failures keep the order of `files`.
+ */
 export async function scanFiles(root: string, files: readonly string[], needles: readonly Needle[], options: { lines: boolean }): Promise<string[]> {
-  const failures: string[] = [];
-  for (const file of files) {
+  const hits = await pooled(files, FILE_IO, async (file) => {
     const path = join(root, file);
     // a listed file that is gone has nothing to search; a file that cannot be read fails the check
     const info = await stat(path).catch(whenNotFound(null));
-    if (!info?.isFile()) continue;
-    failures.push(...needleHits(file, await readFile(path), needles, options.lines));
-  }
-  return failures;
+    if (!info?.isFile()) return [];
+    return needleHits(file, await readFile(path), needles, options.lines);
+  });
+  return hits.flat();
 }

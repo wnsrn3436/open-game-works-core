@@ -4,6 +4,7 @@ import { basename, join, relative, sep } from 'node:path';
 import { exists } from '../../../lib/fsx.ts';
 import { git, gitRaw, isCheckout, listTags } from '../../../lib/git.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { GIT_PROCESSES, pooled } from '../../../lib/pool.ts';
 import { lexGd } from '../../check/static/lib/gd-lexer.ts';
 import { compareBytes } from './core-spec.ts';
 
@@ -153,14 +154,13 @@ export function compareVersions(a: string, b: string): number {
  * deterministic simulation files (paths and SHA-256) differ from the working tree.
  */
 export async function tickChangedVersions(root: string): Promise<string> {
-  const current = await workingTreeSim(root);
+  const tags = (isCheckout(root) ? await listTags(root) : []).filter((tag) => VERSION_TAG.test(tag));
+  // the git processes of the tags run several at a time, beside the reads of the working tree
+  const [current, atTags] = await Promise.all([workingTreeSim(root), pooled(tags, GIT_PROCESSES, (tag) => commitSim(root, `refs/tags/${tag}^{commit}`))]);
   const versions = new Set<string>();
-  for (const tag of isCheckout(root) ? await listTags(root) : []) {
-    const match = VERSION_TAG.exec(tag);
-    if (!match) continue;
-    if (!sameFiles(current, await commitSim(root, `refs/tags/${tag}^{commit}`))) {
-      versions.add(`${match[1] as string}.${match[2] as string}.${match[3] as string}`);
-    }
+  for (const [i, tag] of tags.entries()) {
+    const match = VERSION_TAG.exec(tag) as RegExpExecArray;
+    if (!sameFiles(current, atTags[i] as Map<string, string>)) versions.add(`${match[1] as string}.${match[2] as string}.${match[3] as string}`);
   }
   const list = [...versions].sort(compareVersions).map((v) => JSON.stringify(v));
   return `export const TickChangedVersions: readonly string[] = [${list.join(', ')}];\n`;

@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { exists } from '../../../lib/fsx.ts';
+import { FILE_IO, pooled } from '../../../lib/pool.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../core/api.ts';
 import { absence, at, finding, folderOf, type Finding, type StaticContext } from './lib/context.ts';
 import { gameEngine } from './lib/engine.ts';
@@ -22,22 +23,19 @@ export async function walk(dir: string): Promise<string[]> {
     .sort();
 }
 
-/** Differences between a game folder and the release folder, one finding per file. */
+/** Differences between a game folder and the release folder, one finding per file, in file order; files are compared several at a time. */
 export async function compareFolders(gameDir: string, releaseDir: string, label: string, version: string): Promise<Finding[]> {
   const [gameFiles, releaseFiles] = await Promise.all([walk(gameDir), walk(releaseDir)]);
   const releaseSet = new Set(releaseFiles);
   const gameSet = new Set(gameFiles);
-  const out: Finding[] = [];
-  for (const rel of [...new Set([...gameFiles, ...releaseFiles])].sort()) {
+  const found = await pooled([...new Set([...gameFiles, ...releaseFiles])].sort(), FILE_IO, async (rel): Promise<Finding | null> => {
     const where = at(`${label}${rel}`, 1);
-    if (!gameSet.has(rel)) out.push(absence(NAME, folderOf(`${label}${rel}`), `${label}${rel} missing; core ${version} has it`));
-    else if (!releaseSet.has(rel)) out.push(finding(NAME, where, `not in core ${version}`));
-    else {
-      const [a, b] = await Promise.all([readFile(join(gameDir, rel)), readFile(join(releaseDir, rel))]);
-      if (!a.equals(b)) out.push(finding(NAME, where, `differs from core ${version}`));
-    }
-  }
-  return out;
+    if (!gameSet.has(rel)) return absence(NAME, folderOf(`${label}${rel}`), `${label}${rel} missing; core ${version} has it`);
+    if (!releaseSet.has(rel)) return finding(NAME, where, `not in core ${version}`);
+    const [a, b] = await Promise.all([readFile(join(gameDir, rel)), readFile(join(releaseDir, rel))]);
+    return a.equals(b) ? null : finding(NAME, where, `differs from core ${version}`);
+  });
+  return found.filter((f): f is Finding => f !== null);
 }
 
 export async function run(sc: StaticContext): Promise<Finding[]> {
