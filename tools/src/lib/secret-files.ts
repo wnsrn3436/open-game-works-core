@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { OgwError } from './errors.ts';
+import { whenNotFound } from './fsx.ts';
 import { harnessRoot } from './paths.ts';
 
 /**
@@ -10,13 +11,14 @@ import { harnessRoot } from './paths.ts';
  */
 async function checkoutCommonDir(root: string): Promise<string> {
   const dotGit = join(root, '.git');
-  const info = await stat(dotGit).catch(() => null);
+  const info = await stat(dotGit).catch(whenNotFound(null));
   if (info === null) throw new OgwError(`the harness repo ${root} is not a git checkout`);
   if (info.isDirectory()) return dotGit;
   const gitDir = /^gitdir: (.+)$/m.exec(await readFile(dotGit, 'utf8'))?.[1]?.trim();
   if (gitDir === undefined) throw new OgwError(`${dotGit} names no gitdir`);
   const absolute = resolve(root, gitDir);
-  const common = await readFile(join(absolute, 'commondir'), 'utf8').catch(() => null);
+  // the git dir of the main checkout has no commondir: it is the common dir
+  const common = await readFile(join(absolute, 'commondir'), 'utf8').catch(whenNotFound(null));
   return common === null ? absolute : resolve(absolute, common.trim());
 }
 

@@ -93,15 +93,15 @@ export async function startPostgresContainer(input: PostgresCreate): Promise<str
   }
 }
 
-/** Removes a container and its anonymous volumes. A missing container is not an error. */
+/** Removes a container and its anonymous volumes. A missing container is not an error; docker that cannot run is. */
 export async function removeContainer(nameOrId: string, env: NodeJS.ProcessEnv): Promise<void> {
-  await run('docker', ['rm', '--force', '--volumes', nameOrId], { timeoutMs: LIMITS.programMs, env }).catch(() => undefined);
+  await run('docker', ['rm', '--force', '--volumes', nameOrId], { timeoutMs: LIMITS.programMs, env });
 }
 
 /**
  * Removes the volumes labeled `VOLUME_LABEL` that no container uses. They are anonymous volumes, which `docker volume
- * prune` removes without `--all` on every Docker version. A failure is not an error.
+ * prune` removes without `--all` on every Docker version. A prune that fails is not an error; docker that cannot run is.
  */
 async function pruneVolumes(env: NodeJS.ProcessEnv): Promise<void> {
-  await run('docker', ['volume', 'prune', '--force', '--filter', `label=${VOLUME_LABEL}`], { timeoutMs: LIMITS.programMs, env }).catch(() => undefined);
+  await run('docker', ['volume', 'prune', '--force', '--filter', `label=${VOLUME_LABEL}`], { timeoutMs: LIMITS.programMs, env });
 }

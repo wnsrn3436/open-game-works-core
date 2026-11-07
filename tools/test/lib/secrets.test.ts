@@ -9,6 +9,7 @@ import {
   OGW_KEYCHAIN_FILE,
   folderSecretEntries,
   keychainEntries,
+  KeyringError,
   linuxSecretsFolder,
   linuxSecretStore,
   MOVED_MARKER_FILE,
@@ -474,7 +475,7 @@ describe('Linux secret store', () => {
     // no D-Bus session bus or no Secret Service
     const unreachable: SecretEntries = {
       get: () => {
-        throw new Error('Platform secure storage failure: no session bus');
+        throw new KeyringError('cannot read secret store: Platform secure storage failure: no session bus');
       },
       set: () => undefined,
       delete: () => undefined,

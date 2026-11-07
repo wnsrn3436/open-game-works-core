@@ -3,6 +3,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { OgwError } from './errors.ts';
+import { whenNotFound } from './fsx.ts';
 import { isStale, ownerText, withLock, withLockWithin } from './lock.ts';
 
 const READERS_POLL_MS = 500;
@@ -96,21 +97,26 @@ async function afterWaitingWriters<T>(lock: RwLock, fn: () => Promise<T>, reads:
 export async function withReader<T>(lock: RwLock, fn: () => Promise<T>): Promise<T> {
   let reading = held.get(lock.base);
   if (reading === undefined) {
-    reading = { count: 0, entry: afterWaitingWriters(lock, () => addReader(lock), false) };
+    // a failed take leaves no entry: the next reader tries again; each reader gets the failure
+    const entry = afterWaitingWriters(lock, () => addReader(lock), false).catch((error: unknown) => {
+      held.delete(lock.base);
+      throw error;
+    });
+    reading = { count: 0, entry };
     held.set(lock.base, reading);
-    // a failed take leaves no entry: the next reader tries again
-    reading.entry.catch(() => held.delete(lock.base));
   }
   reading.count += 1;
   const shared = reading;
+  let release: (() => Promise<void>) | undefined;
   try {
-    await shared.entry;
+    release = await shared.entry;
     return await fn();
   } finally {
     shared.count -= 1;
     if (shared.count === 0) {
       if (held.get(lock.base) === shared) held.delete(lock.base);
-      await shared.entry.then((release) => release(), () => undefined);
+      // a take that failed has no entry to remove: its failure is thrown above
+      if (release !== undefined) await release();
     }
   }
 }
@@ -131,7 +137,7 @@ async function addEntry(dir: string): Promise<() => Promise<void>> {
 /** The live entries of `dir`. An entry whose process is gone is left over from a crash: it is removed. */
 async function liveEntries(dir: string): Promise<number> {
   let live = 0;
-  for (const name of await readdir(dir).catch(() => [])) {
+  for (const name of await readdir(dir).catch(whenNotFound([]))) {
     const entry = join(dir, name);
     if (await isStale(entry)) await rm(entry, { recursive: true, force: true });
     else live += 1;

@@ -93,16 +93,22 @@ export function forwardToBroker(socket: string, argv: readonly string[], io: Bro
         let message: BrokerMessage;
         try {
           message = JSON.parse(text) as BrokerMessage;
-        } catch {
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
           end(1, 'the ogw broker sent a line that is not JSON');
           return;
         }
         if (typeof message.stdout === 'string') io.stdout(message.stdout);
         if (typeof message.stderr === 'string') io.stderr(message.stderr);
         if (message.stdin === true) {
-          void io.stdin().then((stdin) => connection.write(`${JSON.stringify({ stdin })}\n`));
+          void io.stdin().then(
+            (stdin) => connection.write(`${JSON.stringify({ stdin })}\n`),
+            (error: unknown) => {
+              end(1, stdinFailure(error));
+            },
+          );
         }
-        if (message.stdinStream === true) void streamStdin(io, connection);
+        if (message.stdinStream === true) void streamStdin(io, connection, end);
         if (typeof message.exit === 'number') end(message.exit);
       }),
     );
@@ -115,16 +121,22 @@ export function forwardToBroker(socket: string, argv: readonly string[], io: Bro
   });
 }
 
-/** Sends stdin to the broker as it comes, chunk by chunk, then its end. */
-async function streamStdin(io: BrokerIo, connection: Socket): Promise<void> {
+/** The failure line of stdin that cannot be read: the command does not run on part of its stdin. */
+function stdinFailure(error: unknown): string {
+  return `cannot read stdin: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** Sends stdin to the broker as it comes, chunk by chunk, then its end; stdin that cannot be read ends the call. */
+async function streamStdin(io: BrokerIo, connection: Socket, end: (code: number, message?: string) => void): Promise<void> {
   const send = (line: unknown): void => {
     if (!connection.destroyed) connection.write(`${JSON.stringify(line)}\n`);
   };
   try {
     if (io.stdinChunks) for await (const chunk of io.stdinChunks()) send({ chunk });
     else send({ chunk: await io.stdin() });
-  } catch {
-    // stdin that cannot be read ends here
+  } catch (error) {
+    end(1, stdinFailure(error));
+    return;
   }
   send({ end: true });
 }

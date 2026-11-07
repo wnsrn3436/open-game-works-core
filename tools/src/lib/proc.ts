@@ -2,6 +2,7 @@ import { execFileSync, spawn, spawnSync, type ChildProcess, type SpawnOptions } 
 import { readFileSync, readlinkSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { OgwError } from './errors.ts';
+import { isNotFound } from './fsx.ts';
 
 export interface RunOptions {
   cwd?: string;
@@ -27,6 +28,21 @@ export interface RunResult {
 
 const KILL_GRACE_MS = 5000;
 const SIGNAL_POLL_MS = 50;
+
+/** A process that could not be started: `code` is the error code of the spawn (`ENOENT` for a program that is not there). */
+export class SpawnError extends OgwError {
+  readonly code: string | undefined;
+
+  constructor(cmd: string, error: NodeJS.ErrnoException) {
+    super(`cannot run ${cmd}: ${error.message}`);
+    this.code = error.code;
+  }
+}
+
+/** Whether a signal failed because no such process or process group is there (`ESRCH`). */
+function noSuchProcess(error: unknown): boolean {
+  return (error as { code?: unknown }).code === 'ESRCH';
+}
 const live = new Set<ChildProcess>();
 let exitHookInstalled = false;
 
@@ -65,8 +81,9 @@ export function killRecordedGroup(pid: number, startedAt: unknown, signal: NodeJ
   }
   try {
     process.kill(-pid, signal);
-  } catch {
+  } catch (error) {
     // no member of the group is left
+    if (!noSuchProcess(error)) throw error;
   }
 }
 
@@ -80,11 +97,14 @@ export function killTree(child: ChildProcess | number, signal: NodeJS.Signals = 
     } else {
       process.kill(-pid, signal);
     }
-  } catch {
+  } catch (error) {
+    // no process group of that id: the process alone
+    if (!noSuchProcess(error)) throw error;
     try {
       process.kill(pid, signal);
-    } catch {
+    } catch (alone) {
       // already gone
+      if (!noSuchProcess(alone)) throw alone;
     }
   }
 }
@@ -101,8 +121,9 @@ export function pidNamespace(): string | null {
   if (process.platform === 'linux') {
     try {
       cachedPidNs = /\[([0-9]+)\]/.exec(readlinkSync('/proc/self/ns/pid'))?.[1] ?? null;
-    } catch {
+    } catch (error) {
       // no /proc
+      if (!isNotFound(error)) throw error;
     }
   }
   return cachedPidNs;
@@ -118,7 +139,10 @@ export function isAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as { code?: string }).code === 'EPERM';
+    // EPERM: a process of another user is there
+    if (noSuchProcess(error)) return false;
+    if ((error as { code?: unknown }).code === 'EPERM') return true;
+    throw error;
   }
 }
 
@@ -170,13 +194,27 @@ export function spawnTracked(cmd: string, args: readonly string[], options: Spaw
   return child;
 }
 
+/** Whether `error` is the failure of a spawn system call (`syscall` `spawn` or `spawn <cmd>`), not an invalid argument. */
+function spawnFailure(error: unknown): error is NodeJS.ErrnoException {
+  const syscall = (error as { syscall?: unknown } | null)?.syscall;
+  return typeof syscall === 'string' && (syscall === 'spawn' || syscall.startsWith('spawn '));
+}
+
 export async function run(cmd: string, args: readonly string[], options: RunOptions): Promise<RunResult> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawnTracked(cmd, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let child: ChildProcess;
+    try {
+      child = spawnTracked(cmd, args, {
+        cwd: options.cwd,
+        env: options.env ?? process.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      // a start the OS refuses at once (EPERM in the macOS sandbox) throws here instead of coming as an `error` event
+      if (!spawnFailure(error)) throw error;
+      reject(new SpawnError(cmd, error));
+      return;
+    }
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let timedOut = false;
@@ -204,7 +242,7 @@ export async function run(cmd: string, args: readonly string[], options: RunOpti
       clearTimeout(timer);
       if (stopPoll) clearInterval(stopPoll);
       if (killTimer) clearTimeout(killTimer);
-      reject(new OgwError(`cannot run ${cmd}: ${error.message}`));
+      reject(new SpawnError(cmd, error));
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
@@ -243,8 +281,8 @@ export async function runOk(cmd: string, args: readonly string[], options: RunOp
 /** Finds a program on the PATH of `env` (default `process.env`). Returns the absolute path or null. */
 export async function which(program: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = await run(finder, [program], { timeoutMs: 10_000, env }).catch(() => null);
-  if (!result || result.code !== 0) return null;
+  const result = await run(finder, [program], { timeoutMs: 10_000, env });
+  if (result.code !== 0) return null;
   return result.stdout.split(/\r?\n/)[0]?.trim() || null;
 }
 
@@ -285,15 +323,11 @@ let cachedBootId: string | null | undefined;
  */
 export function hostBootId(): string | null {
   if (cachedBootId !== undefined) return cachedBootId;
-  try {
-    if (process.platform === 'darwin') {
-      cachedBootId = execFileSync('sysctl', ['-n', 'kern.bootsessionuuid'], { encoding: 'utf8', timeout: 10_000 }).trim() || null;
-    } else if (process.platform === 'linux') {
-      cachedBootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null;
-    } else {
-      cachedBootId = null;
-    }
-  } catch {
+  if (process.platform === 'darwin') {
+    cachedBootId = execFileSync('sysctl', ['-n', 'kern.bootsessionuuid'], { encoding: 'utf8', timeout: 10_000 }).trim() || null;
+  } else if (process.platform === 'linux') {
+    cachedBootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null;
+  } else {
     cachedBootId = null;
   }
   return cachedBootId;

@@ -34,11 +34,7 @@ export function expand(start: SchemaNode, depth = 0): SchemaNode[] {
 }
 
 function matchesPattern(pattern: string, key: string): boolean {
-  try {
-    return new RegExp(pattern, 'u').test(key);
-  } catch {
-    return false;
-  }
+  return new RegExp(pattern, 'u').test(key);
 }
 
 function childOfNode(start: SchemaNode, segment: string): JsonObject[] {

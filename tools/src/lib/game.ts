@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { OgwError } from './errors.ts';
-import { exists } from './fsx.ts';
+import { exists, whenNotFound } from './fsx.ts';
 import { commonDir, gitRaw, topLevel } from './git.ts';
 import { segmentsBelow } from './paths.ts';
 import type { Workspace } from './settings.ts';
@@ -52,18 +52,17 @@ function coreTreeOf(cwd: string): string | null {
 }
 
 async function realOf(path: string): Promise<string> {
-  return realpath(path).catch(() => resolve(path));
+  return realpath(path).catch(whenNotFound(resolve(path)));
 }
 
 /** The top of the git worktree of `coreImpl`'s repo that holds `cwd`, or null when `cwd` is in no worktree of that repo. */
 async function coreWorktreeOf(coreImpl: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string | null> {
   if (!exists(join(coreImpl, '.git'))) return null;
-  const here = await gitRaw(cwd, ['rev-parse', '--show-toplevel', '--git-common-dir'], { env }).catch(() => null);
-  if (here === null || here.code !== 0) return null;
+  const here = await gitRaw(cwd, ['rev-parse', '--show-toplevel', '--git-common-dir'], { env });
+  if (here.code !== 0) return null;
   const [top, common] = here.stdout.trim().split('\n');
   if (top === undefined || common === undefined) return null;
-  const implCommon = await commonDir(coreImpl, { env }).catch(() => null);
-  if (implCommon === null) return null;
+  const implCommon = await commonDir(coreImpl, { env });
   return (await realOf(resolve(cwd, common))) === (await realOf(implCommon)) ? top : null;
 }
 

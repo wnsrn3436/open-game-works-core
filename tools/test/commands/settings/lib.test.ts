@@ -103,7 +103,7 @@ describe('schema-nav', () => {
       far: { $ref: 'other.json#/x' },
       loop: { $ref: '#/$defs/loop' },
       map: {
-        patternProperties: { '^[0-9]+$': { type: 'integer' }, '(': { type: 'null' } },
+        patternProperties: { '^[0-9]+$': { type: 'integer' } },
         additionalProperties: { type: 'boolean' },
       },
       list: { type: 'array', items: { type: 'object', properties: { k: { type: 'string', 'x-owner': 'inner' } } } },

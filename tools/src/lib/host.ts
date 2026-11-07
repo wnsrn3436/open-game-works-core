@@ -72,9 +72,12 @@ export async function hostId(env: NodeJS.ProcessEnv = process.env): Promise<stri
   const key = env.OGW_HOST_ID ?? '';
   let id = cache.get(key);
   if (id === undefined) {
-    id = resolveHostId({ env });
+    // a failed read is not kept, so the next call reads again; the caller gets the failure
+    id = resolveHostId({ env }).catch((error: unknown) => {
+      cache.delete(key);
+      throw error;
+    });
     cache.set(key, id);
-    id.catch(() => cache.delete(key));
   }
   return id;
 }

@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { whenNotFound } from './fsx.ts';
 
 /** A value the build-time check `secret` looks for. */
 export interface Needle {
@@ -36,7 +37,8 @@ export async function scanFiles(root: string, files: readonly string[], needles:
   const failures: string[] = [];
   for (const file of files) {
     const path = join(root, file);
-    const info = await stat(path).catch(() => null);
+    // a listed file that is gone has nothing to search; a file that cannot be read fails the check
+    const info = await stat(path).catch(whenNotFound(null));
     if (!info?.isFile()) continue;
     failures.push(...needleHits(file, await readFile(path), needles, options.lines));
   }

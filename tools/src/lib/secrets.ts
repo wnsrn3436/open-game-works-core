@@ -19,6 +19,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { OgwError } from './errors.ts';
+import { isNotFound } from './fsx.ts';
 import { LIMITS } from './limits.ts';
 
 /** account name of every ogw secret in the OS credential store */
@@ -130,26 +131,29 @@ function randomChunkId(): string {
   return randomBytes(6).toString('hex');
 }
 
+/** A call of the OS credential store (`@napi-rs/keyring`) that failed: on Linux, the D-Bus Secret Service cannot be reached. */
+export class KeyringError extends OgwError {}
+
 const keyringEntries: SecretEntries = {
   get(service) {
     try {
       return new Entry(service, SECRET_ACCOUNT).getPassword();
     } catch (error) {
-      throw new OgwError(`cannot read secret store: ${(error as Error).message}`);
+      throw new KeyringError(`cannot read secret store: ${(error as Error).message}`);
     }
   },
   set(service, value) {
     try {
       new Entry(service, SECRET_ACCOUNT).setPassword(value);
     } catch (error) {
-      throw new OgwError(`cannot write secret store: ${(error as Error).message}`);
+      throw new KeyringError(`cannot write secret store: ${(error as Error).message}`);
     }
   },
   delete(service) {
     try {
       new Entry(service, SECRET_ACCOUNT).deleteCredential();
     } catch (error) {
-      throw new OgwError(`cannot write secret store: ${(error as Error).message}`);
+      throw new KeyringError(`cannot write secret store: ${(error as Error).message}`);
     }
   },
 };
@@ -305,15 +309,20 @@ export function keychainEntries(options: KeychainOptions): SecretEntries {
 /** The exit code of `security` for an item that is not there (errSecItemNotFound). */
 const SECURITY_NOT_FOUND = 44;
 
-/** The services a marker file of `movingSecretStore` lists and whether it has `"done": true`; none when it is missing or broken. */
+/**
+ * The services a marker file of `movingSecretStore` lists and whether it has `"done": true`; none when it is missing or
+ * not JSON. A marker that cannot be read is an error.
+ */
 function readMarker(marker: string): { moved: string[]; done: boolean } {
+  let value: { moved?: unknown; done?: unknown } | null;
   try {
-    const value = JSON.parse(readFileSync(marker, 'utf8')) as { moved?: unknown; done?: unknown };
-    const moved = Array.isArray(value.moved) ? value.moved.filter((service): service is string => typeof service === 'string') : [];
-    return { moved, done: value.done === true };
-  } catch {
-    return { moved: [], done: false };
+    value = JSON.parse(readFileSync(marker, 'utf8')) as { moved?: unknown; done?: unknown } | null;
+  } catch (error) {
+    if (isNotFound(error) || error instanceof SyntaxError) return { moved: [], done: false };
+    throw new OgwError(`cannot read ${marker}: ${(error as Error).message}`);
   }
+  const moved = Array.isArray(value?.moved) ? value.moved.filter((service): service is string => typeof service === 'string') : [];
+  return { moved, done: value?.done === true };
 }
 
 function writeMarker(marker: string, services: readonly string[]): void {
@@ -438,8 +447,9 @@ export function folderSecretEntries(folder: string): SecretEntries {
       } catch (error) {
         try {
           rmSync(tmp, { force: true });
-        } catch {
-          // no temporary file where the folder is missing or not a folder
+        } catch (cleanup) {
+          // no temporary file where the folder is not a folder
+          if ((cleanup as { code?: unknown }).code !== 'ENOTDIR') throw cleanup;
         }
         throw error instanceof OgwError ? error : failed('write', error);
       }
@@ -463,8 +473,9 @@ function unreachableAsEmpty(entries: SecretEntries): SecretEntries {
     get(service) {
       try {
         return entries.get(service);
-      } catch {
-        return null;
+      } catch (error) {
+        if (error instanceof KeyringError) return null;
+        throw error;
       }
     },
     set: (service, value) => {
@@ -508,8 +519,9 @@ export function fileSecretStore(path: string): SecretEntries {
   const load = (): Record<string, string> => {
     try {
       return JSON.parse(readFileSync(path, 'utf8')) as Record<string, string>;
-    } catch {
-      return {};
+    } catch (error) {
+      if (isNotFound(error)) return {};
+      throw error;
     }
   };
   const save = (all: Record<string, string>): void => {

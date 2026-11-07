@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/pro
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { OgwError } from './errors.ts';
-import { isNotFound } from './fsx.ts';
+import { isNotFound, whenNotFound } from './fsx.ts';
 import { hostBootId, isAlive, pidNamespace } from './proc.ts';
 
 const POLL_MS = 100;
@@ -72,8 +72,12 @@ export async function takeFolder(path: string): Promise<boolean> {
         return true;
       } catch (error) {
         if (await targetTaken(error, path)) {
-          // removes only an empty folder: a lock folder has its owner file
-          await rmdir(path).catch(() => undefined);
+          // removes only an empty folder: a lock folder has its owner file, and a folder gone meanwhile has none
+          await rmdir(path).catch((error: unknown) => {
+            const code = (error as { code?: unknown }).code;
+            if (code === 'ENOTEMPTY' || code === 'EEXIST' || isNotFound(error)) return;
+            throw error;
+          });
           return false;
         }
         // Windows: the owner let the lock go between the failed move and the check; the move is tried once more
@@ -98,7 +102,7 @@ function refusedMove(error: unknown): boolean {
 async function targetTaken(error: unknown, target: string): Promise<boolean> {
   const code = (error as { code?: string }).code;
   if (code === 'ENOTEMPTY' || code === 'EEXIST') return true;
-  return refusedMove(error) && (await stat(target).catch(() => null)) !== null;
+  return refusedMove(error) && (await stat(target).catch(whenNotFound(null))) !== null;
 }
 
 /**
@@ -128,7 +132,7 @@ export async function isStale(lockPath: string, ns: string | null = pidNamespace
   } catch (error) {
     if (!isNotFound(error)) throw error;
     // The owner made the folder but has not written the pid yet, or crashed in between.
-    const info = await stat(lockPath).catch(() => null);
+    const info = await stat(lockPath).catch(whenNotFound(null));
     return info !== null && Date.now() - info.mtimeMs > NO_PID_STALE_MS;
   }
 }

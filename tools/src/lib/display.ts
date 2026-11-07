@@ -1,3 +1,4 @@
+import { OgwError } from './errors.ts';
 import { LIMITS } from './limits.ts';
 import { runOk } from './proc.ts';
 
@@ -6,8 +7,9 @@ export function macosRefreshHz(json: string): number | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
   const gpus = (parsed as { SPDisplaysDataType?: { spdisplays_ndrvs?: Record<string, unknown>[] }[] } | null)?.SPDisplaysDataType ?? [];
   const displays = gpus.flatMap((gpu) => gpu.spdisplays_ndrvs ?? []);
@@ -46,11 +48,15 @@ let cached: Promise<number | null> | null = null;
 
 /**
  * The refresh rate of the main display of this host in whole Hz (rounded down, as `QualityCore` reads a device screen),
- * read once per process; null when it cannot be read.
+ * read once per process; null when it cannot be read (ogw.md `## performance`): the program that prints it fails or
+ * cannot run, or prints no rate.
  */
 export function hostRefreshHz(env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
   cached ??= readRefreshHz(env)
     .then((hz) => (hz !== null && Number.isFinite(hz) && hz >= 1 ? Math.floor(hz) : null))
-    .catch(() => null);
+    .catch((error: unknown) => {
+      if (error instanceof OgwError) return null;
+      throw error;
+    });
   return cached;
 }

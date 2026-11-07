@@ -179,18 +179,26 @@ export async function endJobsOfAgent(agentJob: string, env: NodeJS.ProcessEnv = 
   let ids: string[];
   try {
     ids = await readdir(dir);
-  } catch {
-    return;
+  } catch (error) {
+    // the agent started no job
+    if (isNotFound(error)) return;
+    throw error;
   }
+  // every job is ended before a failure to end one is thrown
+  const failures: string[] = [];
   for (const id of ids) {
     const job = await readJob(id, env, hostBootId(), ns).catch((error: unknown) => {
       if (error instanceof JobNotFound) return null;
       throw error;
     });
     if (job === null || job.agentJob !== agentJob || job.status !== 'running') continue;
-    if (samePidNamespace(job.pidNs, ns)) await killJob(job.id, env, KILL_GRACE_MS, ns).catch(() => undefined);
-    else await markFailed(job.id, env);
+    if (samePidNamespace(job.pidNs, ns)) {
+      await killJob(job.id, env, KILL_GRACE_MS, ns).catch((error: unknown) => {
+        failures.push(`job ${job.id}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } else await markFailed(job.id, env);
   }
+  if (failures.length > 0) throw new OgwError(`cannot end the jobs of agent ${agentJob}: ${failures.join('; ')}`);
   await rm(dir, { recursive: true, force: true });
 }
 
@@ -371,7 +379,7 @@ export async function superviseJob(id: string, env: NodeJS.ProcessEnv = process.
   }, env);
   // the agent CLI runs in its own process group, which the SIGKILL of the command group does not reach
   killProcesses(ended);
-  for (const hook of onJobEnd) await hook(id, env).catch(() => undefined);
+  for (const hook of onJobEnd) await hook(id, env);
 }
 
 /** Hooks the supervisor runs after a job ends. The agent run log registers one. */
@@ -416,7 +424,11 @@ function groupAlive(pid: number): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    return (error as { code?: string }).code === 'EPERM';
+    // EPERM: a member of another user is there
+    const code = (error as { code?: unknown }).code;
+    if (code === 'ESRCH') return false;
+    if (code === 'EPERM') return true;
+    throw error;
   }
 }
 

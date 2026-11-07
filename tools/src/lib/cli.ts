@@ -191,11 +191,17 @@ export async function runCli(commands: readonly CommandDef[], argv: readonly str
   return runCommand(commands, argv, io);
 }
 
+/** Whether a write to fd 3 failed because no file is open there (`EBADF`): no broker gave it. */
+function noBrokerFd(error: unknown): boolean {
+  return (error as { code?: unknown }).code === 'EBADF';
+}
+
 function brokerStdin(io: CliIo): Promise<string> {
   try {
     writeSync(3, STDIN_REQUEST);
-  } catch {
+  } catch (error) {
     // no broker on fd 3: stdin as it is
+    if (!noBrokerFd(error)) throw error;
   }
   return io.stdin();
 }
@@ -204,8 +210,9 @@ function brokerStdin(io: CliIo): Promise<string> {
 async function* brokerStdinChunks(io: CliIo): AsyncIterable<string> {
   try {
     writeSync(3, STDIN_STREAM_REQUEST);
-  } catch {
+  } catch (error) {
     // no broker on fd 3: stdin as it is
+    if (!noBrokerFd(error)) throw error;
   }
   if (io.stdinChunks) yield* io.stdinChunks();
   else yield await io.stdin();
@@ -244,7 +251,10 @@ async function runCommand(commands: readonly CommandDef[], argv: readonly string
     return exitCode;
   } catch (error) {
     const exitCode = reportError(io, json, error);
-    await recordEnd(ctx, agent, logIndex, exitCode, null).catch(() => undefined);
+    // the failure of the command stays its result; a failure to record its end is reported after it
+    await recordEnd(ctx, agent, logIndex, exitCode, null).catch((recordError: unknown) => {
+      io.stderr(`cannot record the end of the command: ${recordError instanceof Error ? recordError.message : String(recordError)}\n`);
+    });
     return exitCode;
   }
 }

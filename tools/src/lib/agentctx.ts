@@ -10,7 +10,7 @@ function gone(error: unknown): null {
   throw error;
 }
 import { withLock } from './lock.ts';
-import { ancestorPids, pidNamespace, samePidNamespace } from './proc.ts';
+import { ancestorPids, pidNamespace, samePidNamespace, SpawnError } from './proc.ts';
 import type { Role } from './settings.ts';
 
 /** Fields `ogw agent` keeps in the `meta` of its job. */
@@ -148,7 +148,12 @@ export async function agentContext(env: NodeJS.ProcessEnv = process.env, ns: str
   const local = (await runningAgents(env, ns)).filter((a) => a.meta.cliPid !== null && samePidNamespace(a.job.pidNs, ns));
   if (local.length > 0) {
     // `ps` cannot run in the macOS sandbox: the key identifies the agent there
-    const ancestors = new Set(await ancestorPids().catch(() => []));
+    const ancestors = new Set(
+      await ancestorPids().catch((error: unknown) => {
+        if (error instanceof SpawnError) return [];
+        throw error;
+      }),
+    );
     const byAncestry = local.find((a) => ancestors.has(a.meta.cliPid as number));
     if (byAncestry) return byAncestry;
   }
@@ -206,12 +211,12 @@ export async function recordJobEnd(id: string, env: NodeJS.ProcessEnv = process.
   const agentId = job.agentJob;
   if (!agentId) return;
   const open = (agent: JobRecord | null): agent is JobRecord => agent?.status === 'running' && agent.meta.cliEnded !== true;
-  const first = await readJob(agentId, env).catch(() => null);
+  const first = await readJob(agentId, env).catch(gone);
   if (!open(first)) return;
   const runLog = first.meta.runLog;
   if (typeof runLog !== 'string') return;
   await withLock(`${runLog}.lock`, async () => {
-    const agent = await readJob(agentId, env).catch(() => null);
+    const agent = await readJob(agentId, env).catch(gone);
     if (!open(agent) || agent.meta.runLog !== runLog) return;
     const log = await readJsonIfExists<RunLog>(runLog);
     const entry = log?.runs.find((e) => e.job === id);
