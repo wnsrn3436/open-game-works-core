@@ -115,6 +115,33 @@ export function parseJsonWithLines(text: string): JsonWithLines {
   return { value, lines: reader.lines };
 }
 
+/** The JSON pointer of `segments`. */
+export function pointerOf(segments: readonly string[]): string {
+  return segments.map((segment) => `/${escapePointer(segment)}`).join('');
+}
+
+/** The segments of a JSON pointer. */
+export function segmentsOf(pointer: string): string[] {
+  return pointer === '' ? [] : pointer.slice(1).split('/').map((segment) => segment.replaceAll('~1', '/').replaceAll('~0', '~'));
+}
+
+/** The line of the value at `segments`, or, when it is absent, of the nearest value that holds its place (the root at the last). */
+export function valueLine(parsed: JsonWithLines, segments: readonly string[]): number {
+  for (let n = segments.length; n >= 0; n--) {
+    const line = parsed.lines.get(pointerOf(segments.slice(0, n)));
+    if (line !== undefined) return line;
+  }
+  return 1;
+}
+
+/** Per line, the pointer of the outermost value that starts on it. */
+export function valueStarts(parsed: JsonWithLines): Map<number, string> {
+  const out = new Map<number, string>();
+  // a value's line is set before those of the values it holds
+  for (const [pointer, line] of parsed.lines) if (!out.has(line)) out.set(line, pointer);
+  return out;
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

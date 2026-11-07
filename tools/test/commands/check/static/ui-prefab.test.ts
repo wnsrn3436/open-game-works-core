@@ -70,6 +70,12 @@ describe('UI prefab', () => {
       'settings.json:1 | UI prefab: `UICore.loadingIconResource` `prefab/common/icon` has no file resource/prefab/common/icon.tscn',
       'settings.json:1 | UI prefab: `UICore.systemPopupResource` `prefab/common/gone` has no file resource/prefab/common/gone.tscn',
     ]);
+    // with `core` in settings.json but not the key, the where is the line of `core`, the value that would hold it
+    const withCore = { ...noIcon, 'settings.json': '{\n  "engine": "godot",\n  "core": {\n    "NetworkCore.retryCount": 1\n  }\n}\n', 'resource/resources.csv': `${LIST}prefab/common/gone,x,,final,,,,,\n` };
+    expect(lines(await uiPrefab.run(memContext(withCore)))).toEqual([
+      'settings.json:3 | UI prefab: `UICore.loadingIconResource` `prefab/common/icon` has no file resource/prefab/common/icon.tscn',
+      'settings.json:3 | UI prefab: `UICore.systemPopupResource` `prefab/common/gone` has no file resource/prefab/common/gone.tscn',
+    ]);
   });
 
   it('checks nothing when the merged core settings have no such key', async () => {

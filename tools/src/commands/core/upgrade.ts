@@ -14,7 +14,7 @@ import { callContractTool, contractPrevious, runContract, type ContractRun } fro
 import { staticCheckDetail, type StaticCheckDetail } from '../check/static-api.ts';
 import { GENERATED_FOLDERS } from '../check/static/generated-diff.ts';
 import { runData } from '../data/api.ts';
-import { blockingFailures } from '../game/lib/pre-commit.ts';
+import { blockingFailures, settingsChangeOf } from '../game/lib/pre-commit.ts';
 import { generateCheckout } from '../generate/api.ts';
 import { CORE_UPGRADE_KEY } from '../loop/lib/api.ts';
 import { gameProject, sourceOf } from '../meta/lib/project.ts';
@@ -208,7 +208,8 @@ async function printHookFailures(ctx: Context, game: GameRepo, commit: string): 
     ctx.log(`static check of the upgraded checkout could not run: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
-  for (const failure of blockingFailures(detail, files)) ctx.log(`${failure.where}: ${failure.message}`);
+  const settings = await settingsChangeOf(game.root, `${commit}^`, commit, ctx.env);
+  for (const failure of blockingFailures(detail, files, settings)) ctx.log(`${failure.where}: ${failure.message}`);
 }
 
 /** First lines of the commits `ogw` makes for agent records, review lists and releases: not changes of core. */

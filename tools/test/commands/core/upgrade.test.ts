@@ -384,6 +384,7 @@ describe('ogw core upgrade', () => {
       checked = sh(game.root, 'git', ['log', '-1', '--format=%s']).trim();
       return Promise.resolve(staticResult([
         { where: 'settings.json:1', message: 'game settings owner: ogw game check: uiCheckScreens.0.pixelRatio: missing' },
+        { where: 'settings.json:2', message: 'a failure at `coreVersion`, which the commit changes' },
         { where: 'settings.json:4', message: 'option entry: no `BootstrapCore.request_restart` call in client content code' },
         { where: 'client/core/new_core:1', message: 'an absence failure in a folder of the commit', absent: true },
         { where: 'client/core/new_core:1', message: 'a failure at a folder of the commit' },
@@ -404,11 +405,13 @@ describe('ogw core upgrade', () => {
       'settings.json',
     ]);
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['A  client/features/lead/lead.gd', 'A  client/features/lead/lead.gd.uid']);
-    // the static check of the hook ran on the upgraded checkout, and what the hook would refuse the commit for is printed
+    // the static check of the hook ran on the upgraded checkout, and what the hook would refuse the commit for is printed:
+    // not the option entry at `supportedLanguages` (line 4), a value the commit does not change
     expect(checked).toBe('core upgrade: 1.0.0 -> 1.1.0');
+    expect(readFileSync(join(dir, 'settings.json'), 'utf8').split('\n').slice(1, 4)).toEqual(['  "coreVersion": "1.1.0",', '  "engine": "godot",', '  "supportedLanguages": [']);
     expect(run.stderr.split('\n').filter((line) => /^(settings\.json|client\/)/.test(line))).toEqual([
       'settings.json:1: game settings owner: ogw game check: uiCheckScreens.0.pixelRatio: missing',
-      'settings.json:4: option entry: no `BootstrapCore.request_restart` call in client content code',
+      'settings.json:2: a failure at `coreVersion`, which the commit changes',
       'client/core/new_core:1: an absence failure in a folder of the commit',
     ]);
   });

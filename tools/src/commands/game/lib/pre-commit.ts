@@ -1,13 +1,16 @@
-import { chmod, mkdir } from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import type { CliIo } from '../../../lib/cli.ts';
 import { createContext, type Context } from '../../../lib/command.ts';
-import { writeFileAtomic } from '../../../lib/fsx.ts';
+import { whenNotFound, writeFileAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
-import { commonDir, git, stagedPaths } from '../../../lib/git.ts';
+import { commonDir, git, showFile, stagedPaths } from '../../../lib/git.ts';
 import type { CheckFailure } from '../../check/api.ts';
+import { JsonPosError, parseJsonWithLines, segmentsOf, valueStarts, type JsonWithLines } from '../../check/static/lib/json-pos.ts';
 import type { StaticCheckDetail, StaticCheckOptions } from '../../check/static-api.ts';
+import { getAt } from '../../settings/lib/json-path.ts';
 
 export interface PreCommitDeps {
   /** Runs an ogw command line with the given io and returns its exit code. */
@@ -55,12 +58,73 @@ export function folderHolds(where: string, files: readonly string[]): boolean {
   return files.some((file) => folder === '.' || file.startsWith(`${folder}/`));
 }
 
+/** Game settings: a list of independent values, of which a commit makes only the failures at the values it changes. */
+const SETTINGS = 'settings.json';
+
+/** For a line of the checkout's `settings.json`, whether the commit changes the value that starts on it. */
+export type SettingsChange = (line: number) => boolean;
+
+const EVERY_LINE: SettingsChange = () => true;
+
+/** The value of JSON bytes, `undefined` for no file; null when they do not parse. */
+function jsonValue(bytes: Buffer | null): { value: unknown } | null {
+  if (bytes === null) return { value: undefined };
+  try {
+    return { value: JSON.parse(bytes.toString('utf8')) as unknown };
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
 /**
- * The failures of a static check that block a commit of `files`: a failure whose `where` points at one of the files,
- * and an absence failure whose `where` `<folder>:1` holds one of them.
+ * The change of a commit to `settings.json` by the lines of `text`, the checkout's file that the static check reads:
+ * the outermost value that starts on a line (on line 1 the whole file) is changed when its path has another value in
+ * `after` (the commit) than in `before` (its parent), a value on one side only included (null bytes: no file). Every
+ * line is changed when one of them does not parse.
  */
-export function blockingFailures(detail: StaticCheckDetail, files: readonly string[]): CheckFailure[] {
-  return detail.result.failures.filter((failure) => pointsAt(failure.where, files) || (detail.absent.includes(failure) && folderHolds(failure.where, files)));
+export function settingsChange(text: string | null, before: Buffer | null, after: Buffer | null): SettingsChange {
+  if (text === null) return EVERY_LINE;
+  let parsed: JsonWithLines;
+  try {
+    parsed = parseJsonWithLines(text);
+  } catch (error) {
+    if (error instanceof JsonPosError) return EVERY_LINE;
+    throw error;
+  }
+  const old = jsonValue(before);
+  const next = jsonValue(after);
+  if (old === null || next === null) return EVERY_LINE;
+  const starts = valueStarts(parsed);
+  return (line) => {
+    const segments = segmentsOf(starts.get(line) ?? '');
+    return !isDeepStrictEqual(getAt(old.value, segments), getAt(next.value, segments));
+  };
+}
+
+/** `settingsChange` of the checkout `root` from revision `from` to revision `to` (`''` for the index). */
+export async function settingsChangeOf(root: string, from: string, to: string, env: NodeJS.ProcessEnv): Promise<SettingsChange> {
+  const text = await readFile(join(root, SETTINGS), 'utf8').catch(whenNotFound(null));
+  return settingsChange(text, await showFile(root, from, SETTINGS, { env }), await showFile(root, to, SETTINGS, { env }));
+}
+
+/** The line of a `where` at a line of `settings.json` (`settings.json:<line>` or `settings.json:<line>:<column>`), or null. */
+function settingsWhereLine(where: string): number | null {
+  const match = /^settings\.json:(\d+)(?::\d+)?$/.exec(where);
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * The failures of a static check that block a commit of `files` (ogw.md `## pre-commit hook`): a failure at a line of
+ * `settings.json` when `settings` says the commit changes the value that starts there; another failure whose `where`
+ * points at one of the files; an absence failure whose `where` `<folder>:1` holds one of them.
+ */
+export function blockingFailures(detail: StaticCheckDetail, files: readonly string[], settings: SettingsChange): CheckFailure[] {
+  return detail.result.failures.filter((failure) => {
+    const line = settingsWhereLine(failure.where);
+    if (line !== null) return files.includes(SETTINGS) && settings(line);
+    return pointsAt(failure.where, files) || (detail.absent.includes(failure) && folderHolds(failure.where, files));
+  });
 }
 
 /**
@@ -79,7 +143,9 @@ export async function runPreCommit(io: CliIo, gameName: string, deps: PreCommitD
   }
   const game = await ctx.game(gameName);
   const staged = await stagedPaths(game.root, { env: envs.checkout });
-  const blocking = blockingFailures(await deps.staticCheck(ctx, game, { stagedEnv: envs.checkout }), staged);
+  const detail = await deps.staticCheck(ctx, game, { stagedEnv: envs.checkout });
+  const settings = staged.includes(SETTINGS) ? await settingsChangeOf(game.root, 'HEAD', '', envs.checkout) : EVERY_LINE;
+  const blocking = blockingFailures(detail, staged, settings);
   for (const failure of blocking) ctx.log(`${failure.where}: ${failure.message}`);
   return blocking.length > 0 ? 1 : 0;
 }

@@ -156,6 +156,25 @@ describe('game settings owner', () => {
     ]));
   });
 
+  it('points a humanDecided path at the line of its value, not at an earlier value of the same key name', async () => {
+    const { sc, root, game } = ownerGame();
+    const base = { engine: 'godot', environments: { DEV: { serverUrl: 'https://dev' }, PROD: { serverUrl: 'https://prod' } }, humanDecided: ['environments.PROD.serverUrl'] };
+    writeFiles(root, { 'settings.json': base });
+    const reference = commitAll(root);
+    await changeRuns(game, (runs) => {
+      runs.push(newRunState({ name: 'r1', kind: 'loop', branch: 'loop/r1', baseCommit: reference, referenceCommit: reference }));
+    });
+    const changed = { ...base, environments: { DEV: { serverUrl: 'https://dev' }, PROD: { serverUrl: 'https://other' } } };
+    writeFiles(root, { 'settings.json': changed });
+    const text = JSON.stringify(changed, null, 2).split('\n');
+    const prod = text.findIndex((l) => l.includes('"https://other"')) + 1;
+    expect(prod).toBe(8);
+    expect(lines(await owner.run(await sc()))).toEqual(sorted([
+      `settings.json:3 | game settings owner: \`environments\` is not a content item and differs from the run reference commit ${reference}`,
+      `settings.json:${String(prod)} | game settings owner: \`environments.PROD.serverUrl\` is in humanDecided and differs from the run reference commit ${reference}`,
+    ]));
+  });
+
   it('compares PROD-fixed items with the last prod tag, schema defaults filled in', async () => {
     const { sc, root } = ownerGame();
     writeFiles(root, { 'settings.json': { engine: 'godot', nicknameUnique: true } });

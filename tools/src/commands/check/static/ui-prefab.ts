@@ -2,7 +2,7 @@ import { LIST_PATH, parseKey } from '../../resource/lib/list.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { godotInherits } from './lib/engine.ts';
 import { instanceChain, nodeClass } from './lib/scene-classes.ts';
-import { keyLine } from './option-entry.ts';
+import { settingsLine } from './lib/settings-lines.ts';
 
 /**
  * UI prefab (`client-content` Godot `## scene and prefab`): merged core settings `UICore.systemPopupResource` and
@@ -10,7 +10,7 @@ import { keyLine } from './option-entry.ts';
  * system popup prefab has a script that is or inherits `UIPopup` (its own, else the root script of the scene it
  * instances), and the root of the loading icon prefab is a `Control`: its node type, or when it instances a scene the node
  * type of that scene's root, is `Control` or inherits it in the pinned Godot. A key that the merged core settings do not
- * have is not checked. The `where` is the line of the key in `settings.json`, else `settings.json:1`.
+ * have is not checked. The `where` is the line of the value of `core.<key>` in `settings.json` (`settingsLine`).
  */
 export const NAME = 'UI prefab';
 
@@ -53,7 +53,7 @@ export async function run(sc: StaticContext): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const key of keys) {
     const why = await problem(sc, key, core[key], prefabs);
-    if (why !== null) out.push(finding(NAME, at('settings.json', keyLine(text, key)), why));
+    if (why !== null) out.push(finding(NAME, at('settings.json', settingsLine(text, `core.${key}`)), why));
   }
   return out;
 }

@@ -9,7 +9,7 @@ import { coreReleaseOfGame } from '../../core/api.ts';
 import { gameCheckErrors, gameSettingsValue } from '../../settings/api.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { isRecord } from './lib/json-pos.ts';
-import { keyLine } from './option-entry.ts';
+import { settingsLine } from './lib/settings-lines.ts';
 
 /**
  * game settings owner: game settings fail `ogw game check`; a game settings item whose schema `x-owner` is not
@@ -63,16 +63,6 @@ export function coreValue(core: unknown, key: string): unknown {
   return cur;
 }
 
-/** Line of a core settings key in the settings text: the flat key, else its last segment. */
-function coreKeyLine(text: string, key: string): number {
-  return text.includes(`"${key}"`) ? keyLine(text, key) : keyLine(text, key.split('.').pop() ?? key);
-}
-
-/** Line of a `humanDecided` path in the settings text: its core settings key, else its last key. */
-function humanDecidedLine(text: string, path: string): number {
-  return path.startsWith('core.') ? coreKeyLine(text, path.slice('core.'.length)) : keyLine(text, path.split('.').pop() ?? path);
-}
-
 async function settingsAt(sc: StaticContext, rev: string): Promise<Record<string, unknown>> {
   const bytes = await showFile(sc.root, rev, 'settings.json');
   if (!bytes) return {};
@@ -86,19 +76,19 @@ async function referenceFindings(sc: StaticContext, current: Record<string, unkn
   const ref = await settingsAt(sc, run.referenceCommit);
   const out: Finding[] = [];
   for (const key of humanItems(schema)) {
-    if (!isDeepStrictEqual(current[key], ref[key])) out.push(finding(NAME, at('settings.json', keyLine(text, key)), `\`${key}\` is not a content item and differs from the run reference commit ${run.referenceCommit}`));
+    if (!isDeepStrictEqual(current[key], ref[key])) out.push(finding(NAME, at('settings.json', settingsLine(text, key)), `\`${key}\` is not a content item and differs from the run reference commit ${run.referenceCommit}`));
   }
   const decided = Array.isArray(ref.humanDecided) ? ref.humanDecided.filter((p): p is string => typeof p === 'string') : [];
   for (const path of decided) {
     if (!isDeepStrictEqual(gameSettingsValue(current, path), gameSettingsValue(ref, path))) {
-      out.push(finding(NAME, at('settings.json', humanDecidedLine(text, path)), `\`${path}\` is in humanDecided and differs from the run reference commit ${run.referenceCommit}`));
+      out.push(finding(NAME, at('settings.json', settingsLine(text, path)), `\`${path}\` is in humanDecided and differs from the run reference commit ${run.referenceCommit}`));
     }
   }
   const release = await coreReleaseOfGame(sc.ctx, sc.game);
   const coreSchema = JSON.parse(await readFile(join(release.dir, 'core-settings.schema.json'), 'utf8')) as unknown;
   for (const key of humanCoreKeys(coreSchema)) {
     if (!isDeepStrictEqual(coreValue(current.core, key), coreValue(ref.core, key))) {
-      out.push(finding(NAME, at('settings.json', coreKeyLine(text, key)), `core settings key \`${key}\` is owned by human and differs from the run reference commit ${run.referenceCommit}`));
+      out.push(finding(NAME, at('settings.json', settingsLine(text, `core.${key}`)), `core settings key \`${key}\` is owned by human and differs from the run reference commit ${run.referenceCommit}`));
     }
   }
   return out;
@@ -110,7 +100,7 @@ async function prodFindings(sc: StaticContext, current: Record<string, unknown>,
   const prod = withDefaults(schema, await settingsAt(sc, tag));
   const now = withDefaults(schema, current);
   return prodFixedChanges(now, prod).map((key) =>
-    finding(NAME, at('settings.json', keyLine(text, key)), `\`${key}\` differs from the last PROD build \`${tag}\``),
+    finding(NAME, at('settings.json', settingsLine(text, key)), `\`${key}\` differs from the last PROD build \`${tag}\``),
   );
 }
 

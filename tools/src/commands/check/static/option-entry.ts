@@ -6,7 +6,9 @@ import type { Expr } from './lib/gd-ast.ts';
 import { callsOf } from './lib/gd-shared.ts';
 import { chainText } from './lib/gd-walk.ts';
 import { inputMapActions, PROJECT_FILE } from './lib/input-map.ts';
+import { isRecord } from './lib/json-pos.ts';
 import { sceneFiles } from './lib/scene-classes.ts';
+import { settingsLine } from './lib/settings-lines.ts';
 
 /**
  * option entry (`client-content` `## core usage`): client content code outside `client/dev/` and `client/tests/` lacks
@@ -63,23 +65,21 @@ interface CodeScan {
   badBus: Finding[];
 }
 
-/** Line of the first `"<key>"` in the settings text, or 1. */
-export function keyLine(text: string, key: string): number {
-  const index = text.split('\n').findIndex((l) => l.includes(`"${key}"`));
-  return index === -1 ? 1 : index + 1;
-}
-
 function needKey(need: Need): string {
   return need.bus === undefined ? need.chain : `${need.chain} ${need.bus}`;
 }
 
-function socialLogin(settings: Record<string, unknown>): boolean {
+/** The path of the first `login-apple` or `login-google` adapter of an environment that is not `null`: it makes social login entries required. */
+function socialLogin(settings: Record<string, unknown>): string | null {
   const envs = settings.environments;
-  if (typeof envs !== 'object' || envs === null) return false;
-  return Object.values(envs as Record<string, unknown>).some((env) => {
-    const adapters = (env as { adapters?: Record<string, unknown> } | null)?.adapters ?? {};
-    return (adapters['login-apple'] ?? null) !== null || (adapters['login-google'] ?? null) !== null;
-  });
+  if (!isRecord(envs)) return null;
+  for (const [env, value] of Object.entries(envs)) {
+    const adapters = isRecord(value) && isRecord(value.adapters) ? value.adapters : {};
+    for (const [name, adapter] of Object.entries(adapters)) {
+      if ((name === 'login-apple' || name === 'login-google') && adapter !== null) return `environments.${env}.adapters.${name}`;
+    }
+  }
+  return null;
 }
 
 function setFirst(map: Map<string, string>, key: string, where: string): void {
@@ -129,25 +129,27 @@ const chains = (list: readonly string[]): Need[] => list.map((chain) => ({ chain
 async function requirements(sc: StaticContext, scan: CodeScan): Promise<Requirement[]> {
   const settings = await sc.settings();
   const text = await sc.text('settings.json');
+  const value = (path: string): string => at('settings.json', settingsLine(text, path));
   const req: Requirement[] = [{ needs: chains(ALWAYS), where: at('client/features', 1) }];
-  if (socialLogin(settings)) req.push({ needs: chains(['AuthCore.list_linked_providers', 'AuthCore.link_account', 'AuthCore.switch_account']), where: at('settings.json', keyLine(text, 'environments')) });
+  const social = socialLogin(settings);
+  if (social !== null) req.push({ needs: chains(['AuthCore.list_linked_providers', 'AuthCore.link_account', 'AuthCore.switch_account']), where: value(social) });
   const consent = settings.consent as { privacyChoices?: unknown } | undefined;
-  if (consent?.privacyChoices === true) req.push({ needs: chains(['AuthCore.open_privacy_choices']), where: at('settings.json', keyLine(text, 'privacyChoices')) });
-  if ((await sc.modules()).client.includes('AdCore')) req.push({ needs: chains(['AdCore.is_ad_privacy_options_required', 'AdCore.open_ad_privacy_options']), where: at('settings.json', keyLine(text, 'coreModules')) });
+  if (consent?.privacyChoices === true) req.push({ needs: chains(['AuthCore.open_privacy_choices']), where: value('consent.privacyChoices') });
+  if ((await sc.modules()).client.includes('AdCore')) req.push({ needs: chains(['AdCore.is_ad_privacy_options_required', 'AdCore.open_ad_privacy_options']), where: value('coreModules') });
   const push = settings.pushConsent as { adPush?: unknown } | undefined;
-  if (push?.adPush === true) req.push({ needs: chains(['PushCore.get_push_consent', 'PushCore.set_push_consent']), where: at('settings.json', keyLine(text, 'adPush')) });
+  if (push?.adPush === true) req.push({ needs: chains(['PushCore.get_push_consent', 'PushCore.set_push_consent']), where: value('pushConsent.adPush') });
   req.push(...(await iapRequirements(sc, settings)));
-  req.push(...(await standardRequirements(sc, scan, settings, text)));
+  req.push(...(await standardRequirements(sc, scan, settings, value)));
   return req;
 }
 
 /** The entries of the standard options: language, screen mode, volume, haptics, accessibility and bindings. */
-async function standardRequirements(sc: StaticContext, scan: CodeScan, settings: Record<string, unknown>, text: string): Promise<Requirement[]> {
+async function standardRequirements(sc: StaticContext, scan: CodeScan, settings: Record<string, unknown>, value: (path: string) => string): Promise<Requirement[]> {
   const req: Requirement[] = [];
   const languages = Array.isArray(settings.supportedLanguages) ? (settings.supportedLanguages as unknown[]) : [];
-  if (languages.length >= 2) req.push({ needs: chains(LANGUAGE), where: at('settings.json', keyLine(text, 'supportedLanguages')) });
+  if (languages.length >= 2) req.push({ needs: chains(LANGUAGE), where: value('supportedLanguages') });
   const platforms = Array.isArray(settings.buildPlatforms) ? (settings.buildPlatforms as unknown[]) : [];
-  if (SCREEN_MODE_PLATFORMS.some((p) => platforms.includes(p))) req.push({ needs: chains(SCREEN_MODE), where: at('settings.json', keyLine(text, 'buildPlatforms')) });
+  if (SCREEN_MODE_PLATFORMS.some((p) => platforms.includes(p))) req.push({ needs: chains(SCREEN_MODE), where: value('buildPlatforms') });
   for (const [bus, where] of scan.played) req.push({ needs: [{ chain: 'SoundCore.get_volume', bus }, { chain: 'SoundCore.set_volume', bus }], where });
   for (const [chain, needs] of CALL_ENTRIES) {
     const where = scan.firstCall.get(chain);

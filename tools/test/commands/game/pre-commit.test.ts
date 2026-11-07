@@ -1,11 +1,11 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StaticCheckDetail } from '../../../src/commands/check/static-api.ts';
-import { folderHolds, hookEnvs, pointsAt, REPO_VARS, runPreCommit, type PreCommitDeps } from '../../../src/commands/game/lib/pre-commit.ts';
+import { blockingFailures, folderHolds, hookEnvs, pointsAt, REPO_VARS, runPreCommit, settingsChange, type PreCommitDeps } from '../../../src/commands/game/lib/pre-commit.ts';
 import type { CliIo } from '../../../src/lib/cli.ts';
 import type { Context } from '../../../src/lib/command.ts';
-import { makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
+import { commitAll, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 
 let ws: TestWorkspace;
 let root: string;
@@ -18,6 +18,15 @@ beforeEach(() => {
   logs = [];
   io = { cwd: root, env: ws.env, stdin: () => Promise.resolve(''), stdout: (t) => logs.push(`out:${t}`), stderr: (t) => logs.push(t) };
 });
+
+function writeSettings(value: object): void {
+  writeFileSync(join(root, 'settings.json'), `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** `settings.json:<line>` of the first line of the checkout's settings.json that holds `needle`. */
+function settingsWhere(needle: string): string {
+  return `settings.json:${String(readFileSync(join(root, 'settings.json'), 'utf8').split('\n').findIndex((l) => l.includes(needle)) + 1)}`;
+}
 
 function stage(path: string): void {
   mkdirSync(join(root, path, '..'), { recursive: true });
@@ -107,12 +116,86 @@ describe('runPreCommit', () => {
     expect(seen.check?.OGW_HARNESS_ROOT).toBe(ws.env.OGW_HARNESS_ROOT);
   });
 
+  it('blocks a failure at a line of settings.json only when the commit changes the value that starts on that line', async () => {
+    const settings = { engine: 'godot', supportedLanguages: ['en'], uiCheckScreens: [{ name: 'phone' }] };
+    writeSettings(settings);
+    commitAll(root, 'settings');
+    // the lead agent fills a value: the option entry that the languages require is not made by this commit
+    writeSettings({ ...settings, supportedLanguages: ['en', 'ko'] });
+    commitAll(root, 'second language, committed without the hook');
+    writeSettings({ ...settings, supportedLanguages: ['en', 'ko'], uiCheckScreens: [{ name: 'phone', pixelRatio: 2 }] });
+    sh(root, 'git', ['add', 'settings.json']);
+    const languages = settingsWhere('"supportedLanguages"');
+    const ratio = settingsWhere('"pixelRatio"');
+    expect(await runPreCommit(io, 'mygame', deps(result([languages, ratio, 'settings.json:1'])))).toBe(1);
+    expect(logs).toEqual([`${ratio}: bad ${ratio}\n`, 'settings.json:1: bad settings.json:1\n']);
+    commitAll(root, 'ratio');
+    // a commit that adds a language makes the failure at supportedLanguages, though its key line stays as it was
+    logs.length = 0;
+    writeSettings({ ...settings, supportedLanguages: ['en', 'ko', 'ja'], uiCheckScreens: [{ name: 'phone', pixelRatio: 2 }] });
+    sh(root, 'git', ['add', 'settings.json']);
+    expect(await runPreCommit(io, 'mygame', deps(result([settingsWhere('"supportedLanguages"'), settingsWhere('"pixelRatio"')])))).toBe(1);
+    expect(logs).toEqual([`${settingsWhere('"supportedLanguages"')}: bad ${settingsWhere('"supportedLanguages"')}\n`]);
+    // the commit is what is staged: a language added in the checkout and not staged makes nothing
+    sh(root, 'git', ['reset', '--quiet', 'settings.json']);
+    writeSettings({ ...settings, supportedLanguages: ['en', 'ko'], uiCheckScreens: [{ name: 'phone', pixelRatio: 3 }] });
+    sh(root, 'git', ['add', 'settings.json']);
+    writeSettings({ ...settings, supportedLanguages: ['en', 'ko', 'ja'], uiCheckScreens: [{ name: 'phone', pixelRatio: 3 }] });
+    logs.length = 0;
+    expect(await runPreCommit(io, 'mygame', deps(result([settingsWhere('"supportedLanguages"')])))).toBe(0);
+    // a commit that does not stage settings.json makes no failure there
+    sh(root, 'git', ['reset', '--quiet', 'settings.json']);
+    stage('client/a.gd');
+    expect(await runPreCommit(io, 'mygame', deps(result([settingsWhere('"supportedLanguages"'), 'settings.json:1'])))).toBe(0);
+    expect(logs).toEqual([]);
+  });
+
   it('stops when meta sync fails', async () => {
     const staticCheck = vi.fn();
     const code = await runPreCommit(io, 'mygame', { ogw: () => Promise.resolve(3), staticCheck });
     expect(code).toBe(3);
     expect(staticCheck).not.toHaveBeenCalled();
     expect(logs).toEqual(['ogw meta sync mygame --staged failed\n']);
+  });
+});
+
+describe('settingsChange', () => {
+  const bytes = (value: unknown): Buffer => Buffer.from(JSON.stringify(value));
+  const text = (value: unknown): string => JSON.stringify(value, null, 2);
+  const lineOf = (body: string, needle: string): number => body.split('\n').findIndex((l) => l.includes(needle)) + 1;
+  const before = { engine: 'godot', supportedLanguages: ['en', 'ko'], uiCheckScreens: [{ name: 'phone', pixelRatio: 1 }] };
+
+  it('says that a line changed when the outermost value that starts on it changed, line 1 being the whole file', () => {
+    const after = { ...before, uiCheckScreens: [{ name: 'phone', pixelRatio: 2 }] };
+    const body = text(after);
+    const change = settingsChange(body, bytes(before), bytes(after));
+    expect([1, lineOf(body, '"engine"'), lineOf(body, '"supportedLanguages"'), lineOf(body, '"uiCheckScreens"'), lineOf(body, '"name"'), lineOf(body, '"pixelRatio"')].map(change)).toEqual([
+      true, false, false, true, false, true,
+    ]);
+    // a closing line starts no value: it is judged as the whole file
+    expect(change(lineOf(body, ']'))).toBe(true);
+    expect(settingsChange(body, bytes(after), bytes(after))(1)).toBe(false);
+  });
+
+  it('counts a value on one side only, a file absent from HEAD, and a file that does not parse as changed', () => {
+    const after = { ...before, consent: { privacyChoices: true } };
+    const body = text(after);
+    const change = settingsChange(body, bytes(before), bytes(after));
+    expect([lineOf(body, '"consent"'), lineOf(body, '"privacyChoices"'), lineOf(body, '"engine"')].map(change)).toEqual([true, true, false]);
+    expect(settingsChange(text(before), bytes(after), bytes(before))(lineOf(text(before), '"engine"'))).toBe(false);
+    expect(settingsChange(body, null, bytes(after))(lineOf(body, '"engine"'))).toBe(true);
+    expect(settingsChange(body, Buffer.from('{'), bytes(after))(lineOf(body, '"engine"'))).toBe(true);
+    expect(settingsChange('{', bytes(before), bytes(after))(2)).toBe(true);
+    expect(settingsChange(null, bytes(before), bytes(after))(2)).toBe(true);
+  });
+});
+
+describe('blockingFailures', () => {
+  it('judges a failure at a line of settings.json by the change, and one without a line as the whole file', () => {
+    const detail = result(['settings.json:4', 'settings.json:5:2', 'settings.json', 'client/a.gd:1']);
+    const changed = (line: number): boolean => line === 5;
+    expect(blockingFailures(detail, ['settings.json', 'client/a.gd'], changed).map((f) => f.where)).toEqual(['settings.json:5:2', 'settings.json', 'client/a.gd:1']);
+    expect(blockingFailures(detail, ['client/a.gd'], () => true).map((f) => f.where)).toEqual(['client/a.gd:1']);
   });
 });
 

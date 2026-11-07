@@ -281,9 +281,10 @@ describe('option entry', () => {
     const text = JSON.stringify(settings, null, 2).split('\n');
     const line = (key: string): number => text.findIndex((l) => l.includes(`"${key}"`)) + 1;
     expect(lines(await optionEntry.run(sc))).toEqual(sorted([
-      `settings.json:${String(line('environments'))} | option entry: no \`AuthCore.list_linked_providers\` call in client content code`,
-      `settings.json:${String(line('environments'))} | option entry: no \`AuthCore.link_account\` call in client content code`,
-      `settings.json:${String(line('environments'))} | option entry: no \`AuthCore.switch_account\` call in client content code`,
+      // the first login adapter that is not null makes the social login entries required: STG, not the null one of DEV
+      `settings.json:${String(line('login-google'))} | option entry: no \`AuthCore.list_linked_providers\` call in client content code`,
+      `settings.json:${String(line('login-google'))} | option entry: no \`AuthCore.link_account\` call in client content code`,
+      `settings.json:${String(line('login-google'))} | option entry: no \`AuthCore.switch_account\` call in client content code`,
       `settings.json:${String(line('privacyChoices'))} | option entry: no \`AuthCore.open_privacy_choices\` call in client content code`,
       `settings.json:${String(line('coreModules'))} | option entry: no \`AdCore.is_ad_privacy_options_required\` call in client content code`,
       `settings.json:${String(line('coreModules'))} | option entry: no \`AdCore.open_ad_privacy_options\` call in client content code`,
@@ -342,6 +343,17 @@ describe('option entry', () => {
       'InputCore.wait_pad_button', 'InputCore.set_pad_buttons(&"jump", keys)', 'InputCore.reset_pad_buttons',
     ];
     expect(await optionEntry.run(memContext({ ...files, 'client/features/options/options_panel.gd': code(options) }))).toEqual([]);
+  });
+
+  it('points at the line of the settings value by its path, not at another line that holds its name', async () => {
+    modules.value = { client: BASE_MODULES, server: [] };
+    const settingsText = JSON.stringify({ humanDecided: ['supportedLanguages', 'buildPlatforms'], note: { supportedLanguages: 1 }, supportedLanguages: ['ko', 'en'], buildPlatforms: ['macos'] }, null, 2);
+    const s = (key: string): string => `settings.json:${String(lineOf(settingsText, `  "${key}"`))}`;
+    const found = lines(await optionEntry.run(memContext({ 'settings.json': settingsText, 'client/features/options/options_panel.gd': code(ALL_CALLS) })));
+    expect(found).toContain(`${s('supportedLanguages')} | option entry: no \`BootstrapCore.request_restart\` call in client content code`);
+    expect(found).toContain(`${s('buildPlatforms')} | option entry: no \`ResolutionCore.get_screen_mode\` call in client content code`);
+    // the first line that holds `"supportedLanguages"` is line 3, a value of humanDecided
+    expect(s('supportedLanguages')).toBe('settings.json:9');
   });
 
   it('requires no standard option whose condition does not hold', async () => {
