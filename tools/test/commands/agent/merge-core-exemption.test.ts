@@ -282,11 +282,11 @@ describe('ogw agent merge: core worktrees', () => {
     expect(run.stdout.split('\n')).toContain(`merged ${storage}`);
   });
 
-  it('checks the branch again under the main checkout lock when main changed outside records/ since the check', async () => {
+  it('checks main again under the main checkout lock when main changed outside records/ since the check, against the result of the branch', async () => {
     const ws = makeWorkspace();
     coreSpec(ws, { routing: [], storage: [] });
     const first = sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim();
-    // the branch's failure line is main's at the commit checked first; a commit made while the branch is checked drops it
+    // the branch's failure line is main's at the commit checked first; a commit made while main is checked drops it
     const commitOnMain = (file: string): void => {
       mkdirSync(dirname(join(ws.coreImpl, file)), { recursive: true });
       writeFileSync(join(ws.coreImpl, file), `${file}\n`);
@@ -295,7 +295,7 @@ describe('ogw agent merge: core worktrees', () => {
     };
     let movedTo: string | null = null;
     typeCheck.fake = (commit) => {
-      if (commit.startsWith('agent/') && movedTo !== null) {
+      if (commit === first && movedTo !== null) {
         commitOnMain(movedTo);
         movedTo = null;
       }
@@ -305,12 +305,15 @@ describe('ogw agent merge: core worktrees', () => {
     movedTo = 'server/other.ts';
     const run = await ogw(ws, ['agent', 'merge', routing]);
     expect(run.stdout).toContain(`not merged ${routing}: type check: server/x.ts:1:1 TS1 old`);
-    expect(typeCheck.calls.filter((commit) => commit === `agent/${routing}`)).toHaveLength(2);
+    // the branch is checked once, as its result does not depend on main; main at the commit compared first and again
+    // under the lock after the move
+    expect(typeCheck.calls.filter((commit) => commit === `agent/${routing}`)).toHaveLength(1);
+    expect(typeCheck.calls.filter((commit) => !commit.startsWith('agent/'))).toEqual([first, sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim()]);
     // a change only under records/ makes no second check; main's commit here has the branch's line
     commitOnMain('server/second.ts');
     const main = sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim();
     typeCheck.fake = (commit) => {
-      if (commit.startsWith('agent/') && movedTo !== null) {
+      if (commit === main && movedTo !== null) {
         commitOnMain(movedTo);
         movedTo = null;
       }
@@ -322,6 +325,7 @@ describe('ogw agent merge: core worktrees', () => {
     const merged = await ogw(ws, ['agent', 'merge', storage]);
     expect(merged.stdout).toBe(`merged ${storage}\n`);
     expect(typeCheck.calls.filter((commit) => commit === `agent/${storage}`)).toHaveLength(1);
+    expect(typeCheck.calls.filter((commit) => !commit.startsWith('agent/'))).toEqual([main]);
   });
 
   it('makes the type check of a main commit once and keeps it in the harness git common dir, unless it stopped with an error', async () => {

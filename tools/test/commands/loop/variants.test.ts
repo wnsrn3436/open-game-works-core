@@ -34,6 +34,12 @@ interface Fake {
   votes: (k: number, j: number) => Record<string, Vote>;
   mergeFails: Set<number>;
   merges: { id: string; alsoCommit: readonly string[] }[];
+  /** Whether variant agent k has ended; a running one is `running` to `agentOutcome`. */
+  ended: (k: number) => boolean;
+  /** The start of a variant agent before it makes its worktree. */
+  starting: (k: number) => Promise<void>;
+  /** The commit of each shared telemetry bot run, in run order. */
+  botRuns: string[];
 }
 
 const fake = vi.hoisted(
@@ -50,8 +56,20 @@ const fake = vi.hoisted(
     votes: () => ({}),
     mergeFails: new Set(),
     merges: [],
+    ended: () => true,
+    starting: () => Promise.resolve(),
+    botRuns: [],
   }),
 );
+
+vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
+  botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {
+    fake.botRuns.push(fake.instances.find((i) => i.id === instance.id)?.commit ?? '');
+    const telemetry = { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: 30, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
+    return Promise.resolve({ telemetry, guide: null });
+  }),
+}));
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({
   startInstance: vi.fn((_ctx: unknown, opts: { commit: string; db?: string }) => {
@@ -93,9 +111,10 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
   const side = (input: Record<string, unknown>, which: 'A' | 'B'): string =>
     fake.instances.find((i) => i.id === (input[which] as { instance: string }).instance)?.commit ?? '';
   return {
-    startAgentJob: vi.fn((_ctx: unknown, options: { role: string; input: string; variant?: number; runPlace?: { output: string } }) => {
+    startAgentJob: vi.fn(async (_ctx: unknown, options: { role: string; input: string; variant?: number; runPlace?: { output: string } }) => {
       if (options.role === 'content') {
         const k = options.variant as number;
+        await fake.starting(k);
         const id = `c${String(fake.content.length + 1)}v${String(k)}`;
         const wt = path.join(fake.worktrees, 'g', `agent-${id}`);
         sh(fake.root, 'worktree', 'add', '-q', '-b', `agent/${id}`, wt);
@@ -124,6 +143,7 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
     }),
     agentOutcome: vi.fn((_ctx: unknown, id: string) => {
       const content = fake.content.find((c) => c.id === id);
+      if (content !== undefined && !fake.ended(content.k)) return Promise.resolve({ status: 'running', output: null });
       if (content !== undefined) return Promise.resolve({ status: content.status, output: content.status === 'done' ? content.output : null });
       const judge = fake.judges.find((j) => j.id === id) as FakeJudge;
       const thisSide = fake.commits.get(side(judge.input, 'A')) === judge.k ? 'A' : 'B';
@@ -182,6 +202,9 @@ beforeEach(() => {
   fake.votes = () => ({});
   fake.mergeFails = new Set();
   fake.merges = [];
+  fake.ended = () => true;
+  fake.starting = () => Promise.resolve();
+  fake.botRuns = [];
   evaluateDeps.pollMs = 0;
   evaluateDeps.random = () => 0.1;
   variantDeps.pollMs = 0;
@@ -435,5 +458,70 @@ describe('ogw loop variants', () => {
     commit(g.root);
     expect((await ogw(g.ws, ['loop', 'variants', 'g'])).stderr).toBe(`${R}/content-input-2.md is missing; run ogw loop input g content first\n`);
     expect(fake.content).toEqual([]);
+  });
+});
+
+/** Waits until `done` holds or `ms` passed: the timeout is what a version that never gets there meets. */
+async function until(done: () => boolean, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; !done() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 5));
+  return done();
+}
+
+describe('ogw loop variants work beside each other', () => {
+  it('starts the variant agents together', async () => {
+    const { g } = await funIteration();
+    let starting = 0;
+    let most = 0;
+    fake.starting = async () => {
+      starting++;
+      most = Math.max(most, starting);
+      await until(() => most >= 3, 200);
+      starting--;
+    };
+    expect((await ogw(g.ws, ['loop', 'variants', 'g'])).code).toBe(0);
+    expect(most).toBe(3);
+  });
+
+  it('judges a variant as soon as its agent ended, while the other variant agents run', async () => {
+    const { g } = await funIteration();
+    fake.votes = (k): Record<string, Vote> => (k === 1 ? { 'game feel': 'this' } : {});
+    // variants 2 and 3 end once a judge of variant 1 started, or 500 ms after they were first asked
+    let judgedFirst = false;
+    let firstAsked: number | null = null;
+    fake.ended = (k) => {
+      if (k === 1) return true;
+      firstAsked ??= Date.now();
+      judgedFirst ||= fake.judges.some((j) => j.k === 1);
+      return judgedFirst || Date.now() - firstAsked >= 500;
+    };
+    const out = await ogw(g.ws, ['loop', 'variants', 'g']);
+    expect(out.stderr).toBe('');
+    expect(judgedFirst).toBe(true);
+    // every variant was judged and the record is as when the judges waited for every agent
+    const file = readJsonFile(g.root, `${R}/variants-2.json`) as VariantsFile;
+    expect(file.variants.map((v) => [v.k, v.vsBaseline, v.chosen])).toEqual([
+      [1, 'better', true],
+      [2, 'indistinguishable', false],
+      [3, 'indistinguishable', false],
+    ]);
+    expect(fake.judges.map((j) => j.k).sort()).toEqual([1, 1, 2, 2, 3, 3]);
+  });
+
+  it('makes the shared telemetry runs of the baseline game commit once for every variant', async () => {
+    const { g, base } = await funIteration();
+    write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } });
+    commit(g.root);
+    const out = await ogw(g.ws, ['loop', 'variants', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    // three runs of the baseline commit, and three of each variant commit
+    expect(fake.botRuns.filter((c) => c === base)).toHaveLength(3);
+    for (const k of [1, 2, 3]) expect(fake.botRuns.filter((c) => fake.commits.get(c) === k)).toHaveLength(3);
+    // each judge compares its variant with the same baseline runs
+    expect(fake.judges).toHaveLength(6);
+    for (const judge of fake.judges) {
+      expect(typeof judge.input.telemetry).toBe('string');
+      expect(read(g.root, (judge.input.telemetry as string).slice(g.root.length + 1))).toContain('input_latency_ms');
+    }
   });
 });

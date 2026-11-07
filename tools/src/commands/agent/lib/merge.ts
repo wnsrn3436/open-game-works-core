@@ -8,7 +8,7 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { commonDir, currentBranch, deleteBranch, git, gitRaw, head, revParse, showFile, statusLines, worktreeRemove } from '../../../lib/git.ts';
 import { harnessRoot } from '../../../lib/paths.ts';
 import type { Role } from '../../../lib/settings.ts';
-import { partCovers, runCoreTypeCheck } from '../../code/api.ts';
+import { partCovers, runCoreTypeCheck, type TypeCheckAt } from '../../code/api.ts';
 import { enginesOf } from '../../core/lib/impl.ts';
 import { isGeneratedPath, withCoreMain } from '../../core/lib/main-checkout.ts';
 import { passedEngines, readTestRecords, sideOf } from '../../core/lib/test-records.ts';
@@ -331,23 +331,65 @@ export function failureKey(line: string): string {
   return line.replace(/^([^\s:]+):\d+(?::\d+)?(?=\s)/, '$1');
 }
 
+/** What the core agent jobs of one `ogw agent merge` found before their turn, by job id. */
+interface Checked {
+  /**
+   * The type check of each branch, settled: it runs once, and its result, which does not depend on main, serves every
+   * comparison with main of that job. A check that failed holds its error, which the comparison of that job throws.
+   */
+  branches: Map<string, Promise<{ checked: TypeCheckAt } | { error: unknown }>>;
+  /**
+   * The core test requirement of a job that gets the type check whatever the merges before it do: null when it passed,
+   * else why the job is not merged.
+   */
+  coreTests: Map<string, MergeStop | null>;
+}
+
+/** Starts the type check of branch `agent/<id>` when it did not start before. */
+function startBranchCheck(ctx: Context, checked: Checked, id: string, meta: AgentMeta): void {
+  if (checked.branches.has(id)) return;
+  // the branch is checked in its worktree: the packages there are the ones its package-lock.json installs
+  const check = runCoreTypeCheck(ctx, `agent/${id}`, meta.worktree as string).then(
+    (result) => ({ checked: result }),
+    (error: unknown) => ({ error }),
+  );
+  checked.branches.set(id, check);
+}
+
+/** The type check of branch `agent/<id>`, started now when it did not start before; its failure is thrown here. */
+async function branchTypeCheck(ctx: Context, checked: Checked, id: string, meta: AgentMeta): Promise<TypeCheckAt> {
+  startBranchCheck(ctx, checked, id, meta);
+  const result = await (checked.branches.get(id) as Promise<{ checked: TypeCheckAt } | { error: unknown }>);
+  if ('error' in result) throw result.error;
+  return result.checked;
+}
+
 /**
- * A core agent branch that changes files outside `records/` merges only when the `ogw code check core` type check of
- * its branch has no failure line that the one of main HEAD lacks (`core` command.md `## command`). Returns main's
- * commit it compared with, or null for a job it does not check.
+ * The paths a core agent branch changed since its merge base with main `main` when the type check applies to it: it
+ * changes files outside `records/` and has no exemption for an engine whose client core never passed; else null.
  */
-async function checkTypeCheck(ctx: Context, repo: string, id: string, meta: AgentMeta): Promise<string | null> {
-  if (meta.place.kind !== 'core-worktree') return null;
-  const main = await revParse(repo, 'main');
-  if (main === null) throw new MergeStop('not on branch', `${repo} has no branch main`);
+async function typeChecked(repo: string, id: string, meta: AgentMeta, main: string): Promise<string[] | null> {
   const changed = (await git(repo, ['diff', '--name-only', '-z', `${main}...agent/${id}`])).split('\0').filter((path) => path !== '');
   if (!changed.some((path) => !path.startsWith('records/'))) return null;
   // the exemption of the core test requirement: an engine whose client core never passed does not compile as a whole
   const engines = await enginesOf(repo);
   if (await exemptForEngine(repo, id, meta, changed, engines, await enginesPassed(repo, engines))) return null;
-  const before = new Set((await mainTypeCheck(ctx, repo, main)).map(failureKey));
-  // the branch is checked in its worktree: the packages there are the ones its package-lock.json installs
-  const branch = await runCoreTypeCheck(ctx, `agent/${id}`, meta.worktree as string);
+  return changed;
+}
+
+/**
+ * A core agent branch that changes files outside `records/` merges only when the `ogw code check core` type check of
+ * its branch has no failure line that the one of main HEAD lacks (`core` command.md `## command`). The check of main and
+ * that of the branch run together. Returns main's commit it compared with, or null for a job it does not check.
+ */
+async function checkTypeCheck(ctx: Context, repo: string, id: string, meta: AgentMeta, checked: Checked): Promise<string | null> {
+  if (meta.place.kind !== 'core-worktree') return null;
+  const main = await revParse(repo, 'main');
+  if (main === null) throw new MergeStop('not on branch', `${repo} has no branch main`);
+  const changed = await typeChecked(repo, id, meta, main);
+  if (changed === null) return null;
+  const [mainFailures, branch] = await Promise.all([mainTypeCheck(ctx, repo, main), branchTypeCheck(ctx, checked, id, meta)]);
+  const before = new Set(mainFailures.map(failureKey));
   // a part that stopped checked none of the branch's files it covers
   const stopped = branch.stops.filter((stop) => changed.some((path) => !path.startsWith('records/') && partCovers(stop.part, path)));
   if (stopped.length > 0) throw new MergeStop('type check', stopped.map((stop) => `${stop.part} part stopped: ${stop.reason}`).join('\n'));
@@ -358,13 +400,14 @@ async function checkTypeCheck(ctx: Context, repo: string, id: string, meta: Agen
   return main;
 }
 
-async function mergeCoreWorktree(ctx: Context, id: string, meta: AgentMeta, checkedMain: string | null): Promise<void> {
+async function mergeCoreWorktree(ctx: Context, id: string, meta: AgentMeta, checkedMain: string | null, checked: Checked): Promise<void> {
   if (meta.place.kind !== 'core-worktree') return;
   const repo = meta.place.coreImpl;
-  // main moved past the commit the type check compared with: a change outside records/ may change main's failures
+  // main moved past the commit the type check compared with: a change outside records/ may change main's failures; the
+  // branch's result stays
   const main = await revParse(repo, 'main');
   if (checkedMain !== null && main !== null && main !== checkedMain && (await changedOutsideRecords(repo, checkedMain, main)).length > 0) {
-    await checkTypeCheck(ctx, repo, id, meta);
+    await checkTypeCheck(ctx, repo, id, meta, checked);
   }
   if ((await currentBranch(repo)) !== 'main') throw new MergeStop('not on branch', `${repo} is not on main`);
   if ((await statusLines(repo)).some((line) => !line.startsWith('??'))) throw new MergeStop('uncommitted changes', `${repo} has uncommitted changes`);
@@ -448,7 +491,7 @@ function checkMergeable(meta: AgentMeta, status: string): void {
   if (meta.worktree === null || meta.branch === null) throw new MergeStop('no worktree', 'the job has no worktree to merge');
 }
 
-async function mergeOne(ctx: Context, id: string, options: MergeOptions): Promise<void> {
+async function mergeOne(ctx: Context, id: string, options: MergeOptions, checked: Checked): Promise<void> {
   const { job, meta } = await readAgentJob(id, ctx.env);
   checkMergeable(meta, job.status);
   const repo = meta.place.kind === 'game-worktree' ? meta.place.checkout : meta.place.kind === 'core-worktree' ? meta.place.coreImpl : null;
@@ -458,9 +501,11 @@ async function mergeOne(ctx: Context, id: string, options: MergeOptions): Promis
     // one change of the main checkout at a time, and none under the module tests of a core test run (ogw.md `## agent merge`)
     // a review job adds only its review file under records/, which no module test reads
     // the checks run before the lock: a type check takes long, and the checkout waits for no change meanwhile
-    await checkCoreTest(meta.place.coreImpl, id, meta);
-    const checkedMain = await checkTypeCheck(ctx, meta.place.coreImpl, id, meta);
-    await withCoreMain(meta.place.coreImpl, ctx.env, () => mergeCoreWorktree(ctx, id, meta, checkedMain), { readers: meta.role === 'core' });
+    const coreTest = checked.coreTests.get(id);
+    if (coreTest === undefined) await checkCoreTest(meta.place.coreImpl, id, meta);
+    else if (coreTest !== null) throw coreTest;
+    const checkedMain = await checkTypeCheck(ctx, meta.place.coreImpl, id, meta, checked);
+    await withCoreMain(meta.place.coreImpl, ctx.env, () => mergeCoreWorktree(ctx, id, meta, checkedMain, checked), { readers: meta.role === 'core' });
   }
   // the merge commit is on the branch: the result file is found there before the worktree goes (`resultFile`)
   await changeAgentMeta(id, ctx.env, (m) => {
@@ -531,6 +576,37 @@ export async function orderIds(ctx: Context, ids: readonly string[]): Promise<{ 
   return mergeOrder(list, topologicalOrder(await mergeDependencies(ctx, coreImpl, main, list)));
 }
 
+/**
+ * Starts the branch type check of each core agent job that gets the type check whatever the merges before it do: one
+ * that passes its core test requirement and gets the type check now. An engine whose client core passed stays passed,
+ * so neither changes with a merge before it, and the core test requirement of a job that has it is kept for its turn,
+ * passed or not. A job that gets the type check only after a merge before it starts its branch check at its turn. A job
+ * that fails here for another reason is left to its turn, which reports why.
+ */
+async function startBranchChecks(ctx: Context, ids: readonly string[], checked: Checked): Promise<void> {
+  for (const id of ids) {
+    try {
+      const { job, meta } = await readAgentJob(id, ctx.env);
+      if (meta.place.kind !== 'core-worktree') continue;
+      checkMergeable(meta, job.status);
+      const repo = meta.place.coreImpl;
+      try {
+        await checkCoreTest(repo, id, meta);
+      } catch (error) {
+        // only a job without an exemption has the requirement
+        if (error instanceof MergeStop) checked.coreTests.set(id, error);
+        throw error;
+      }
+      const main = await revParse(repo, 'main');
+      if (main === null || (await typeChecked(repo, id, meta, main)) === null) continue;
+      checked.coreTests.set(id, null);
+      startBranchCheck(ctx, checked, id, meta);
+    } catch (error) {
+      if (!(error instanceof MergeStop || error instanceof OgwError)) throw error;
+    }
+  }
+}
+
 /** `ogw agent merge <id>...`. */
 export async function mergeAgents(ctx: Context, ids: readonly string[], options: MergeOptions = {}): Promise<MergeResult> {
   const order = await orderIds(ctx, ids);
@@ -538,15 +614,23 @@ export async function mergeAgents(ctx: Context, ids: readonly string[], options:
     merged: [],
     failed: order.unordered.map(({ id, module }) => ({ id, reason: 'not defined', detail: `merge order of module ${module}, which is in no core-spec/ of main or of the branch or is on a dependency cycle` })),
   };
-  for (const id of order.ids) {
-    try {
-      await mergeOne(ctx, id, options);
-      result.merged.push(id);
-    } catch (error) {
-      if (error instanceof MergeStop) result.failed.push({ id, reason: error.reason, detail: error.detail });
-      else if (error instanceof OgwError) result.failed.push({ id, reason: 'error', detail: error.message });
-      else throw error;
+  // the branch checks do not depend on a merge: they all run while the jobs merge one after another
+  const checked: Checked = { branches: new Map(), coreTests: new Map() };
+  try {
+    await startBranchChecks(ctx, order.ids, checked);
+    for (const id of order.ids) {
+      try {
+        await mergeOne(ctx, id, options, checked);
+        result.merged.push(id);
+      } catch (error) {
+        if (error instanceof MergeStop) result.failed.push({ id, reason: error.reason, detail: error.detail });
+        else if (error instanceof OgwError) result.failed.push({ id, reason: 'error', detail: error.message });
+        else throw error;
+      }
     }
+  } finally {
+    // no check runs on after the command: one whose job stopped before its comparison ends here
+    await Promise.all(checked.branches.values());
   }
   return result;
 }

@@ -1,6 +1,7 @@
 // A fake Godot dev run client that speaks the QACore automation channel (qa-core `### automation channel`).
 // Behaviour comes from the JSON file in FAKE_GODOT_CONFIG; every request is logged to FAKE_LOG_DIR/<client>.jsonl.
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const argv = process.argv.slice(2);
@@ -13,7 +14,34 @@ if (argv.includes('--import')) {
     process.exit(3);
   }
   mkdirSync(join(project, '.godot'), { recursive: true });
+  if (process.env.FAKE_IMPORT_PRODUCTS) fakeImportProducts(project);
   process.exit(0);
+}
+
+/**
+ * What Godot's import leaves, with FAKE_IMPORT_PRODUCTS set: per project file an imported file in `.godot/imported/`
+ * made from its content, a `.godot/uid_cache.bin` of random bytes, a `.uid` file of a random uid beside each `.gd` file
+ * without one, and each `.import` file written again with its content (the resources linked into the project included).
+ */
+function fakeImportProducts(project) {
+  const files = [];
+  const walk = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (rel === '' && entry.name === '.godot') continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory() || (entry.isSymbolicLink() && statSync(path).isDirectory())) walk(path, join(rel, entry.name));
+      else files.push({ path, rel: join(rel, entry.name) });
+    }
+  };
+  walk(project, '');
+  mkdirSync(join(project, '.godot', 'imported'), { recursive: true });
+  for (const { path, rel } of files) {
+    const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
+    writeFileSync(join(project, '.godot', 'imported', `${rel.replaceAll('/', '_')}.md5`), `${digest}\n`);
+    if (rel.endsWith('.gd') && !existsSync(`${path}.uid`)) writeFileSync(`${path}.uid`, `uid://${randomBytes(6).toString('hex')}\n`);
+    if (rel.endsWith('.import')) writeFileSync(path, readFileSync(path));
+  }
+  writeFileSync(join(project, '.godot', 'uid_cache.bin'), randomBytes(16));
 }
 // launch values: the JSON object file of the user argument --launch-values=<path> (client-core engines/godot)
 const user = argv.slice(argv.indexOf('--') + 1);

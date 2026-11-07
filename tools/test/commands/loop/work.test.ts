@@ -284,6 +284,34 @@ describe('ogw loop dispatch', () => {
     expect((await ogw(g.ws, ['loop', 'dispatch', 'g'])).stdout).toBe('nothing to dispatch\n');
   });
 
+  it('commits the translation inputs of every language in one commit and starts the jobs of a kind together', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { startedAt: 5 });
+    write(g.root, 'records/loops/update-1/resource-requests/100.md', 'r');
+    write(g.root, 'records/loops/update-1/resource-requests/200.md', 'r');
+    commit(g.root);
+    const before = git(g.root, 'rev-list', '--count', 'HEAD');
+    mocks.placeholderFailures.mockResolvedValue(['ko', 'ja', 'fr'].map((l) => ({ where: l, message: `translation_missing ${l}`, evidence: [] })));
+    let starting = 0;
+    const most: Record<string, number> = { resource: 0, translation: 0 };
+    mocks.startAgentJob.mockImplementation(async (_ctx: unknown, options: { role: string }) => {
+      starting++;
+      most[options.role] = Math.max(most[options.role] ?? 0, starting);
+      // a start ends once the starts of its kind run at once, or after 200 ms
+      const want = options.role === 'resource' ? 2 : 3;
+      for (let k = 0; k < 40 && (most[options.role] ?? 0) < want; k++) await new Promise((r) => setTimeout(r, 5));
+      starting--;
+      return `new${String(++started)}`;
+    });
+    const out = await ogw(g.ws, ['loop', 'dispatch', 'g', '--json']);
+    expect(out.code).toBe(0);
+    expect(most).toEqual({ resource: 2, translation: 3 });
+    expect(Number(git(g.root, 'rev-list', '--count', 'HEAD'))).toBe(Number(before) + 1);
+    const committed = git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n');
+    expect(committed.map((p) => /translation-input-(.+)-\d+\.md$/.exec(p)?.[1])).toEqual(['fr', 'ja', 'ko']);
+    expect(git(g.root, 'log', '-1', '--format=%s')).toBe('loop update-1: translation input ko, ja, fr');
+  });
+
   it('starts a language only when every translation task of it in the run is merged', async () => {
     const g = setupGame();
     await openLoopRun(g, { startedAt: 5 });
@@ -571,7 +599,8 @@ describe('ogw loop sync', () => {
     mocks.mergeAgentJobs.mockResolvedValue({ merged: [job.id], failed: [] });
     const out = await ogw(g.ws, ['loop', 'sync', 'g', '--wait']);
     expect(out.stdout).toBe(`merged ${job.id}\n`);
-    expect(polls).toBe(3);
+    // the pass reads it, the wait reads it until it ended, and the next pass reads it again
+    expect(polls).toBe(4);
   });
 
   it('with --wait, merges the job it gave again for a conflict in the same call', async () => {
@@ -589,7 +618,7 @@ describe('ogw loop sync', () => {
       Promise.resolve(ids[0] === job.id ? { merged: [], failed: [{ id: job.id, reason: 'conflict', detail: 'resource/resources.csv' }] } : { merged: ids, failed: [] }));
     const out = await ogw(g.ws, ['loop', 'sync', 'g', '--wait']);
     expect(out.stdout).toBe(`merged new1\ngiven again ${job.id} -> new1 /r/1.md\n`);
-    expect(polls).toBe(3);
+    expect(polls).toBe(4);
   });
 
   it('with --wait, tries the merge of a job it leaves unhandled once', async () => {
@@ -605,7 +634,34 @@ describe('ogw loop sync', () => {
     const out = await ogw(g.ws, ['loop', 'sync', 'g', '--wait']);
     expect(out.stdout).toBe(`merged ${running.id}\nnot merged ${job.id}: merge of job ${job.id} failed: uncommitted changes\n`);
     expect(mocks.mergeAgentJobs.mock.calls.filter((c) => (c[1] as string[])[0] === job.id)).toHaveLength(1);
-    expect(polls).toBe(3);
+    expect(polls).toBe(4);
+  });
+
+  it('gives the failed jobs again before it merges the done ones, and with --wait reads only the running jobs until one ended', async () => {
+    const g = setupGame({ backgroundRetryLimit: 2 });
+    await openLoopRun(g, { startedAt: 5 });
+    const done = await addJob(g.ws, { meta: { role: 'resource', input: '/r/1.md' }, status: 'done' });
+    const failed = await addJob(g.ws, { meta: { role: 'resource', input: '/r/2.md' }, status: 'failed', exitCode: 3 });
+    const events: string[] = [];
+    let retryPolls = 0;
+    mocks.agentOutcome.mockImplementation((_ctx: unknown, id: string) => {
+      if (id === done.id) return Promise.resolve({ status: 'done', output: '/o' });
+      if (id === failed.id) return Promise.resolve({ status: 'failed', output: null });
+      events.push(`poll ${id}`);
+      return Promise.resolve(++retryPolls < 3 ? { status: 'running', output: null } : { status: 'done', output: '/o2' });
+    });
+    mocks.retryAgentJob.mockImplementation(async () => {
+      events.push('retry');
+      await addJob(g.ws, { id: 'again1', meta: { role: 'resource', input: '/r/2-retry-1.md' } });
+      return 'again1';
+    });
+    mocks.mergeAgentJobs.mockImplementation((_ctx: unknown, ids: string[]) => {
+      events.push(`merge ${ids[0] as string}`);
+      return Promise.resolve({ merged: ids, failed: [] });
+    });
+    const out = await ogw(g.ws, ['loop', 'sync', 'g', '--wait']);
+    expect(out.code).toBe(0);
+    expect(events).toEqual(['retry', `merge ${done.id}`, 'poll again1', 'poll again1', 'poll again1', 'poll again1', 'merge again1']);
   });
 
   it('does nothing while the content agent runs', async () => {
@@ -733,7 +789,11 @@ describe('ogw loop sync', () => {
     expect(out).toMatchObject({ code: 0, stdout: `merged ${done.id}\ngiven again ${failed.id} -> again1 /h/stg-0.2.0-resource-2.md\n` });
     const run = await currentRun(g);
     expect(run.data.build).toEqual({ retries: 2 });
-    expect((run.data.loop as { tasks: { retries: number }[] }).tasks.map((t) => t.retries)).toEqual([0, 1]);
+    // the task given again is first: its job starts before the merges
+    expect((run.data.loop as { tasks: { input: string; retries: number }[] }).tasks.map((t) => [t.input, t.retries])).toEqual([
+      ['/h/stg-0.2.0-resource-2.md', 1],
+      ['/h/stg-0.2.0-resource-1.md', 0],
+    ]);
     expect((await ogw(g.ws, ['build', 'retry', 'g'])).stdout).toContain('retries 3');
   });
 

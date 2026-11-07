@@ -49,8 +49,12 @@ interface Fake {
   othersListed: number | null;
   /** Instances running (with `others`) when each instance start succeeded, before it was added. */
   runningAtStart: number[];
+  /** By instance id, the ids of the instances of the run that were running when its start succeeded, before it was added. */
+  runningIdsAtStart: Map<string, string[]>;
   /** Boot of an instance after its slot was reserved; the start fails when the instance was stopped meanwhile. */
   booting: (id: string) => Promise<void>;
+  /** The stop of an instance once it left `running`, before the stop returns. */
+  stopping: (id: string) => Promise<void>;
   /** Called inside `startAgentJob` before it returns the new job id. */
   agentStarting: (id: string) => void;
   /** Wait for a slot with the start's abort signal, before the instance id is reserved. */
@@ -74,7 +78,9 @@ const fake = vi.hoisted(
     others: 0,
     othersListed: null,
     runningAtStart: [],
+    runningIdsAtStart: new Map(),
     booting: () => Promise.resolve(),
+    stopping: () => Promise.resolve(),
     agentStarting: () => undefined,
     reserving: () => Promise.resolve(),
     limited: () => false,
@@ -97,6 +103,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, client: opts.client as string | undefined, root, startedAt: 100 };
     fake.instances.push(info);
     fake.runningAtStart.push(fake.running.size + fake.others);
+    fake.runningIdsAtStart.set(id, [...fake.running]);
     const stops = fake.stopped.length;
     hooks.onReserved?.(id);
     // the detached supervisor runs from here on
@@ -108,7 +115,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
   stopInstance: vi.fn((_ctx: unknown, id: string) => {
     fake.running.delete(id);
     fake.stopped.push(id);
-    return Promise.resolve();
+    return fake.stopping(id);
   }),
   listInstances: vi.fn(() => {
     if (fake.othersListed !== null && --fake.othersListed <= 0) fake.others = 0;
@@ -177,12 +184,21 @@ vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
   };
 });
 
-const measure = vi.hoisted(() => ({ collected: [] as string[][], collect: [] as [string, string][], dead: [] as string[] }));
+/** The raw data collected, the instances whose client cannot answer, and the read of a telemetry summary before its result. */
+interface Measure {
+  collected: string[][];
+  collect: [string, string][];
+  dead: string[];
+  summarizing: (id: string) => Promise<void>;
+}
+
+const measure = vi.hoisted((): Measure => ({ collected: [], collect: [], dead: [], summarizing: () => Promise.resolve() }));
 
 vi.mock('../../../src/commands/telemetry/api.ts', () => ({
-  telemetrySummary: vi.fn((_ctx: unknown, id: string) =>
-    measure.dead.includes(id) ? Promise.reject(new Error('get_telemetry failed: client channel closed\nmore')) : Promise.resolve([`device ms: ${id}`, 'scenes: lobby']),
-  ),
+  telemetrySummary: vi.fn(async (_ctx: unknown, id: string) => {
+    await measure.summarizing(id);
+    return measure.dead.includes(id) ? Promise.reject(new Error('get_telemetry failed: client channel closed\nmore')) : Promise.resolve([`device ms: ${id}`, 'scenes: lobby']);
+  }),
 }));
 vi.mock('../../../src/commands/measure/api.ts', () => ({
   collectMeasure: vi.fn((_ctx: unknown, _game: string, id: string, out: string) => {
@@ -201,13 +217,22 @@ vi.mock('../../../src/commands/measure/api.ts', () => ({
 }));
 
 /** The bot runs of the shared telemetry: by instance id, the telemetry, or null for a run that did not reach every step. */
-const bots = vi.hoisted(() => ({ runs: [] as { id: string; commit: string; pollMs: number }[], fail: new Set<string>(), failRuns: new Map<string, number>() }));
+interface Bots {
+  runs: { id: string; commit: string; pollMs: number }[];
+  fail: Set<string>;
+  failRuns: Map<string, number>;
+  /** The run of the scenario on an instance, before its result. */
+  running: (id: string) => Promise<void>;
+}
+
+const bots = vi.hoisted((): Bots => ({ runs: [], fail: new Set(), failRuns: new Map(), running: () => Promise.resolve() }));
 
 vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
-  botRun: vi.fn((_ctx: unknown, instance: { id: string }, _scenario: unknown, pollMs: number) => {
+  botRun: vi.fn(async (_ctx: unknown, instance: { id: string }, _scenario: unknown, pollMs: number) => {
     const commit = fake.instances.find((i) => i.id === instance.id)?.commit ?? '';
     bots.runs.push({ id: instance.id, commit, pollMs });
+    await bots.running(instance.id);
     if (bots.fail.has(commit)) return Promise.resolve(null);
     const failing = bots.failRuns.get(commit) ?? 0;
     if (failing > 0) {
@@ -305,7 +330,9 @@ beforeEach(() => {
   fake.others = 0;
   fake.othersListed = null;
   fake.runningAtStart = [];
+  fake.runningIdsAtStart = new Map();
   fake.booting = () => Promise.resolve();
+  fake.stopping = () => Promise.resolve();
   fake.agentStarting = () => undefined;
   fake.reserving = () => Promise.resolve();
   fake.limited = () => false;
@@ -316,7 +343,9 @@ beforeEach(() => {
   measure.collected = [];
   measure.collect = [];
   measure.dead = [];
+  measure.summarizing = () => Promise.resolve();
   bots.runs = [];
+  bots.running = () => Promise.resolve();
   bots.fail = new Set();
   bots.failRuns = new Map();
   evaluateDeps.pollMs = 0;
@@ -388,7 +417,7 @@ describe('ogw loop evaluate', () => {
     expect(file.plays[3]).toEqual({ result: '', instance: '', platform: 'android', moment: 'broken', status: 'failed' });
     // main judge: the boss pair and the broken pair (null), then this commit and the baseline from the first screen,
     // started in the order the judge plays them
-    const mainInput = fake.agents[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string; playGuide: string; names: unknown }; fixtures: unknown[]; reference: unknown; elements: string[]; telemetry: unknown };
+    const mainInput = judgeAgents()[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string; playGuide: string; names: unknown }; fixtures: unknown[]; reference: unknown; elements: string[]; telemetry: unknown };
     expect(mainInput.elements).toEqual(file.elements);
     expect(mainInput.telemetry).toBeNull();
     expect(fake.instances.slice(0, 4).map((i) => [i.id, i.commit, i.fixture !== undefined])).toEqual([
@@ -398,11 +427,11 @@ describe('ogw loop evaluate', () => {
       ['i4', base, false],
     ]);
     // the second step 4 judge: the other side
-    expect((fake.agents[1]?.input as { A: { instance: string } }).A.instance).toBe('i7');
+    expect((judgeAgents()[1]?.input as { A: { instance: string } }).A.instance).toBe('i7');
     expect(fake.instances.find((i) => i.id === 'i7')?.commit).toBe(base);
     // play-guide.md and records/setup/name.md of the commit of each side, from git
     expect(mainInput.A).toEqual({ instance: 'i3', playGuide: expect.stringMatching(new RegExp(`/ogw-guides-[^/]+/${head}/play-guide\\.md$`)) as string, names: { ko: '등불 지하실', en: 'Lantern Crypt' } });
-    expect((fake.agents[0] as FakeAgent).guides).toEqual({ A: '## controls\n\ntap\n', B: null });
+    expect((judgeAgents()[0] as FakeAgent).guides).toEqual({ A: '## controls\n\ntap\n', B: null });
     expect(mainInput.B.names).toEqual({ ko: 'Runner' });
     expect(mainInput.B.instance).toBe('i4');
     expect(existsSync(join(mainInput.A.playGuide, '..', '..'))).toBe(false);
@@ -672,7 +701,7 @@ describe('ogw loop evaluate', () => {
       },
     ]);
     expect(created).toMatchObject({ votes: null, vsBaseline: null, vsReference: 'unknown' });
-    expect(fake.agents[0]?.input).toMatchObject({ B: null, fixtures: [], reference: { name: 'Hollow Run', presentation: 'Glow Town' } });
+    expect(judgeAgents()[0]?.input).toMatchObject({ B: null, fixtures: [], reference: { name: 'Hollow Run', presentation: 'Glow Town' } });
   });
 
   it('caps judge moments by maxConcurrentInstances and waits for room', async () => {
@@ -687,7 +716,7 @@ describe('ogw loop evaluate', () => {
     expect(fake.runningAtStart.slice(0, 4)).toEqual([0, 1, 2, 3]);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.judges[0]?.omittedMoments).toEqual(['broken']);
-    expect((fake.agents[0]?.input as { fixtures: unknown[] }).fixtures).toHaveLength(1);
+    expect((judgeAgents()[0]?.input as { fixtures: unknown[] }).fixtures).toHaveLength(1);
   });
 
   it('stops the instances a running judge released and starts the next judge waiting for them', async () => {
@@ -1179,11 +1208,11 @@ describe('ogw loop evaluate', () => {
     const signals = trapSignals();
     evaluateDeps.signalSettleMs = 100;
     fake.respond = () => undefined;
-    let sent = false;
-    // the main judge's agent and instances run; the play instance's boot ignores the stop and outlasts the settle time
-    fake.booting = async () => {
-      if (fake.agents.length === 0 || sent) return;
-      sent = true;
+    // the judges' agents and instances run; the boot of the play instance (the one with a platform) waits for a judge
+    // agent, then ignores the stop and outlasts the settle time; every agent that started is killed
+    fake.booting = async (id) => {
+      if (fake.instances.find((i) => i.id === id)?.platform === undefined) return;
+      while (!fake.agents.some((a) => a.role === 'judge')) await new Promise((r) => setTimeout(r, 5));
       signals.send();
       await new Promise((r) => setTimeout(r, 500));
     };
@@ -1192,8 +1221,8 @@ describe('ogw loop evaluate', () => {
     expect(out.stderr).toContain('ogw loop evaluate stopped by SIGTERM');
     expect(signals.resignals).toHaveLength(1);
     const [at] = signals.resignals as [Resignal];
-    expect(fake.agents.map((a) => a.id)).toEqual(['a1']);
-    expect(at.killed).toEqual(['a1']);
+    expect(fake.agents.some((a) => a.role === 'judge')).toBe(true);
+    expect(new Set(at.killed)).toEqual(new Set(fake.agents.map((a) => a.id)));
     expect(at.instances.length).toBeGreaterThan(1);
     expect(at.running).toEqual([]);
   });
@@ -1209,9 +1238,12 @@ describe('ogw loop evaluate', () => {
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
     // each step 4 judge in its own group of one instance per side (the boss pair; the first-screen pair waits for it):
-    // the plays leave the judges 1 slot, so their least fills the 4 slots; then the play and the boss play, then one
-    // success judge with its share of 2; the second does not fit beside the first and is not called after it failed
-    expect(fake.runningAtStart).toEqual([0, 1, 2, 3, 0, 1, 2, 3]);
+    // the plays leave the judges 1 slot, so their least fills the 4 slots; then the play and the boss play as slots free
+    // up, then one success judge with its share of 2; the second does not fit beside the first and is not called after
+    // it failed. No start runs beside 4 instances
+    expect(fake.runningAtStart.slice(0, 4)).toEqual([0, 1, 2, 3]);
+    expect(fake.runningAtStart).toHaveLength(8);
+    expect(fake.runningAtStart.every((n) => n < 4)).toBe(true);
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.judges.map((j) => [j.kind, j.vsReference])).toEqual([['main', 'pass'], ['main', 'pass'], ['success', 'fail']]);
     expect(file.judges[0]?.A).toBe(head);
@@ -1431,19 +1463,21 @@ describe('ogw loop evaluate', () => {
     const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
-    // six headless instances first, three of this commit and three of the baseline game, stopped before the judges start
-    expect(fake.instances.slice(0, 6).map((i) => [i.commit, i.client, i.played])).toEqual([
-      [head, 'headless', undefined],
-      [base, 'headless', undefined],
-      [head, 'headless', undefined],
-      [base, 'headless', undefined],
-      [head, 'headless', undefined],
-      [base, 'headless', undefined],
-    ]);
+    // six headless instances first, started together, three of this commit and three of the baseline game, stopped
+    // before the judges start
+    const headless = fake.instances.slice(0, 6);
+    expect(headless.map((i) => [i.commit, i.client, i.played]).sort()).toEqual(
+      [head, head, head, base, base, base].map((c) => [c, 'headless', undefined]).sort(),
+    );
     expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, head, base, base, base].sort());
     // the bot runs poll at their own interval, not that of the agent jobs
     expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7, 7, 7, 7, 7]);
-    expect(fake.stopped.slice(0, 6).sort()).toEqual(['i1', 'i2', 'i3', 'i4', 'i5', 'i6']);
+    expect(fake.stopped).toEqual(expect.arrayContaining(['i1', 'i2', 'i3', 'i4', 'i5', 'i6']));
+    const judgeIds = judgeAgents().flatMap((a) => {
+      const input = a.input as { A: { instance: string }; B: { instance: string } | null; fixtures: { A: string | null; B: string | null }[] };
+      return [input.A.instance, input.B?.instance ?? null, ...input.fixtures.flatMap((f) => [f.A, f.B])].filter((id): id is string => id !== null);
+    });
+    for (const id of judgeIds) expect(fake.runningIdsAtStart.get(id)?.filter((r) => headless.some((h) => h.id === r)) ?? []).toEqual([]);
     const first = join(g.root, `${R}/evidence/telemetry-1-1.md`);
     const second = join(g.root, `${R}/evidence/telemetry-1-2.md`);
     expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 30, B 90');
@@ -1780,5 +1814,148 @@ describe('ogw loop evaluate confirmation pair', () => {
     // both success judges started together; the one that failed is not called again
     expect(judgeAgents().map((a) => a.agent)).toEqual([OPUS, OPUS, OPUS, OPUS]);
     expect(file.judges.map((j) => [j.kind, j.status, j.fallback])).toEqual([['main', 'done', undefined], ['main', 'done', undefined], ['success', 'failed', undefined], ['success', 'done', undefined]]);
+  });
+});
+
+/** Waits until `done` holds or `ms` passed: the timeout is what a version that never gets there meets. */
+async function until(done: () => boolean, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; !done() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 5));
+  return done();
+}
+
+const PLAY_DONE = '## coverage\n\nunknown: none\n';
+const SCENARIO = { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } };
+
+/** Records the boot of each instance that is not headless: `play` for one of the `playInstances` plays (it has a platform). */
+function recordBoots(events: string[]): void {
+  fake.booting = (id) => {
+    const instance = fake.instances.find((i) => i.id === id);
+    if (instance?.client !== 'headless') events.push(instance?.platform === undefined ? 'judge or moment' : 'play');
+    return Promise.resolve();
+  };
+}
+
+/** The instance ids that the inputs of the judges name. */
+function judgeInstanceIds(): string[] {
+  return judgeAgents().flatMap((a) => {
+    const input = a.input as { A: { instance: string }; B: { instance: string } | null; fixtures: { A: string | null; B: string | null }[] };
+    return [input.A.instance, input.B?.instance ?? null, ...input.fixtures.flatMap((f) => [f.A, f.B])].filter((id): id is string => id !== null);
+  });
+}
+
+describe('ogw loop evaluate work beside each other', () => {
+  it('starts the instances of the groups that fit together, not one after another', async () => {
+    // 8 slots: the 4 play instances (2 plays and a play per moment) and the 2 instances each step 4 judge starts with
+    const { g } = await loop({ maxConcurrentInstances: 8 });
+    // no poll comes between the starts of the groups: they start in one pass
+    evaluateDeps.pollMs = 10_000;
+    fake.respond = (agent) => (agent.role === 'play' ? PLAY_DONE : judgeText('A', 'A', 'pass'));
+    let booting = 0;
+    let most = 0;
+    // the broken moment fails its save fixture before its boot: 7 boots of the 8 starts
+    fake.booting = async () => {
+      booting++;
+      most = Math.max(most, booting);
+      await until(() => most >= 7, 300);
+      booting--;
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect(most).toBe(7);
+    // no start ran beside 8 instances
+    expect(fake.runningAtStart.every((n) => n < 8)).toBe(true);
+  });
+
+  it('starts the plays while the shared telemetry runs, and the judges once the runs ended', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    write(g.root, 'client/dev/bot/scenario.json', SCENARIO);
+    commit(g.root);
+    fake.respond = (agent) => (agent.role === 'play' ? PLAY_DONE : judgeText('A', 'A', 'pass'));
+    const events: string[] = [];
+    bots.running = async () => {
+      // the runs end once the play started, or after 300 ms: a version whose plays wait for the runs gets there
+      await until(() => events.includes('play'), 300);
+      events.push('bot');
+    };
+    recordBoots(events);
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    // the play started before the runs ended; the judges, whose input names the runs, after all six ended
+    expect(events.indexOf('play')).toBeLessThan(events.indexOf('bot'));
+    const ids = judgeInstanceIds();
+    expect(ids.length).toBeGreaterThan(0);
+    const headless = (id: string): boolean => fake.instances.find((i) => i.id === id)?.client === 'headless';
+    for (const id of ids) expect(fake.runningIdsAtStart.get(id)?.filter(headless) ?? []).toEqual([]);
+    expect(judgeAgents().every((a) => typeof a.input.telemetry === 'string')).toBe(true);
+  });
+
+  it('keeps the slots the shared telemetry runs and their judges take for them: no play starts in them', async () => {
+    // 8 slots: the 6 runs and the 2 instances each of the 2 step 4 judges start with leave none for a play meanwhile
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0, maxConcurrentInstances: 8 });
+    write(g.root, 'client/dev/bot/scenario.json', SCENARIO);
+    commit(g.root);
+    fake.respond = (agent) => (agent.role === 'play' ? PLAY_DONE : judgeText('A', 'A', 'pass'));
+    const events: string[] = [];
+    bots.running = async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      events.push('bot');
+    };
+    recordBoots(events);
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(events.slice(0, 6)).toEqual(['bot', 'bot', 'bot', 'bot', 'bot', 'bot']);
+    // the judges start first, as they did after the runs
+    expect(events[6]).toBe('judge or moment');
+    expect(fake.runningAtStart.every((n) => n < 8)).toBe(true);
+  });
+
+  it('stops the instances of an ended judge together', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    let firstStopped = false;
+    let stopping = 0;
+    let most = 0;
+    // the first judge ends first; the other agents end once its 4 instances (the broken pair fails its save fixture)
+    // stopped, so that no other stop runs beside them
+    fake.respond = (agent) => {
+      if (agent === judgeAgents()[0]) return judgeText('A', 'A', 'pass');
+      if (!firstStopped) return undefined;
+      return agent.role === 'play' ? PLAY_DONE : judgeText('A', 'A', 'pass');
+    };
+    fake.stopping = async () => {
+      stopping++;
+      // the stops of the first judge: those before the first time no stop runs
+      if (!firstStopped) most = Math.max(most, stopping);
+      // the stops end once 4 run at once, or after 200 ms
+      await until(() => most >= 4, 200);
+      stopping--;
+      if (stopping === 0) firstStopped = true;
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(most).toBe(4);
+  });
+
+  it('finishes an agent that ended while the work after another ended agent runs', async () => {
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
+    let summarizing = false;
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return PLAY_DONE;
+      // the judges end once the telemetry of an ended play is being read
+      return summarizing ? judgeText('A', 'A', 'pass') : undefined;
+    };
+    let judgesStopped = false;
+    measure.summarizing = async () => {
+      summarizing = true;
+      // the summary ends once the step 4 judges ended and their instances stopped, or after 500 ms
+      judgesStopped = await until(() => {
+        const ids = judgeInstanceIds();
+        return ids.length >= 8 && ids.every((id) => fake.stopped.includes(id));
+      }, 500);
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.stderr).toBe('');
+    expect(judgesStopped).toBe(true);
   });
 });

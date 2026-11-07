@@ -23,15 +23,19 @@ vi.mock('../../../src/commands/data/api.ts', () => ({
 type FakeTypeCheck = (commit: string) => { failures: string[]; complete: boolean; stops?: { part: 'TypeScript' | 'engine'; reason: string }[] };
 const typeCheck = vi.hoisted(() => {
   const pass: FakeTypeCheck = () => ({ failures: [], complete: true });
-  return { real: false, fake: pass, calls: [] as string[] };
+  /** The run of a fake check before its result. */
+  const wait: (commit: string) => Promise<void> = () => Promise.resolve();
+  return { real: false, fake: pass, calls: [] as string[], wait };
 });
 vi.mock('../../../src/commands/code/api.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/commands/code/api.ts')>();
   return {
     ...actual,
-    runCoreTypeCheck: (ctx: Parameters<typeof actual.runCoreTypeCheck>[0], commit: string, root: string) => {
+    runCoreTypeCheck: async (ctx: Parameters<typeof actual.runCoreTypeCheck>[0], commit: string, root: string) => {
       typeCheck.calls.push(commit);
-      return typeCheck.real ? actual.runCoreTypeCheck(ctx, commit, root) : Promise.resolve({ stops: [], ...typeCheck.fake(commit) });
+      if (typeCheck.real) return actual.runCoreTypeCheck(ctx, commit, root);
+      await typeCheck.wait(commit);
+      return { stops: [], ...typeCheck.fake(commit) };
     },
   };
 });
@@ -40,12 +44,47 @@ beforeEach(() => {
   typeCheck.real = false;
   typeCheck.fake = () => ({ failures: [], complete: true });
   typeCheck.calls = [];
+  typeCheck.wait = () => Promise.resolve();
   data.exitCode = 0;
   data.calls = [];
   data.write = null;
 });
 
+/** Waits until `done` holds or `ms` passed: the timeout is what a version that never gets there meets. */
+async function until(done: () => boolean, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; !done() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 5));
+  return done();
+}
+
 describe('ogw agent merge: core worktrees', () => {
+  it('runs the type checks of the branches together and beside that of main, and that of main after the merge it follows', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { storage: [], routing: [] });
+    const storage = await coreJob(ws, 'storage');
+    const routing = await coreJob(ws, 'routing');
+    const before = sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim();
+    let running = 0;
+    let most = 0;
+    const mainsAtStart: string[] = [];
+    // a check ends once the checks of both branches and of main run at once, or after 3 s
+    typeCheck.wait = async (commit) => {
+      if (!commit.startsWith('agent/')) mainsAtStart.push(sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim());
+      running++;
+      most = Math.max(most, running);
+      await until(() => most >= 3, 3000);
+      running--;
+    };
+    const run = await ogw(ws, ['agent', 'merge', storage, routing]);
+    expect(run.code).toBe(0);
+    expect(most).toBe(3);
+    // each branch is checked once; main is checked at the commit before each merge, the second after the first merge
+    expect(typeCheck.calls.filter((c) => c.startsWith('agent/')).sort()).toEqual([`agent/${routing}`, `agent/${storage}`].sort());
+    const first = /^merged (\S+)$/m.exec(run.stdout)?.[1] as string;
+    const afterFirst = sh(ws.coreImpl, 'git', ['log', '--format=%H', '-1', `--grep=^ogw agent merge ${first}$`, 'main']).trim();
+    expect(typeCheck.calls.filter((c) => !c.startsWith('agent/'))).toEqual([before, afterFirst]);
+    expect(mainsAtStart).toEqual([before, afterFirst]);
+  });
+
   it('merges core jobs into main in dependency order with git merge', async () => {
     const ws = makeWorkspace();
     coreSpec(ws, { storage: ['routing'], routing: [], auth: ['storage'] });

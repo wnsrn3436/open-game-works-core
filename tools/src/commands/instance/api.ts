@@ -406,7 +406,8 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
       db: options.db,
       fixture: options.fixture === undefined ? undefined : resolve(ctx.cwd, options.fixture),
     });
-    await importIfNeeded(ctx, plan, checkout.root);
+    // a fresh `--commit` checkout gets the import of another checkout with the same files (ogw.md `## runner`)
+    await importIfNeeded(ctx, plan, checkout.root, made.worktree === null ? null : { commonDir: game.commonDir, keep: max });
     checkAborted(signal);
     const commit = exists(join(checkout.root, '.git')) ? await head(checkout.root, { env: ctx.env }) : '';
     await updateRecord(id, (r) => {

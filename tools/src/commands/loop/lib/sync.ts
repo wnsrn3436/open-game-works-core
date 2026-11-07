@@ -4,13 +4,17 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { git, head } from '../../../lib/git.ts';
 import { waitJob, type JobRecord } from '../../../lib/jobs.ts';
 import { changeOpenRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
-import { agentOutcome, mergeAgentJobs, retryAgentJob, startAgentJob } from '../../agent/api.ts';
+import { agentOutcome, mergeAgentJobs, retryAgentJob, startAgentJob, type AgentOutcome } from '../../agent/api.ts';
 import { agentJobsOf, failWhenContentRunning, inputOf, roleOf, runJobs } from './jobs.ts';
 import { loopData, type LoopData, type TaskState } from './run.ts';
 
 export const WORKER_ROLES = ['resource', 'translation'] as const;
 
-export const syncDeps = { pollMs: 5000 };
+/**
+ * Dependencies tests replace: the poll interval of `--wait` between passes, which reads the outcome of each running
+ * worker job alone; a pass that reads every job of the run comes once one of them ended.
+ */
+export const syncDeps = { pollMs: 1000 };
 
 export interface SyncResult {
   merged: string[];
@@ -98,10 +102,13 @@ async function mergeOrRedo(ctx: Context, game: GameRepo, job: JobRecord, task: T
   return { start: await startAgentJob(ctx, { role: task.role, game: game.name, input }), failure };
 }
 
-async function handle(ctx: Context, game: GameRepo, job: JobRecord, task: TaskState, limit: number): Promise<Step | null> {
-  const outcome = await agentOutcome(ctx, job.id);
-  if (outcome.status === 'running') return null;
-  if (outcome.status === 'done' && outcome.output !== null) return mergeOrRedo(ctx, game, job, task, limit);
+/** True for an ended job whose result is merged; any other ended job is given again. */
+function merges(outcome: AgentOutcome): boolean {
+  return outcome.status === 'done' && outcome.output !== null;
+}
+
+async function handle(ctx: Context, game: GameRepo, job: JobRecord, task: TaskState, limit: number, outcome: AgentOutcome): Promise<Step> {
+  if (merges(outcome)) return mergeOrRedo(ctx, game, job, task, limit);
   const failure = await failureText(ctx, job);
   if (task.retries >= limit) return { failure };
   return { start: await retryAgentJob(ctx, job.id), failure };
@@ -128,23 +135,27 @@ function apply(run: RunState, job: JobRecord, step: Step, result: SyncResult): v
 }
 
 /**
- * One pass over the resource and translation jobs of the run. Returns whether a worker job still runs.
- * `unhandled` holds the jobs whose merge failed earlier in this sync; they are not tried again.
+ * One pass over the resource and translation jobs of the run. Returns the worker jobs that still run, the jobs it gave
+ * again included. The ended jobs that are given again start before the merges, which run one after another in the
+ * checkout and do not hold up the jobs given again. `unhandled` holds the jobs whose merge failed earlier in this sync;
+ * they are not tried again.
  */
-export async function syncOnce(ctx: Context, game: GameRepo, result: SyncResult, unhandled: Set<string>): Promise<boolean> {
+export async function syncOnce(ctx: Context, game: GameRepo, result: SyncResult, unhandled: Set<string>): Promise<string[]> {
   const limit = (await ctx.settings()).backgroundRetryLimit;
   const jobs = await runJobs(ctx, game, await requireOpenRun(game));
   failWhenContentRunning(jobs);
-  let running = false;
+  const running: string[] = [];
+  const ended: { job: JobRecord; outcome: AgentOutcome }[] = [];
   for (const job of agentJobsOf(jobs, WORKER_ROLES)) {
     const data = loopData(await requireOpenRun(game));
     if (data.handled.includes(job.id) || unhandled.has(job.id)) continue;
-    const task = taskOf(data, job);
-    const step = await handle(ctx, game, job, task, limit);
-    if (step === null) {
-      running = true;
-      continue;
-    }
+    const outcome = await agentOutcome(ctx, job.id);
+    if (outcome.status === 'running') running.push(job.id);
+    else ended.push({ job, outcome });
+  }
+  for (const { job, outcome } of [...ended.filter((e) => !merges(e.outcome)), ...ended.filter((e) => merges(e.outcome))]) {
+    const task = taskOf(loopData(await requireOpenRun(game)), job);
+    const step = await handle(ctx, game, job, task, limit, outcome);
     if (step.unhandled === true) {
       const failure = step.failure ?? '';
       unhandled.add(job.id);
@@ -155,7 +166,7 @@ export async function syncOnce(ctx: Context, game: GameRepo, result: SyncResult,
       });
       continue;
     }
-    if (step.start) running = true;
+    if (step.start) running.push(step.start);
     await changeOpenRun(game, (open) => {
       apply(open, job, step, result);
       const stuck = loopData(open).stuck;
@@ -165,11 +176,22 @@ export async function syncOnce(ctx: Context, game: GameRepo, result: SyncResult,
   return running;
 }
 
+/** Waits until one of the jobs no longer runs, reading the outcome of each of them every `syncDeps.pollMs`. */
+async function untilOneEnds(ctx: Context, jobs: readonly string[]): Promise<void> {
+  for (;;) {
+    for (const id of jobs) if ((await agentOutcome(ctx, id)).status !== 'running') return;
+    await sleep(syncDeps.pollMs);
+  }
+}
+
 export async function sync(ctx: Context, game: GameRepo, wait: boolean): Promise<SyncResult> {
   const result: SyncResult = { merged: [], given: [], gaveUp: [], failed: [] };
   const unhandled = new Set<string>();
-  while ((await syncOnce(ctx, game, result, unhandled)) && wait) await sleep(syncDeps.pollMs);
-  return result;
+  for (;;) {
+    const running = await syncOnce(ctx, game, result, unhandled);
+    if (!wait || running.length === 0) return result;
+    await untilOneEnds(ctx, running);
+  }
 }
 
 export function syncText(result: SyncResult): string {

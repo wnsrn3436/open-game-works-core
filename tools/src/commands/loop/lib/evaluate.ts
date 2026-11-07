@@ -1,16 +1,17 @@
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { exists, formatJson, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, showFile } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
 import { killJob, readJob } from '../../../lib/jobs.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import type { AgentSettings, HarnessSettings } from '../../../lib/settings.ts';
-import { agentHitLimit, agentOutcome, startAgentJob, type CalibrationPlace } from '../../agent/api.ts';
+import { agentHitLimit, agentOutcome, startAgentJob, type AgentOutcome, type CalibrationPlace } from '../../agent/api.ts';
 import { clearPlayBudget } from '../../agent/lib/play-budget.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from '../../instance/api.ts';
 import { clearReleases, takeReleases } from '../../instance/lib/releases.ts';
@@ -34,7 +35,18 @@ import {
 } from './files.ts';
 import { appendCoverage, judgeReadingOf, judgeResultErrors, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
-import { botRun, checkTelemetryRuns, comparisonText, pairRuns, scenarioAtHead, withInputLatency, type BotRun, type PairRuns, type SharedScenario } from './shared-telemetry.ts';
+import {
+  botRun,
+  checkTelemetryRuns,
+  comparisonText,
+  scenarioAtHead,
+  sideRuns,
+  SHARED_TELEMETRY_RUNS,
+  withInputLatency,
+  type BotRun,
+  type PairRuns,
+  type SharedScenario,
+} from './shared-telemetry.ts';
 import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import { CONFIRMATION_JUDGES, combinedVsBaseline, combinedVsReference, confirmationOutcome, countVotes } from './votes.ts';
@@ -50,7 +62,11 @@ const SIGNAL_KILL_GRACE_MS = 2000;
 export const evaluateDeps = {
   /** Returns a number in [0, 1); below 0.5 puts this commit's instance in `A`. */
   random: Math.random,
-  pollMs: 5000,
+  /**
+   * The longest wait between two polls of the running agents: a poll reads one job record and one release folder per
+   * agent, and an instance start, stop or other work of the run that ends wakes the wait at once.
+   */
+  pollMs: 1000,
   /** The poll interval of the shared-telemetry bot runs: that of the bot playtest. */
   botPollMs: BOT_PLAYTEST_POLL_MS,
   now: Date.now,
@@ -150,8 +166,33 @@ export interface JudgingPlan {
    * null when there are none, and the judging makes them. Absent: the judging always makes them.
    */
   takeRuns?: (pair: JudgePair, scenario: SharedScenario) => Promise<PairRuns | null>;
+  /**
+   * True when the shared telemetry runs of a baseline commit with the same degradation flags are made once for every
+   * pair that has them (`ogw loop variants`); absent: each pair makes its own.
+   */
+  shareBaselineRuns?: boolean;
+  /** Groups that come while the judging runs (`ogw loop variants`); absent: every group is in the queue it starts with. */
+  feed?: JudgingFeed;
   /** The defects to confirm that every play agent gets in its input `defects`; absent: none. */
   playDefects?: PlayDefect[];
+}
+
+/** Groups that come while the judging runs, each judged as it comes. */
+export interface JudgingFeed {
+  /** The groups that came since the last call, and true once no more come. A failure ends the judging with it. */
+  next(): Promise<{ groups: Group[]; done: boolean }>;
+  /** The agent jobs a signal kills with the judging: those whose end brings groups. */
+  jobs(): readonly string[];
+}
+
+/** What holds instance slots of the run: a play slot, a judge slot, or the shared telemetry runs of a pair. */
+interface Holder {
+  /** Its instances that are starting, running or stopping. */
+  live: number;
+  /** Its instances that are starting. */
+  starting: number;
+  /** The slots it keeps while it stops its instances to start new ones (a call again, a fallback). */
+  reserved: number;
 }
 
 /** An instance to start. A start that fails for another reason than a save fixture step ends `ogw loop evaluate`. */
@@ -173,7 +214,7 @@ interface Spec {
   id?: string;
 }
 
-interface PlaySlot {
+interface PlaySlot extends Holder {
   role: 'play';
   spec: Spec;
   platform: string;
@@ -188,7 +229,13 @@ interface PlaySlot {
   entry: PlayEntry | null;
 }
 
-export interface JudgeSlot {
+/** An instance of a judge input that starts as the judge gives other instances back, with the id the input names. */
+interface PendingInstance {
+  id: string;
+  spec: Spec;
+}
+
+export interface JudgeSlot extends Holder {
   role: 'judge';
   kind: JudgeKind;
   pair: JudgePair;
@@ -207,7 +254,11 @@ export interface JudgeSlot {
   /** Most instances the judge holds at once: those it starts with, and as it gives back instances, the next of `pending`. */
   budget: number;
   /** Instances of the judge input not started yet, in the order the judge plays them, with the ids the input names. */
-  pending: { id: string; spec: Spec }[];
+  pending: PendingInstance[];
+  /** Ids of the pending instances whose start runs. */
+  inFlight: Set<string>;
+  /** Ids the judge gave back with `ogw instance release`; one whose start ran then is stopped once it started. */
+  released: Set<string>;
   attempts: number;
   instances: InstanceInfo[];
   /** The judge input file of its current call, which sets what of its judge result is read; null before its first call. */
@@ -217,6 +268,21 @@ export interface JudgeSlot {
 }
 
 export type Slot = PlaySlot | JudgeSlot;
+
+/** The shared telemetry runs of a pair that the judging makes, which the judges of the pair wait for. */
+interface TelemetryJob extends Holder {
+  role: 'telemetry';
+  pair: JudgePair;
+  scenario: Scenario;
+  /** The slots it keeps from its start until its runs ended: `SHARED_TELEMETRY_RUNS` per commit it runs. */
+  size: number;
+  status: 'queued' | 'running' | 'done';
+  /**
+   * True when this job makes the runs of the baseline commit; false when it takes those of the job before it that makes
+   * them for the pairs with the same baseline commit and degradation (`shareBaselineRuns`).
+   */
+  makesBaseline: boolean;
+}
 
 /** What a group waits for: nothing, the rest of `success` (success judges), or a `better` of step 4 (the confirmation pair). */
 type Gate = 'none' | 'success' | 'confirm';
@@ -234,9 +300,12 @@ interface State {
   queue: Group[];
   /** Every slot in plan order. */
   all: Slot[];
+  /** Slots whose agent runs, which each poll reads. */
   active: Slot[];
   /** Every instance started and not stopped yet. */
   instances: Map<string, InstanceInfo>;
+  /** What holds each instance of `instances`. */
+  owners: Map<string, Holder>;
   /** Ids of the instances whose `startInstance` reserved a slot and has not returned yet. */
   starting: Set<string>;
   jobs: Set<string>;
@@ -247,12 +316,33 @@ interface State {
   waitingSince: number | null;
   /** The signal that stopped this run; null while it runs. */
   stoppedBy: NodeJS.Signals | null;
-  /** Aborted on the signal: ends the wait between polls. */
+  /** The first failure of the work in `tasks`, which ends the run; null while none failed. */
+  failure: { error: unknown } | null;
+  /** Aborted on the signal and on a failure: ends the wait between polls and stops the instance starts in flight. */
   wake: AbortController;
+  /** Aborted when work of `tasks` or an instance start or stop ends: ends the wait between polls. */
+  nudge: AbortController;
+  /** The work that runs beside the polls: instance starts, stops, finishing an ended agent, shared telemetry runs. */
+  tasks: Set<Promise<void>>;
+  /** The shared telemetry jobs in the order they start, before every group. */
+  telemetry: TelemetryJob[];
+  /** The job of each pair whose shared telemetry the judging makes. */
+  telemetryOf: Map<JudgePair, TelemetryJob>;
+  /** The pairs whose shared telemetry was set up. */
+  shared: Set<JudgePair>;
+  /**
+   * The runs of a baseline commit made once for every pair with it (`shareBaselineRuns`), by commit and degradation: the
+   * job that makes them, and the runs once it started.
+   */
+  baselineRuns: Map<string, { maker: TelemetryJob; runs: Promise<BotRun[] | null> | null }>;
+  /** `client/dev/bot/scenario.json` of the checkout HEAD, read once at the first pair with a baseline commit. */
+  scenario: Promise<SharedScenario | null> | null;
+  /** True once the feed gives no more groups. */
+  feedDone: boolean;
   /** Resolves when `runSlots` ended and the run cleaned up after a failure. */
   settled: Promise<void>;
   /** The folder of the `play-guide.md` files of the commits the judges compare, made at the first judge; null before. */
-  guides: string | null;
+  guides: Promise<string> | null;
   /** The `<game>` of a judge input per commit, without the instance (`sideOf`). */
   sides: Map<string, Promise<{ playGuide: string; names: Record<string, string> | null }>>;
 }
@@ -308,7 +398,31 @@ export function judgeGroup(
 ): Group {
   const { included, omitted, size } = judgeMoments(plan, pair);
   const budget = judgeBudget(slots, pair.baseline === null ? 1 : 2, included.length, together);
-  const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, fallback, fellBack: false, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], input: null, job: null, entry: null };
+  const slot: JudgeSlot = {
+    role: 'judge',
+    kind,
+    pair,
+    k,
+    agent,
+    fallback,
+    fellBack: false,
+    telemetry: null,
+    side,
+    moments: included,
+    omitted,
+    budget: Math.min(size, budget),
+    pending: [],
+    inFlight: new Set(),
+    released: new Set(),
+    attempts: 0,
+    instances: [],
+    input: null,
+    job: null,
+    entry: null,
+    live: 0,
+    starting: 0,
+    reserved: 0,
+  };
   return { size: slot.budget, slots: [slot], gate: kind === 'main' ? 'none' : kind };
 }
 
@@ -347,7 +461,7 @@ export function alternateSide(first: 'A' | 'B', k: number): 'A' | 'B' {
 }
 
 function playSlot(spec: Spec, platform: string, moment: Moment | null, measure: boolean): PlaySlot {
-  return { role: 'play', spec, platform, moment, measure, measureFile: null, attempts: 0, instance: null, job: null, entry: null };
+  return { role: 'play', spec, platform, moment, measure, measureFile: null, attempts: 0, instance: null, job: null, entry: null, live: 0, starting: 0, reserved: 0 };
 }
 
 /**
@@ -416,12 +530,24 @@ function confirmGroups(plan: EvaluatePlan, pair: JudgePair, slots: number | null
   );
 }
 
-async function inputFile(state: State, role: 'play' | 'judge', input: unknown): Promise<string> {
+/**
+ * Writes an agent input file, through a temporary file and a rename. The write does not wait: the agents whose instances
+ * started first start first, whatever the order the file system ends writes in.
+ */
+function inputFile(state: State, role: 'play' | 'judge', input: unknown): string {
   let ms = evaluateDeps.now();
   if (ms <= state.lastInputMs) ms = state.lastInputMs + 1;
   state.lastInputMs = ms;
   const path = state.plan.site.input(role, ms);
-  await writeJsonAtomic(path, input);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${String(process.pid)}-${newId()}`;
+  try {
+    writeFileSync(tmp, formatJson(input));
+    renameSync(tmp, path);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
   return path;
 }
 
@@ -443,8 +569,46 @@ function degradeOptions(degrade: Degrade): Pick<InstanceOptions, 'inputLatencyMs
   };
 }
 
-/** Starts an instance; null when a save fixture step failed (ogw.md `## loop evaluate` "An instance that could not be started with its save fixture is not put in"). */
-async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
+/** The values of every promise once all settled; the first rejection once all settled, so that no work of it still runs. */
+async function allSettled<T>(promises: readonly Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed !== undefined) throw failed.reason;
+  return results.map((r) => (r as PromiseFulfilledResult<T>).value);
+}
+
+/** Ends the wait between polls at once. */
+function nudge(state: State): void {
+  state.nudge.abort();
+}
+
+/**
+ * Runs `work` beside the polls. Its first failure ends the run: the wait between polls ends, and the instance starts in
+ * flight stop at their next step. Its end wakes the wait.
+ */
+function spawn(state: State, work: () => Promise<void>): void {
+  const task: Promise<void> = work()
+    .catch((error: unknown) => {
+      state.failure ??= { error };
+      state.wake.abort();
+    })
+    .finally(() => {
+      state.tasks.delete(task);
+      nudge(state);
+    });
+  state.tasks.add(task);
+}
+
+/** Waits until no work of `tasks` runs, the work that work started included. */
+async function settleTasks(state: State): Promise<void> {
+  while (state.tasks.size > 0) await Promise.all([...state.tasks]);
+}
+
+/**
+ * Starts an instance for `owner`; null when a save fixture step failed (ogw.md `## loop evaluate` "An instance that could
+ * not be started with its save fixture is not put in"). It counts in `owner` from the call on, before its first wait.
+ */
+async function start(state: State, spec: Spec, owner: Holder): Promise<InstanceInfo | null> {
   checkStopped(state);
   const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: spec.headless === true ? 'headless' : 'window', ...degradeOptions(spec) };
   if (spec.platform !== undefined) options.platform = spec.platform;
@@ -453,9 +617,12 @@ async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
   if (state.plan.db) options.db = state.plan.db;
   if (spec.id !== undefined) options.id = spec.id;
   const reserved: string[] = [];
+  let info: InstanceInfo | null = null;
+  owner.live++;
+  owner.starting++;
   try {
     // A signal ends a wait for a slot without one, and stops an instance start that reserved one at its next step.
-    const info = await startInstance(state.ctx, options, {
+    info = await startInstance(state.ctx, options, {
       signal: state.wake.signal,
       onReserved: (id) => {
         reserved.push(id);
@@ -463,13 +630,17 @@ async function start(state: State, spec: Spec): Promise<InstanceInfo | null> {
       },
     });
     state.instances.set(info.id, info);
+    state.owners.set(info.id, owner);
     return info;
   } catch (error) {
     checkStopped(state);
     if (startFailureReason(error) === 'fixture') return null;
     throw new OgwError(`instance start failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
+    owner.starting--;
+    if (info === null) owner.live--;
     for (const id of reserved) state.starting.delete(id);
+    nudge(state);
   }
 }
 
@@ -484,10 +655,18 @@ async function startJob(state: State, slot: Slot, input: string): Promise<void> 
   state.active.push(slot);
 }
 
+/** Stops an instance of the run; it counts in its owner until the stop ended. */
 async function stop(state: State, instance: InstanceInfo | null): Promise<void> {
   if (!instance || !state.instances.has(instance.id)) return;
+  const owner = state.owners.get(instance.id);
   state.instances.delete(instance.id);
-  await stopInstance(state.ctx, instance.id);
+  state.owners.delete(instance.id);
+  try {
+    await stopInstance(state.ctx, instance.id);
+  } finally {
+    if (owner !== undefined) owner.live--;
+    nudge(state);
+  }
 }
 
 /**
@@ -501,11 +680,12 @@ async function sideOf(state: State, commit: string): Promise<{ playGuide: string
   if (side === undefined) {
     side = (async () => {
       const env = { env: state.ctx.env };
-      state.guides ??= await newPrivateTempFolder('ogw-guides-', state.ctx.env);
-      const playGuide = join(state.guides, commit, 'play-guide.md');
+      state.guides ??= newPrivateTempFolder('ogw-guides-', state.ctx.env);
+      const guides = await state.guides;
+      const playGuide = join(guides, commit, 'play-guide.md');
       const text = await showFile(state.plan.game.root, commit, 'play-guide.md', env);
       if (text !== null) {
-        await mkdir(join(state.guides, commit), { recursive: true });
+        await mkdir(join(guides, commit), { recursive: true });
         await writeFile(playGuide, text);
       }
       const names = await showFile(state.plan.game.root, commit, NAME_FILE, env);
@@ -517,12 +697,12 @@ async function sideOf(state: State, commit: string): Promise<{ playGuide: string
 }
 
 async function launchPlay(state: State, slot: PlaySlot): Promise<void> {
-  slot.instance = await start(state, slot.spec);
+  slot.instance = await start(state, slot.spec, slot);
   if (!slot.instance) {
     slot.entry = { result: '', instance: '', platform: slot.platform, moment: slot.moment?.name ?? null, status: 'failed' };
     return;
   }
-  const input = await inputFile(state, 'play', { instance: slot.instance.id, playGuide: join(slot.instance.root, 'play-guide.md'), moment: slot.moment, defects: state.plan.playDefects ?? [] });
+  const input = inputFile(state, 'play', { instance: slot.instance.id, playGuide: join(slot.instance.root, 'play-guide.md'), moment: slot.moment, defects: state.plan.playDefects ?? [] });
   await startJob(state, slot, input);
 }
 
@@ -584,26 +764,32 @@ function fixtureEntries(specs: readonly JudgeSpec[], ids: readonly (string | nul
 }
 
 /**
- * Starts the judge: the first `budget` of its instances (`judgeSpecs`) now, and the others into `pending` with ids made
- * now, which its input names.
+ * Starts the judge: the first `budget` of its instances (`judgeSpecs`) now, together, and the others into `pending`
+ * with ids made now, which its input names; only the pending ones keep the order the judge plays them in.
  */
 async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
   const { plan } = state;
   const specs = judgeSpecs(plan, slot);
   slot.instances = [];
   slot.pending = [];
+  slot.released = new Set();
   const ids: (string | null)[] = [];
+  const first: Promise<InstanceInfo | null>[] = [];
   for (const [i, item] of specs.entries()) {
     if (i < slot.budget) {
-      const info = await start(state, item.spec);
-      if (info) slot.instances.push(info);
-      ids.push(info?.id ?? null);
+      first.push(start(state, item.spec, slot));
+      ids.push(null);
     } else {
       const id = newId();
       slot.pending.push({ id, spec: item.spec });
       ids.push(id);
     }
   }
+  const started = await allSettled(first);
+  started.forEach((info, i) => {
+    ids[i] = info?.id ?? null;
+  });
+  slot.instances = started.filter((info): info is InstanceInfo => info !== null);
   // the first-screen instance of a side is named whether it started or waits in `pending`; it never fails on a save fixture
   const game = async (side: 'A' | 'B'): Promise<{ instance: string; playGuide: string; names: Record<string, string> | null } | null> => {
     const i = specs.findIndex((s) => s.moment === null && s.side === side);
@@ -611,25 +797,32 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
     return i < 0 || commit === null ? null : { instance: ids[i] as string, ...(await sideOf(state, commit)) };
   };
   const reference = plan.kind === 'fun' || plan.reference === null ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
-  const input = await inputFile(state, 'judge', { A: await game('A'), B: await game('B'), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
+  const [a, b] = [await game('A'), await game('B')];
+  const input = inputFile(state, 'judge', { A: a, B: b, fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
   slot.input = input;
   await startJob(state, slot, input);
 }
 
 /**
- * Starts the next pending instances of a running judge while it holds fewer than its budget and a slot is free. An
- * instance whose save fixture step failed is noted for `ogw instance wait`, which tells the judge it is not put in.
+ * Starts a pending instance of a running judge. An instance whose save fixture step failed is noted for `ogw instance
+ * wait`, which tells the judge it is not put in. One the judge no longer gets (it gave it back, or its agent ended while
+ * the instance started) is stopped.
  */
-async function startPending(state: State, slot: JudgeSlot): Promise<void> {
-  const max = state.plan.settings.maxConcurrentInstances;
-  while (slot.pending.length > 0 && slot.instances.length < slot.budget) {
-    // without a free slot now, the start waits for the next poll instead of holding up the other agents
-    if (max !== null && (await listInstances(state.ctx)).length >= max) return;
-    const next = slot.pending.shift() as { id: string; spec: Spec };
-    const info = await start(state, { ...next.spec, id: next.id });
-    if (info) slot.instances.push(info);
-    else await noteUnstarted(state.ctx.env, slot.job as string, next.id, 'its save fixture step failed');
+async function startPendingOne(state: State, slot: JudgeSlot, next: PendingInstance): Promise<void> {
+  const job = slot.job as string;
+  slot.inFlight.add(next.id);
+  let info: InstanceInfo | null;
+  try {
+    info = await start(state, { ...next.spec, id: next.id }, slot);
+  } finally {
+    slot.inFlight.delete(next.id);
   }
+  if (!state.active.includes(slot) || slot.job !== job || slot.released.has(next.id)) {
+    await stop(state, info);
+    return;
+  }
+  if (info) slot.instances.push(info);
+  else await noteUnstarted(state.ctx.env, job, next.id, 'its save fixture step failed');
 }
 
 async function launch(state: State, slot: Slot): Promise<void> {
@@ -638,32 +831,49 @@ async function launch(state: State, slot: Slot): Promise<void> {
   else await launchJudge(state, slot);
 }
 
-/**
- * True when the group fits beside every running instance, this run's and others'. A group larger than
- * `maxConcurrentInstances` never fits: it starts once this run holds no instance, and `startInstance` waits for each slot.
- */
-async function hasRoom(state: State, size: number): Promise<boolean> {
-  const max = state.plan.settings.maxConcurrentInstances;
-  if (max === null) return true;
-  if (size > max) return state.instances.size === 0;
-  return (await listInstances(state.ctx)).length + heldForJudges(state) + size <= max;
+/** Every holder of instance slots of the run. */
+function holders(state: State): (Slot | TelemetryJob)[] {
+  return [...state.all, ...state.telemetry];
 }
 
-/** The slots the running judges keep for their pending instances: each one's budget not in use, at most its pending count. */
-function heldForJudges(state: State): number {
-  let held = 0;
-  for (const slot of state.active) {
-    if (slot.role === 'judge') held += Math.min(slot.pending.length, Math.max(0, slot.budget - slot.instances.length));
+/**
+ * The slots a holder keeps: its instances, a running judge also the slots for its pending instances up to its budget,
+ * and a running shared telemetry job its size.
+ */
+function kept(holder: Slot | TelemetryJob): number {
+  if (holder.role === 'telemetry') return holder.status === 'running' ? Math.max(holder.live, holder.size) : holder.live;
+  if (holder.role === 'play') return Math.max(holder.live, holder.reserved);
+  return Math.max(holder.live, holder.reserved, Math.min(holder.budget, holder.instances.length + holder.starting + holder.pending.length));
+}
+
+/**
+ * The slots free beside the running instances of other runs: `free` beside the slots the holders of this run keep, for
+ * a group; `actual` beside their instances alone, for a pending instance of a running judge, which takes a slot its judge
+ * keeps. `kept` is true when a holder of this run keeps a slot.
+ */
+async function roomOf(state: State, max: number): Promise<{ free: number; actual: number; kept: boolean }> {
+  const listed = await listInstances(state.ctx);
+  const others = listed.filter((i) => !state.instances.has(i.id) && !state.starting.has(i.id)).length;
+  let live = 0;
+  let keeps = 0;
+  for (const holder of holders(state)) {
+    live += holder.live;
+    keeps += kept(holder);
   }
-  return held;
+  return { free: max - others - keeps, actual: max - others - live, kept: keeps > 0 };
+}
+
+/** True when a judge of the group waits for the shared telemetry of its pair. */
+function waitsForTelemetry(state: State, group: Group): boolean {
+  return group.slots.some((slot) => slot.role === 'judge' && (state.telemetryOf.get(slot.pair)?.status ?? 'done') !== 'done');
 }
 
 /**
  * Notes a group that does not fit. While this run holds no instance, none of its own stops frees a slot: the wait ends
  * in a failure after `instanceWaitTimeoutMs`, like an instance start that waits for a slot.
  */
-function waitForRoom(state: State): void {
-  if (state.instances.size > 0) {
+function waitForRoom(state: State, size: number): void {
+  if (holders(state).some((holder) => holder.live > 0)) {
     state.waitingSince = null;
     return;
   }
@@ -671,35 +881,115 @@ function waitForRoom(state: State): void {
   state.waitingSince ??= now;
   const waitMs = state.plan.settings.instanceWaitTimeoutMs;
   if (now - state.waitingSince >= waitMs) {
-    throw new OgwError(`instance start failed: no room for ${String(state.queue[0]?.size ?? 0)} instances within instanceWaitTimeoutMs (${String(waitMs)} ms)`);
+    throw new OgwError(`instance start failed: no room for ${String(size)} instances within instanceWaitTimeoutMs (${String(waitMs)} ms)`);
   }
 }
 
+/** Throws when a signal stopped the run or work of it failed: the work in flight then makes nothing new. */
 function checkStopped(state: State): void {
   if (state.stoppedBy !== null) throw new OgwError(`ogw loop evaluate stopped by ${state.stoppedBy}`);
+  if (state.failure !== null) throw new OgwError('ogw loop evaluate stopped after a failure');
 }
 
-/** Starts queued groups in order while they fit. */
-async function launchQueued(state: State): Promise<boolean> {
-  let launched = false;
-  while (state.queue.length > 0) {
-    const group = state.queue[0] as Group;
+/** Throws the signal stop of the run, or else the first failure of its work. */
+function checkRun(state: State): void {
+  if (state.stoppedBy !== null) throw new OgwError(`ogw loop evaluate stopped by ${state.stoppedBy}`);
+  if (state.failure !== null) throw state.failure.error;
+}
+
+/** The room an admission pass takes from: the slots free for a group and for a pending instance, and whether this run keeps one. */
+interface Room {
+  max: number | null;
+  /** Free beside the slots the holders of this run keep: for a job or group. */
+  free: number;
+  /** Free beside their instances alone: for a pending instance of a running judge, which takes a slot its judge keeps. */
+  actual: number;
+  /** True when a holder of this run keeps a slot. */
+  kept: boolean;
+}
+
+/**
+ * Whether a job or group of `size` fits. One larger than `maxConcurrentInstances` never fits: it starts once this run
+ * holds no instance, and `startInstance` waits for each slot.
+ */
+function fits(room: Room, size: number): boolean {
+  if (room.max === null) return true;
+  return size > room.max ? !room.kept : size <= room.free;
+}
+
+function take(room: Room, size: number): void {
+  room.free -= size;
+  room.actual -= size;
+  room.kept = true;
+}
+
+/** Starts the next pending instances of the running judges in the slots they keep, while a slot is free. */
+function admitPending(state: State, room: Room): void {
+  for (const slot of [...state.active]) {
+    if (slot.role !== 'judge') continue;
+    while (slot.pending.length > 0 && slot.instances.length + slot.starting < slot.budget && room.actual > 0) {
+      room.actual--;
+      const next = slot.pending.shift() as PendingInstance;
+      spawn(state, () => startPendingOne(state, slot, next));
+    }
+  }
+}
+
+/** Starts the shared telemetry jobs in order; false when one does not fit, which stops the starts. */
+function admitTelemetry(state: State, room: Room): boolean {
+  for (const job of state.telemetry) {
+    if (job.status !== 'queued') continue;
+    if (!fits(room, job.size)) {
+      waitForRoom(state, job.size);
+      return false;
+    }
+    take(room, job.size);
+    job.status = 'running';
+    spawn(state, () => makeTelemetry(state, job));
+  }
+  return true;
+}
+
+/**
+ * Starts the queued groups in order. A group whose judges wait for the shared telemetry of their pair keeps its slots
+ * and lets the groups after it start; a group that does not fit, or one whose gate is still pending, stops the starts.
+ */
+function admitGroups(state: State, room: Room): void {
+  for (let i = 0; i < state.queue.length; ) {
+    const group = state.queue[i] as Group;
     const gate = group.gate === 'none' ? 'open' : group.gate === 'success' ? state.successGate : state.confirmGate;
     if (gate === 'closed') {
-      state.queue.shift();
+      state.queue.splice(i, 1);
       continue;
     }
-    if (gate === 'pending') break;
-    if (!(await hasRoom(state, group.size))) {
-      waitForRoom(state);
-      break;
+    if (gate === 'pending') return;
+    if (waitsForTelemetry(state, group)) {
+      room.free -= group.size;
+      i++;
+      continue;
+    }
+    if (!fits(room, group.size)) {
+      waitForRoom(state, group.size);
+      return;
     }
     state.waitingSince = null;
-    state.queue.shift();
-    for (const slot of group.slots) await launch(state, slot);
-    launched = true;
+    state.queue.splice(i, 1);
+    take(room, group.size);
+    for (const slot of group.slots) spawn(state, () => launch(state, slot));
   }
-  return launched;
+}
+
+/**
+ * Starts what fits now, every start beside the others (ogw.md `## loop evaluate`): first the next instances of the
+ * running judges in the slots they keep, then the shared telemetry jobs in order, then the queued groups in order.
+ */
+async function admit(state: State): Promise<void> {
+  const max = state.plan.settings.maxConcurrentInstances;
+  const counted = max === null ? null : await roomOf(state, max);
+  checkRun(state);
+  const room: Room = { max, free: counted?.free ?? Number.POSITIVE_INFINITY, actual: counted?.actual ?? Number.POSITIVE_INFINITY, kept: counted?.kept ?? false };
+  admitPending(state, room);
+  if (admitTelemetry(state, room)) admitGroups(state, room);
 }
 
 function rel(state: State, path: string | null): string {
@@ -813,11 +1103,14 @@ function updateGates(state: State, slot: JudgeSlot, entry: JudgeEntry): void {
   state.confirmGate = state.plan.confirmOpen?.(main) === true ? 'open' : 'closed';
 }
 
+/** Stops every instance of a judge, all at once. */
 async function stopJudgeInstances(state: State, slot: JudgeSlot): Promise<void> {
+  const job = slot.job;
+  const instances = slot.instances;
   slot.pending = [];
-  for (const instance of slot.instances) await stop(state, instance);
   slot.instances = [];
-  if (slot.job !== null) await clearUnstarted(state.ctx.env, slot.job);
+  await allSettled(instances.map((instance) => stop(state, instance)));
+  if (job !== null) await clearUnstarted(state.ctx.env, job);
 }
 
 /**
@@ -832,15 +1125,33 @@ async function readVerdict(slot: JudgeSlot, output: string): Promise<JudgeVerdic
   return judgeVerdict(text, slot.side, { ...reading, judgeMoments: slot.moments.map((m) => m.name) });
 }
 
+/**
+ * Stops the instances of a slot and calls its agent again on new instances. It keeps its slots meanwhile, so that no
+ * group starts in the slots its stops free.
+ */
+async function relaunch(state: State, slot: Slot): Promise<void> {
+  slot.reserved = slot.role === 'play' ? 1 : slot.budget;
+  try {
+    if (slot.role === 'play') await stop(state, slot.instance);
+    else await stopJudgeInstances(state, slot);
+    // the starts of the call count in the slot from the call on
+    const launched = launch(state, slot);
+    slot.reserved = 0;
+    await launched;
+  } finally {
+    slot.reserved = 0;
+  }
+}
+
 async function retryOrFail(state: State, slot: Slot): Promise<void> {
   const output = slot.job === null ? null : await expectedOutput(state, slot.job);
-  if (slot.role === 'play') await stop(state, slot.instance);
-  else await stopJudgeInstances(state, slot);
   if (slot.attempts < state.plan.settings.backgroundRetryLimit) {
     slot.attempts++;
-    await launch(state, slot);
+    await relaunch(state, slot);
     return;
   }
+  if (slot.role === 'play') await stop(state, slot.instance);
+  else await stopJudgeInstances(state, slot);
   if (slot.role === 'play') {
     slot.entry = { result: rel(state, output), instance: slot.instance?.id ?? '', platform: slot.platform, moment: slot.moment?.name ?? null, status: 'failed' };
   } else {
@@ -849,47 +1160,54 @@ async function retryOrFail(state: State, slot: Slot): Promise<void> {
   }
 }
 
-/** Stops the instances a judge released with `ogw instance release`, so a waiting group can start. True when it stopped one. */
-async function carryOutReleases(state: State, slot: JudgeSlot): Promise<boolean> {
-  const ids = new Set(await takeReleases(state.ctx.env, slot.job as string));
+/**
+ * Stops the instances a judge released with `ogw instance release`, all at once beside the polls, so a waiting group
+ * can start. A pending instance given back is never started; one whose start runs is stopped once it started.
+ */
+async function carryOutReleases(state: State, slot: JudgeSlot): Promise<void> {
+  const job = slot.job as string;
+  const ids = new Set(await takeReleases(state.ctx.env, job));
+  if (ids.size === 0) return;
   const released = slot.instances.filter((instance) => ids.has(instance.id));
-  for (const instance of released) await stop(state, instance);
   slot.instances = slot.instances.filter((instance) => !ids.has(instance.id));
-  // a pending instance given back is never started
   const dropped = slot.pending.filter((p) => ids.has(p.id));
   slot.pending = slot.pending.filter((p) => !ids.has(p.id));
-  for (const id of [...released.map((i) => i.id), ...dropped.map((p) => p.id)]) await noteUnstarted(state.ctx.env, slot.job as string, id, 'it was given back');
-  return released.length + dropped.length > 0;
+  const starting = [...ids].filter((id) => slot.inFlight.has(id));
+  for (const id of ids) slot.released.add(id);
+  for (const instance of released) spawn(state, () => stop(state, instance));
+  for (const id of [...released.map((i) => i.id), ...dropped.map((p) => p.id), ...starting]) await noteUnstarted(state.ctx.env, job, id, 'it was given back');
 }
 
-/** Polls one running agent. Returns true when it ended or a judge released an instance. */
-async function poll(state: State, slot: Slot): Promise<boolean> {
-  const released = slot.role === 'judge' ? await carryOutReleases(state, slot) : false;
-  const outcome = await agentOutcome(state.ctx, slot.job as string);
-  if (outcome.status === 'running') {
-    // the judge's next instances take the slots it gave back before a waiting group does
-    if (slot.role === 'judge') await startPending(state, slot);
-    return released;
-  }
-  await clearReleases(state.ctx.env, slot.job as string);
-  await clearPlayBudget(state.ctx.env, slot.job as string);
+/** Polls one running agent: carries out its releases, and finishes it beside the polls once it ended. */
+async function poll(state: State, slot: Slot): Promise<void> {
+  if (slot.role === 'judge') await carryOutReleases(state, slot);
+  const job = slot.job as string;
+  const outcome = await agentOutcome(state.ctx, job);
+  if (outcome.status === 'running') return;
   state.active.splice(state.active.indexOf(slot), 1);
+  spawn(state, () => finish(state, slot, job, outcome));
+}
+
+/** The work after an agent ended: its result, or a call again or a fallback. */
+async function finish(state: State, slot: Slot, job: string, outcome: AgentOutcome): Promise<void> {
+  await clearReleases(state.ctx.env, job);
+  await clearPlayBudget(state.ctx.env, job);
   if (outcome.status === 'done' && outcome.output !== null && exists(outcome.output)) {
     if (slot.role === 'play') {
       await finishPlay(state, slot, outcome.output);
-      return true;
+      return;
     }
     const verdict = await readVerdict(slot, outcome.output);
     if (verdict) {
-      await stopJudgeInstances(state, slot);
+      // the gates open before the instances stop: a group they let start waits for room as any group does
       slot.entry = judgeEntry(state, slot, outcome.output, verdict);
       updateGates(state, slot, slot.entry);
-      return true;
+      await stopJudgeInstances(state, slot);
+      return;
     }
   }
-  if (slot.role === 'judge' && (await fallBack(state, slot))) return true;
+  if (slot.role === 'judge' && (await fallBack(state, slot))) return;
   await retryOrFail(state, slot);
-  return true;
 }
 
 /**
@@ -901,11 +1219,10 @@ async function fallBack(state: State, slot: JudgeSlot): Promise<boolean> {
   if (slot.fallback === null || slot.job === null) return false;
   if (!(await agentHitLimit(state.ctx, slot.job, judgeAgentOf(slot.agent).cli))) return false;
   state.ctx.log(`judge ${slot.job} hit the limit of ${judgeAgentOf(slot.agent).cli}: calling it again with loop.confirmFallback`);
-  await stopJudgeInstances(state, slot);
   slot.agent = slot.fallback;
   slot.fallback = null;
   slot.fellBack = true;
-  await launch(state, slot);
+  await relaunch(state, slot);
   return true;
 }
 
@@ -919,13 +1236,17 @@ function cleanupFailed(state: State, what: string): (error: unknown) => void {
   };
 }
 
-/** Kills every agent job and stops every instance of this run, the ones still starting too, all at once. */
+/**
+ * Kills every agent job and stops every instance of this run, the ones still starting too, all at once. A signal also
+ * kills the agent jobs of the feed, whose groups the judging would get.
+ */
 async function abort(state: State): Promise<void> {
   const graceMs = state.stoppedBy === null ? undefined : SIGNAL_KILL_GRACE_MS;
   const starting = [...state.starting];
   state.starting.clear();
+  const fed = state.stoppedBy === null ? [] : (state.plan.feed?.jobs() ?? []);
   await Promise.all([
-    ...[...state.jobs].map((job) => killJob(job, state.ctx.env, graceMs).catch(cleanupFailed(state, `killing job ${job}`))),
+    ...[...state.jobs, ...fed].map((job) => killJob(job, state.ctx.env, graceMs).catch(cleanupFailed(state, `killing job ${job}`))),
     ...[...state.instances.values()].map((instance) => stop(state, instance).catch(cleanupFailed(state, `stopping instance ${instance.id}`))),
     ...starting.map((id) => stopInstance(state.ctx, id).catch(cleanupFailed(state, `stopping instance ${id}`))),
     ...[...state.jobs].flatMap((job) => [
@@ -945,6 +1266,8 @@ async function abort(state: State): Promise<void> {
 function abortOnSignal(state: State): () => void {
   const off = evaluateDeps.onSignal((signal) => {
     off();
+    // the handler is off from here on: starts in flight may still pass a signal they saw to it
+    if (state.stoppedBy !== null) return;
     state.stoppedBy = signal;
     state.wake.abort();
     const settled = Promise.race([state.settled, sleep(evaluateDeps.signalSettleMs, undefined, { ref: false })]);
@@ -956,10 +1279,10 @@ function abortOnSignal(state: State): () => void {
 }
 
 /** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
-async function botRunOf(state: State, commit: string, scenario: Scenario, degrade: Degrade = {}): Promise<BotRun | null> {
+async function botRunOf(state: State, job: TelemetryJob, commit: string, scenario: Scenario, degrade: Degrade = {}): Promise<BotRun | null> {
   let instance: InstanceInfo | null = null;
   try {
-    instance = await start(state, { commit, headless: true, ...degrade });
+    instance = await start(state, { commit, headless: true, ...degrade }, job);
     const run = instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.botPollMs);
     if (run === null) state.ctx.log(`shared telemetry: a bot run of ${commit} did not reach every step`);
     return run;
@@ -974,25 +1297,10 @@ async function botRunOf(state: State, commit: string, scenario: Scenario, degrad
 
 /**
  * The shared telemetry of one pair (ogw.md `## loop evaluate`): the shared telemetry runs of this commit and the
- * baseline commit, those `takeRuns` gives or else new ones, compared with `A` and `B` of each step 4 judge of the pair in
- * the site's telemetry file. A success judge and a judge of the confirmation pair get the file of the first step 4
- * judge of its side. Without the runs of both commits the judges of the pair get `telemetry` null.
+ * baseline commit compared with `A` and `B` of each step 4 judge of the pair in the site's telemetry file. A success
+ * judge and a judge of the confirmation pair get the file of the first step 4 judge of its side.
  */
-async function sharePairTelemetry(state: State, pair: JudgePair, shared: SharedScenario): Promise<void> {
-  if (pair.baseline === null) return;
-  const baseline = pair.baseline;
-  const { scenario } = shared;
-  const taken = (await state.plan.takeRuns?.(pair, shared)) ?? null;
-  const runs =
-    taken ??
-    (await pairRuns(
-      (side) => (side === 'commit' ? botRunOf(state, pair.commit, scenario) : botRunOf(state, baseline, scenario, baselineDegrade(pair))),
-      () => {
-        checkStopped(state);
-      },
-    ));
-  const { commit: mine, baseline: theirRuns } = runs;
-  if (mine === null || theirRuns === null) return;
+async function shareRuns(state: State, pair: JudgePair, mine: readonly BotRun[], theirRuns: readonly BotRun[]): Promise<void> {
   const theirs = theirRuns.map((r) => withInputLatency(r, pair.baselineLatencyMs));
   const judges = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.pair === pair);
   for (const slot of judges.filter((j) => j.kind === 'main')) {
@@ -1005,25 +1313,128 @@ async function sharePairTelemetry(state: State, pair: JudgePair, shared: SharedS
   }
 }
 
-/** The shared telemetry of every pair with a baseline commit, from the scenario of the checkout HEAD; none without it. */
-async function shareTelemetry(state: State): Promise<void> {
-  const pairs = [...new Set(state.all.filter((s): s is JudgeSlot => s.role === 'judge').map((s) => s.pair))].filter((p) => p.baseline !== null);
-  if (pairs.length === 0) return;
-  const shared = await scenarioAtHead(state.plan.game, state.ctx.env);
-  if (shared === null) return;
-  for (const pair of pairs) await sharePairTelemetry(state, pair, shared);
+/** The key of the runs of the baseline commit of a pair that the pairs with that commit and degradation share. */
+function baselineKey(pair: JudgePair): string {
+  return `${pair.baseline as string}\0${JSON.stringify(baselineDegrade(pair))}`;
 }
 
-async function runSlots(state: State): Promise<void> {
-  while (state.queue.length > 0 || state.active.length > 0) {
+/**
+ * A job that makes the shared telemetry runs of a pair: of both commits, or of this commit beside the baseline runs a
+ * job before it makes. The jobs start in order, so the one that makes the baseline runs has started when another takes them.
+ */
+function telemetryJob(state: State, pair: JudgePair, scenario: Scenario): TelemetryJob {
+  const shared = state.plan.shareBaselineRuns === true ? state.baselineRuns.get(baselineKey(pair)) : undefined;
+  const job: TelemetryJob = { role: 'telemetry', pair, scenario, size: SHARED_TELEMETRY_RUNS * (shared === undefined ? 2 : 1), status: 'queued', makesBaseline: shared === undefined, live: 0, starting: 0, reserved: 0 };
+  if (state.plan.shareBaselineRuns === true && shared === undefined) state.baselineRuns.set(baselineKey(pair), { maker: job, runs: null });
+  return job;
+}
+
+/**
+ * Makes the shared telemetry runs of a job, those of both commits at once, and gives them to the judges of its pair.
+ * Without the runs of both commits the judges of the pair get `telemetry` null.
+ */
+async function makeTelemetry(state: State, job: TelemetryJob): Promise<void> {
+  const { pair, scenario } = job;
+  const between = (): void => {
     checkStopped(state);
-    let changed = await launchQueued(state);
-    for (const slot of [...state.active]) {
-      checkStopped(state);
-      if (await poll(state, slot)) changed = true;
+  };
+  const mine = sideRuns(() => botRunOf(state, job, pair.commit, scenario), between);
+  const shared = state.baselineRuns.get(baselineKey(pair));
+  const taken = job.makesBaseline ? null : (shared?.runs ?? null);
+  if (!job.makesBaseline && taken === null) throw new OgwError(`the shared telemetry runs of ${pair.baseline as string} did not start before those of ${pair.commit}`);
+  const theirs = taken ?? sideRuns(() => botRunOf(state, job, pair.baseline as string, scenario, baselineDegrade(pair)), between);
+  if (shared?.maker === job) shared.runs = theirs;
+  const [commitRuns = null, baselineRuns = null] = await allSettled([mine, theirs]);
+  if (commitRuns !== null && baselineRuns !== null) await shareRuns(state, pair, commitRuns, baselineRuns);
+  job.status = 'done';
+}
+
+/**
+ * Sets up the shared telemetry of each new pair of `slots` with a baseline commit, from the scenario of the checkout
+ * HEAD (none without it): the runs `takeRuns` gives, or else a job that makes them, which the judges of the pair wait for.
+ */
+async function setupTelemetry(state: State, slots: readonly Slot[]): Promise<void> {
+  const pairs = [...new Set(slots.filter((s): s is JudgeSlot => s.role === 'judge').map((s) => s.pair))].filter((p) => p.baseline !== null && !state.shared.has(p));
+  if (pairs.length === 0) return;
+  for (const pair of pairs) state.shared.add(pair);
+  state.scenario ??= scenarioAtHead(state.plan.game, state.ctx.env);
+  const shared = await state.scenario;
+  if (shared === null) return;
+  for (const pair of pairs) {
+    const taken = (await state.plan.takeRuns?.(pair, shared)) ?? null;
+    if (taken !== null) {
+      if (taken.commit !== null && taken.baseline !== null) await shareRuns(state, pair, taken.commit, taken.baseline);
+      continue;
     }
-    // a wake (a signal, an ended agent) ends the sleep early with an `AbortError`
-    if (!changed) await sleep(evaluateDeps.pollMs, undefined, { signal: state.wake.signal }).catch(whenAborted);
+    const job = telemetryJob(state, pair, shared.scenario);
+    state.telemetry.push(job);
+    state.telemetryOf.set(pair, job);
+  }
+}
+
+/** A failure of the feed, which ends the judging as a failure that keeps no ended slot. */
+class FeedFailure extends Error {
+  readonly error: unknown;
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : String(error));
+    this.error = error;
+  }
+}
+
+/** Takes the groups that came from the feed into the queue, with the shared telemetry of their pairs. */
+async function takeArrivals(state: State): Promise<void> {
+  const feed = state.plan.feed;
+  if (feed === undefined || state.feedDone) return;
+  const arrived = await feed.next().catch((error: unknown) => {
+    throw new FeedFailure(error);
+  });
+  const slots = arrived.groups.flatMap((g) => g.slots);
+  state.queue.push(...arrived.groups);
+  state.all.push(...slots);
+  await prepareJudges(state, slots);
+  state.feedDone = arrived.done;
+}
+
+/**
+ * Before the judges of `slots` start: the `<game>` of their judge inputs (`sideOf`), so that a judge starts its agent as
+ * soon as its instances started, and the shared telemetry of their pairs.
+ */
+async function prepareJudges(state: State, slots: readonly Slot[]): Promise<void> {
+  const commits = new Set(slots.flatMap((s) => (s.role === 'judge' ? [s.pair.commit, ...(s.pair.baseline === null ? [] : [s.pair.baseline])] : [])));
+  await allSettled([...commits].map((commit) => sideOf(state, commit)));
+  await setupTelemetry(state, slots);
+}
+
+/** True when nothing is left to start, run or come. */
+function finished(state: State): boolean {
+  return state.queue.length === 0 && state.active.length === 0 && state.tasks.size === 0 && (state.plan.feed === undefined || state.feedDone);
+}
+
+/**
+ * Polls the running agents and starts what fits, while the starts, stops and finishing work run beside the polls. Each instance start or stop and each such work that ends wakes the wait between polls. On a failure or a
+ * signal, the work in flight stops at its next step and cleans up what it made before the failure is thrown.
+ */
+async function runSlots(state: State): Promise<void> {
+  try {
+    for (;;) {
+      checkRun(state);
+      const nudged = new AbortController();
+      state.nudge = nudged;
+      // a poll only reads, so the polls go one after another and none runs after a signal
+      for (const slot of [...state.active]) {
+        checkRun(state);
+        await poll(state, slot);
+      }
+      await takeArrivals(state);
+      checkRun(state);
+      await admit(state);
+      if (finished(state)) break;
+      await sleep(evaluateDeps.pollMs, undefined, { signal: AbortSignal.any([state.wake.signal, nudged.signal]) }).catch(whenAborted);
+    }
+  } catch (error) {
+    state.wake.abort();
+    await settleTasks(state);
+    throw state.stoppedBy === null && state.failure !== null ? state.failure.error : error;
   }
   checkStopped(state);
 }
@@ -1092,16 +1503,16 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
 }
 
 /**
- * Runs the groups (judges and plays) in order within `maxConcurrentInstances`, after the shared telemetry of their pairs,
- * and returns every slot with its entry. On a failure or a signal it stops what it started and throws.
+ * Runs the groups (judges and plays) in order within `maxConcurrentInstances`, the judges of a pair once its shared
+ * telemetry is there, and returns every slot with its entry. On a failure or a signal it stops what it started and throws.
  */
 export async function runJudging(ctx: Context, plan: JudgingPlan, queue: Group[]): Promise<Slot[]> {
   return (await judging(ctx, plan, queue, false)).slots;
 }
 
 /**
- * As `runJudging`, but on a failure other than a signal it stops what it started and returns every slot with the
- * failure: the slots that ended before it keep their entries, the others have none.
+ * As `runJudging`, but on a failure other than a signal or one of the feed it stops what it started and returns every
+ * slot with the failure: the slots that ended before it keep their entries, the others have none.
  */
 export async function runJudgingKeepingEnded(ctx: Context, plan: JudgingPlan, queue: Group[]): Promise<{ slots: Slot[]; failure: string | null }> {
   return judging(ctx, plan, queue, true);
@@ -1115,6 +1526,7 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     all: queue.flatMap((g) => g.slots),
     active: [],
     instances: new Map(),
+    owners: new Map(),
     starting: new Set(),
     jobs: new Set(),
     successGate: 'pending',
@@ -1122,7 +1534,16 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     lastInputMs: 0,
     waitingSince: null,
     stoppedBy: null,
+    failure: null,
     wake: new AbortController(),
+    nudge: new AbortController(),
+    tasks: new Set(),
+    telemetry: [],
+    telemetryOf: new Map(),
+    shared: new Set(),
+    baselineRuns: new Map(),
+    scenario: null,
+    feedDone: false,
     settled: Promise.resolve(),
     guides: null,
     sides: new Map(),
@@ -1134,16 +1555,17 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
   const off = abortOnSignal(state);
   let failure: string | null = null;
   try {
-    await shareTelemetry(state);
+    await prepareJudges(state, state.all);
     await runSlots(state);
   } catch (error) {
     await abort(state);
-    if (!keep || state.stoppedBy !== null) throw error;
-    failure = error instanceof Error ? error.message : String(error);
+    const thrown = error instanceof FeedFailure ? error.error : error;
+    if (!keep || state.stoppedBy !== null || error instanceof FeedFailure) throw thrown;
+    failure = thrown instanceof Error ? thrown.message : String(thrown);
   } finally {
     settle();
     off();
-    if (state.guides !== null) await rm(state.guides, { recursive: true, force: true });
+    if (state.guides !== null) await rm(await state.guides, { recursive: true, force: true });
   }
   return { slots: state.all, failure };
 }

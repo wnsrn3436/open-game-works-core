@@ -50,25 +50,30 @@ export type RunSide = 'commit' | 'baseline';
 export type PairRuns = Record<RunSide, BotRun[] | null>;
 
 /**
- * The shared telemetry runs of a pair (ogw.md `## loop evaluate`): `SHARED_TELEMETRY_RUNS` runs of each side at once,
- * then, per side, new runs one at a time in place of those that did not reach every step, up to
- * `SHARED_TELEMETRY_RETRIES`. `runOnce` makes one run on a new instance (null when it did not reach every step);
- * `between` runs after each wait, and a stop it throws ends the runs.
+ * The shared telemetry runs of one commit (ogw.md `## loop evaluate`): `SHARED_TELEMETRY_RUNS` runs at once, then the
+ * runs that did not reach every step replaced together by as many new runs, up to `SHARED_TELEMETRY_RETRIES` new runs;
+ * null, with no more runs, once `SHARED_TELEMETRY_RUNS` runs that reached every step can no longer be made. `runOnce`
+ * makes one run on a new instance (null when it did not reach every step); `between` runs after each wait, and a stop it
+ * throws ends the runs.
  */
+export async function sideRuns(runOnce: () => Promise<BotRun | null>, between: () => void = () => undefined): Promise<BotRun[] | null> {
+  const runs: BotRun[] = [];
+  let retries = SHARED_TELEMETRY_RETRIES;
+  for (let count = SHARED_TELEMETRY_RUNS; ; ) {
+    const made = await Promise.all(Array.from({ length: count }, () => runOnce()));
+    between();
+    for (const run of made) if (run !== null) runs.push(run);
+    const missing = SHARED_TELEMETRY_RUNS - runs.length;
+    if (missing === 0) return runs;
+    if (missing > retries) return null;
+    retries -= missing;
+    count = missing;
+  }
+}
+
+/** The shared telemetry runs of a pair (ogw.md `## loop evaluate`): those of each side (`sideRuns`), both sides at once. */
 export async function pairRuns(runOnce: (side: RunSide) => Promise<BotRun | null>, between: () => void = () => undefined): Promise<PairRuns> {
-  const sides: RunSide[] = ['commit', 'baseline'];
-  const first = await Promise.all(Array.from({ length: SHARED_TELEMETRY_RUNS }, () => sides.map((side) => runOnce(side))).flat());
-  between();
-  const complete = async (side: RunSide, k: number): Promise<BotRun[] | null> => {
-    const runs = first.filter((r, i): r is BotRun => i % 2 === k && r !== null);
-    for (let retry = 0; runs.length < SHARED_TELEMETRY_RUNS && retry < SHARED_TELEMETRY_RETRIES; retry++) {
-      const run = await runOnce(side);
-      between();
-      if (run !== null) runs.push(run);
-    }
-    return runs.length === SHARED_TELEMETRY_RUNS ? runs : null;
-  };
-  const [commit, baseline] = await Promise.all([complete('commit', 0), complete('baseline', 1)]);
+  const [commit, baseline] = await Promise.all([sideRuns(() => runOnce('commit'), between), sideRuns(() => runOnce('baseline'), between)]);
   between();
   return { commit, baseline };
 }

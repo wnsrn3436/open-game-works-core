@@ -104,7 +104,7 @@ async function installOf(ctx: Context, game: GameRepo, method: string): Promise<
  */
 async function startResources(ctx: Context, game: GameRepo, run: RunState, jobs: readonly JobRecord[]): Promise<{ started: Started[]; held: Held[]; installs: Install[] }> {
   const used = new Set(agentJobsOf(jobs, ['resource']).map(inputOf));
-  const started: Started[] = [];
+  const given: string[] = [];
   const held: Held[] = [];
   const installs = new Map<string, Install>();
   for (const file of await requestFiles(game, run)) {
@@ -114,13 +114,22 @@ async function startResources(ctx: Context, game: GameRepo, run: RunState, jobs:
       if (!installs.has(method)) installs.set(method, await installOf(ctx, game, method));
       if (installs.get(method)?.state === 'running') waiting.push(method);
     }
-    if (waiting.length > 0) {
-      held.push({ input: file, methods: waiting });
-      continue;
-    }
-    started.push({ job: await startAgentJob(ctx, { role: 'resource', game: game.name, input: file }), role: 'resource', input: file });
+    if (waiting.length > 0) held.push({ input: file, methods: waiting });
+    else given.push(file);
   }
+  const started = await startTogether(given.map((input) => ({ role: 'resource' as const, input })), (s) => startAgentJob(ctx, { role: s.role, game: game.name, input: s.input }));
   return { started, held, installs: [...installs.values()] };
+}
+
+/**
+ * Starts a job per item, all at once, each in its own worktree. When one does not start, the error of the first such
+ * item is thrown once every start ended; the jobs that started run on, and the next `ogw loop dispatch` sees them.
+ */
+async function startTogether(items: readonly Omit<Started, 'job'>[], start: (item: Omit<Started, 'job'>) => Promise<string>): Promise<Started[]> {
+  const starts = await Promise.allSettled(items.map(start));
+  const failed = starts.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed !== undefined) throw failed.reason;
+  return starts.map((r, i) => ({ ...(items[i] as Omit<Started, 'job'>), job: (r as PromiseFulfilledResult<string>).value }));
 }
 
 function installLine(install: Install): string {
@@ -146,19 +155,17 @@ export function unmergedLanguages(run: RunState, jobs: readonly JobRecord[]): Se
   return languages;
 }
 
+/** Writes the input of each language to translate in one commit, then starts the translation jobs together. */
 async function startTranslations(ctx: Context, game: GameRepo, run: RunState, jobs: readonly JobRecord[]): Promise<Started[]> {
   const failures = await placeholderFailures(ctx, game);
   const busy = unmergedLanguages(run, jobs);
-  const started: Started[] = [];
-  for (const language of translationLanguages(failures.map((f) => f.message))) {
-    if (busy.has(language)) continue;
-    const rel = runRel(run, `translation-input-${language}-${String(Date.now())}.md`);
-    await writeFileAtomic(abs(game, rel), `${language}\n`);
-    await commitPaths(game.root, [rel], `loop ${run.name}: translation input ${language}`, { env: ctx.env });
-    const input = abs(game, rel);
-    started.push({ job: await startAgentJob(ctx, { role: 'translation', game: game.name, input }), role: 'translation', input });
-  }
-  return started;
+  const languages = translationLanguages(failures.map((f) => f.message)).filter((language) => !busy.has(language));
+  if (languages.length === 0) return [];
+  const ms = String(Date.now());
+  const rels = languages.map((language) => runRel(run, `translation-input-${language}-${ms}.md`));
+  for (const [i, rel] of rels.entries()) await writeFileAtomic(abs(game, rel), `${languages[i] as string}\n`);
+  await commitPaths(game.root, rels, `loop ${run.name}: translation input ${languages.join(', ')}`, { env: ctx.env });
+  return startTogether(rels.map((rel) => ({ role: 'translation' as const, input: abs(game, rel) })), (s) => startAgentJob(ctx, { role: s.role, game: game.name, input: s.input }));
 }
 
 export const loopDispatch: CommandDef = {

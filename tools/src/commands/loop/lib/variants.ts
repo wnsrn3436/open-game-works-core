@@ -9,13 +9,28 @@ import type { RunState } from '../../../lib/runstate.ts';
 import type { HarnessSettings } from '../../../lib/settings.ts';
 import { agentOutcome, mergeAgentJobs, startAgentJob, type AgentOutcome } from '../../agent/api.ts';
 import { removeAgentWorktrees } from './agent-worktrees.ts';
-import { alternateSide, drawSide, evaluateDeps, judgeAgent, judgeGroup, runJudgingKeepingEnded, type EvaluateSite, type Group, type JudgePair, type JudgingPlan } from './evaluate.ts';
+import {
+  alternateSide,
+  drawSide,
+  evaluateDeps,
+  judgeAgent,
+  judgeGroup,
+  runJudgingKeepingEnded,
+  type EvaluateSite,
+  type Group,
+  type JudgePair,
+  type JudgingFeed,
+  type JudgingPlan,
+} from './evaluate.ts';
 import { elementsOf, FUN_ITERATION_ELEMENTS, type ElementVotes, type JudgeEntry, type VsBaseline } from './files.ts';
 import { abs, runRel } from './run.ts';
 import { combinedVsBaseline, countVotes } from './votes.ts';
 
-/** Dependencies tests replace: the poll interval of the wait for the variant agents. */
-export const variantDeps = { pollMs: 5000 };
+/**
+ * Dependencies tests replace: the poll interval of the wait for the variant agents that end with no judging, which reads
+ * one job record per agent.
+ */
+export const variantDeps = { pollMs: 1000 };
 
 /** One variant of `records/loops/<run>/variants-<iteration>.json` (ogw.md `## loop variants`). */
 export interface VariantEntry {
@@ -140,9 +155,14 @@ function variantSite(game: GameRepo, run: RunState): EvaluateSite {
   };
 }
 
+/** Makes the entry and report of a variant agent that ended (`entryOf`) and keeps them; returns the entry. */
+type EndVariant = (variant: Started, outcome: AgentOutcome | undefined) => Promise<VariantEntry>;
+
 /**
- * Runs `loop.judgeVotes` fun judges of each variant commit against the baseline, all variants in one judging. A variant
- * whose judges did not all end before a failure of the judging gets no votes; returns that failure, or null.
+ * Runs `loop.judgeVotes` fun judges of each variant commit against the baseline, all variants in one judging, the judges
+ * of a variant as soon as its agent ended (`end` makes its entry). The shared telemetry runs of the baseline commit are
+ * made once for every variant. A variant whose judges did not all end before a failure of the judging gets no votes;
+ * returns that failure, or null. The agents that had not ended at the failure are left to the caller.
  */
 async function judgeVariants(
   ctx: Context,
@@ -150,20 +170,32 @@ async function judgeVariants(
   run: RunState,
   settings: HarnessSettings,
   baseline: string,
-  entries: readonly VariantEntry[],
+  started: readonly Started[],
+  end: EndVariant,
   db: 'postgresql' | undefined,
 ): Promise<string | null> {
-  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db, site: variantSite(game, run) };
-  const groups: Group[] = [];
+  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db, site: variantSite(game, run), shareBaselineRuns: true };
   const pairs = new Map<JudgePair, VariantEntry>();
-  for (const entry of entries.filter((e) => e.commit !== null)) {
-    const pair: JudgePair = { name: `v${String(entry.k)}`, commit: entry.commit as string, baseline, baselineLatencyMs: 0 };
-    pairs.set(pair, entry);
-    const first = drawSide();
-    for (let j = 1; j <= settings.loop.judgeVotes; j++) groups.push(judgeGroup(plan, pair, 'main', j, alternateSide(first, j), judgeAgent(settings, j), settings.loop.judgeVotes));
-  }
-  if (groups.length === 0) return null;
-  const { slots, failure } = await runJudgingKeepingEnded(ctx, plan, groups);
+  const waiting = [...started];
+  const feed: JudgingFeed = {
+    jobs: () => waiting.map((s) => s.job),
+    next: async () => {
+      const groups: Group[] = [];
+      for (const variant of [...waiting]) {
+        const outcome = await agentOutcome(ctx, variant.job);
+        if (outcome.status === 'running') continue;
+        waiting.splice(waiting.indexOf(variant), 1);
+        const entry = await end(variant, outcome);
+        if (entry.commit === null) continue;
+        const pair: JudgePair = { name: `v${String(entry.k)}`, commit: entry.commit, baseline, baselineLatencyMs: 0 };
+        pairs.set(pair, entry);
+        const first = drawSide();
+        for (let j = 1; j <= settings.loop.judgeVotes; j++) groups.push(judgeGroup(plan, pair, 'main', j, alternateSide(first, j), judgeAgent(settings, j), settings.loop.judgeVotes));
+      }
+      return { groups, done: waiting.length === 0 };
+    },
+  };
+  const { slots, failure } = await runJudgingKeepingEnded(ctx, { ...plan, feed }, []);
   const judged = new Map<VariantEntry, { j: number; entry: JudgeEntry | null }[]>();
   for (const slot of slots) {
     const entry = slot.role === 'judge' ? pairs.get(slot.pair) : undefined;
@@ -199,38 +231,24 @@ async function startVariants(ctx: Context, game: GameRepo, run: RunState, count:
   }
   await commitPaths(game.root, inputs, `loop ${run.name}: variant inputs ${String(n)}`, { env: ctx.env });
   const base = await head(game.root, { env: ctx.env });
-  const started: Started[] = [];
-  try {
-    for (let k = 1; k <= count; k++) {
-      const job = await startAgentJob(ctx, { role: 'content', game: game.name, input: abs(game, inputs[k - 1] as string), variant: k });
-      started.push({ k, job, element: targetElement(k, n) });
-    }
-  } catch (error) {
+  // the agents start together, each in its own worktree
+  const starts = await Promise.allSettled(inputs.map((input, i) => startAgentJob(ctx, { role: 'content', game: game.name, input: abs(game, input), variant: i + 1 })));
+  const started = starts.flatMap((r, i): Started[] => (r.status === 'fulfilled' ? [{ k: i + 1, job: r.value, element: targetElement(i + 1, n) }] : []));
+  const failed = starts.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed !== undefined) {
     await Promise.all(started.map((s) => killJob(s.job, ctx.env).catch(killFailed(ctx, s.job))));
-    throw error;
+    throw failed.reason;
   }
   return { base, started };
 }
 
-/** The entry of each variant agent that ended, and the report of each variant with a variant commit by k. */
-async function entriesOf(
-  ctx: Context,
-  game: GameRepo,
-  run: RunState,
-  base: string,
-  started: readonly Started[],
-  outcomes: ReadonlyMap<string, AgentOutcome>,
-): Promise<{ entries: VariantEntry[]; reports: Map<number, string> }> {
-  const entries: VariantEntry[] = [];
-  const reports = new Map<number, string>();
-  for (const variant of started) {
-    const outcome = outcomes.get(variant.job);
-    const commit = await variantCommit(ctx, game, base, variant, outcome);
-    const output = outcome?.output ?? null;
-    if (commit !== null && output !== null) reports.set(variant.k, await readFile(output, 'utf8'));
-    entries.push({ k: variant.k, job: variant.job, element: variant.element, commit: reports.has(variant.k) ? commit : null, judges: [], votes: null, vsBaseline: null, merge: null, chosen: false });
-  }
-  return { entries, reports };
+/** The entry of a variant agent that ended, and its report when it has a variant commit (else null). */
+async function entryOf(ctx: Context, game: GameRepo, base: string, variant: Started, outcome: AgentOutcome | undefined): Promise<{ entry: VariantEntry; report: string | null }> {
+  const commit = await variantCommit(ctx, game, base, variant, outcome);
+  const output = outcome?.output ?? null;
+  const report = commit !== null && output !== null ? await readFile(output, 'utf8') : null;
+  const entry: VariantEntry = { k: variant.k, job: variant.job, element: variant.element, commit: report !== null ? commit : null, judges: [], votes: null, vsBaseline: null, merge: null, chosen: false };
+  return { entry, report };
 }
 
 /**
@@ -272,9 +290,20 @@ export async function runVariants(
   db?: 'postgresql',
 ): Promise<VariantsResult> {
   const { base, started } = await startVariants(ctx, game, run, settings.loop.variants);
-  const outcomes = await waitAgents(ctx, started.map((s) => s.job));
-  const { entries, reports } = await entriesOf(ctx, game, run, base, started, outcomes);
-  const judging = baseline === null ? null : await judgeVariants(ctx, game, run, settings, baseline, entries, db);
+  const ended = new Map<number, VariantEntry>();
+  const reports = new Map<number, string>();
+  const end: EndVariant = async (variant, outcome) => {
+    const { entry, report } = await entryOf(ctx, game, base, variant, outcome);
+    ended.set(variant.k, entry);
+    if (report !== null) reports.set(variant.k, report);
+    return entry;
+  };
+  const judging = baseline === null ? null : await judgeVariants(ctx, game, run, settings, baseline, started, end, db);
+  // the agents that had not ended when the judging ended: all of them without a baseline game, or after a failure
+  const rest = started.filter((s) => !ended.has(s.k));
+  const outcomes = await waitAgents(ctx, rest.map((s) => s.job));
+  for (const variant of rest) await end(variant, outcomes.get(variant.job));
+  const entries = started.map((s) => ended.get(s.k) as VariantEntry);
   const file: VariantsFile = { baseline, judging, variants: entries };
   const { path, chosen } = await mergeChosen(ctx, game, run, file, reports);
   await removeAgentWorktrees(ctx, game, entries.filter((e) => e !== chosen).map((e) => e.job));
