@@ -73,11 +73,26 @@ async function recordAllPass(impl: string): Promise<string> {
   return commit;
 }
 
+/** The bare repo of the core release repository of these tests. */
+function remotePath(ws: TestWorkspace): string {
+  return join(ws.root, 'remotes', 'wnsrn3436', 'open-game-works-core-impl.git');
+}
+
 /** A bare repo that `https://github.com/<repo>.git` pushes go to. */
 function remoteEnv(ws: TestWorkspace): NodeJS.ProcessEnv {
   const remotes = join(ws.root, 'remotes');
-  sh(ws.root, 'git', ['init', '--quiet', '--bare', join(remotes, 'wnsrn3436', 'open-game-works-core-impl.git')]);
+  sh(ws.root, 'git', ['init', '--quiet', '--bare', remotePath(ws)]);
   return { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${remotes}/.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/' };
+}
+
+/** Puts a commit that the checkout does not have on main of the core release repository, as a push from elsewhere; returns it. */
+function commitOnRemoteMain(ws: TestWorkspace, name: string): string {
+  const clone = join(ws.root, `clone-${name}`);
+  sh(ws.root, 'git', ['clone', '--quiet', '--branch', 'main', remotePath(ws), clone]);
+  writeFileSync(join(clone, `${name}.txt`), name);
+  commitAll(clone, `${name} from elsewhere`);
+  sh(clone, 'git', ['push', '--quiet', 'origin', 'HEAD:refs/heads/main']);
+  return sh(clone, 'git', ['rev-parse', 'HEAD']).trim();
 }
 
 async function setup(): Promise<{ ws: TestWorkspace; env: NodeJS.ProcessEnv; gh: ReturnType<typeof fakeGh> }> {
@@ -119,7 +134,9 @@ describe('ogw core release', () => {
     const engine = readJsonFile(join(ws.coreImpl, 'client/godot/engine.json')) as { plugins: { url: string; sha256: string }[] };
     expect(engine.plugins[0]?.url).toBe('https://github.com/wnsrn3436/open-game-works-core-impl/releases/download/v1.2.0/client-godot-plugins.zip');
     expect(engine.plugins[0]?.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(sh(join(ws.root, 'remotes', 'wnsrn3436', 'open-game-works-core-impl.git'), 'git', ['tag']).trim()).toBe('v1.2.0');
+    expect(sh(remotePath(ws), 'git', ['tag']).trim()).toBe('v1.2.0');
+    // main goes to the core release repository with the tag: the tagged commit is on its main
+    expect(sh(remotePath(ws), 'git', ['rev-parse', 'main']).trim()).toBe(head);
     expect(gh.created()['v1.2.0']?.sort()).toEqual([
       'benchmark-godot.zip', 'client-godot-plugins.zip', 'client-godot.zip', 'contract-tool.tgz', 'core-settings-constraints.json', 'core-settings.json',
       'core-settings.schema.json', 'core-spec.json', 'data-tool.tgz', 'licenses.json', 'manifest.json', 'server.tgz',
@@ -294,6 +311,74 @@ describe('ogw core release', () => {
     expect((await ogw(ws, ['core', 'release', '1.1.0', '--notes', NOTES], { env })).stderr).toContain('release v1.1.0 already exists in wnsrn3436/open-game-works-core-impl');
   });
 
+  it('pushes main of open-game-works-core-impl/ to the core release repository whose main is behind it', async () => {
+    const { ws, env } = await setup();
+    // main here has a commit that the core release repository does not have yet
+    sh(ws.coreImpl, 'git', ['push', '--quiet', remotePath(ws), 'HEAD~1:refs/heads/main']);
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const head = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    expect(sh(remotePath(ws), 'git', ['rev-parse', 'main', 'v1.2.0^{commit}']).trim().split('\n')).toEqual([head, head]);
+  });
+
+  it('refuses, before anything else, a core release repository whose main has commits that main here does not contain', async () => {
+    for (const remoteKnown of [false, true]) {
+      const { ws, env, gh } = await setup();
+      const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+      let theirs: string;
+      if (remoteKnown) {
+        // a commit this checkout has, on another branch: main here does not contain it
+        sh(ws.coreImpl, 'git', ['checkout', '--quiet', '-b', 'side', 'HEAD~1']);
+        writeFiles(ws.coreImpl, { 'side.txt': 'side' });
+        commitAll(ws.coreImpl, 'side');
+        theirs = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+        sh(ws.coreImpl, 'git', ['push', '--quiet', remotePath(ws), 'side:refs/heads/main']);
+        sh(ws.coreImpl, 'git', ['checkout', '--quiet', 'main']);
+      } else {
+        sh(ws.coreImpl, 'git', ['push', '--quiet', remotePath(ws), 'HEAD:refs/heads/main']);
+        theirs = commitOnRemoteMain(ws, 'elsewhere');
+      }
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
+      expect(run.code).toBe(1);
+      const remote = 'https://github.com/wnsrn3436/open-game-works-core-impl.git';
+      expect(run.stderr).toContain(`main of ${remote} is at ${theirs}, which main of open-game-works-core-impl/ (${before}) does not contain: ${remote} has commits that are not on main here`);
+      // nothing checked, built, committed, tagged, pushed or released
+      expect(runCodeCheck).not.toHaveBeenCalled();
+      expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
+      expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
+      expect(sh(remotePath(ws), 'git', ['rev-parse', 'main']).trim()).toBe(theirs);
+      expect(sh(remotePath(ws), 'git', ['tag'])).toBe('');
+      expect(gh.created()).toEqual({});
+      vi.mocked(runCodeCheck).mockClear();
+    }
+  });
+
+  it('pushes main and the tag in one atomic push: neither when main of the core release repository moved during the release', async () => {
+    const { ws, env, gh } = await setup();
+    sh(ws.coreImpl, 'git', ['push', '--quiet', remotePath(ws), 'HEAD:refs/heads/main']);
+    const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    const hook = globalThis as { onStageTool?: () => void };
+    let theirs = '';
+    hook.onStageTool = () => {
+      hook.onStageTool = undefined;
+      // after the check of main of the core release repository, a push from elsewhere
+      theirs = commitOnRemoteMain(ws, 'meanwhile');
+    };
+    try {
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain('push');
+      expect(sh(remotePath(ws), 'git', ['rev-parse', 'main']).trim()).toBe(theirs);
+      expect(sh(remotePath(ws), 'git', ['tag'])).toBe('');
+      expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
+      expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
+      expect(gh.created()).toEqual({});
+    } finally {
+      hook.onStageTool = undefined;
+    }
+  });
+
   it('runs the code check on open-game-works-core-impl/ also from inside a core worktree', async () => {
     const { ws, env } = await setup();
     const worktree = join(ws.worktrees, '_core', 'w1');
@@ -382,8 +467,10 @@ describe('ogw core release', () => {
     expect(existsSync(join(ws.coreImpl, 'client/godot/engine.json'))).toBe(true);
     expect(readFileSync(join(ws.coreImpl, 'client/godot/engine.json'), 'utf8')).toContain('"url": ""');
     expect(clearReviews).not.toHaveBeenCalled();
-    const remote = join(ws.root, 'remotes', 'wnsrn3436', 'open-game-works-core-impl.git');
+    const remote = remotePath(ws);
     expect(sh(remote, 'git', ['tag'])).toBe('');
+    // main of the core release repository is set back with the tag: main here no longer has the release commit
+    expect(sh(remote, 'git', ['rev-parse', 'main']).trim()).toBe(before);
     // The same version can be released again: no tag is left on the remote.
     const again = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
     expect(again.stderr).toBe('');
@@ -401,7 +488,8 @@ describe('ogw core release', () => {
     expect(head).not.toBe(before);
     expect(run.stderr).toContain(`release v1.2.0 exists in wnsrn3436/open-game-works-core-impl; kept tag v1.2.0 (pushed) and commit ${head}`);
     expect(sh(ws.coreImpl, 'git', ['rev-parse', 'v1.2.0^{commit}']).trim()).toBe(head);
-    expect(sh(join(ws.root, 'remotes', 'wnsrn3436', 'open-game-works-core-impl.git'), 'git', ['tag']).trim()).toBe('v1.2.0');
+    expect(sh(remotePath(ws), 'git', ['tag']).trim()).toBe('v1.2.0');
+    expect(sh(remotePath(ws), 'git', ['rev-parse', 'main']).trim()).toBe(head);
     expect(readFileSync(join(ws.coreImpl, 'client/godot/engine.json'), 'utf8')).toContain('releases/download/v1.2.0/client-godot-plugins.zip');
     expect(Object.keys(gh.created())).toEqual(['v1.2.0']);
   });

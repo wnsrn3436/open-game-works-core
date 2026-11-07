@@ -70,22 +70,50 @@ async function releaseAfterFailure(ctx: Context, repo: string, tag: string): Pro
   }
 }
 
-/**
- * Tags, pushes the tag and creates the GitHub release. When one of them fails and no release was made, it undoes the
- * local tag, the pushed tag and the commit, so the same version can be released again. When the release exists or
- * `gh` cannot tell (for example `gh release create` timed out after it made the release), it keeps them all, so main
- * keeps the asset URLs the release was made with.
- */
 /** git options that make a push to github.com use the `gh` login, which `gh release create` uses too. */
 const GH_CREDENTIAL = ['-c', 'credential.https://github.com.helper=', '-c', 'credential.https://github.com.helper=!gh auth git-credential'];
 
+/** The core release repository that the release pushes main and the tag to (ogw.md `## core release`). */
+function releaseRemote(settings: HarnessSettings): string {
+  return `https://github.com/${settings.coreReleaseRepository}.git`;
+}
+
+/** The commit of main of `remote`, or null when it has no main. */
+async function remoteMain(ctx: Context, implDir: string, remote: string): Promise<string | null> {
+  const listed = await git(implDir, [...GH_CREDENTIAL, 'ls-remote', remote, 'refs/heads/main'], { env: ctx.env, timeoutMs: LIMITS.httpMs });
+  const line = listed.split('\n').find((l) => l.endsWith('\trefs/heads/main'));
+  return line === undefined ? null : (line.split('\t')[0] as string);
+}
+
+/**
+ * Fails when main of the core release repository is not an ancestor of main of `open-game-works-core-impl/` (ogw.md
+ * `## core release`): the release pushes main without force, and a main it does not contain would reject that push.
+ */
+async function requireRemoteMainContained(ctx: Context, implDir: string, remote: string): Promise<void> {
+  const theirs = await remoteMain(ctx, implDir, remote);
+  if (theirs === null) return;
+  const ours = await head(implDir, { env: ctx.env });
+  // also not contained: a commit this checkout does not have, which `merge-base` refuses
+  const contained = (await gitRaw(implDir, ['merge-base', '--is-ancestor', theirs, ours], { env: ctx.env })).code === 0;
+  if (!contained) {
+    throw new OgwError(`main of ${remote} is at ${theirs}, which main of open-game-works-core-impl/ (${ours}) does not contain: ${remote} has commits that are not on main here`);
+  }
+}
+
+/**
+ * Tags, pushes main and the tag in one atomic push, and creates the GitHub release. When one of them fails and no
+ * release was made, it undoes the pushed tag and main, the local tag and the commit, so the same version can be
+ * released again. When the release exists or `gh` cannot tell (for example `gh release create` timed out after it made
+ * the release), it keeps them all, so main keeps the asset URLs the release was made with.
+ */
 async function publish(ctx: Context, implDir: string, settings: HarnessSettings, release: { tag: string; commit: string; previousHead: string; files: string[]; notes: string }): Promise<void> {
   const repo = settings.coreReleaseRepository;
-  const remote = `https://github.com/${repo}.git`;
+  const remote = releaseRemote(settings);
+  const made = release.commit !== release.previousHead;
   let pushed = false;
   try {
     await git(implDir, ['tag', release.tag, release.commit], { env: ctx.env });
-    await git(implDir, [...GH_CREDENTIAL, 'push', remote, `refs/tags/${release.tag}`], { env: ctx.env, timeoutMs: LIMITS.programMs });
+    await git(implDir, [...GH_CREDENTIAL, 'push', '--atomic', remote, `${release.commit}:refs/heads/main`, `refs/tags/${release.tag}`], { env: ctx.env, timeoutMs: LIMITS.programMs });
     pushed = true;
     await createRelease(ctx, repo, release.tag, release.files, release.notes);
   } catch (error) {
@@ -97,8 +125,13 @@ async function publish(ctx: Context, implDir: string, settings: HarnessSettings,
     }
     const problems: string[] = [];
     if (pushed) {
-      const removed = await gitRaw(implDir, [...GH_CREDENTIAL, 'push', remote, `:refs/tags/${release.tag}`], { env: ctx.env, timeoutMs: LIMITS.programMs });
-      if (removed.code !== 0) problems.push(`could not delete the pushed tag ${release.tag} from ${remote}: ${(removed.stderr || removed.stdout).trim()}`);
+      // main goes back only while it is still the release commit
+      const mainBack = made ? [`--force-with-lease=refs/heads/main:${release.commit}`, `${release.previousHead}:refs/heads/main`] : [];
+      const removed = await gitRaw(implDir, [...GH_CREDENTIAL, 'push', '--atomic', remote, ...mainBack, `:refs/tags/${release.tag}`], { env: ctx.env, timeoutMs: LIMITS.programMs });
+      if (removed.code !== 0) {
+        const what = made ? `delete the pushed tag ${release.tag} and set main back to ${release.previousHead} in` : `delete the pushed tag ${release.tag} from`;
+        problems.push(`could not ${what} ${remote}: ${(removed.stderr || removed.stdout).trim()}`);
+      }
     }
     await gitRaw(implDir, ['tag', '--delete', release.tag], { env: ctx.env });
     // Only the release commit itself is undone: never a commit that reached main after it.
@@ -143,6 +176,7 @@ export const releaseCommand: CommandDef = {
     if (await releaseExists(ctx, settings.coreReleaseRepository, tag)) {
       throw new OgwError(`release ${tag} already exists in ${settings.coreReleaseRepository}`);
     }
+    await requireRemoteMainContained(ctx, implDir, releaseRemote(settings));
     const previousHead = await head(implDir, { env: ctx.env });
     const violations = await releaseViolations(ctx, implDir, previousHead, version, await remoteReleaseVersions(ctx));
     if (violations.length > 0) {
