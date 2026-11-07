@@ -7,7 +7,7 @@ import { stateSettings, upgradeCore } from '../../../src/commands/regress/lib/op
 import { withRegressLock } from '../../../src/commands/regress/lib/repo.ts';
 import { readMark } from '../../../src/commands/regress/lib/mark.ts';
 import { ogw, makeWorkspace, sh, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
-import { ctxOf, item, joinedSpans, meetOtherGroup, overlaps, sourceGame, write, type Span } from './helpers.ts';
+import { ctxOf, item, joinedSpans, meetOtherGroup, overlaps, runningBeside, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
@@ -296,12 +296,15 @@ describe('ogw regress refresh and admission', () => {
 });
 
 describe('ogw regress refresh: the order of the admissions', () => {
-  /** States lc and lc2 of the source game, each with two caught seeds: S21 and S22 on lc, S23 and S24 on lc2. */
-  function twoStates(ws: TestWorkspace): void {
+  /**
+   * States lc and lc2 of the source game, each with two caught seeds: S21 and S22 on lc, S23 and S24 on lc2, those of
+   * `withPerformance` with `performance`.
+   */
+  function twoStates(ws: TestWorkspace, withPerformance: readonly string[] = []): void {
     const commit = sourceGame(ws, 'src');
     write(ws.harness, 'regress/states.json', JSON.stringify([{ state: 'lc', game: 'src', commit }, { state: 'lc2', game: 'src', commit }]));
     for (const [id, state] of [['S21', 'lc'], ['S22', 'lc'], ['S23', 'lc2'], ['S24', 'lc2']] as const) {
-      write(ws.harness, `regress/seeds/${id}/seed.json`, JSON.stringify({ ...MANIFEST, state }));
+      write(ws.harness, `regress/seeds/${id}/seed.json`, JSON.stringify({ ...MANIFEST, state, performance: withPerformance.includes(id) }));
       write(ws.harness, `regress/seeds/${id}/patch-1.0.0.diff`, patchOf(`leak${id}`));
     }
     sh(ws.harness, 'git', ['add', '-A']);
@@ -355,6 +358,33 @@ describe('ogw regress refresh: the order of the admissions', () => {
     expect(admissions).toHaveLength(4);
     expect(overlaps(admissions, true)).toEqual([]);
     expect(overlaps(admissions, false)).toEqual([]);
+  });
+
+  it('runs a check with performance while no other check of the refresh runs, and the checks without performance of different states together', async () => {
+    const ws = makeWorkspace();
+    twoStates(ws, ['S22', 'S24']);
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const spans: (Span & { performance: boolean })[] = [];
+    const started = new Set<string>();
+    let n = 0;
+    vi.mocked(regressChecks).mockImplementation(async (_ctx, game, _evidence, pick) => {
+      const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8').trim();
+      const key = `${game.name} ${code} ${String(++n)}`;
+      const start = performance.now();
+      if (!pick.performance) await meetOtherGroup(started, game.name);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      spans.push({ key, group: game.name, start, end: performance.now(), performance: pick.performance });
+      const leak = code.includes('leak');
+      return { checks: [item('regression test', 'pass'), item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : []), item('full flow', 'pass')], fixTestProof: [] };
+    });
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // 3 base checks of each state and 3 checks of each seeded commit of S22 and S24 have performance
+    const alone = spans.filter((s) => s.performance);
+    expect(alone).toHaveLength(12);
+    for (const span of alone) expect(runningBeside(spans, span)).toEqual([]);
+    expect(overlaps(spans.filter((s) => !s.performance), false)).not.toEqual([]);
   });
 });
 

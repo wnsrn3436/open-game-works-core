@@ -8,7 +8,7 @@ import { revParse } from '../../../lib/git.ts';
 import type { AgentSettings } from '../../../lib/settings.ts';
 import { dataDir } from '../../env/lib/host.ts';
 import { makeCopyRepo, registryCommit } from './copy.ts';
-import { pooled } from './pool.ts';
+import { checkGate, pooled, type CheckGate } from './pool.ts';
 import { catchOf, type CatchResult, type RegressCheckFile } from './keys.ts';
 import { commitRegress, fixGame, listSeeds, readAdmission, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
 import { renderReport, type CatchLine, type RunData, type SeedLine } from './report.ts';
@@ -44,15 +44,17 @@ interface SideCatch {
 
 /**
  * The catch of each admitted seed by one side (`### regress run` 2), with the second check of a catch that is not its
- * `expect`: the checks of one state one after another, its base first, and the states together, at most `parallel`.
+ * `expect`: the checks of one state one after another, its base first, and the states together, at most `parallel`, a
+ * check with performance alone (`gate`).
  */
-async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], folder: string, parallel: number): Promise<SideCatch> {
+async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], folder: string, parallel: number, gate: CheckGate): Promise<SideCatch> {
   const out: SideCatch = { base: new Map(), seeded: new Map(), catches: new Map() };
   const catchOfSeed = async ({ seed, admission }: Admitted): Promise<void> => {
     const base = out.base.get(seed.manifest.state);
     const once = async (attempt: number): Promise<CatchResult> => {
       const path = join(folder, attempt === 1 ? `${seed.id}.json` : `${seed.id}-${String(attempt)}.json`);
-      const checked = await sideCheck(ctx, side, { game: stateGame(seed.manifest.state), commit: admission.seeded as string, out: path, checks: null, performance: seed.manifest.performance, proof: null });
+      const performance = seed.manifest.performance;
+      const checked = await gate.run(performance, () => sideCheck(ctx, side, { game: stateGame(seed.manifest.state), commit: admission.seeded as string, out: path, checks: null, performance, proof: null }));
       if (!('file' in checked)) return { catch: 'unknown', reason: checked.error, collateral: [], pipeline: null, matched: null };
       out.seeded.set(seed.id, { file: checked.file, path });
       if (base === undefined || !('file' in base)) return { catch: 'unknown', reason: `the base check of ${seed.manifest.state}: ${base === undefined ? 'none' : base.error}`, collateral: [], pipeline: null, matched: null };
@@ -64,7 +66,7 @@ async function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[
   const states = [...new Map(admitted.map((a) => [a.seed.manifest.state, a.admission.base as string])).entries()];
   await pooled(states, parallel, async ([state, base]) => {
     const path = join(folder, `${state}-base.json`);
-    const checked = await sideCheck(ctx, side, { game: stateGame(state), commit: base, out: path, checks: null, performance: true, proof: null });
+    const checked = await gate.run(true, () => sideCheck(ctx, side, { game: stateGame(state), commit: base, out: path, checks: null, performance: true, proof: null }));
     out.base.set(state, 'file' in checked ? { file: checked.file, path } : checked);
     for (const one of admitted.filter((a) => a.seed.manifest.state === state)) await catchOfSeed(one);
   });
@@ -206,9 +208,11 @@ export async function regressRun(ctx: Context, repo: string, options: RunOptions
       const version = requireSameCore(sides.before.info as NonNullable<Side['info']>, sides.after.info as NonNullable<Side['info']>);
       const { lines, admitted } = await seedsAt(repo, version, options.seeds);
       data.seeds = lines;
+      // the fix phase needs no gate: its checks with performance are those of the seeds with performance, which run alone
+      const gate = checkGate();
       const caught = {
-        before: await catchPhase(ctx, sides.before, admitted, join(folder, 'catch', 'before'), settings.regress.parallel),
-        after: await catchPhase(ctx, sides.after, admitted, join(folder, 'catch', 'after'), settings.regress.parallel),
+        before: await catchPhase(ctx, sides.before, admitted, join(folder, 'catch', 'before'), settings.regress.parallel, gate),
+        after: await catchPhase(ctx, sides.after, admitted, join(folder, 'catch', 'after'), settings.regress.parallel, gate),
       };
       data.catches = admitted.map((a): CatchLine => ({ seed: a.seed.id, before: caught.before.catches.get(a.seed.id) ?? null, after: caught.after.catches.get(a.seed.id) ?? null }));
       if (!options.catchOnly) {

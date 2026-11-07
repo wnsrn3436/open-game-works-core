@@ -5,7 +5,7 @@ import { regressChecks, type CheckResult } from '../../../src/commands/check/api
 import { jobFacts, makeSide, removeSide, sideAgent, sideCheck, sideMerge, sideProbe, type Side, type SideSpec } from '../../../src/commands/regress/lib/side.ts';
 import { seedRunOrder } from '../../../src/commands/regress/lib/run.ts';
 import { ogw, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
-import { item, meetOtherGroup, overlaps, sourceGame, write, type Span } from './helpers.ts';
+import { item, meetOtherGroup, overlaps, runningBeside, sourceGame, write, type Span } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
@@ -45,7 +45,7 @@ function blockerOf(code: string): CheckResult {
 
 /**
  * The regress repo with state lc and seeds S01 (content fixer) and S07b (catch only), and with `secondState` also
- * state lc2 and seed S08 (content fixer), refreshed and admitted at 1.0.0.
+ * state lc2 and seeds S08 and S09 (content fixers, S09 with `performance`), refreshed and admitted at 1.0.0.
  */
 async function admitted(ws: TestWorkspace, secondState = false): Promise<void> {
   const commit = sourceGame(ws, 'src');
@@ -57,6 +57,8 @@ async function admitted(ws: TestWorkspace, secondState = false): Promise<void> {
   if (secondState) {
     write(ws.harness, 'regress/seeds/S08/seed.json', JSON.stringify({ ...MANIFEST, state: 'lc2' }));
     write(ws.harness, 'regress/seeds/S08/patch-1.0.0.diff', patchOf('leak8'));
+    write(ws.harness, 'regress/seeds/S09/seed.json', JSON.stringify({ ...MANIFEST, state: 'lc2', performance: true }));
+    write(ws.harness, 'regress/seeds/S09/patch-1.0.0.diff', patchOf('leak9'));
   }
   sh(ws.harness, 'git', ['add', '-A']);
   sh(ws.harness, 'git', ['commit', '-qm', 'bootstrap']);
@@ -130,27 +132,31 @@ describe('ogw regress run', () => {
     expect(vi.mocked(removeSide)).toHaveBeenCalledTimes(2);
   });
 
-  it('checks the catch of one state one after another, its base first, and the states together, one side after the other', async () => {
+  it('checks the catch of one state one after another, its base first, and the states together, a check with performance alone, one side after the other', async () => {
     const ws = makeWorkspace();
     await admitted(ws, true);
     const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
-    const spans: Span[] = [];
+    const spans: (Span & { performance: boolean })[] = [];
     const started: Record<string, Set<string>> = { before: new Set(), after: new Set() };
     vi.mocked(sideCheck).mockImplementation(async (_ctx, side, request) => {
       const start = performance.now();
       const group = `${side.name} ${request.game}`;
-      await meetOtherGroup(started[side.name] as Set<string>, group);
+      // the checks without performance of the two states meet; one with performance runs alone
+      if (!request.performance) await meetOtherGroup(started[side.name] as Set<string>, group);
       await new Promise((resolve) => setTimeout(resolve, 15));
-      spans.push({ key: `${side.name} ${basename(request.out)}`, group, start, end: performance.now() });
+      spans.push({ key: `${side.name} ${basename(request.out)}`, group, start, end: performance.now(), performance: request.performance });
       return { file: { commit: request.commit, checks: [blockerOf(codeAt(ws, request.game, request.commit)), item('full flow', 'pass')], fixTestProof: [] }, minutes: 1 };
     });
     const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     // per side: the base checks of lc and lc2, and one check of each seeded commit
-    expect(spans.map((s) => s.key).sort()).toEqual(['after S01.json', 'after S07b.json', 'after S08.json', 'after lc-base.json', 'after lc2-base.json', 'before S01.json', 'before S07b.json', 'before S08.json', 'before lc-base.json', 'before lc2-base.json']);
+    expect(spans.map((s) => s.key).sort()).toEqual(['after S01.json', 'after S07b.json', 'after S08.json', 'after S09.json', 'after lc-base.json', 'after lc2-base.json', 'before S01.json', 'before S07b.json', 'before S08.json', 'before S09.json', 'before lc-base.json', 'before lc2-base.json']);
     expect(overlaps(spans, true)).toEqual([]);
-    for (const side of ['before', 'after']) expect(overlaps(spans.filter((s) => s.key.startsWith(side)), false)).not.toEqual([]);
+    // the base checks and the checks of S09 have performance
+    expect(spans.filter((s) => s.performance).map((s) => s.key).sort()).toEqual(['after S09.json', 'after lc-base.json', 'after lc2-base.json', 'before S09.json', 'before lc-base.json', 'before lc2-base.json']);
+    for (const span of spans.filter((s) => s.performance)) expect(runningBeside(spans, span)).toEqual([]);
+    for (const side of ['before', 'after']) expect(overlaps(spans.filter((s) => s.key.startsWith(side) && !s.performance), false)).not.toEqual([]);
     for (const group of new Set(spans.map((s) => s.group))) expect([...spans].sort((a, b) => a.start - b.start).find((s) => s.group === group)?.key).toMatch(/-base\.json$/);
     const before = spans.filter((s) => s.key.startsWith('before'));
     const after = spans.filter((s) => s.key.startsWith('after'));

@@ -634,6 +634,8 @@ The tool writes the judge results to `records/calibration/<unix ms>/judge-<pair>
 
 The regression suite (AGENTS.md `## terms`, [`harness-regress`](../skills/harness-regress/SKILL.md)). Each `ogw regress` command other than `ogw regress init`, `ogw regress status` and the side commands (`### side`) takes the lock `ogw-regress.lock` in the git dir of the regress repo for its whole work, so that one runs at a time, and fails at once when another holds it.
 
+In each `ogw regress` command, a check with performance (`ogw regress check --performance`) runs while no other check of that command runs, so that it does not measure under the load of the others: it starts once the checks running have ended, and a check that comes while it waits starts after it.
+
 ### regress repo
 
 The regress repo is the git repo at harness settings `paths.regress` on branch `main`. Only `ogw regress` writes it, and it commits each change.

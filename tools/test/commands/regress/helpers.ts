@@ -80,12 +80,17 @@ export function overlaps(spans: readonly Span[], sameGroup: boolean): string[] {
   return pairs;
 }
 
+/** The keys of the other spans that ran while `span` ran. */
+export function runningBeside(spans: readonly Span[], span: Span): string[] {
+  return spans.filter((s) => s !== span && overlap(s, span)).map((s) => s.key);
+}
+
 /**
  * Starts a piece of work of `group` and waits until a piece of work of another group has started too, or `limitMs`
  * has passed: work of two groups that runs together gets past it at once, and work of groups that runs one after
  * another gets past it only at the limit, with no other group started.
  */
-export async function meetOtherGroup(started: Set<string>, group: string, limitMs = 3000): Promise<void> {
+export async function meetOtherGroup(started: Set<string>, group: string, limitMs = 10_000): Promise<void> {
   started.add(group);
   const until = Date.now() + limitMs;
   while (![...started].some((g) => g !== group) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
