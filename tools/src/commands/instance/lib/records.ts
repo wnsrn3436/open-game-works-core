@@ -1,7 +1,7 @@
-import { readdir, rm } from 'node:fs/promises';
+import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OgwError } from '../../../lib/errors.ts';
-import { readJsonIfExists, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { readJsonIfExists, whenNotFound, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { commonDir } from '../../../lib/git.ts';
 import { withLock } from '../../../lib/lock.ts';
 import { hostBootId } from '../../../lib/jobs.ts';
@@ -235,9 +235,12 @@ export async function slotLock(env: NodeJS.ProcessEnv = process.env): Promise<st
   return join(await instancesDir(env), 'slots.lock');
 }
 
+/** The failure of reading the record of an instance that has none: it was never made, or a stop removed it. */
+export class InstanceNotFound extends OgwError {}
+
 export async function readRecord(id: string, env: NodeJS.ProcessEnv = process.env): Promise<InstanceRecord> {
   const record = await readJsonIfExists<InstanceRecord>(await recordPath(id, env));
-  if (!record) throw new OgwError(`instance not found: ${id}`);
+  if (!record) throw new InstanceNotFound(`instance not found: ${id}`);
   return record;
 }
 
@@ -271,16 +274,19 @@ export async function deleteRecord(id: string, env: NodeJS.ProcessEnv = process.
 
 export async function listRecords(env: NodeJS.ProcessEnv = process.env): Promise<InstanceRecord[]> {
   const dir = await instancesDir(env);
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return [];
-  }
+  // no instance record folder yet: no instance
+  const names = await readdir(dir).catch(whenNotFound([] as string[]));
   const records: InstanceRecord[] = [];
   for (const name of names.filter((n) => n.endsWith('.json'))) {
-    const record = await readJsonIfExists<InstanceRecord>(join(dir, name)).catch(() => null);
-    if (record) records.push(record);
+    // a record a stop removed after the listing is no instance; a record that cannot be read or parsed fails the listing
+    const path = join(dir, name);
+    const text = await readFile(path, 'utf8').catch(whenNotFound(null));
+    if (text === null) continue;
+    try {
+      records.push(JSON.parse(text) as InstanceRecord);
+    } catch (error) {
+      throw new OgwError(`invalid JSON in ${path}: ${(error as Error).message}`);
+    }
   }
   return records.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
 }

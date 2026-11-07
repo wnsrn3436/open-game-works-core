@@ -31,4 +31,18 @@ describe('dataVersionsAt', () => {
     expect(calls[0]?.args).not.toContain('--previous');
     expect(sh(root, 'git', ['worktree', 'list']).trim().split('\n')).toHaveLength(1);
   });
+
+  it('keeps no failed build: the next call builds the commit again and fails with its own error', async () => {
+    const ws = makeWorkspace();
+    const release = makeRelease(ws, '1.0.0');
+    // the data tool fails at this commit
+    const root = makeGame(ws, 'g', { 'settings.json': GAME_SETTINGS, 'data/version.txt': 'p1-d1', 'fake-data-tool.json': { exitCode: 1, stderr: 'bad table' } });
+    const ctx = ctxOf(ws);
+    const game = await ctx.game('g');
+    const commit = sh(root, 'git', ['rev-parse', 'HEAD']).trim();
+    await expect(dataVersionsAt(ctx, game, commit)).rejects.toThrow();
+    await expect(dataVersionsAt(ctx, game, commit)).rejects.toThrow();
+    expect(toolCalls(release, 'data-tool.tgz')).toHaveLength(2);
+    expect(sh(root, 'git', ['worktree', 'list']).trim().split('\n')).toHaveLength(1);
+  });
 });

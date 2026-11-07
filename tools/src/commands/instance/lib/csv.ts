@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { dataTable } from '../../../lib/datatable.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 
 /** A data table: column names (header row 4) and the data rows that are built (`id` not starting with `#`). */
 export interface DataTable {
@@ -13,8 +14,9 @@ export interface DataTable {
 /** Reads `data/tables/<table>.csv` of a checkout (data `## CSV format`). */
 export async function readTable(root: string, table: string): Promise<DataTable> {
   const path = join(root, 'data', 'tables', `${table}.csv`);
-  const text = await readFile(path, 'utf8').catch(() => {
-    throw new OgwError(`data table not found: ${path}`);
+  const text = await readFile(path, 'utf8').catch((error: unknown) => {
+    if (isNotFound(error)) throw new OgwError(`data table not found: ${path}`);
+    throw error;
   });
   const parsed = dataTable(text);
   if (!parsed) throw new OgwError(`data table has no header: ${path}`);

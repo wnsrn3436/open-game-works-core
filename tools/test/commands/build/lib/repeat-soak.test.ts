@@ -46,6 +46,16 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({
   instanceProcesses: vi.fn(() => Promise.resolve({ server: true, clients: [] })),
   instanceServerLog: vi.fn(() => Promise.resolve('{"level":"info","message":"up"}\n')),
 }));
+/** Set to make the reads of the instance record by the soak session (after the scenario) fail. */
+const records = vi.hoisted(() => ({ failInSoak: false }));
+vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of the fake check instance: a checkout without client/generated/core_settings.json (no input gap)
+  readRecord: vi.fn((id: string) =>
+    records.failInSoak && (new Error().stack ?? '').includes('soakOn')
+      ? Promise.reject(new Error('the instance record cannot be read'))
+      : Promise.resolve({ id, root: '/nonexistent/ogw-check-instance' })),
+}));
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('../../check/helpers.ts').fakeRestartClient>) => (await import('../../check/helpers.ts')).fakeRestartClient(...args),
@@ -477,6 +487,19 @@ describe('soak test', () => {
     expect([samples.ticks, samples.windows.length, samples.memory.s]).toEqual([36, 8, 0]);
     expect(existsSync(join(s.dir, 'builds/stg-0.2.0/soak-test/console.log'))).toBe(true);
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(1);
+  });
+
+  it('is unknown with the reason when the core settings of the instance cannot be read for the session, instead of no quality levels and no input gap', async () => {
+    const s = await setup();
+    shortPlan();
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
+    records.failInSoak = true;
+    try {
+      expect(await soakTest(s.input)).toEqual({ name: 'soak test', result: 'unknown', details: ['soak test did not run: the instance record cannot be read'] });
+      expect(s.requests()).not.toContain('get_stats');
+    } finally {
+      records.failInSoak = false;
+    }
   });
 
   it('fails a memory floor that rises tick by tick (DEV warns), and fails at once on a command with ok false', async () => {

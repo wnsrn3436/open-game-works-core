@@ -24,6 +24,7 @@ vi.mock('../../../src/commands/instance/lib/launch.ts', async (importOriginal) =
 function fakeMain(fail: Record<string, string> = {}) {
   const sent: string[] = [];
   const waits: number[] = [];
+  const logged: string[] = [];
   let stepMode = false;
   const send = (command: string, args: readonly string[]): Promise<ChannelResponse> => {
     const response = (ok: boolean, result: unknown): ChannelResponse => ({ ok, result, bytes: Buffer.alloc(0), frames: [] });
@@ -33,11 +34,11 @@ function fakeMain(fail: Record<string, string> = {}) {
     const failure = fail[[command, ...args].join(' ')];
     return Promise.resolve(failure === undefined ? response(true, null) : response(false, failure));
   };
-  const latency = new InputLatency(150, send, (ms) => {
+  const latency = new InputLatency(150, send, (line) => logged.push(line), (ms) => {
     waits.push(ms);
     return Promise.resolve();
   });
-  return { sent, waits, latency };
+  return { sent, waits, logged, latency };
 }
 
 describe('input latency', () => {
@@ -49,7 +50,7 @@ describe('input latency', () => {
       return Promise.resolve({ ok: true, result: command === 'get_state' ? { step_mode: false } : null, bytes: Buffer.alloc(0), frames: [] });
     };
     const waits: number[] = [];
-    const latency = new InputLatency(150, send, (ms) => {
+    const latency = new InputLatency(150, send, () => undefined, (ms) => {
       waits.push(ms);
       return new Promise((resolve) => {
         release = resolve;
@@ -70,7 +71,7 @@ describe('input latency', () => {
       if (command !== 'get_state') arrived.push({ command, at: Date.now() });
       return Promise.resolve({ ok: true, result: command === 'get_state' ? { step_mode: false } : null, bytes: Buffer.alloc(0), frames: [] });
     };
-    const latency = new InputLatency(150, send);
+    const latency = new InputLatency(150, send, () => undefined);
     const start = Date.now();
     const sentAt: number[] = [];
     for (const [i, command] of ['key_down', 'tap', 'key_up'].entries()) {
@@ -122,6 +123,35 @@ describe('input latency', () => {
     await main.latency.request('set_step_mode', ['off'], 1000);
     expect(main.sent).toEqual(['set_step_mode on', 'step 100', 'set_step_mode off', 'key_down A', 'key_up A']);
     expect(main.waits).toEqual([50, 100]);
+  });
+
+  it('writes a delayed input that is not ok or fails to the log, as its caller already got ok', async () => {
+    const main = fakeMain({ 'key_down A': 'no focus' });
+    await main.latency.request('key_down', ['A'], 1000);
+    await main.latency.sent();
+    expect(main.logged).toEqual(['main: delayed key_down failed: "no focus"']);
+    const logged: string[] = [];
+    const send = (command: string): Promise<ChannelResponse> =>
+      command === 'get_state'
+        ? Promise.resolve({ ok: true, result: { step_mode: false }, bytes: Buffer.alloc(0), frames: [] })
+        : Promise.reject(new Error('main: automation channel closed'));
+    const gone = new InputLatency(150, send, (line) => logged.push(line), () => Promise.resolve());
+    expect((await gone.request('tap', ['1', '1'], 1000)).ok).toBe(true);
+    await gone.sent();
+    expect(logged).toEqual(['main: delayed tap failed: main: automation channel closed']);
+  });
+
+  it('fails an input whose get_state fails, as the input itself would, instead of taking it as outside step mode', async () => {
+    const sent: string[] = [];
+    const send = (command: string): Promise<ChannelResponse> => {
+      if (command === 'get_state') return Promise.reject(new Error('main: get_state got no response within 1000 ms'));
+      sent.push(command);
+      return Promise.resolve({ ok: true, result: null, bytes: Buffer.alloc(0), frames: [] });
+    };
+    const latency = new InputLatency(150, send, () => undefined, () => Promise.resolve());
+    await expect(latency.request('tap', ['1', '1'], 1000)).rejects.toThrow('get_state got no response');
+    await latency.sent();
+    expect(sent).toEqual([]);
   });
 });
 

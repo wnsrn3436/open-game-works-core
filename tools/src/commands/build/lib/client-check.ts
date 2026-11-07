@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import type { GameRepo } from '../../../lib/game.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { revParse } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { isInside } from '../../../lib/paths.ts';
@@ -89,9 +90,8 @@ export async function withCheckInstance<T>(
     if (instance.external === null) throw new OgwError(`instance ${instance.id} has no automation channel for the client`);
     return await work(instance, instance.external);
   } finally {
-    await stopInstance(ctx, instance.id).catch((error: unknown) => {
-      ctx.log(`cannot stop instance ${instance.id}: ${(error as Error).message}`);
-    });
+    // an instance left running would take a slot and load the checks after this one: a stop that fails fails the check
+    await stopInstance(ctx, instance.id);
   }
 }
 
@@ -131,7 +131,8 @@ export async function withCheckWorkspace<T>(input: ClientCheckInput, use: (expor
       const build = { game, env: 'DEV' as const, version: input.exportVersion, platforms: [platform], settings: input.settings, outDir: dir, iosPrivacy: [], privacyManifest: null };
       // the exports share the checkout and its `generated/launch_values.json`: one after the other
       const made = last.then(() => godotCheckExport(ctx, build, platform, repo.root, dir, values));
-      last = made.catch(() => undefined);
+      // the next export waits until this one settled; its failure goes to its own caller
+      last = Promise.allSettled([made]);
       return made;
     };
     try {
@@ -161,7 +162,7 @@ export type BootOutcome = { kind: 'done'; at: number } | { kind: 'blocker'; mess
 /**
  * Waits until the outside client connected to the automation channel and `boot_stage` is `Done`.
  * `Halted` and `blocker()` (checked after each `get_state`) end the wait as a blocker; requests fail while
- * the client is not connected.
+ * the client is not connected, and the timeout message names the last failure.
  */
 export async function waitClientBoot(
   ctx: Context,
@@ -170,10 +171,19 @@ export async function waitClientBoot(
   limitMs: number = clientCheckTiming.bootLimitMs,
 ): Promise<BootOutcome> {
   const deadline = Date.now() + limitMs;
+  let lastFailure: string | null = null;
   for (;;) {
     const left = deadline - Date.now();
-    if (left <= 0) return { kind: 'timeout', message: `the client did not reach boot_stage Done within ${String(limitMs)} ms` };
-    const response = await automationRequest(ctx, id, 'get_state', [], 'main', { timeoutMs: Math.min(left, LIMITS.shortMs) }).catch(() => null);
+    if (left <= 0) {
+      const last = lastFailure === null ? '' : ` (last get_state: ${lastFailure})`;
+      return { kind: 'timeout', message: `the client did not reach boot_stage Done within ${String(limitMs)} ms${last}` };
+    }
+    const asked = await automationRequest(ctx, id, 'get_state', [], 'main', { timeoutMs: Math.min(left, LIMITS.shortMs) }).then(
+      (answer) => ({ response: answer, failure: null }),
+      (error: unknown) => ({ response: null, failure: (error as Error).message }),
+    );
+    if (asked.failure !== null) lastFailure = asked.failure;
+    const response = asked.response;
     const stop = await blocker();
     if (stop !== null) return { kind: 'blocker', message: stop };
     const stage = response?.ok === true ? (response.result as { boot_stage?: unknown } | null)?.boot_stage : undefined;
@@ -196,8 +206,10 @@ export async function serveFolder(dir: string): Promise<{ url: string; close: ()
       (content) => {
         res.writeHead(200, { 'content-type': contentTypeOf(file) }).end(content);
       },
-      () => {
-        res.writeHead(404).end();
+      (error: unknown) => {
+        // no such file (or a folder): 404; a file that cannot be read is a server error the page sees
+        const missing = isNotFound(error) || (error as NodeJS.ErrnoException).code === 'EISDIR';
+        res.writeHead(missing ? 404 : 500).end(missing ? undefined : (error as Error).message);
       },
     );
   });

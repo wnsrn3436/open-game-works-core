@@ -1,11 +1,11 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consoleText, openHeadless } from '../../../../src/commands/build/lib/chromium.ts';
 import { buildCheckOf, clientCheckTiming, didNotRun, serveFolder, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
-import { devicePerformance } from '../../../../src/commands/build/lib/device-performance.ts';
+import { appBlocker, devicePerformance } from '../../../../src/commands/build/lib/device-performance.ts';
 import { fpsSampling } from '../../../../src/commands/check/lib/performance.ts';
 import { webSmoke } from '../../../../src/commands/build/lib/web-smoke.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../../src/commands/core/api.ts';
@@ -30,6 +30,11 @@ vi.mock('../../../../src/commands/instance/api.ts', () => ({
   stopInstance: vi.fn(),
   instanceProcesses: vi.fn(() => Promise.resolve({ server: true, clients: [] })),
   instanceServerLog: vi.fn(() => Promise.resolve('{"level":"info","message":"up"}\n')),
+}));
+vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of the fake check instance: a checkout without client/generated/core_settings.json (no input gap)
+  readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-check-instance' })),
 }));
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
@@ -197,6 +202,12 @@ describe('build check helpers', () => {
     expect((await get('/%2e%2e/secret.txt')).status).toBe(404);
     expect((await get('/none.js')).status).toBe(404);
     expect((await get('/index.html', 'POST')).status).toBe(404);
+    // a folder is no file; a file that cannot be read is a server error with its reason, not a missing file
+    mkdirSync(join(s.ws.root, 'site', 'sub'));
+    expect((await get('/sub')).status).toBe(404);
+    write(s.ws.root, 'site/locked.js', 'x');
+    chmodSync(join(s.ws.root, 'site', 'locked.js'), 0o000);
+    expect(await get('/locked.js')).toMatchObject({ status: 500, body: expect.stringMatching(/EACCES/) as string });
     await host.close();
   });
 
@@ -281,6 +292,16 @@ describe('web smoke', () => {
     expect(readdirSync(join(s.ws.worktrees, 'g'))).toEqual([]);
   });
 
+  it('is unknown with the reason when the check instance does not stop: it would take a slot and load the checks after it', async () => {
+    const s = await setup();
+    s.config({ telemetry: { goal_intervals: [{}], scene_loads: [] } });
+    vi.mocked(stopInstance).mockImplementationOnce(async () => {
+      await channel?.close();
+      throw new Error('cannot remove the worktree');
+    });
+    expect((await webSmoke({ ...s.input, env: 'STG' }))?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: cannot remove the worktree'] });
+  });
+
   it('fails on an error line in the browser console; warns in DEV', async () => {
     const s = await setup({}, { FAKE_CHROMIUM_CONSOLE: JSON.stringify(['1\terror\tnet\tconnection lost\t']) });
     s.config({ telemetry: { goal_intervals: [{}] } });
@@ -324,9 +345,13 @@ describe('web smoke', () => {
     const s = await setup({}, {}, { webSmokeBootTimeoutMs: 300 });
     s.config({ clients: { main: { exitOnStart: 0 } } });
     const timeout = await webSmoke({ ...s.input, env: 'STG' });
+    // the timeout names the last get_state failure: the client never connected
     expect(timeout?.check).toEqual({
       name: 'web smoke', result: 'fail',
-      details: ['no blocker: boot: the client did not reach boot_stage Done within 300 ms', 'full flow: boot: the scenario did not start'],
+      details: [
+        expect.stringMatching(/^no blocker: boot: the client did not reach boot_stage Done within 300 ms \(last get_state: main: no automation channel connection within \d+ ms\)$/),
+        'full flow: boot: the scenario did not start',
+      ],
     });
     expect(timeout?.loadingMs).toBeNull();
     expect((await webSmoke({ ...s.input, env: 'DEV' }))?.check.result).toBe('warn');
@@ -426,6 +451,14 @@ describe('device performance', () => {
     vi.mocked(gameModules).mockResolvedValue({ client: ['QualityCore'], server: [] });
     s.config({ clients: { main: { fail: { set_quality_level: 'no' } } } });
     expect(await devicePerformance({ ...s.input, env: 'STG' })).toEqual({ name: 'device performance', result: 'unknown', details: ['device performance did not run to the end: set_quality_level High failed: "no"'] });
+  });
+
+  it('throws when adb cannot be started to ask for the app process, instead of taking the app as ended', async () => {
+    const s = await setup();
+    const noAdb = { ...s.input.ctx, env: { ...s.input.ctx.env, PATH: '/nonexistent' } };
+    await expect(appBlocker(noAdb, 'emulator-5554', 'com.x.g', 'i1')()).rejects.toThrow(/adb/);
+    // adb that answers that the app has no process: the app ended
+    expect(await appBlocker(s.input.ctx, 'emulator-5554', 'com.x.g', 'i1')()).toBe('client process main ended');
   });
 
   it('is unknown when UDP does not reach the host, the app ends, or the client logs an error', async () => {

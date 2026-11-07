@@ -129,7 +129,14 @@ async function countHolds(ctx: Context, target: Target, scenario: Scenario, coun
     const held = await Promise.all(started.map((info) => scenarioHolds(ctx, info.id, scenario, target.targetFps)));
     return { holds: held.every((h) => h.holds), reason: held.find((h) => h.reason !== null)?.reason ?? null };
   } finally {
-    for (const info of started) await stopInstance(ctx, info.id).catch(() => undefined);
+    // an instance left running would load the next count: a stop that fails fails the measure, after the others stopped
+    const failures: string[] = [];
+    for (const info of started) {
+      await stopInstance(ctx, info.id).catch((error: unknown) => {
+        failures.push(`instance ${info.id}: ${(error as Error).message}`);
+      });
+    }
+    if (failures.length > 0) throw new OgwError(`${target.name}: the measured instances were not all stopped: ${failures.join('; ')}`);
   }
 }
 

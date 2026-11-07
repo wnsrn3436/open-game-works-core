@@ -204,15 +204,24 @@ async function writeCompose(ctx: Context, t: DeployTarget, ssh: SshSession): Pro
   await ssh.execOk(`mkdir -p ${dir} && cat > ${file}.tmp && mv ${file}.tmp ${file}`, { input: yaml });
 }
 
+/** The message of a failed `fetch`, with its cause (e.g. `ECONNREFUSED`). */
+function fetchFailure(error: unknown): string {
+  const cause = (error as { cause?: unknown }).cause;
+  const message = (error as Error).message;
+  return cause instanceof Error ? `${message}: ${cause.message}` : message;
+}
+
 async function waitServer(t: DeployTarget): Promise<void> {
   const serverUrl = t.envSettings.serverUrl as string;
   const deadline = Date.now() + POLL.serverStartMs;
   for (;;) {
-    const status = await fetch(`${serverUrl}/update/deploy_list.json`, { signal: AbortSignal.timeout(LIMITS.httpMs) })
-      .then((r) => r.status)
-      .catch(() => 0);
-    if (status === 200 || status === 404) return;
-    if (Date.now() >= deadline) throw new OgwError(`the server did not answer GET /update/deploy_list.json (last status ${String(status)})`);
+    // a server that is still starting does not answer yet: the request is sent again, and the last answer or failure is the reason
+    const last = await fetch(`${serverUrl}/update/deploy_list.json`, { signal: AbortSignal.timeout(LIMITS.httpMs) }).then(
+      (r) => ({ status: r.status, why: `last status ${String(r.status)}` }),
+      (error: unknown) => ({ status: 0, why: `last request failed: ${fetchFailure(error)}` }),
+    );
+    if (last.status === 200 || last.status === 404) return;
+    if (Date.now() >= deadline) throw new OgwError(`the server did not answer GET /update/deploy_list.json (${last.why})`);
     await sleep(POLL.intervalMs);
   }
 }

@@ -22,10 +22,20 @@ export async function setStepMode(ctx: Context, id: string, on: boolean): Promis
       changed.push(bot);
     }
   } catch (error) {
+    // every revert runs even when another failed; a revert that failed leaves the instance in a mixed step mode, so its
+    // failure is added to the failure of the command
     const revert = on ? 'off' : 'on';
-    for (const client of changed) await automationRequest(ctx, id, 'set_step_mode', [revert], client, { access: 'play' }).catch(() => undefined);
-    await botControl(ctx, id, 'resume', { stepMode: !on }).catch(() => undefined);
-    throw error;
+    const failures: string[] = [];
+    const undo = async (what: string, work: () => Promise<unknown>): Promise<void> => {
+      await work().catch((undoError: unknown) => {
+        failures.push(`${what}: ${(undoError as Error).message}`);
+      });
+    };
+    for (const client of changed) await undo(`${client}: set_step_mode ${revert}`, () => send(ctx, id, client, 'set_step_mode', [revert]));
+    await undo('resuming the bot loops', () => botControl(ctx, id, 'resume', { stepMode: !on }));
+    if (failures.length === 0) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new OgwError(`${message}\nstep mode was not reverted: ${failures.join('; ')}`, error instanceof OgwError ? error.exitCode : 1);
   }
   await botControl(ctx, id, 'resume', { stepMode: on });
 }

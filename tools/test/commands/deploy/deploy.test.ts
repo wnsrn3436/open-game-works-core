@@ -276,6 +276,21 @@ describe('deploy', () => {
     expect(late.stderr).toContain('failed step: 3. docker compose up\nthe server did not answer GET /update/deploy_list.json (last status 503)');
   });
 
+  it('names the failure of the last request when the server does not answer at all', async () => {
+    const ws = makeWorkspace();
+    const { env } = setup(ws);
+    adminScript({});
+    // nothing listens at serverUrl any more: each request fails to connect
+    await new Promise<void>((r) => server.close(() => {
+      r();
+    }));
+    server = createServer((_req, res) => res.end());
+    const run = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toMatch(/failed step: 3\. docker compose up\nthe server did not answer GET \/update\/deploy_list\.json \(last request failed: fetch failed: .*ECONNREFUSED.*\)/);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  });
+
   it('stops before any step when the deploy list cannot be read', async () => {
     const ws = makeWorkspace();
     const { dir, env, fake } = setup(ws);

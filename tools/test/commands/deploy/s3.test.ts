@@ -90,6 +90,25 @@ describe('putObject', () => {
     }
   });
 
+  it('names why the body of a failure answer could not be read', async () => {
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        // the answer says 1000 bytes and the connection ends after 4
+        res.writeHead(500, { 'content-length': '1000' });
+        res.write('oops');
+        setTimeout(() => res.destroy(), 20);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const target = { endpoint: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`, bucket: 'b', accessKeyId: 'a', secretAccessKey: 's', region: 'auto' };
+    try {
+      await expect(putObject(target, { key: 'k', body: Buffer.from('x'), contentType: 'a', cacheControl: 'b' })).rejects.toThrow(/^PUT k failed: HTTP 500 \(the answer could not be read: .+\)$/);
+    } finally {
+      server.close();
+    }
+  });
+
   it('fails when the endpoint cannot be reached', async () => {
     const target = { endpoint: 'http://127.0.0.1:1', bucket: 'b', accessKeyId: 'a', secretAccessKey: 's', region: 'auto' };
     await expect(putObject(target, { key: 'k', body: Buffer.from('x'), contentType: 'a', cacheControl: 'b' })).rejects.toThrow('PUT k failed:');

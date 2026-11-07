@@ -42,12 +42,13 @@ async function adb(ctx: Context, serial: string, args: string[], timeoutMs: numb
 
 /**
  * Blocker of the app on the device: its process ended, or an error level line in its client log. A client log that
- * cannot be read throws `ClientLogUnreadable`: it is not a log without error lines.
+ * cannot be read throws `ClientLogUnreadable`: it is not a log without error lines. An `adb` that cannot be started
+ * throws: it is not an ended app.
  */
 export function appBlocker(ctx: Context, serial: string, appId: string, instanceId: string): () => Promise<string | null> {
   return async () => {
-    const pid = await run('adb', ['-s', serial, 'shell', 'pidof', appId], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
-    if (pid?.code !== 0 || pid.stdout.trim() === '') return 'client process main ended';
+    const pid = await run('adb', ['-s', serial, 'shell', 'pidof', appId], { env: ctx.env, timeoutMs: LIMITS.shortMs });
+    if (pid.code !== 0 || pid.stdout.trim() === '') return 'client process main ended';
     const line = clientErrorLines(await clientLog(ctx, instanceId, 'main'))[0];
     return line === undefined ? null : `client main error log: ${line}`;
   };
@@ -86,8 +87,9 @@ async function onDevice(d: DeviceRun, apk: string): Promise<BuildCheck> {
     const limits = { loadingTimeLimitMs: numberSetting(d.input, 'loadingTimeLimitMs') };
     return ranToEnd(NAME, buildCheckOf(NAME, d.input.env, [performanceVerdict(measured, 'android', limits, evidence)]));
   } finally {
-    await run('adb', ['-s', d.serial, 'uninstall', d.appId], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
-    for (const port of ports) await run('adb', ['-s', d.serial, 'reverse', '--remove', `tcp:${port}`], { env: ctx.env, timeoutMs: LIMITS.shortMs }).catch(() => null);
+    // their exit codes are not checked (the app or a reverse may not be there yet); an adb that cannot be started fails the check
+    await run('adb', ['-s', d.serial, 'uninstall', d.appId], { env: ctx.env, timeoutMs: LIMITS.shortMs });
+    for (const port of ports) await run('adb', ['-s', d.serial, 'reverse', '--remove', `tcp:${port}`], { env: ctx.env, timeoutMs: LIMITS.shortMs });
   }
 }
 

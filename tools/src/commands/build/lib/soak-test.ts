@@ -356,9 +356,9 @@ async function soakOn(input: ClientCheckInput, id: string, page: HeadlessPage, s
   const { ctx } = input;
   const targetFps = input.settings.targetFps;
   if (typeof targetFps !== 'number') throw new OgwError('game settings targetFps is not set');
-  // the headless browser draws to no display: no refresh rate bounds its fps
-  const bound: TickBound = { targetFps, refreshHz: null, levels: (await instanceCoreSettings(ctx, id).catch(() => null))?.['QualityCore.levels'] ?? null };
-  const session = await soakSession(ctx, id, page, soakBot(scenario), bound, await autoInputGapMs(ctx, id).catch(() => 0));
+  // the headless browser draws to no display: no refresh rate bounds its fps; core settings that cannot be read stop the check (`unknown`)
+  const bound: TickBound = { targetFps, refreshHz: null, levels: (await instanceCoreSettings(ctx, id))?.['QualityCore.levels'] ?? null };
+  const session = await soakSession(ctx, id, page, soakBot(scenario), bound, await autoInputGapMs(ctx, id));
   await keepSamples(evidence, session.ticks, session.stop);
   await writeEvidence(evidence, 'console.log', `${page.console.join('\n')}\n`);
   await writeEvidence(evidence, 'server.log', await instanceServerLog(ctx, id).catch((error: unknown) => `the server log could not be read: ${(error as Error).message}\n`));

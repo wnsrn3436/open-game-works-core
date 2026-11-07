@@ -119,14 +119,25 @@ const userSearchList = async (ctx: Context): Promise<string[]> => searchList(awa
 
 /**
  * Takes the keychain out of the user keychain search list as it is now and deletes the keychain, inside the keychain
- * search list lock; each step runs even when another failed.
+ * search list lock; each step runs even when another failed, and then the removal fails with the failed steps: a
+ * keychain left in the search list or on disk outlives the export.
  */
 async function removeKeychain(ctx: Context, keychain: string): Promise<void> {
   await withLock(searchListLock(ctx.env), async () => {
-    const list = await userSearchList(ctx).catch(() => null);
-    if (list !== null) await sec(ctx, ['list-keychains', '-d', 'user', '-s', ...list.filter((k) => k !== keychain)]).catch(() => undefined);
-    await sec(ctx, ['delete-keychain', keychain]).catch(() => undefined);
-  }).catch(() => undefined);
+    const failures: string[] = [];
+    const step = async <T>(what: string, work: () => Promise<T>): Promise<T | null> => {
+      try {
+        return await work();
+      } catch (error) {
+        failures.push(`${what}: ${(error as Error).message}`);
+        return null;
+      }
+    };
+    const list = await step('reading the user keychain search list', () => userSearchList(ctx));
+    if (list !== null) await step('setting the user keychain search list', () => sec(ctx, ['list-keychains', '-d', 'user', '-s', ...list.filter((k) => k !== keychain)]));
+    await step('deleting the keychain', () => sec(ctx, ['delete-keychain', keychain]));
+    if (failures.length > 0) throw new OgwError(`the signing keychain ${keychain} was not removed: ${failures.join('; ')}`);
+  });
 }
 
 /**
@@ -134,12 +145,13 @@ async function removeKeychain(ctx: Context, keychain: string): Promise<void> {
  * search list lock, unlocks it without auto-lock, and imports the certificate with its password so that `codesign`
  * uses the key without asking.
  */
-async function importCertificate(ctx: Context, keychain: string, p12: string, certPassword: string): Promise<void> {
+async function importCertificate(ctx: Context, keychain: string, p12: string, certPassword: string, made: { keychain: boolean }): Promise<void> {
   const password = randomBytes(24).toString('base64url');
   await withLock(searchListLock(ctx.env), async () => {
     // `create-keychain` also adds the keychain to the search list
     const list = (await userSearchList(ctx)).filter((k) => k !== keychain);
     await secSecret(ctx, ['create-keychain', '-p', password, keychain]);
+    made.keychain = true;
     await sec(ctx, ['list-keychains', '-d', 'user', '-s', keychain, ...list]);
   });
   await secSecret(ctx, ['unlock-keychain', '-p', password, keychain]);
@@ -166,16 +178,18 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
   const kind = env === 'DEV' ? 'development' : 'distribution';
   const dir = await tempDir(ctx);
   const keychain = join(dir, 'ogw.keychain-db');
+  // a keychain that was not made is not removed: the failure before it is the failure of the export
+  const made = { keychain: false };
   const placed: string[] = [];
   const cleanup = async (): Promise<void> => {
-    await removeKeychain(ctx, keychain);
+    if (made.keychain) await removeKeychain(ctx, keychain);
     for (const file of placed) await rm(file, { force: true });
     await rm(dir, { recursive: true, force: true });
   };
   try {
     const p12 = join(dir, 'cert.p12');
     await writeFile(p12, Buffer.from(secretOf(ctx, game, settings, 'ios', `${kind}Certificate`), 'base64'), { mode: 0o600 });
-    await importCertificate(ctx, keychain, p12, secretOf(ctx, game, settings, 'ios', `${kind}CertificatePassword`));
+    await importCertificate(ctx, keychain, p12, secretOf(ctx, game, settings, 'ios', `${kind}CertificatePassword`), made);
     const profile = join(dir, 'profile.mobileprovision');
     await writeFile(profile, Buffer.from(secretOf(ctx, game, settings, 'ios', `${kind}ProvisioningProfile`), 'base64'), { mode: 0o600 });
     const uuid = await profileUuid(ctx, profile);
@@ -197,9 +211,11 @@ async function ios(ctx: Context, game: string, settings: GameSettings, env: Env)
 
 async function macos(ctx: Context, game: string, settings: GameSettings, env: Env): Promise<Signing> {
   const dir = await tempDir(ctx);
-  let keychain: string | null = null;
+  const keychain = join(dir, 'ogw.keychain-db');
+  // a keychain that was not made is not removed: the failure before it is the failure of the export
+  const made = { keychain: false };
   const cleanup = async (): Promise<void> => {
-    if (keychain !== null) await removeKeychain(ctx, keychain);
+    if (made.keychain) await removeKeychain(ctx, keychain);
     await rm(dir, { recursive: true, force: true });
   };
   const write = async (name: string, key: string): Promise<string> => {
@@ -218,8 +234,7 @@ async function macos(ctx: Context, game: string, settings: GameSettings, env: En
     // Godot embeds a provisioning profile only for App Store distribution: the macOS signing after the export embeds it
     const profile = await write('profile.provisionprofile', 'provisioningProfile');
     const notaryKey = env !== 'DEV' && notary?.keyId && notary.issuerId ? { key: await write('notary.p8', 'notaryApiKey'), keyId: notary.keyId, issuerId: notary.issuerId } : null;
-    keychain = join(dir, 'ogw.keychain-db');
-    await importCertificate(ctx, keychain, p12, certPassword);
+    await importCertificate(ctx, keychain, p12, certPassword, made);
     const identity = await developerIdIdentity(ctx, keychain);
     const options: Record<string, unknown> = { 'codesign/codesign': 3, 'codesign/apple_team_id': team, 'codesign/identity': identity };
     return { env: {}, options, credentials, keychain, macos: { identity, profile, notary: notaryKey }, cleanup };
@@ -361,7 +376,11 @@ async function entraToken(ctx: Context, game: string, settings: GameSettings): P
     body,
     signal: AbortSignal.timeout(LIMITS.httpMs),
   });
-  const json = (await response.json().catch(() => ({}))) as { access_token?: string };
+  // an answer that is not JSON has no token; a body that cannot be read fails the request
+  const json = (await response.json().catch((error: unknown) => {
+    if (error instanceof SyntaxError) return {};
+    throw error;
+  })) as { access_token?: string };
   if (!response.ok || !json.access_token) throw new OgwError(`Microsoft Entra ID token request failed: HTTP ${String(response.status)}`);
   return json.access_token;
 }

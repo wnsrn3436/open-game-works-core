@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listInstances, startInstance } from '../../../src/commands/instance/api.ts';
 import { instanceFolder, listRecords, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { createContext } from '../../../src/lib/command.ts';
+import type { OgwError } from '../../../src/lib/errors.ts';
 import { jobsDir } from '../../../src/lib/jobs.ts';
 import { ogw, sh } from '../../helpers/workspace.ts';
 import { fakeAgentJob } from './agents.ts';
@@ -332,7 +333,7 @@ describe('ogw instance start', () => {
     expect(await listRecords(runner.ws.env)).toEqual([]);
   });
 
-  it('calls beforeFailedStop before it stops a failed start, with the folder and record still there, and throws the start error', async () => {
+  it('calls beforeFailedStop before it stops a failed start, with the folder and record still there, and throws the start error with the hook failure', async () => {
     runner = setupRunner();
     runner.config({ clients: { main: { exitOnStart: 3 } } });
     const env = runner.ws.env;
@@ -343,9 +344,37 @@ describe('ogw instance start', () => {
       seen.push({ folder: existsSync(folder), runnerLog: existsSync(join(folder, 'runner.log')), mainPid: typeof (await readRecord(id, env)).pids.main === 'number' });
       throw new Error('the hook broke');
     };
-    await expect(startInstance(ctx, { game: 'g' }, { beforeFailedStop })).rejects.toThrow('main: the client process ended');
+    const failure = await startInstance(ctx, { game: 'g' }, { beforeFailedStop }).then(() => null, (error: unknown) => error as OgwError);
+    // the start failure stays the failure, its reason kept; the hook failure is added to it, and the instance is still stopped
+    expect(failure?.message).toMatch(/^instance start failed: main: the client process ended.*\nthe cleanup after the failed start failed: keeping the instance files: the hook broke$/s);
+    expect(failure?.data).toEqual({ reason: 'start' });
     expect(seen).toEqual([{ folder: true, runnerLog: true, mainPid: true }]);
     expect(await listRecords(env)).toEqual([]);
+  });
+
+  it('fails a start whose agent job record cannot be read, instead of taking that agent as ended or as none', async () => {
+    runner = setupRunner();
+    const dir = await jobsDir(runner.ws.env);
+    mkdirSync(dir, { recursive: true });
+    const job = (id: string, agentJob: string | null) =>
+      JSON.stringify({ id, argv: ['instance', 'start', 'g'], cwd: '/', command: 'instance start', game: 'g', startedAt: 3, endedAt: null, status: 'running', exitCode: null, supervisorPid: null, pid: null, timeLimitMs: 60_000, agentJob, summary: null, meta: {} });
+    // the agent the background start names has an unreadable record: not an ended agent
+    writeFileSync(join(dir, 'bgstart2.json'), job('bgstart2', 'agentbad1'));
+    writeFileSync(join(dir, 'agentbad1.json'), '{ not json');
+    const bad = await ogw(runner.ws, ['instance', 'start', 'g'], { env: { ...runner.ws.env, OGW_JOB_ID: 'bgstart2' } });
+    expect(bad.code).not.toBe(0);
+    expect(bad.stderr).toContain('invalid JSON');
+    expect(bad.stderr).not.toContain('has ended');
+    // the record of the background start job itself cannot be read: not a start without an agent
+    writeFileSync(join(dir, 'bgstart3.json'), '{ not json');
+    const own = await ogw(runner.ws, ['instance', 'start', 'g'], { env: { ...runner.ws.env, OGW_JOB_ID: 'bgstart3' } });
+    expect(own.code).not.toBe(0);
+    expect(own.stderr).toContain('invalid JSON');
+    expect(await listRecords(runner.ws.env)).toEqual([]);
+    // an agent job whose record is gone has ended
+    writeFileSync(join(dir, 'bgstart4.json'), job('bgstart4', 'agentgone1'));
+    const gone = await ogw(runner.ws, ['instance', 'start', 'g'], { env: { ...runner.ws.env, OGW_JOB_ID: 'bgstart4' } });
+    expect(gone.stderr).toContain('the ogw agent job agentgone1 that started this instance has ended');
   });
 
   /** A `docker` on PATH that logs its arguments, keeps what `docker cp -` reads, and waits in `create` while `hold` exists. */

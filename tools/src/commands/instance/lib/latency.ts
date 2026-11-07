@@ -22,20 +22,23 @@ function stepMs(args: readonly string[]): number | null {
  * The input latency of the client `main` of an instance started with `--input-latency` (ogw.md `## runner`). An input
  * command is answered at once and sent the latency after it was received, in the order received; in step mode it is
  * held until the `step` commands after it have advanced game time by the latency, and the step during which that
- * happens is split there.
+ * happens is split there. A delayed send whose answer is not `ok`, or that fails, goes to `log` (the runner log), as
+ * its caller already got `ok`.
  */
 export class InputLatency {
   private readonly ms: number;
   private readonly send: Requester;
+  private readonly log: (line: string) => void;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly now: () => number;
   private held: Held[] = [];
   /** The sends of the inputs received outside step mode, in the order received. */
   private delayed: Promise<void> = Promise.resolve();
 
-  constructor(ms: number, send: Requester, wait: (ms: number) => Promise<void> = (delay) => sleep(delay), now: () => number = Date.now) {
+  constructor(ms: number, send: Requester, log: (line: string) => void, wait: (ms: number) => Promise<void> = (delay) => sleep(delay), now: () => number = Date.now) {
     this.ms = ms;
     this.send = send;
+    this.log = log;
     this.wait = wait;
     this.now = now;
   }
@@ -60,9 +63,20 @@ export class InputLatency {
     return response;
   }
 
+  /** Whether the client is in step mode; a `get_state` that fails fails the input, as the input itself would. */
   private async stepMode(timeoutMs: number): Promise<boolean> {
-    const state = await this.send('get_state', [], timeoutMs).catch(() => null);
-    return state?.ok === true && (state.result as Record<string, unknown> | null)?.step_mode === true;
+    const state = await this.send('get_state', [], timeoutMs);
+    return state.ok && (state.result as Record<string, unknown> | null)?.step_mode === true;
+  }
+
+  /** Sends an input whose caller already got `ok`; an answer that is not `ok` or a failure goes to the log. */
+  private async sendLate(command: string, args: string[], timeoutMs: number): Promise<void> {
+    try {
+      const response = await this.send(command, args, timeoutMs);
+      if (!response.ok) this.log(`main: delayed ${command} failed: ${JSON.stringify(response.result)}`);
+    } catch (error) {
+      this.log(`main: delayed ${command} failed: ${(error as Error).message}`);
+    }
   }
 
   private async input(command: string, args: string[], timeoutMs: number): Promise<ChannelResponse> {
@@ -75,7 +89,7 @@ export class InputLatency {
     this.delayed = this.delayed.then(async () => {
       const left = due - this.now();
       if (left > 0) await this.wait(left);
-      await this.send(command, args, timeoutMs).catch(() => undefined);
+      await this.sendLate(command, args, timeoutMs);
     });
     return OK;
   }
@@ -120,7 +134,7 @@ export class InputLatency {
     for (const item of held) {
       if (item.leftMs - waited > 0) await this.wait(item.leftMs - waited);
       waited = Math.max(waited, item.leftMs);
-      await this.send(item.command, item.args, timeoutMs).catch(() => undefined);
+      await this.sendLate(item.command, item.args, timeoutMs);
     }
   }
 }

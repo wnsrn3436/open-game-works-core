@@ -5,7 +5,8 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { OgwError } from '../../../lib/errors.ts';
+import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
+import { isNotFound } from '../../../lib/fsx.ts';
 import { isPlainObject } from '../../../lib/json.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { killTree, run, spawnTracked } from '../../../lib/proc.ts';
@@ -32,6 +33,7 @@ import {
   MAIN_DEV_ACCOUNT,
   deletePlayAccess,
   instanceFolder,
+  InstanceNotFound,
   opponentName,
   plannedClients,
   readRecord,
@@ -113,9 +115,20 @@ export class Supervisor {
   log(line: string): void {
     try {
       appendFileSync(join(this.folder, 'runner.log'), `${new Date().toISOString()} ${line}\n`);
-    } catch {
+    } catch (error) {
       // the instance folder is gone after stop
+      if (!isNotFound(error)) throw error;
     }
+  }
+
+  /**
+   * Records a change of the record that an event of a child process brings; a record a stop removed is no failure, and
+   * any other failure goes to the runner log (the event has no caller to fail).
+   */
+  private recordEvent(what: string, change: (record: InstanceRecord) => void): void {
+    void updateRecord(this.id, change, this.env).catch((error: unknown) => {
+      if (!(error instanceof InstanceNotFound)) this.log(`${what} could not be recorded: ${(error as Error).message}`);
+    });
   }
 
   /** Starts everything, records `running` or `failed`, and resolves when the instance stops. */
@@ -138,11 +151,14 @@ export class Supervisor {
       const message = (error as Error).message;
       this.log(`start failed: ${message}`);
       await this.shutdown();
+      // a stop that came during the start removed the record
       await updateRecord(this.id, (r) => {
         r.status = 'failed';
         r.error = message;
         r.failure = error instanceof FixtureError ? 'fixture' : 'start';
-      }, this.env).catch(() => undefined);
+      }, this.env).catch((recordError: unknown) => {
+        if (!(recordError instanceof InstanceNotFound)) throw recordError;
+      });
       await this.closeControl();
       return;
     }
@@ -270,7 +286,13 @@ export class Supervisor {
   private latencyFor(client: string, command: string): InputLatency | null {
     const ms = this.plan.inputLatencyMs ?? 0;
     if (ms <= 0 || client !== 'main' || !(isInputCommand(command) || command === 'step' || command === 'set_step_mode')) return null;
-    this.latency ??= new InputLatency(ms, (c, a, t) => this.channel('main').request(c, a, t));
+    this.latency ??= new InputLatency(
+      ms,
+      (c, a, t) => this.channel('main').request(c, a, t),
+      (line) => {
+        this.log(line);
+      },
+    );
     return this.latency;
   }
 
@@ -365,15 +387,15 @@ export class Supervisor {
     child.on('exit', (code) => {
       if (this.stopping) return;
       this.log(`${name} exited with ${String(code)}`);
-      void updateRecord(this.id, (r) => {
+      this.recordEvent(`the exit of ${name}`, (r) => {
         r.exited[name] = code;
-      }, this.env).catch(() => undefined);
+      });
     });
     if (child.pid !== undefined) {
       const pid = child.pid;
-      void updateRecord(this.id, (r) => {
+      this.recordEvent(`the pid of ${name}`, (r) => {
         r.pids[name] = pid;
-      }, this.env).catch(() => undefined);
+      });
     }
     return child;
   }
@@ -475,16 +497,16 @@ export class Supervisor {
   /** Waits until the client reached `boot_stage` `Done`, or with `done` false until its automation channel connected. */
   private async waitClient(name: string, done: boolean, timeoutMs: number): Promise<unknown> {
     if (this.exitedEarly(name)) throw new OgwError('the client process ended');
+    const ready = done
+      ? waitBootDone(this.requester(name), timeoutMs, this.plan.commandTimeoutMs + LIMITS.shortMs)
+      : this.channel(name).waitConnected(timeoutMs);
+    // made right before the race, which handles its rejection also after `ready` won
     const exited = new Promise<never>((_, reject) => {
       const child = this.children.get(name);
       child?.once('exit', (code) => {
         reject(new OgwError(`the client process ended with ${String(code)}`));
       });
     });
-    exited.catch(() => undefined);
-    const ready = done
-      ? waitBootDone(this.requester(name), timeoutMs, this.plan.commandTimeoutMs + LIMITS.shortMs)
-      : this.channel(name).waitConnected(timeoutMs);
     return Promise.race([ready, exited]);
   }
 
@@ -517,11 +539,19 @@ export class Supervisor {
     }
   }
 
-  /** The `user_id` of the client `main` once it is not 0; null when the instance stops first. */
+  /**
+   * The `user_id` of the client `main` once it is not 0; null when the instance stops first. While `main` is not
+   * connected it waits; a `get_state` that fails goes to the runner log, and the next one is asked.
+   */
   private async mainUserId(commandMs: number): Promise<number | null> {
     for (;;) {
       if (this.stopping) return null;
-      const state = await getState(this.requester('main'), commandMs).catch(() => null);
+      const state = this.channel('main').connected
+        ? await getState(this.requester('main'), commandMs).catch((error: unknown) => {
+            if (!this.stopping) this.log(`social: get_state of main failed: ${(error as Error).message}`);
+            return null;
+          })
+        : null;
       if (typeof state?.user_id === 'number' && state.user_id !== 0) return state.user_id;
       await sleep(200);
     }
@@ -551,7 +581,8 @@ export class Supervisor {
   async shutdown(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
-    await deletePlayAccess(this.id, this.env).catch(() => undefined);
+    // the stop removes the play access again with the record (`deleteRecord`), and fails there when it cannot
+    await deletePlayAccess(this.id, this.env).catch(ignoreCleanupError);
     this.gate.stop();
     await Promise.all([...this.children.values()].map(stopChild));
     await Promise.all([...this.channels.values()].map((c) => c.close()));

@@ -90,11 +90,14 @@ export function controlCall(
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
         res.on('end', () => {
           clearTimeout(timer);
-          let value: unknown = null;
+          const text = Buffer.concat(chunks).toString('utf8');
+          let value: unknown;
           try {
-            value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          } catch {
-            value = null;
+            value = JSON.parse(text);
+          } catch (error) {
+            // the supervisor answers JSON: an answer that is not is a failure, whatever its status
+            reject(new OgwError(`instance control ${path} failed (${String(res.statusCode)}): the answer is not JSON (${(error as Error).message})`));
+            return;
           }
           if (res.statusCode === 200) resolvePromise(value);
           else reject(new OgwError(errorOf(value) ?? `instance control ${path} failed (${String(res.statusCode)})`));

@@ -183,8 +183,9 @@ export async function runScript(ctx: Context, instanceId: string, steps: readonl
       recording = recordVideo(ctx, instanceId, prepared.ms, prepared.dir, prepared.format, () => {
         sent.resolve(null);
       });
-      // the first input goes after the capture_video request, so the video starts before it
-      await Promise.race([sent.promise, recording.then(() => null, () => null)]);
+      // the first input goes after the capture_video request, so the video starts before it; a recording that ended
+      // first does not hold the script, and its failure is the `videoError` of the run (`endVideo`)
+      await Promise.race([sent.promise, Promise.allSettled([recording])]);
     }
     const sentAt = Date.now();
     if (unnoted !== null && !releasesHeld([step.command, ...step.args])) {

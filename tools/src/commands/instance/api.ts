@@ -10,7 +10,7 @@ import { newId } from '../../lib/ids.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { withLock } from '../../lib/lock.ts';
 import { agentContext } from '../../lib/agentctx.ts';
-import { hostBootId, readJob } from '../../lib/jobs.ts';
+import { hostBootId, JobNotFound, readJob } from '../../lib/jobs.ts';
 import { isAlive, killTree } from '../../lib/proc.ts';
 import { gameSettingsPath, loadGameSettings, withGameSettingsLock } from '../../lib/settings.ts';
 import { controlCall, type ClientRef } from './automation.ts';
@@ -21,6 +21,7 @@ import {
   deleteRecord,
   fromEarlierBoot,
   instanceFolder,
+  InstanceNotFound,
   listRecords,
   plannedClients,
   readRecord,
@@ -132,7 +133,8 @@ export interface StartHooks {
   signal?: AbortSignal;
   /**
    * Called with the instance id when the start failed after the id was reserved, before the instance is stopped and
-   * its folder removed: the caller can still read the instance folder and record. A throw is ignored.
+   * its folder removed: the caller can still read the instance folder and record. A throw is added to the start
+   * failure, and the instance is still stopped.
    */
   beforeFailedStop?: (id: string) => Promise<void>;
 }
@@ -142,6 +144,12 @@ function checkAborted(signal: AbortSignal | undefined): void {
 }
 
 const SLOT_POLL_MS = 1000;
+
+/** null for a job whose record is gone; any other read error is not "no job". */
+function jobGone(error: unknown): null {
+  if (error instanceof JobNotFound) return null;
+  throw error;
+}
 
 async function infoOf(record: InstanceRecord, env: NodeJS.ProcessEnv): Promise<InstanceInfo> {
   const plan = record.plan;
@@ -175,7 +183,7 @@ async function reserveSlot(ctx: Context, record: InstanceRecord, max: number, wa
       if (busy >= max) return false;
       // an agent that ended while this start waited would leave the instance to nobody (instance.md `## start and stop`)
       // the job stays `running` while it finishes after its agent CLI ended, so `cliEnded` counts as ended too
-      const agent = record.agentJob == null ? null : await readJob(record.agentJob, ctx.env).catch(() => null);
+      const agent = record.agentJob == null ? null : await readJob(record.agentJob, ctx.env).catch(jobGone);
       if (record.agentJob != null && (agent?.status !== 'running' || agent.meta.cliEnded === true)) {
         throw new OgwError(`the ogw agent job ${record.agentJob} that started this instance has ended`, 1, { reason: 'start' } satisfies StartFailure);
       }
@@ -191,7 +199,11 @@ async function reserveSlot(ctx: Context, record: InstanceRecord, max: number, wa
         { reason: 'wait-timeout' } satisfies StartFailure,
       );
     }
-    await sleep(Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())), undefined, { signal }).catch(() => undefined);
+    await sleep(Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())), undefined, { signal }).catch((error: unknown) => {
+      // the abort of `signal` ends the wait: the start fails as stopped
+      checkAborted(signal);
+      throw error;
+    });
   }
 }
 
@@ -228,7 +240,7 @@ async function checkoutOf(
 async function startingAgent(ctx: Context): Promise<string | null> {
   const agent = (await agentContext(ctx.env))?.job.id ?? null;
   if (agent !== null || ctx.jobId === null) return agent;
-  return (await readJob(ctx.jobId, ctx.env).catch(() => null))?.agentJob ?? null;
+  return (await readJob(ctx.jobId, ctx.env).catch(jobGone))?.agentJob ?? null;
 }
 
 /** Game settings `baseResolution` as `[width, height]`. */
@@ -378,12 +390,41 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
     await launchSupervisor(id, ctx.env);
     return await infoOf(await waitStarted(ctx, id), ctx.env);
   } catch (error) {
-    await hooks.beforeFailedStop?.(id).catch(() => undefined);
-    await stopInstance(ctx, id).catch(() => undefined);
-    // A stop of the id (`onReserved`) that came before the worktree add left the record gone and the worktree here.
-    if (made.worktree !== null) await worktreeRemove(game.mainRoot, made.worktree, { env: ctx.env }).catch(() => undefined);
-    throw error;
+    const failures = await cleanUpFailedStart(ctx, game, id, made.worktree, hooks);
+    throw withCleanupFailures(error, failures);
   }
+}
+
+/**
+ * Stops the instance of a failed start and removes its worktree, each step even when another failed; the messages of
+ * the steps that failed. An instance a stop already removed is no failure: a stop of the id (`onReserved`) that came
+ * before the worktree add left the record gone and the worktree here.
+ */
+async function cleanUpFailedStart(ctx: Context, game: GameRepo, id: string, worktree: string | null, hooks: StartHooks): Promise<string[]> {
+  const failures: string[] = [];
+  const step = async (what: string, work: () => Promise<void>): Promise<void> => {
+    try {
+      await work();
+    } catch (error) {
+      if (!(error instanceof InstanceNotFound)) failures.push(`${what}: ${(error as Error).message}`);
+    }
+  };
+  const keep = hooks.beforeFailedStop;
+  if (keep !== undefined) await step('keeping the instance files', () => keep(id));
+  await step(`stopping instance ${id}`, () => stopInstance(ctx, id));
+  // the stop removes the worktree its record names; one it did not remove is removed here
+  if (worktree !== null && exists(worktree)) await step(`removing the worktree ${worktree}`, () => worktreeRemove(game.mainRoot, worktree, { env: ctx.env }));
+  return failures;
+}
+
+/**
+ * The failure of a start whose cleanup failed too: the start failure with the cleanup failures added to its message,
+ * its exit code and `data` kept; the start failure itself when the cleanup did not fail.
+ */
+function withCleanupFailures(error: unknown, failures: readonly string[]): unknown {
+  if (failures.length === 0) return error;
+  const start = asStartFailure(error);
+  return new OgwError(`${start.message}\nthe cleanup after the failed start failed: ${failures.join('; ')}`, start.exitCode, start.data);
 }
 
 /**
@@ -414,9 +455,13 @@ export async function stopInstance(ctx: Context, id: string): Promise<void> {
   const supervisorAlive = !earlierBoot && record.supervisorPid !== null && isAlive(record.supervisorPid);
   let stopped = false;
   if (record.control && supervisorAlive) {
+    // a supervisor that does not stop the instance is killed with its processes
     stopped = await controlCall(record.control.port, record.control.token, '/stop', {}, LIMITS.shortMs * 2).then(
       () => true,
-      () => false,
+      (error: unknown) => {
+        ctx.log(`instance ${id}: the supervisor did not stop it (${(error as Error).message}); its processes are killed`);
+        return false;
+      },
     );
   }
   if (!stopped) {
@@ -437,7 +482,14 @@ export async function stopInstance(ctx: Context, id: string): Promise<void> {
  */
 export async function stopInstancesOfAgent(ctx: Context, agentJob: string): Promise<string[]> {
   const ids = await withLock(await slotLock(ctx.env), async () => (await listRecords(ctx.env)).filter((r) => r.agentJob === agentJob).map((r) => r.id));
-  for (const id of ids) await stopInstance(ctx, id).catch(() => undefined);
+  // every instance is stopped even when the stop of another failed; one a stop removed meanwhile is no failure
+  const failures: string[] = [];
+  for (const id of ids) {
+    await stopInstance(ctx, id).catch((error: unknown) => {
+      if (!(error instanceof InstanceNotFound)) failures.push(`instance ${id}: ${(error as Error).message}`);
+    });
+  }
+  if (failures.length > 0) throw new OgwError(`the instances of agent job ${agentJob} were not all stopped: ${failures.join('; ')}`);
   return ids;
 }
 

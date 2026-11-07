@@ -17,6 +17,8 @@ interface State {
   crashAt: number | null;
   startFailAt: number | null;
   statsFailAt: number | null;
+  /** Ids of the instances whose stop fails. */
+  stopFails: Set<string>;
   seenRoots: string[];
   starting: number;
   maxStarting: number;
@@ -36,6 +38,7 @@ const state = vi.hoisted(
     crashAt: null,
     startFailAt: null,
     statsFailAt: null,
+    stopFails: new Set<string>(),
     seenRoots: [],
     starting: 0,
     maxStarting: 0,
@@ -66,6 +69,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     }, 0));
   },
   stopInstance: (_ctx: unknown, id: string) => {
+    if (state.stopFails.has(id)) return Promise.reject(new Error(`cannot remove the worktree of ${id}`));
     state.running.delete(id);
     return Promise.resolve();
   },
@@ -73,6 +77,11 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
   instanceServerLog: () => Promise.resolve(''),
 }));
 
+vi.mock('../../../src/commands/instance/lib/records.ts', async (orig) => ({
+  ...(await orig<object>()),
+  // the instance record of a fake instance: a checkout without client/generated/core_settings.json (no input gap)
+  readRecord: vi.fn((id: string) => Promise.resolve({ id, root: '/nonexistent/ogw-measure-instance' })),
+}));
 vi.mock('../../../src/lib/display.ts', () => ({ hostRefreshHz: () => Promise.resolve(null) }));
 
 /** get_stats calls of an instance after which its first input ends, so the fps sampler reads enough ticks. */
@@ -80,12 +89,14 @@ const TICKS = 6;
 
 vi.mock('../../../src/commands/instance/automation.ts', () => ({
   automationRequest: async (_ctx: unknown, id: string, command: string, args: string[]) => {
+    // a request the client does not answer fails with an OgwError, as the real automationRequest does
+    const { OgwError } = await import('../../../src/lib/errors.ts');
     if (command !== 'get_stats' && command !== 'get_state') state.calls.push(`${id} ${command} ${args.join(' ')}`.trim());
-    if (state.crashAt !== null && state.running.size >= state.crashAt) throw new Error('automation channel closed');
+    if (state.crashAt !== null && state.running.size >= state.crashAt) throw new OgwError('automation channel closed');
     if (command === 'get_stats') {
       state.stats[id] = (state.stats[id] ?? 0) + 1;
       for (const wake of state.waiters.splice(0)) wake();
-      if (state.statsFailAt !== null && state.running.size >= state.statsFailAt) throw new Error('client ended');
+      if (state.statsFailAt !== null && state.running.size >= state.statsFailAt) throw new OgwError('client ended');
     }
     while (command === 'tap' && (state.stats[id] ?? 0) < TICKS) await new Promise<void>((resolve) => state.waiters.push(resolve));
     const results: Record<string, unknown> = {
@@ -149,6 +160,7 @@ afterEach(() => {
   state.crashAt = null;
   state.startFailAt = null;
   state.statsFailAt = null;
+  state.stopFails.clear();
   state.seenRoots = [];
   state.starting = 0;
   state.maxStarting = 0;
@@ -269,6 +281,17 @@ describe('ogw instance measure', () => {
     expect(target?.value).toBe(2);
     expect(target?.detail).toMatch(/^instance i\d+: no scene got 2 fps samples outside scene loads$/);
     expect(state.running.size).toBe(0);
+  });
+
+  it('fails without a result when an instance of a count does not stop, after it stopped the others: it would load the next count', async () => {
+    const { ws, env } = setup();
+    state.versions = [];
+    state.stopFails.add('i1');
+    const run = await ogw(ws, ['instance', 'measure'], { env });
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain('g: the measured instances were not all stopped: instance i1: cannot remove the worktree of i1');
+    expect([...state.running]).toEqual(['i1']);
+    expect(existsSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'instance-measure.json'))).toBe(false);
   });
 
   it('fails without a result when the first instance does not start', async () => {

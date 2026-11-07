@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { WebSocket, type RawData } from 'ws';
 import type { Context } from '../../../lib/command.ts';
-import { OgwError } from '../../../lib/errors.ts';
+import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { killTree, spawnTracked } from '../../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
@@ -80,8 +80,10 @@ export class Cdp {
     let message: unknown;
     try {
       message = JSON.parse(text);
-    } catch {
-      return;
+    } catch (error) {
+      // a DevTools frame that is not JSON is no message
+      if (error instanceof SyntaxError) return;
+      throw error;
     }
     if (!isObject(message)) return;
     const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
@@ -196,7 +198,8 @@ class Page implements HeadlessPage {
     this.end('closed');
     this.cdp?.close();
     killTree(this.browser, 'SIGKILL');
-    await rm(this.profile, { recursive: true, force: true }).catch(() => undefined);
+    // the profile is a temporary folder of this page only: a leftover changes no result
+    await rm(this.profile, { recursive: true, force: true }).catch(ignoreCleanupError);
   }
 }
 

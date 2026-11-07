@@ -283,6 +283,34 @@ esac`;
     expect(() => securityArg('a\nb')).toThrow('line break');
   });
 
+  it('takes every step of the keychain removal and then fails with the steps that failed', async () => {
+    const ws = makeWorkspace();
+    const b64 = (s: string) => Buffer.from(s).toString('base64');
+    setSecrets(ws, { 'ogw/g/signing/dc': b64('P12'), 'ogw/g/signing/dcp': 'pw', 'ogw/g/signing/dpp': b64('PROFILE') });
+    const bin = fakeBin(ws, {
+      security: `case "$1" in
+  -i) read -r line; echo "security -i $line" >> "$(dirname "$0")/calls.log";;
+  list-keychains) [ "$3" = "-s" ] || echo '    "/Users/x/login.keychain-db"';;
+  cms) echo '<plist><dict><key>UUID</key><string>ABC-123</string></dict></plist>';;
+  delete-keychain) echo 'security: SecKeychainDelete: The user name or passphrase you entered is not correct.' >&2; exit 51;;
+esac`,
+    });
+    const settings = { signing: { ios: { distributionCertificate: 'dc', distributionCertificatePassword: 'dcp', distributionProvisioningProfile: 'dpp' } } };
+    const signing = await prepareSigning(ctxOf(ws, { ...bin.env, HOME: tmp() }), 'g', settings, 'STG', 'ios');
+    await expect(signing.cleanup()).rejects.toThrow(/^the signing keychain \S+ogw\.keychain-db was not removed: deleting the keychain: security delete-keychain \S+ failed/);
+    // the search list was still set without the keychain
+    expect(readFileSync(bin.log, 'utf8')).toMatch(/security list-keychains -d user -s \/Users\/x\/login\.keychain-db\n/);
+  });
+
+  it('removes no keychain it did not make: the failure before it is the failure of the export', async () => {
+    const ws = makeWorkspace();
+    const bin = fakeBin(ws, { security: 'echo "security $*" >> "$(dirname "$0")/calls.log"' });
+    const settings = { signing: { ios: { distributionCertificate: 'dc', distributionCertificatePassword: 'dcp', distributionProvisioningProfile: 'dpp' } } };
+    // no certificate secret on this host: the export fails before the keychain is made
+    await expect(prepareSigning(ctxOf(ws, { ...bin.env, HOME: tmp() }), 'g', settings, 'STG', 'ios')).rejects.toThrow('signing secret dc is not in the secret store');
+    expect(existsSync(bin.log) ? readFileSync(bin.log, 'utf8') : '').not.toContain('delete-keychain');
+  });
+
   it('prepares and removes the iOS keychain', async () => {
     const ws = makeWorkspace();
     const home = tmp();
@@ -382,6 +410,36 @@ esac`,
       expect(existsSync(/file:(\S+)/.exec(readFileSync(bin.log, 'utf8'))?.[1] ?? '')).toBe(false);
       await expect(signWindows(ctxOf(ws, bin.env), 'g', { ...settings, trustedSigning: { ...settings.trustedSigning, tenantId: 'other' } }, ['x'], signer)).rejects.toThrow('token request failed');
       await expect(signWindows(ctxOf(ws), 'g', {}, [], signer)).rejects.toThrow('trustedSigning is missing');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('takes an Entra answer that is not JSON as a failed token request, and fails with the error of an answer that breaks off', async () => {
+    const ws = makeWorkspace();
+    setSecrets(ws, { 'ogw/g/signing/cs': 'CLIENT-SECRET' });
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        if (req.url?.startsWith('/notjson/') === true) {
+          res.end('<html>maintenance</html>');
+          return;
+        }
+        // the answer says 1000 bytes and the connection ends after 10
+        res.writeHead(200, { 'content-type': 'application/json', 'content-length': '1000' });
+        res.write('{"access_t');
+        setTimeout(() => res.destroy(), 20);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    ENDPOINTS.entraToken = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+    const settings = (tenantId: string) => ({ trustedSigning: { tenantId, clientId: 'cid', endpoint: 'https://eus.codesigning.azure.net', account: 'acc', certificateProfile: 'prof' }, signing: { windows: { clientSecret: 'cs' } } });
+    const signer = { program: 'jsign', prefix: [], env: ws.env };
+    try {
+      await expect(signWindows(ctxOf(ws), 'g', settings('notjson'), ['x'], signer)).rejects.toThrow('Microsoft Entra ID token request failed: HTTP 200');
+      const broken = await signWindows(ctxOf(ws), 'g', settings('broken'), ['x'], signer).then(() => null, (error: unknown) => error as Error);
+      expect(broken).not.toBeNull();
+      expect(broken?.message).not.toContain('token request failed');
     } finally {
       server.close();
     }

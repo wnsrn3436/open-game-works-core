@@ -36,15 +36,20 @@ export async function dataVersionsAt(ctx: Context, game: GameRepo, commit: strin
   let versions = versionsMemo.get(key);
   if (versions === undefined) {
     versions = (async () => {
-      const made: string[] = [];
       try {
-        return (await binaryBuildAt(ctx, game, commit, commit, made)).versions;
-      } finally {
-        for (const dir of made) await worktreeRemove(game.mainRoot, dir, { env: ctx.env });
+        const made: string[] = [];
+        try {
+          return (await binaryBuildAt(ctx, game, commit, commit, made)).versions;
+        } finally {
+          for (const dir of made) await worktreeRemove(game.mainRoot, dir, { env: ctx.env });
+        }
+      } catch (error) {
+        // a failed build is not kept: a later call builds the commit again (`binaryBuildAt` is async, so this runs after the set below)
+        versionsMemo.delete(key);
+        throw error;
       }
     })();
     versionsMemo.set(key, versions);
-    versions.catch(() => versionsMemo.delete(key));
   }
   return versions;
 }

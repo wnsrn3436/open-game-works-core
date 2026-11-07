@@ -112,7 +112,7 @@ export async function putObject(target: S3Target, object: PutObject, now: Date =
     throw new OgwError(`PUT ${object.key} failed: ${(error as Error).message}`);
   }
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
+    const text = await response.text().catch((error: unknown) => `(the answer could not be read: ${(error as Error).message})`);
     throw new OgwError(`PUT ${object.key} failed: HTTP ${String(response.status)} ${text.slice(0, 500)}`);
   }
 }

@@ -33,14 +33,17 @@ function sameToken(given: unknown, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** A message of the client as an object; null for one that is not a JSON object (dropped, or a refused greeting). */
 function parse(data: RawData): Record<string, unknown> | null {
+  const text = rawBytes(data).toString('utf8');
+  let value: unknown;
   try {
-    const text = rawBytes(data).toString('utf8');
-    const value: unknown = JSON.parse(text);
-    return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-  } catch {
-    return null;
+    value = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function decode(bytes: unknown): Buffer {
