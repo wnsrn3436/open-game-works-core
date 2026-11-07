@@ -574,7 +574,7 @@ put('/started', { run_id: config.ogw_run_id })
     writeFileSync(join(root, 'client/tests/a/test_a.gd'), 'func test_a():\n\tpass\n');
     writeFileSync(join(root, `${R}/content-1.md`), '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `client/tests/a/test_a.gd::test_a` |\n');
     commitAll(root, 'content agent');
-    // the import of the checkout takes a second; the run of the proof on the fix base logs when it starts
+    // the import of the checkout takes 3 s; the run of the proof on the fix base logs when it starts
     const godotDir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
     const godot = join(godotDir, 'godot');
     const log = join(godotDir, 'log');
@@ -590,7 +590,7 @@ if (args.includes('--import')) {
     fs.mkdirSync(require('node:path').join(project, '.godot'), { recursive: true });
     if (!onBase) fs.appendFileSync(${JSON.stringify(log)}, 'import end ' + Date.now() + '\\n');
     process.exit(0);
-  }, onBase ? 0 : 1000);
+  }, onBase ? 0 : 3000);
 } else {
   if (onBase) fs.appendFileSync(${JSON.stringify(log)}, 'base run ' + Date.now() + '\\n');
   const config = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('-gconfig=')).slice(9), 'utf8'));
