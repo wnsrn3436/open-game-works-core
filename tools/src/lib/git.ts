@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { OgwError } from './errors.ts';
+import { withLock } from './lock.ts';
 import { run, type RunResult } from './proc.ts';
 
 export const GIT_TIMEOUT_MS = 10 * 60_000;
@@ -12,8 +13,26 @@ export interface GitOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** Runs git and returns the raw result. */
+/** The file lock in the git common dir of a repo that its `git worktree` commands hold. */
+export const WORKTREE_LOCK = 'ogw-worktree.lock';
+
+/**
+ * Runs git and returns the raw result. A `git worktree` command runs holding `WORKTREE_LOCK` of its repo (ogw.md
+ * `## temp folder`): a `git worktree remove` or `git worktree prune` deletes the admin folder of a worktree that another
+ * process is still adding, and every `git worktree` command reads the admin folders of the other worktrees. The lock is
+ * in the common dir, so the main checkout and every worktree of the repo take the same one. When
+ * `git rev-parse --git-common-dir` fails there (no repo), its result is returned: the worktree command would fail the
+ * same way.
+ */
 export async function gitRaw(cwd: string, args: readonly string[], options: GitOptions = {}): Promise<RunResult> {
+  if (args[0] !== 'worktree') return runGit(cwd, args, options);
+  const common = await runGit(cwd, ['rev-parse', '--git-common-dir'], { env: options.env, timeoutMs: options.timeoutMs });
+  if (common.code !== 0 || common.timedOut) return common;
+  const lock = join(absolute(cwd, common.stdout.replace(/\r?\n$/, '')), WORKTREE_LOCK);
+  return withLock(lock, () => runGit(cwd, args, options));
+}
+
+function runGit(cwd: string, args: readonly string[], options: GitOptions): Promise<RunResult> {
   return run('git', args, {
     cwd,
     input: options.input,
