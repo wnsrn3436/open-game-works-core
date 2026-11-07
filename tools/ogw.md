@@ -328,12 +328,13 @@ How `ogw check` judges performance.
 
 ### performance lease
 
-The performance lease is a lock of this host that keeps `local-model` generation and the performance measurement of `ogw check` from running at the same time.
+The performance lease is a lock of this host that keeps `local-model` generation and the instances of the regression suite from running while `ogw check` measures performance.
 
 - `ogw generation run` of a `local-model` method holds the lease shared while its calls run
-- The performance measurements of one `ogw check`, those of all its platform profiles together, hold the lease exclusively from before the instance of the first starts until the instance of the last stops: meanwhile no `ogw generation run` call and no performance measurement of another `ogw check` runs
-- A waiting measurement goes first: while it waits, no `ogw generation run` takes the lease, so it waits only for the holders it found
-- A measurement waits for the lease at most harness settings `performanceLeaseWaitTimeoutMs`. When that passes, the check does not measure, and each performance item is `unknown` with one `<failure>` whose `where` is `client/dev/bot/scenario.json:1` and whose `message` is `host busy: local generation` when an `ogw generation run` still holds the lease, or `host busy: performance measurement` when another `ogw check` holds it. Its `hostLoad` holds the readings of `### host load` taken during the wait
+- An instance of a game with the regression mark (`### regression state` of `## regress`) holds the lease shared from when it takes its slot (`## runner`) until its record goes, unless a performance measurement starts it. It takes its slot only while no measurement holds or waits for the lease; that wait is not in `instanceWaitTimeoutMs` and lasts at most the time limit of a job. So no other instance of an `ogw regress` command runs beside a measurement, while the rest of its checks (their static checks, regression tests and the parts of a check that start no instance) runs on
+- The performance measurements of one `ogw check`, those of all its platform profiles together, hold the lease exclusively from before the instance of the first starts until the instance of the last stops: meanwhile no `ogw generation run` call, no instance that holds the lease and no performance measurement of another `ogw check` runs
+- A waiting measurement goes first: while it waits, no `ogw generation run` and no instance of a game with the regression mark takes the lease, so it waits only for the holders it found
+- A measurement waits for the lease at most harness settings `performanceLeaseWaitTimeoutMs`. When that passes, the check does not measure, and each performance item is `unknown` with one `<failure>` whose `where` is `client/dev/bot/scenario.json:1` and whose `message` is `host busy: local generation` when an `ogw generation run` still holds the lease, `host busy: regress instance` when an instance of a game with the regression mark still holds it, or `host busy: performance measurement` when another `ogw check` holds it. Its `hostLoad` holds the readings of `### host load` taken during the wait
 - The holders and waiting measurements of the lease are file locks and reader items (`## agent`): one whose process is gone or that was recorded in another boot holds nothing and is removed
 
 ### host load

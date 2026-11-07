@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
-import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
+import { leaseHoldersEnd, listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
 import { HostLoadSampler, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
@@ -33,7 +33,7 @@ import {
 import { performanceLeaseBase, withGenerationLease } from '../../../../src/commands/generation/lib/lease.ts';
 import type { Context } from '../../../../src/lib/command.ts';
 import { hostBootId, pidNamespace } from '../../../../src/lib/proc.ts';
-import { withWriter, type RwLock } from '../../../../src/lib/rwlock.ts';
+import { withWriter, writerHoldsOrWaits, type RwLock } from '../../../../src/lib/rwlock.ts';
 import type { CheckResult } from '../../../../src/commands/check/api.ts';
 import type { Scenario } from '../../../../src/commands/check/lib/scenario.ts';
 import { doneState, fakeContext, notOk, ok } from '../helpers.ts';
@@ -42,7 +42,7 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
 }));
-vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
+vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn(), leaseHoldersEnd: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
 vi.mock('../../../../src/lib/display.ts', () => ({ hostRefreshHz: vi.fn() }));
 vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
@@ -434,6 +434,7 @@ beforeEach(() => {
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
   vi.mocked(listInstances).mockResolvedValue([]);
+  vi.mocked(leaseHoldersEnd).mockReset().mockResolvedValue(true);
   vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
   vi.mocked(instanceServerLog).mockResolvedValue('');
 });
@@ -446,7 +447,7 @@ describe('performanceCheck', () => {
       { at: 2, scene_key: 'battle', duration_ms: 3001 },
     ]);
     const result = await performanceCheck(ctx, 'g', 'android', scenario, options(root));
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined, measured: true }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'p1');
     expect(calls[0]).toBe('set_quality_level High');
     const ev = ['ev/performance-android/samples.json'];
@@ -504,7 +505,7 @@ describe('performanceCheck', () => {
     const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { quality: false, db: 'postgresql' }));
     expect(result.result).toBe('pass');
     expect(calls).not.toContain('set_quality_level High');
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql' }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql', measured: true }, { beforeFailedStop: expect.any(Function) as unknown });
   });
 
   it('bounds the fps by the refresh rate of the host display', async () => {
@@ -891,6 +892,26 @@ describe('performanceChecks: the performance lease', () => {
     expect(noScenario[0]?.failures[0]?.message).toBe('performance did not run: client/dev/bot/scenario.json does not exist');
     gen.end();
     await gen.done;
+  });
+
+  it('waits for the instances that hold the lease with the deadline of its wait, holding the writer lock, and is unknown when they do not stop by then', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    trackInstances([]);
+    const lease = await leaseOf(root, 300);
+    const seen: { deadline: number; holds: boolean }[] = [];
+    vi.mocked(leaseHoldersEnd).mockImplementation(async (_ctx, deadline) => {
+      // the measurement holds the writer lock while it waits: instances of regress games keep off meanwhile
+      seen.push({ deadline, holds: await writerHoldsOrWaits(lease) });
+      return false;
+    });
+    const before = Date.now();
+    expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }))).toEqual([busy('web', 'host busy: regress instance')]);
+    expect(startInstance).not.toHaveBeenCalled();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.holds).toBe(true);
+    expect(seen[0]?.deadline).toBeGreaterThanOrEqual(before + 300);
+    expect(seen[0]?.deadline).toBeLessThanOrEqual(Date.now() + 300);
+    expect(await writerHoldsOrWaits(lease)).toBe(false);
   });
 
   it('is unknown without measuring when the measurement of another check holds the lease past the wait', async () => {

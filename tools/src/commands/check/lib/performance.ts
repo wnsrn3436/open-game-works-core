@@ -1,7 +1,8 @@
 import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { withWriterWithin, type RwLock } from '../../../lib/rwlock.ts';
+import { withWriterWithin, type RwLock, type WriterWait } from '../../../lib/rwlock.ts';
+import { leaseHoldersEnd } from '../../instance/api.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import type { CheckFailure, CheckResult, HostLoad } from '../api.ts';
 import { SCENARIO_WHERE, type InstanceCheckOptions } from './bot-playtest.ts';
@@ -465,7 +466,7 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
   const started: { sampler?: HostLoadSampler } = {};
   try {
     if (typeof scenario === 'string') throw new Error(scenario);
-    return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, async (instance) => {
+    return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db, measured: true }, async (instance) => {
       started.sampler = new HostLoadSampler(options.probe, options.sampleMs, instance.id);
       return measure(ctx, instance.id, platform, scenario, options, started.sampler);
     }, options.evidence);
@@ -475,11 +476,18 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
   }
 }
 
+/** The message of the `unknown` items of a measurement that did not get the performance lease, by what it waited for. */
+const LEASE_BUSY: Record<WriterWait, string> = {
+  writer: 'host busy: performance measurement',
+  readers: 'host busy: local generation',
+  others: 'host busy: regress instance',
+};
+
 /**
  * performance of every platform profile, one profile at a time so that no other instance of the check runs beside the
- * measured one (ogw.md `## performance`), holding the performance lease exclusively across all of them (ogw.md
- * `### performance lease`). When the lease does not come within its wait, nothing is measured and each item is
- * `unknown`, with the host load read during the wait.
+ * measured one (ogw.md `## performance`), holding the performance lease exclusively across all of them, once the
+ * instances that hold it shared have stopped (ogw.md `### performance lease`). When the lease does not come within its
+ * wait, nothing is measured and each item is `unknown`, with the host load read during the wait.
  */
 export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
   const each = async (): Promise<CheckResult[]> => {
@@ -495,12 +503,16 @@ export async function performanceChecks(ctx: Context, game: string, platforms: r
     return platforms.map((p) => withLoad(checkResult('performance', p, [failure(SCENARIO_WHERE, message)], true), hostLoad));
   };
   try {
-    const leased = await withWriterWithin(options.lease, async () => {
-      await waiting.stop();
-      return each();
-    });
+    const leased = await withWriterWithin(
+      options.lease,
+      async () => {
+        await waiting.stop();
+        return each();
+      },
+      (deadline) => leaseHoldersEnd(ctx, deadline),
+    );
     if (leased.ran) return leased.value;
-    return await unknown(leased.waited === 'readers' ? 'host busy: local generation' : 'host busy: performance measurement');
+    return await unknown(LEASE_BUSY[leased.waited]);
   } catch (error) {
     return unknown(`performance did not run: ${(error as Error).message}`);
   }

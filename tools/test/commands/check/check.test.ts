@@ -32,7 +32,7 @@ vi.mock('../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('./helpers.ts').fakeRestartClient>) => (await import('./helpers.ts')).fakeRestartClient(...args),
 }));
-vi.mock('../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
+vi.mock('../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn(), leaseHoldersEnd: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('../../../src/commands/instance/lib/records.ts', async (orig) => ({
   ...(await orig<object>()),
   // the instance record of a fake check instance: a checkout without client/generated/core_settings.json (no input gap), no client pid

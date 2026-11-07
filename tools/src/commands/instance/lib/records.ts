@@ -144,6 +144,8 @@ export interface InstanceRecord {
   plan: InstancePlan | null;
   /** Launch values of the client the runner did not start (`InstancePlan.external`); absent otherwise. */
   external?: ExternalClient | null;
+  /** The instance holds the performance lease from its slot until its record goes (ogw.md `### performance lease`). */
+  leaseHolder?: boolean;
 }
 
 /** What a client the runner does not start (device, headless browser) needs to join the instance. */

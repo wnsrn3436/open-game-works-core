@@ -9,7 +9,10 @@ import { exists, isNotFound, readJson, writeJsonAtomic } from '../../lib/fsx.ts'
 import { newId } from '../../lib/ids.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { withLock } from '../../lib/lock.ts';
+import { writerHoldsOrWaits } from '../../lib/rwlock.ts';
 import { agentContext } from '../../lib/agentctx.ts';
+import { performanceLeaseBase } from '../generation/lib/lease.ts';
+import { readMark } from '../regress/lib/mark.ts';
 import { hostBootId, JobNotFound, readJob } from '../../lib/jobs.ts';
 import { isAlive, killTree } from '../../lib/proc.ts';
 import { gameSettingsPath, loadGameSettings, withGameSettingsLock } from '../../lib/settings.ts';
@@ -93,6 +96,11 @@ export interface InstanceOptions {
   rewardPresentationOff?: boolean;
   /** The id of the instance, made with `newId` by a caller that names the instance before it starts (a judge input); a new id otherwise. */
   id?: string;
+  /**
+   * Started by a performance measurement, which holds the performance lease exclusively: the instance is no holder of
+   * the lease (ogw.md `### performance lease`).
+   */
+  measured?: boolean;
 }
 
 export interface InstanceInfo {
@@ -171,16 +179,24 @@ async function infoOf(record: InstanceRecord, env: NodeJS.ProcessEnv): Promise<I
   };
 }
 
-/** Writes the record of a new instance once fewer than `max` instances take a slot. */
+/**
+ * Writes the record of a new instance once fewer than `max` instances take a slot, and, for a holder of the performance
+ * lease, once no performance measurement holds or waits for the lease (ogw.md `### performance lease`). The wait for
+ * the lease does not count in `waitMs`: it lasts at most the time limit of a job.
+ */
 async function reserveSlot(ctx: Context, record: InstanceRecord, max: number, waitMs: number, signal?: AbortSignal): Promise<void> {
-  const deadline = Date.now() + waitMs;
+  let deadline = Date.now() + waitMs;
+  const leaseDeadline = Date.now() + LIMITS.jobMs;
   const lock = await slotLock(ctx.env);
+  const lease = record.leaseHolder === true ? { base: await performanceLeaseBase(ctx), waitMs: 0 } : null;
   for (;;) {
     checkAborted(signal);
-    const taken = await withLock(lock, async () => {
-      if (signal?.aborted === true) return false;
+    const taken = await withLock(lock, async (): Promise<'taken' | 'busy' | 'lease'> => {
+      if (signal?.aborted === true) return 'busy';
+      // checked under the slot lock, under which a measurement counts the holders (`leaseHoldersEnd`)
+      if (lease !== null && (await writerHoldsOrWaits(lease))) return 'lease';
       const busy = (await listRecords(ctx.env)).filter(takesSlot).length;
-      if (busy >= max) return false;
+      if (busy >= max) return 'busy';
       // an agent that ended while this start waited would leave the instance to nobody (instance.md `## start and stop`)
       // the job stays `running` while it finishes after its agent CLI ended, so `cliEnded` counts as ended too
       const agent = record.agentJob == null ? null : await readJob(record.agentJob, ctx.env).catch(jobGone);
@@ -188,22 +204,42 @@ async function reserveSlot(ctx: Context, record: InstanceRecord, max: number, wa
         throw new OgwError(`the ogw agent job ${record.agentJob} that started this instance has ended`, 1, { reason: 'start' } satisfies StartFailure);
       }
       await writeRecord(record, ctx.env);
-      return true;
+      return 'taken';
     });
-    if (taken) return;
+    if (taken === 'taken') return;
     checkAborted(signal);
-    if (Date.now() >= deadline) {
+    if (taken === 'lease' && Date.now() >= leaseDeadline) {
+      throw new OgwError(`no instance start within ${String(LIMITS.jobMs)} ms: performance measurements held the performance lease`, 1, { reason: 'wait-timeout' } satisfies StartFailure);
+    }
+    if (taken === 'busy' && Date.now() >= deadline) {
       throw new OgwError(
         `no instance slot within instanceWaitTimeoutMs (${String(waitMs)} ms): ${String(max)} instances are running`,
         1,
         { reason: 'wait-timeout' } satisfies StartFailure,
       );
     }
-    await sleep(Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())), undefined, { signal }).catch((error: unknown) => {
+    const paused = Date.now();
+    await sleep(taken === 'lease' ? SLOT_POLL_MS : Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())), undefined, { signal }).catch((error: unknown) => {
       // the abort of `signal` ends the wait: the start fails as stopped
       checkAborted(signal);
       throw error;
     });
+    if (taken === 'lease') deadline += Date.now() - paused;
+  }
+}
+
+/**
+ * Waits until no instance that holds the performance lease takes a slot (ogw.md `### performance lease`); false when
+ * `deadline` came first. It reads the records under the slot lock, under which a holder checks the lease before it takes
+ * its slot (`reserveSlot`): a measurement that holds the writer lock of the lease sees every holder that started before.
+ */
+export async function leaseHoldersEnd(ctx: Context, deadline: number): Promise<boolean> {
+  const lock = await slotLock(ctx.env);
+  for (;;) {
+    const held = await withLock(lock, async () => (await listRecords(ctx.env)).some((r) => r.leaseHolder === true && takesSlot(r)));
+    if (!held) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(Math.min(SLOT_POLL_MS, Math.max(0, deadline - Date.now())));
   }
 }
 
@@ -346,7 +382,9 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
     if (exists(await recordPath(id, ctx.env))) throw new OgwError(`instance ${id} exists`);
   }
   const { signal } = hooks;
-  await reserveSlot(ctx, newRecord(id, game, await startingAgent(ctx)), max, settings.instanceWaitTimeoutMs, signal);
+  // an instance of a regression state or fix repo holds the performance lease, unless a measurement starts it
+  const leaseHolder = options.measured !== true && (await readMark(game.commonDir)) !== null;
+  await reserveSlot(ctx, { ...newRecord(id, game, await startingAgent(ctx)), ...(leaseHolder ? { leaseHolder } : {}) }, max, settings.instanceWaitTimeoutMs, signal);
   hooks.onReserved?.(id);
   const made: { worktree: string | null } = { worktree: null };
   try {
