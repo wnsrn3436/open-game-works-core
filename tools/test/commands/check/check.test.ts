@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -18,7 +19,7 @@ import { resolveGame } from '../../../src/lib/game.ts';
 import { git, head } from '../../../src/lib/git.ts';
 import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { workspaceFrom, loadHarnessSettings } from '../../../src/lib/settings.ts';
-import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
+import { commitAll, ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeAgentJob } from '../instance/agents.ts';
 import { doneState, fakeAutomation, ok } from './helpers.ts';
 
@@ -114,7 +115,7 @@ function serveClient(): string[] {
       case 'get_state':
         return ok(doneState());
       case 'get_telemetry':
-        return ok({ goal_intervals: [{}], scene_loads: [{ scene_key: 'lobby', duration_ms: 10 }] });
+        return ok({ started_at: 0, goal_intervals: [{}], scene_loads: [{ scene_key: 'lobby', duration_ms: 10 }] });
       case 'get_stats':
         // 5 s of frames on time at 60 fps
         return ok({ fps: 60, frame_intervals_ms: Array<number>(300).fill(16.67) });
@@ -390,13 +391,14 @@ describe('ogw check run log summary', () => {
   });
 });
 
-async function openRun(iteration: number, data: Record<string, unknown> = {}): Promise<void> {
+async function openRun(iteration: number, data: Record<string, unknown> = {}, command: 'create' | 'update' = 'create'): Promise<string> {
   const settings = await loadHarnessSettings(ws.env);
   const game = await resolveGame(workspaceFrom(settings, ws.env), 'g', ws.root);
   const base = await head(game.root);
   await changeRuns(game, (runs) => {
-    runs.push(newRunState({ name: 'create-1', kind: 'loop', branch: 'loop/create-1', baseCommit: base, iteration, command: 'create', data }));
+    runs.push(newRunState({ name: `${command}-1`, kind: 'loop', branch: `loop/${command}-1`, baseCommit: base, iteration, command, data }));
   });
+  return base;
 }
 
 describe('ogw check --loop', () => {
@@ -545,6 +547,65 @@ describe('ogw check --loop', () => {
     expect(await git(root, ['status', '--porcelain', '--', 'records/loops/create-1/check-2.json'])).toBe('');
     const text = await ogw(ws, ['check', 'g', '--loop']);
     expect(text.stdout.trimEnd().split('\n').at(-1)).toBe('gate: fail');
+  });
+
+  it('makes the shared telemetry runs of this commit and the baseline game beside the checks, and measures performance with no other instance of the check running', async () => {
+    const root = setupGame(ws, { 'server/tests/a.test.ts': "it('a', () => { expect(1).toBe(1); });\n" });
+    // an update run: its baseline game at iteration 1 is the commit the work branch was made from
+    const base = await openRun(1, {}, 'update');
+    writeFileSync(join(root, 'client/tests/a/test_b.gd'), 'func test_b():\n');
+    commitAll(root, 'content');
+    const commit = (await head(root)).trim();
+    serveClient();
+    const answer = vi.mocked(automationRequest).getMockImplementation() as typeof automationRequest;
+    const measured = new Set<string>();
+    vi.mocked(automationRequest).mockImplementation((c, id, command, args, ...rest) => {
+      if (command === 'set_quality_level') measured.add(id);
+      return answer(c, id, command, args, ...rest);
+    });
+    // starts and stops in order; each instance has a checkout with a play guide
+    const events: [string, string][] = [];
+    const checkout = mkdtempSync(join(tmpdir(), 'ogw-instance-'));
+    writeFileSync(join(checkout, 'play-guide.md'), '## controls\n\ntap\n');
+    let n = 0;
+    vi.mocked(startInstance).mockImplementation(() => {
+      const id = `i${String(++n)}`;
+      events.push(['start', id]);
+      return Promise.resolve({ id, root: checkout } as Awaited<ReturnType<typeof startInstance>>);
+    });
+    vi.mocked(stopInstance).mockImplementation((_c, id) => {
+      events.push(['stop', id]);
+      return Promise.resolve();
+    });
+    const run = await ogw(ws, ['check', 'g', '--loop']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // three headless runs of each commit, each on a new instance of its commit
+    const starts = vi.mocked(startInstance).mock.calls.map((c) => c[1]);
+    expect(starts.filter((o) => o.commit === commit)).toEqual(Array.from({ length: 3 }, () => ({ game: 'g', commit, client: 'headless', db: undefined })));
+    expect(starts.filter((o) => o.commit === base)).toEqual(Array.from({ length: 3 }, () => ({ game: 'g', commit: base, client: 'headless', db: undefined })));
+    const scenario = createHash('sha256').update(readFileSync(join(root, 'client/dev/bot/scenario.json'))).digest('hex');
+    const runs = JSON.parse(readFileSync(join(root, 'records/loops/update-1/evidence/check-1/telemetry-runs.json'), 'utf8')) as { commit: string; baseline: string; scenario: string; runs: Record<string, { telemetry: { started_at: number }; guide: string | null }[] | null> };
+    expect({ commit: runs.commit, baseline: runs.baseline, scenario: runs.scenario }).toEqual({ commit, baseline: base, scenario });
+    for (const side of ['commit', 'baseline']) {
+      expect(runs.runs[side]?.map((r) => [r.telemetry.started_at, r.guide])).toEqual(Array.from({ length: 3 }, () => [0, '## controls\n\ntap\n']));
+    }
+    // the runs are not a check
+    const file = JSON.parse(readFileSync(join(root, 'records/loops/update-1/check-1.json'), 'utf8')) as { checks: { name: string }[] };
+    expect([...new Set(file.checks.map((c) => c.name))]).toEqual(['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder', 'row simulation']);
+    // each performance measurement (one per platform profile) starts when no other instance of the check runs, and
+    // no instance starts or stops until it stops
+    expect(measured.size).toBe(2);
+    for (const id of measured) {
+      const at = events.findIndex(([kind, i]) => kind === 'start' && i === id);
+      const running = new Set<string>();
+      for (const [kind, i] of events.slice(0, at)) {
+        if (kind === 'start') running.add(i);
+        else running.delete(i);
+      }
+      expect([...running]).toEqual([]);
+      expect(events[at + 1]).toEqual(['stop', id]);
+    }
   });
 
   it('runs only in an iteration of an open run, with maxConcurrentInstances set', async () => {

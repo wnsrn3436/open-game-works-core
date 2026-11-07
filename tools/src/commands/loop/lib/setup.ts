@@ -32,8 +32,13 @@ export async function readGameNames(game: GameRepo): Promise<Map<string, string>
 export async function readGameNamesAt(root: string): Promise<Map<string, string> | null> {
   const path = join(root, NAME_FILE);
   if (!exists(path)) return null;
+  return parseGameNames(await readFile(path, 'utf8'));
+}
+
+/** The `<language tag>: <name>` lines of `records/setup/name.md` text. */
+export function parseGameNames(text: string): Map<string, string> {
   const names = new Map<string, string>();
-  for (const line of (await readFile(path, 'utf8')).split(/\r?\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     const match = /^([A-Za-z0-9-]+):\s*(\S.*)$/.exec(line.trim());
     if (match?.[1] !== undefined && match[2] !== undefined) names.set(match[1], match[2].trim());
   }

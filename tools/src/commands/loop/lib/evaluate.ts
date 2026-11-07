@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '../../../lib/command.ts';
@@ -34,11 +34,11 @@ import {
 } from './files.ts';
 import { appendCoverage, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
-import { botRun, comparisonText, scenarioAtHead, withInputLatency, type BotRun } from './shared-telemetry.ts';
+import { botRun, checkTelemetryRuns, comparisonText, pairRuns, scenarioAtHead, withInputLatency, type BotRun, type PairRuns, type SharedScenario } from './shared-telemetry.ts';
 import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
 import { CONFIRMATION_JUDGES, combinedVsBaseline, combinedVsReference, confirmationOutcome, countVotes } from './votes.ts';
-import { MEMORABLE_MOMENT, readGameNamesAt, type Moment, type Reference } from './setup.ts';
+import { MEMORABLE_MOMENT, NAME_FILE, parseGameNames, type Moment, type Reference } from './setup.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
@@ -142,6 +142,11 @@ export interface JudgingPlan {
   successOpen?: (main: readonly JudgeEntry[]) => boolean;
   /** Whether the judges of the confirmation pair start, once every step 4 judge ended; absent: none opens. */
   confirmOpen?: (main: readonly JudgeEntry[]) => boolean;
+  /**
+   * The shared telemetry runs of the pair that another command made with this scenario (those of `ogw check --loop`);
+   * null when there are none, and the judging makes them. Absent: the judging always makes them.
+   */
+  takeRuns?: (pair: JudgePair, scenario: SharedScenario) => Promise<PairRuns | null>;
 }
 
 /** An instance to start. A start that fails for another reason than a save fixture step ends `ogw loop evaluate`. */
@@ -239,6 +244,10 @@ interface State {
   wake: AbortController;
   /** Resolves when `runSlots` ended and the run cleaned up after a failure. */
   settled: Promise<void>;
+  /** The folder of the `play-guide.md` files of the commits the judges compare, made at the first judge; null before. */
+  guides: string | null;
+  /** The `<game>` of a judge input per commit, without the instance (`sideOf`). */
+  sides: Map<string, Promise<{ playGuide: string; names: Record<string, string> | null }>>;
 }
 
 function fixturePath(plan: Pick<JudgingPlan, 'fixtureDir'>, moment: Moment): string {
@@ -274,9 +283,10 @@ function judgeMoments(plan: Pick<JudgingPlan, 'moments' | 'settings'>, pair: Jud
 }
 
 /**
- * Instances of one judge: this commit and the baseline, then a pair per judge moment, within `maxConcurrentInstances`.
- * The group holds the judge's budget (`judgeBudget`): the judge starts with that many of its instances and gets the
- * others as it gives instances back, so `together` judges that start together run at once.
+ * Instances of one judge: a pair per judge moment, then this commit and the baseline from the first screen, within
+ * `maxConcurrentInstances`. The group holds the judge's budget (`judgeBudget`) of `slots`, the slots of its kind
+ * (`maxConcurrentInstances` when omitted): the judge starts with that many of its instances and gets the others as it
+ * gives instances back, so `together` judges that start together run at once.
  */
 export function judgeGroup(
   plan: Pick<JudgingPlan, 'moments' | 'settings'>,
@@ -287,23 +297,23 @@ export function judgeGroup(
   agent: AgentSettings,
   together: number,
   fallback: AgentSettings | null = null,
+  slots: number | null = plan.settings.maxConcurrentInstances,
 ): Group {
   const { included, omitted, size } = judgeMoments(plan, pair);
-  const budget = judgeBudget(plan.settings.maxConcurrentInstances, pair.baseline === null ? 1 : 2, included.length, together);
+  const budget = judgeBudget(slots, pair.baseline === null ? 1 : 2, included.length, together);
   const slot: JudgeSlot = { role: 'judge', kind, pair, k, agent, fallback, fellBack: false, telemetry: null, side, moments: included, omitted, budget: Math.min(size, budget), pending: [], attempts: 0, instances: [], job: null, entry: null };
   return { size: slot.budget, slots: [slot], gate: kind === 'main' ? 'none' : kind };
 }
 
 /**
- * Most instances a judge holds at once: its share of `maxConcurrentInstances` among the `together` judges that start
- * together, and at least the first-screen instances and, with moments, one save fixture pair, as the judge plays the
- * save fixture instances first while it holds the first-screen ones. All of them without `maxConcurrentInstances`.
+ * Most instances a judge holds at once: its share of `slots`, the slots of its kind, among the `together` judges that
+ * start together, and at least one instance per side, as the judge plays its instances one moment at a time in the
+ * order they start (`judgeSpecs`). All of them without `maxConcurrentInstances` (`slots` null).
  */
-export function judgeBudget(max: number | null, perGame: number, moments: number, together: number): number {
+export function judgeBudget(slots: number | null, perGame: number, moments: number, together: number): number {
   const all = (moments + 1) * perGame;
-  if (max === null) return all;
-  const least = perGame * (moments > 0 ? 2 : 1);
-  return Math.min(all, Math.max(least, Math.floor(max / Math.max(1, together))));
+  if (slots === null) return all;
+  return Math.min(all, Math.max(perGame, Math.floor(slots / Math.max(1, together))));
 }
 
 /**
@@ -344,11 +354,15 @@ export function planGroups(plan: EvaluatePlan): Group[] {
   const pair: JudgePair = { name: '', commit: plan.commit, baseline: plan.baseline, baselineLatencyMs: 0 };
   const count = plan.baseline === null ? 1 : plan.settings.loop.judgeVotes;
   const first = plan.baseline === null ? 'A' : drawSide();
+  const plays = playGroups(plan);
+  // the judges of each kind share the slots that step 3 leaves, so that the plays run beside them
+  const max = plan.settings.maxConcurrentInstances;
+  const slots = max === null ? null : max - plays.reduce((n, g) => n + g.size, 0);
   const groups: Group[] = [];
   for (let k = 1; k <= count; k++) {
-    groups.push(judgeGroup(plan, pair, 'main', k, alternateSide(first, k), judgeAgent(plan.settings, k), count));
+    groups.push(judgeGroup(plan, pair, 'main', k, alternateSide(first, k), judgeAgent(plan.settings, k), count, null, slots));
   }
-  return [...groups, ...playGroups(plan), ...successGroups(plan, pair), ...confirmGroups(plan, pair)];
+  return [...groups, ...plays, ...successGroups(plan, pair, slots), ...confirmGroups(plan, pair, slots)];
 }
 
 /** The `playInstances` plays and a play per judge moment; none in a fun iteration. */
@@ -375,23 +389,23 @@ function confirmFallbackOf(plan: EvaluatePlan): AgentSettings | null {
   return confirmJudge === undefined ? null : (confirmFallback ?? null);
 }
 
-/** The success judges of a completeness iteration of a loop run: a random side each. */
-function successGroups(plan: EvaluatePlan, pair: JudgePair): Group[] {
+/** The success judges of a completeness iteration of a loop run, in `slots`: a random side each. */
+function successGroups(plan: EvaluatePlan, pair: JudgePair, slots: number | null): Group[] {
   if (plan.run.kind !== 'loop' || plan.kind !== 'completeness') return [];
   const agent = plan.settings.loop.confirmJudge ?? judgeAgent(plan.settings, 1);
   const successJudges = plan.settings.loopStop.successJudges;
   return Array.from({ length: successJudges }, () =>
-    judgeGroup(plan, pair, 'success', 0, plan.baseline === null ? 'A' : drawSide(), agent, successJudges, confirmFallbackOf(plan)),
+    judgeGroup(plan, pair, 'success', 0, plan.baseline === null ? 'A' : drawSide(), agent, successJudges, confirmFallbackOf(plan), slots),
   );
 }
 
-/** The confirmation pair of a fun iteration with a baseline game and `loop.confirmJudge`: the first on a random side. */
-function confirmGroups(plan: EvaluatePlan, pair: JudgePair): Group[] {
+/** The confirmation pair of a fun iteration with a baseline game and `loop.confirmJudge`, in `slots`: the first on a random side. */
+function confirmGroups(plan: EvaluatePlan, pair: JudgePair, slots: number | null): Group[] {
   const agent = plan.settings.loop.confirmJudge;
   if (plan.run.kind !== 'loop' || plan.kind !== 'fun' || plan.baseline === null || agent === undefined) return [];
   const first = drawSide();
   return Array.from({ length: CONFIRMATION_JUDGES }, (_v, i) =>
-    judgeGroup(plan, pair, 'confirm', 0, alternateSide(first, i + 1), agent, CONFIRMATION_JUDGES, confirmFallbackOf(plan)),
+    judgeGroup(plan, pair, 'confirm', 0, alternateSide(first, i + 1), agent, CONFIRMATION_JUDGES, confirmFallbackOf(plan), slots),
   );
 }
 
@@ -469,11 +483,30 @@ async function stop(state: State, instance: InstanceInfo | null): Promise<void> 
   await stopInstance(state.ctx, instance.id);
 }
 
-/** The `<game>` of the judge input: the instance, its play guide and the game's name per language, which its logo reads. */
-async function guide(instance: InstanceInfo | null): Promise<{ instance: string; playGuide: string; names: Record<string, string> | null } | null> {
-  if (!instance) return null;
-  const names = await readGameNamesAt(instance.root);
-  return { instance: instance.id, playGuide: join(instance.root, 'play-guide.md'), names: names ? Object.fromEntries(names) : null };
+/**
+ * The `<game>` of a judge input without its instance: `play-guide.md` of the commit, written from git into the guides
+ * folder of the run (a path where no file is when the commit has none), and the game's name per language of
+ * `records/setup/name.md` of the commit, which its logo reads. Read from git, as the first-screen instance of the side
+ * can start after the judge (ogw.md `## loop evaluate`).
+ */
+async function sideOf(state: State, commit: string): Promise<{ playGuide: string; names: Record<string, string> | null }> {
+  let side = state.sides.get(commit);
+  if (side === undefined) {
+    side = (async () => {
+      const env = { env: state.ctx.env };
+      state.guides ??= await newPrivateTempFolder('ogw-guides-', state.ctx.env);
+      const playGuide = join(state.guides, commit, 'play-guide.md');
+      const text = await showFile(state.plan.game.root, commit, 'play-guide.md', env);
+      if (text !== null) {
+        await mkdir(join(state.guides, commit), { recursive: true });
+        await writeFile(playGuide, text);
+      }
+      const names = await showFile(state.plan.game.root, commit, NAME_FILE, env);
+      return { playGuide, names: names === null ? null : Object.fromEntries(parseGameNames(names.toString('utf8'))) };
+    })();
+    state.sides.set(commit, side);
+  }
+  return side;
 }
 
 async function launchPlay(state: State, slot: PlaySlot): Promise<void> {
@@ -516,14 +549,18 @@ interface JudgeSpec {
   spec: Spec;
 }
 
-/** The instances of a judge in the order it plays them after the first-screen ones: those, then the save fixture pairs in moment order. */
+/**
+ * The instances of a judge in the order it plays them (`## how to play` of `judge`), which is the order they start in:
+ * the save fixture pairs in moment order, then the first-screen pair; `A` before `B` in each.
+ */
 function judgeSpecs(plan: JudgingPlan, slot: JudgeSlot): JudgeSpec[] {
   const { A, B } = sides(slot);
   const commits: ['A' | 'B', string][] = B === null ? [['A', A]] : [['A', A], ['B', B]];
-  const specs: JudgeSpec[] = commits.map(([side, commit]) => ({ side, moment: null, spec: { commit, ...sideDegrade(slot, side) } }));
+  const specs: JudgeSpec[] = [];
   for (const moment of slot.moments) {
     for (const [side, commit] of commits) specs.push({ side, moment, spec: { commit, fixture: fixturePath(plan, moment), ...sideDegrade(slot, side) } });
   }
+  for (const [side, commit] of commits) specs.push({ side, moment: null, spec: { commit, ...sideDegrade(slot, side) } });
   return specs;
 }
 
@@ -548,24 +585,26 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
   const specs = judgeSpecs(plan, slot);
   slot.instances = [];
   slot.pending = [];
-  const started: (InstanceInfo | null)[] = [];
   const ids: (string | null)[] = [];
   for (const [i, item] of specs.entries()) {
     if (i < slot.budget) {
       const info = await start(state, item.spec);
       if (info) slot.instances.push(info);
-      started.push(info);
       ids.push(info?.id ?? null);
     } else {
       const id = newId();
       slot.pending.push({ id, spec: item.spec });
-      started.push(null);
       ids.push(id);
     }
   }
-  const b = specs[1]?.moment === null ? (started[1] ?? null) : null;
+  // the first-screen instance of a side is named whether it started or waits in `pending`; it never fails on a save fixture
+  const game = async (side: 'A' | 'B'): Promise<{ instance: string; playGuide: string; names: Record<string, string> | null } | null> => {
+    const i = specs.findIndex((s) => s.moment === null && s.side === side);
+    const commit = sides(slot)[side];
+    return i < 0 || commit === null ? null : { instance: ids[i] as string, ...(await sideOf(state, commit)) };
+  };
   const reference = plan.kind === 'fun' || plan.reference === null ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
-  const input = await inputFile(state, 'judge', { A: await guide(started[0] ?? null), B: await guide(b), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
+  const input = await inputFile(state, 'judge', { A: await game('A'), B: await game('B'), fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
   await startJob(state, slot, input);
 }
 
@@ -886,11 +925,6 @@ function abortOnSignal(state: State): () => void {
   return off;
 }
 
-/** Bot runs of the scenario per commit for the shared telemetry: the spread between them is the noise a difference must exceed. */
-const SHARED_TELEMETRY_RUNS = 3;
-/** New runs per commit that may replace runs that did not reach every step. */
-const SHARED_TELEMETRY_RETRIES = 3;
-
 /** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
 async function botRunOf(state: State, commit: string, scenario: Scenario, degrade: Degrade = {}): Promise<BotRun | null> {
   let instance: InstanceInfo | null = null;
@@ -909,43 +943,25 @@ async function botRunOf(state: State, commit: string, scenario: Scenario, degrad
 }
 
 /**
- * The runs of `commit` that reached every step, with new runs, one at a time, in place of those that did not, up to
- * `SHARED_TELEMETRY_RETRIES` new runs; null when fewer than `SHARED_TELEMETRY_RUNS` runs reached every step.
+ * The shared telemetry of one pair (ogw.md `## loop evaluate`): the shared telemetry runs of this commit and the
+ * baseline commit, those `takeRuns` gives or else new ones, compared with `A` and `B` of each step 4 judge of the pair in
+ * the site's telemetry file. A success judge and a judge of the confirmation pair get the file of the first step 4
+ * judge of its side. Without the runs of both commits the judges of the pair get `telemetry` null.
  */
-async function completeRuns(
-  state: State,
-  commit: string,
-  scenario: Scenario,
-  degrade: Degrade,
-  first: readonly (BotRun | null)[],
-): Promise<BotRun[] | null> {
-  const runs = first.filter((r): r is BotRun => r !== null);
-  for (let retry = 0; runs.length < SHARED_TELEMETRY_RUNS && retry < SHARED_TELEMETRY_RETRIES; retry++) {
-    const run = await botRunOf(state, commit, scenario, degrade);
-    checkStopped(state);
-    if (run !== null) runs.push(run);
-  }
-  return runs.length === SHARED_TELEMETRY_RUNS ? runs : null;
-}
-
-/**
- * The shared telemetry of one pair (ogw.md `## loop evaluate`): the bot runs of the scenario on this commit and the
- * baseline commit, compared with `A` and `B` of each step 4 judge of the pair in the site's telemetry file. A success
- * judge and a judge of the confirmation pair get the file of the first step 4 judge of its side. Without both runs the judges of the pair get `telemetry`
- * null.
- */
-async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scenario): Promise<void> {
+async function sharePairTelemetry(state: State, pair: JudgePair, shared: SharedScenario): Promise<void> {
   if (pair.baseline === null) return;
   const baseline = pair.baseline;
-  const runs = await Promise.all(
-    Array.from({ length: SHARED_TELEMETRY_RUNS }, () => [botRunOf(state, pair.commit, scenario), botRunOf(state, baseline, scenario, baselineDegrade(pair))]).flat(),
-  );
-  checkStopped(state);
-  const [mine, theirRuns] = await Promise.all([
-    completeRuns(state, pair.commit, scenario, {}, runs.filter((_, i) => i % 2 === 0)),
-    completeRuns(state, baseline, scenario, baselineDegrade(pair), runs.filter((_, i) => i % 2 === 1)),
-  ]);
-  checkStopped(state);
+  const { scenario } = shared;
+  const taken = (await state.plan.takeRuns?.(pair, shared)) ?? null;
+  const runs =
+    taken ??
+    (await pairRuns(
+      (side) => (side === 'commit' ? botRunOf(state, pair.commit, scenario) : botRunOf(state, baseline, scenario, baselineDegrade(pair))),
+      () => {
+        checkStopped(state);
+      },
+    ));
+  const { commit: mine, baseline: theirRuns } = runs;
   if (mine === null || theirRuns === null) return;
   const theirs = theirRuns.map((r) => withInputLatency(r, pair.baselineLatencyMs));
   const judges = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.pair === pair);
@@ -963,9 +979,9 @@ async function sharePairTelemetry(state: State, pair: JudgePair, scenario: Scena
 async function shareTelemetry(state: State): Promise<void> {
   const pairs = [...new Set(state.all.filter((s): s is JudgeSlot => s.role === 'judge').map((s) => s.pair))].filter((p) => p.baseline !== null);
   if (pairs.length === 0) return;
-  const scenario = await scenarioAtHead(state.plan.game, state.ctx.env);
-  if (scenario === null) return;
-  for (const pair of pairs) await sharePairTelemetry(state, pair, scenario);
+  const shared = await scenarioAtHead(state.plan.game, state.ctx.env);
+  if (shared === null) return;
+  for (const pair of pairs) await sharePairTelemetry(state, pair, shared);
 }
 
 async function runSlots(state: State): Promise<void> {
@@ -1037,6 +1053,9 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
     site: runSite(plan.game, plan.run),
     successOpen: (main) => successPrecondition({ kind: plan.kind, ...together(plan, main) }, (name) => checkResult(plan.check, name)),
     confirmOpen: (main) => together(plan, main).vsBaseline === 'better',
+    // the runs `ogw check --loop` made of the same two commits with the same scenario (ogw.md `## check`)
+    takeRuns: (pair, shared) =>
+      pair.baseline === null ? Promise.resolve(null) : checkTelemetryRuns(plan.game, plan.run, plan.run.iteration, { commit: pair.commit, baseline: pair.baseline, scenario: shared.sha256 }),
   };
 }
 
@@ -1073,6 +1092,8 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     stoppedBy: null,
     wake: new AbortController(),
     settled: Promise.resolve(),
+    guides: null,
+    sides: new Map(),
   };
   let settle = (): void => undefined;
   state.settled = new Promise((resolve) => {
@@ -1090,6 +1111,7 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
   } finally {
     settle();
     off();
+    if (state.guides !== null) await rm(state.guides, { recursive: true, force: true });
   }
   return { slots: state.all, failure };
 }

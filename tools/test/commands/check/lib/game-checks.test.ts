@@ -93,6 +93,47 @@ describe('gameChecks', () => {
     vi.mocked(mergedCoreSettings).mockResolvedValue({});
   });
 
+  it('measures performance only once every other instance work of the check has ended, the work alongside the checks included', async () => {
+    const pending: { name: string; resolve: () => void }[] = [];
+    const later = <T>(name: string, value: T): Promise<T> =>
+      new Promise<T>((resolve) => {
+        pending.push({
+          name,
+          resolve: () => {
+            resolve(value);
+          },
+        });
+      });
+    // a turn of the event loop: what a settled promise starts has started by then
+    const turn = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+    vi.mocked(botPlaytest).mockImplementation(() => later('bot playtest', [pass('no blocker'), pass('full flow')]));
+    vi.mocked(uiQualityCheck).mockImplementation((_c, _g, platform) => later(`UI quality ${platform}`, pass('UI quality', platform)));
+    vi.mocked(rowSimulationCheck).mockImplementation(() => later('row simulation', pass('row simulation')));
+    const alongside = vi.fn<(instance: unknown) => Promise<void>>(() => later('alongside', undefined));
+    const checks = gameChecks(ctx, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all', alongside);
+    while (pending.length < 5) await turn();
+    for (const name of ['bot playtest', 'UI quality ios', 'row simulation', 'UI quality web', 'alongside']) {
+      for (let i = 0; i < 5; i++) await turn();
+      expect(performanceChecks).not.toHaveBeenCalled();
+      pending.find((p) => p.name === name)?.resolve();
+    }
+    expect((await checks).map((c) => [c.name, c.platform])).toEqual([
+      ['regression test', null],
+      ['static check', null],
+      ['no blocker', null],
+      ['full flow', null],
+      ['performance', 'ios'],
+      ['performance', 'web'],
+      ['UI quality', 'ios'],
+      ['UI quality', 'web'],
+      ['no placeholder', null],
+      ['row simulation', null],
+    ]);
+    expect(performanceChecks).toHaveBeenCalledTimes(1);
+    // the work alongside takes its instances within the slots of the check
+    expect(alongside.mock.calls[0]?.[0]).toBe(vi.mocked(botPlaytest).mock.calls[0]?.[3]);
+  });
+
   it('all also runs no placeholder and row simulation', async () => {
     expect((await names('all')).slice(-2)).toEqual([['no placeholder', null], ['row simulation', null]]);
     expect(placeholderFailures).toHaveBeenCalledTimes(1);

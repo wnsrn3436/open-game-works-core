@@ -19,6 +19,7 @@ import { Slots } from './instances.ts';
 import { performanceChecks, platformProfiles } from './performance.ts';
 import { regressionTest } from './regression.ts';
 import { rowSimulationCheck } from './row-simulation.ts';
+import { makeTelemetryRuns } from './telemetry-runs.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
 import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
@@ -100,9 +101,19 @@ const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', '
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
- * the bot playtest (ogw.md `## check`).
+ * the bot playtest (ogw.md `## check`). `alongside` is more instance work of the check, which is not a check (the shared
+ * telemetry runs of `--loop`). The performance measurements start once every other instance of the check has stopped
+ * (ogw.md `## performance`).
  */
-export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSettings, options: LoopOptions, evidence: Evidence, set: CheckSet): Promise<CheckResult[]> {
+export async function gameChecks(
+  ctx: Context,
+  game: GameRepo,
+  settings: GameSettings,
+  options: LoopOptions,
+  evidence: Evidence,
+  set: CheckSet,
+  alongside?: (instance: InstanceCheckOptions) => Promise<void>,
+): Promise<CheckResult[]> {
   const instance: InstanceCheckOptions = { evidence, slots: await slotsOf(ctx), db: options.db, pollMs: options.pollMs };
   const modules = await gameModules(ctx, game);
   const scenario = await readScenario(game.root);
@@ -135,16 +146,29 @@ export async function gameChecks(ctx: Context, game: GameRepo, settings: GameSet
   const client = { godot: options.godot, evidence, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), ...imported, ...db };
   const all = set === 'all';
   const fun = set === 'fun';
+  // every instance of the check other than those of the performance measurements
+  const instances: Promise<CheckResult | CheckResult[]>[] = [
+    botPlaytest(ctx, game.name, scenario, instance),
+    ...(fun ? [] : profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui))),
+    ...(all ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),
+  ];
+  const besides =
+    alongside === undefined
+      ? []
+      : [
+          alongside(instance).catch((error: unknown) => {
+            ctx.log(`shared telemetry runs: ${(error as Error).message}`);
+          }),
+        ];
   const tasks: Promise<CheckResult | CheckResult[]>[] = [
     guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game.root, { client: 'client/tests', server: 'server/tests' }, client)),
     guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })),
-    botPlaytest(ctx, game.name, scenario, instance),
-    ...(fun ? [] : [performanceChecks(ctx, game.name, profiles, scenario, performance)]),
-    ...(fun ? [] : profiles.map((p) => uiQualityCheck(ctx, game.name, p, ui))),
+    ...instances,
+    ...(fun ? [] : [Promise.allSettled([...instances, ...besides]).then(() => performanceChecks(ctx, game.name, profiles, scenario, performance))]),
     ...(all ? [guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game)))] : []),
-    ...(all ? [rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)] : []),
   ];
-  const checks = (await Promise.all(tasks)).flat().sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
+  const [results] = await Promise.all([Promise.all(tasks), ...besides]);
+  const checks = results.flat().sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
   return set === 'core try' ? checks.filter((c) => CORE_TRY_CHECKS.includes(c.name)) : checks;
 }
 
@@ -157,7 +181,9 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   await rm(join(game.root, evidenceDir), { recursive: true, force: true });
   const commit = await head(game.root, { env: ctx.env });
   const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
-  const checks = await gameChecks(ctx, game, settings, options, evidence, iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all');
+  const set = iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all';
+  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`)
+  const checks = await gameChecks(ctx, game, settings, options, evidence, set, (instance) => makeTelemetryRuns(ctx, game, run, commit, instance));
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
   await writeJsonAtomic(join(game.root, file), { commit, checks, gate });

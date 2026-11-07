@@ -774,6 +774,17 @@ describe('performanceChecks: the performance lease', () => {
     expect(order.slice(2).sort()).toEqual(['start', 'start', 'stop', 'stop']);
   });
 
+  it('measures the platform profiles one at a time, so that no other instance runs beside the measured one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const order: string[] = [];
+    trackInstances(order);
+    fakeGame({ lobby: 60, battle: 60 }, []);
+    // slots for both: the measurements themselves keep apart
+    const results = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root), slots: new Slots(2) }));
+    expect(results.map((r) => r.platform)).toEqual(['android', 'web']);
+    expect(order).toEqual(['start', 'stop', 'start', 'stop']);
+  });
+
   it('keeps a generation that starts while it measures out until the measurement ends', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     const order: string[] = [];

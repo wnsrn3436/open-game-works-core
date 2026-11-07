@@ -443,12 +443,17 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
 }
 
 /**
- * performance of every platform profile, measured together holding the performance lease exclusively (ogw.md
+ * performance of every platform profile, one profile at a time so that no other instance of the check runs beside the
+ * measured one (ogw.md `## performance`), holding the performance lease exclusively across all of them (ogw.md
  * `### performance lease`). When the lease does not come within its wait, nothing is measured and each item is
  * `unknown`, with the host load read during the wait.
  */
 export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
-  const each = (): Promise<CheckResult[]> => Promise.all(platforms.map((p) => performanceCheck(ctx, game, p, scenario, options)));
+  const each = async (): Promise<CheckResult[]> => {
+    const results: CheckResult[] = [];
+    for (const p of platforms) results.push(await performanceCheck(ctx, game, p, scenario, options));
+    return results;
+  };
   // nothing to measure: the items say why without waiting for the lease
   if (platforms.length === 0 || typeof scenario === 'string') return each();
   const waiting = new HostLoadSampler(options.probe, options.sampleMs);
