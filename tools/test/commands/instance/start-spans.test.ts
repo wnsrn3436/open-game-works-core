@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { performanceLeaseBase } from '../../../src/commands/generation/lib/lease.ts';
 import { leaseHoldersEnd } from '../../../src/commands/instance/api.ts';
-import { instancesDir } from '../../../src/commands/instance/lib/records.ts';
+import { instancesDir, listRecords } from '../../../src/commands/instance/lib/records.ts';
 import { writeMark } from '../../../src/commands/regress/lib/mark.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { hostBootId } from '../../../src/lib/jobs.ts';
@@ -88,5 +88,21 @@ describe('ogw instance start in a job', () => {
     const waits = lines.flatMap((l) => ('wait' in l && l.end !== null ? [{ on: l.wait, ms: l.end - l.start }] : []));
     expect(waits.map((w) => w.on)).toEqual([lease.base]);
     expect(waits[0]?.ms).toBeGreaterThanOrEqual(300);
+  });
+
+  it('leaves a spans line its supervisor cannot write to the command of the job: the instance starts, the command fails', async () => {
+    runner = setupRunner();
+    const r = runner;
+    const jobs = join(r.ws.root, 'jobs');
+    mkdirSync(jobs);
+    r.ws.env.OGW_JOBS_DIR = jobs;
+    writeJob(jobs, { id: 'sj2', command: 'instance start', startedAt: Date.now(), supervisorPid: process.pid, bootId: hostBootId() });
+    // a folder where the spans file goes: no line can be written
+    mkdirSync(join(jobs, 'sj2.spans.jsonl'));
+    const started = await ogw(r.ws, ['instance', 'start', 'g'], { env: { ...r.ws.env, OGW_JOB_ID: 'sj2' } });
+    expect(started.code).toBe(1);
+    expect(started.stderr).toMatch(/cannot write the spans file .*sj2\.spans\.jsonl/);
+    const records = await listRecords(r.ws.env);
+    expect(records.map((record) => [record.status, record.failure])).toEqual([['running', null]]);
   });
 });

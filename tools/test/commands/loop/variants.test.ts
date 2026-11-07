@@ -266,7 +266,7 @@ describe('ogw loop variants', () => {
     const spans = readFileSync(varjob.spans, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { name?: string; end: number | null; failed?: true });
     const ended = spans.filter((l) => l.end !== null && l.name !== undefined);
     expect(ended.filter((l) => l.name?.startsWith('variant ') === true).map((l) => [l.name, l.failed === true]).sort()).toEqual([['variant 1', false], ['variant 2', false], ['variant 3', true]]);
-    expect(ended.filter((l) => l.name?.startsWith('variant ') !== true).map((l) => l.name)).toEqual(expect.arrayContaining(['judging', 'merge', 'remove worktrees']));
+    expect(ended.filter((l) => l.name?.startsWith('variant ') !== true).map((l) => l.name)).toEqual(expect.arrayContaining(['judging', 'wait for variants', 'merge', 'remove worktrees']));
     const [v1, v2, v3] = fake.content.map((c) => c.id) as [string, string, string];
     // the inputs: the content input with `## variant`, committed before the agents start
     expect(fake.content.map((c) => c.input)).toEqual([1, 2, 3].map((k) => join(g.root, `${R}/content-input-2-v${String(k)}.md`)));

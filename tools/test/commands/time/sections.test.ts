@@ -46,5 +46,8 @@ describe('the ## time section', () => {
     const game = { name: 'g', root, mainRoot: root, commonDir: join(root, '.git'), inWorktree: false };
     expect(await runTimeSection(ws.env, game, run, 1)).toBe(['- wall time: 16m 30s', '- critical path: ogw agent content (a1) 1m 20s 8.1%', '- flags: none'].join('\n'));
     expect(await runTimeSection(ws.env, game, run, 2)).toBe('none: iteration 2 of run create-1 has no ogw agent job');
+    // a spans file of a job of the run that names a parent span it does not hold: the section says why
+    writeFileSync(join(ws.jobs, 'a1.spans.jsonl'), `${JSON.stringify({ id: 'x', name: 'x', parent: 'gone', start: T + 20 * S, end: T + 30 * S })}\n`);
+    expect(await runTimeSection(ws.env, game, run, 1)).toBe('unknown: job a1: span x is in span gone, which its spans file does not hold');
   });
 });
