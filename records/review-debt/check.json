@@ -1,0 +1,12 @@
+{
+  "target": "check",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/ogw.md:1120",
+      "problem": "commit 31ffa6a of the range sets the repeat test and soak test values of `ogw build run` (36 runs, failure rate under 8% at 95%, 45 minutes, 2048 MiB within a day, 10 ms/s) with no message body, so no cause and no evidence (AGENTS.md `## harness writing rules`); its values belong to `ogw build run`, not to `ogw check`",
+      "foundBy": "check round 1"
+    }
+  ]
+}
