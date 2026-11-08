@@ -44,7 +44,7 @@ vi.mock('../../../src/commands/core/lib/server-layout.ts', async (importOriginal
 vi.mock('../../../src/commands/core/lib/server-tests.ts', () => ({ serverModuleTest: vi.fn() }));
 
 beforeEach(() => {
-  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
+  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), gameSettings: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false });
   vi.mocked(baseProtoErrors).mockReset().mockResolvedValue([]);
   vi.mocked(serverModuleTest).mockReset();
   vi.mocked(runToolTest).mockReset();

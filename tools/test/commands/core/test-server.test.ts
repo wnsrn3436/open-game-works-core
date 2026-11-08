@@ -57,7 +57,7 @@ vi.mock('../../../src/commands/core/lib/server-layout.ts', async (importOriginal
 vi.mock('../../../src/commands/core/lib/server-tests.ts', () => ({ serverModuleTest: vi.fn() }));
 
 beforeEach(() => {
-  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
+  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), gameSettings: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false });
   vi.mocked(baseProtoErrors).mockReset().mockResolvedValue([]);
   vi.mocked(serverModuleTest).mockReset();
   vi.mocked(runToolTest).mockReset();
@@ -189,7 +189,7 @@ describe('ogw core test server and tools', () => {
     vi.mocked(writeCoreSpec).mockImplementation(() => {
       const file = join(ws.coreImpl, 'core-spec', 'routing.json');
       writeFileSync(file, `${JSON.stringify({ ...(JSON.parse(readFileSync(file, 'utf8')) as object), regenerated: true })}\n`);
-      return Promise.resolve({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
+      return Promise.resolve({ modules: new Map(), settingTypes: new Map(), gameSettings: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false });
     });
     vi.mocked(serverModuleTest).mockResolvedValue({ tests: 1, passed: 1, failures: [] });
     const ran = await ogw(ws, ['core', 'test', 'server'], { env });

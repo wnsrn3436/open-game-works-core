@@ -1,6 +1,6 @@
 import { expectPositionals, type CommandDef, type CommandResult } from '../../lib/command.ts';
 import { resolveCoreImpl } from '../../lib/game.ts';
-import { SETTING_TYPES_FILE, withGeneratedCommit } from './lib/main-checkout.ts';
+import { SETTING_TYPES_FILE, SETTINGS_SCHEMA_FILE, withGeneratedCommit } from './lib/main-checkout.ts';
 import { writeCoreSpec } from './spec-api.ts';
 
 function failure(errors: string[]): CommandResult {
@@ -20,10 +20,11 @@ export const spec: CommandDef = {
       ...result.written.map((file) => `wrote core-spec/${file}`),
       ...result.deleted.map((file) => `deleted core-spec/${file}`),
       ...(result.settingTypesWritten ? [`wrote ${SETTING_TYPES_FILE}`] : []),
+      ...(result.settingsSchemaWritten ? [`wrote ${SETTINGS_SCHEMA_FILE}`] : []),
     ];
     return {
-      text: lines.length > 0 ? lines.join('\n') : 'core-spec and the settings type table are up to date',
-      data: { ok: true, dir: result.dir, modules: result.modules.size, written: result.written, deleted: result.deleted, settingTypesWritten: result.settingTypesWritten, errors: [] },
+      text: lines.length > 0 ? lines.join('\n') : 'core-spec, the settings type table and the settings schema are up to date',
+      data: { ok: true, dir: result.dir, modules: result.modules.size, written: result.written, deleted: result.deleted, settingTypesWritten: result.settingTypesWritten, settingsSchemaWritten: result.settingsSchemaWritten, errors: [] },
     };
   },
 };

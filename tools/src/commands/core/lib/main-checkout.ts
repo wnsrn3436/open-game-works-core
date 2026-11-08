@@ -25,6 +25,9 @@ export async function withCoreMain<T>(coreImpl: string, env: NodeJS.ProcessEnv, 
 /** The settings type table of `testing`, a generated file (ogw.md `## core spec and core test`). */
 export const SETTING_TYPES_FILE = 'server/core/testing/dev/setting_types.ts';
 
+/** The settings schema that the settings check of `routing` reads in core tests, a generated file (ogw.md `## core spec and core test`). */
+export const SETTINGS_SCHEMA_FILE = 'server/generated/core_settings_schema.json';
+
 /**
  * Whether a checkout path is a generated file: `core-spec/`, the settings type table of `testing`, a committed generation
  * target of the core test data build (`data` SKILL.md `## data tool` and tool.md: `server/` as is, the engine project

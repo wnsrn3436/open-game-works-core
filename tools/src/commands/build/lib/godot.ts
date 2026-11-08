@@ -6,6 +6,7 @@ import { span } from '../../../lib/spans.ts';
 import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { revParse, showFile } from '../../../lib/git.ts';
+import { isPlainObject } from '../../../lib/json.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { runOk } from '../../../lib/proc.ts';
 import { gameSecretService } from '../../../lib/secrets.ts';
@@ -228,6 +229,11 @@ export async function filterCoreSettings(root: string, env: Env): Promise<void> 
   for (const name of ['core_settings.json', 'core_settings_types.json']) await filterCoreSettingsFile(join(root, 'client', 'generated', name), env);
 }
 
+/** Whether the path of a core settings file item names an environment other than `env`. */
+function namesOtherEnv(key: string, env: Env): boolean {
+  return ENVS.some((other) => other !== env && key.split('.').includes(other));
+}
+
 /** A `core_settings.json` without the items whose path names another environment; nothing when the file is absent. */
 export async function filterCoreSettingsFile(path: string, env: Env): Promise<void> {
   const settings = await readJsonIfExists<Record<string, unknown>>(path);
@@ -235,12 +241,27 @@ export async function filterCoreSettingsFile(path: string, env: Env): Promise<vo
   const others = ENVS.filter((e) => e !== env);
   const kept: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(settings)) {
-    if (others.some((other) => key.split('.').includes(other))) continue;
+    if (namesOtherEnv(key, env)) continue;
     if (key === 'environments' && typeof value === 'object' && value !== null) {
       kept[key] = Object.fromEntries(Object.entries(value).filter(([name]) => !others.includes(name as Env)));
     } else kept[key] = value;
   }
   await writeJsonAtomic(path, kept);
+}
+
+/**
+ * A `core_settings_schema.json` without the properties of the items whose path names another environment, in
+ * `properties` and in `required`; nothing when the file is absent.
+ */
+export async function filterSettingsSchemaFile(path: string, env: Env): Promise<void> {
+  const schema = await readJsonIfExists(path);
+  if (schema === null) return;
+  if (!isPlainObject(schema) || !isPlainObject(schema.properties) || !Array.isArray(schema.required)) {
+    throw new OgwError(`settings schema without a properties object and a required array: ${path}`);
+  }
+  const properties = Object.fromEntries(Object.entries(schema.properties).filter(([key]) => !namesOtherEnv(key, env)));
+  const required = schema.required.filter((key) => typeof key !== 'string' || !namesOtherEnv(key, env));
+  await writeJsonAtomic(path, { ...schema, properties, required });
 }
 
 interface Plugin {

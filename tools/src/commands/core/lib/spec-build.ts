@@ -12,6 +12,8 @@ export interface CoreSpecResult {
   modules: Map<string, unknown>;
   /** The settings type table: the `type` of every distinct settings `key` of all modules, in byte order of `key`. */
   settingTypes: Map<string, string>;
+  /** The `type` of every distinct `key` of the settings rows whose `source` is `game` (game settings paths), in byte order of `key`. */
+  gameSettings: Map<string, string>;
   errors: string[];
   entries: ModuleEntry[];
   specs: ParsedSpec[];
@@ -150,7 +152,11 @@ export async function buildFromHarness(harness: string): Promise<CoreSpecResult>
   const modules = new Map<string, unknown>();
   for (const spec of specs) modules.set(spec.entry.name, moduleObject(spec, new Set(spec.tables.map((t) => t.name))));
   const settingTypes = new Map<string, string>();
+  const gameSettings = new Map<string, string>();
   const rows = specs.flatMap((spec) => spec.settings).sort((a, b) => byteCompare(a.key, b.key));
-  for (const row of rows) if (!settingTypes.has(row.key)) settingTypes.set(row.key, row.type);
-  return { modules, settingTypes, errors, entries, specs };
+  for (const row of rows) {
+    if (!settingTypes.has(row.key)) settingTypes.set(row.key, row.type);
+    if (row.source === 'game' && !gameSettings.has(row.key)) gameSettings.set(row.key, row.type);
+  }
+  return { modules, settingTypes, gameSettings, errors, entries, specs };
 }

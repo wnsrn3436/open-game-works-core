@@ -108,7 +108,7 @@ async function setup(): Promise<{ ws: TestWorkspace; env: NodeJS.ProcessEnv; gh:
   sh(ws.coreImpl, 'git', ['tag', 'v1.1.0']);
   await recordAllPass(ws.coreImpl);
   const gh = fakeGh(ws, { 'v1.1.0': makeReleaseDir(join(ws.root, 'r110'), '1.1.0', { 'a.json': '1' }) });
-  vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), errors: [] });
+  vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), gameSettings: new Map(), errors: [] });
   return { ws, gh, env: { ...gh.env, ...remoteEnv(ws) } };
 }
 
@@ -196,7 +196,7 @@ describe('ogw core release', () => {
     modules.set('UICore', { changed: true });
     modules.set('NewCore', {});
     modules.delete('routing');
-    vi.mocked(buildCoreSpec).mockResolvedValue({ modules, settingTypes: new Map(), errors: ['skills/x.md:3: bad dependency line'] });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules, settingTypes: new Map(), gameSettings: new Map(), errors: ['skills/x.md:3: bad dependency line'] });
     vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'fix'], ['data-tool', null], ['contract-tool', 'running']]));
     vi.mocked(changedSinceDone).mockResolvedValue(new Map([['UICore', 2]]));
     vi.mocked(runCodeCheck).mockResolvedValue([{ name: 'lint', result: 'fail', failures: ['a.gd:1 x', 'b.gd:2 y'] }, { name: 'secret', result: 'fail', failures: [] }]);
@@ -233,7 +233,7 @@ describe('ogw core release', () => {
     expect(gh.created()).toEqual({});
     expect(clearReviews).not.toHaveBeenCalled();
 
-    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), errors: [] });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: specFiles(ws.coreImpl), settingTypes: new Map(), gameSettings: new Map(), errors: [] });
     const major = await ogw(ws, ['core', 'release', '2.0.0', '--notes', NOTES, '--json'], { env });
     expect((JSON.parse(major.stdout) as { data: { violations: string[] } }).data.violations.some((v) => v.startsWith('base proto'))).toBe(false);
   });
@@ -554,10 +554,10 @@ describe('release condition parts', () => {
   it('reads a core-spec file that is not JSON as differing from ogw core spec, and fails on one that cannot be read', async () => {
     const impl = mkdtempSync(join(tmpdir(), 'ogw-core-spec-'));
     writeFiles(impl, { 'core-spec/A.json': 'not json' });
-    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: new Map([['A', {}]]), settingTypes: new Map(), errors: [] });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: new Map([['A', {}]]), settingTypes: new Map(), gameSettings: new Map(), errors: [] });
     expect(await coreSpecViolations({} as Context, impl)).toEqual(['core-spec/A.json differs from ogw core spec']);
     mkdirSync(join(impl, 'core-spec', 'B.json'));
-    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: new Map([['A', {}], ['B', {}]]), settingTypes: new Map(), errors: [] });
+    vi.mocked(buildCoreSpec).mockResolvedValue({ modules: new Map([['A', {}], ['B', {}]]), settingTypes: new Map(), gameSettings: new Map(), errors: [] });
     await expect(coreSpecViolations({} as Context, impl)).rejects.toMatchObject({ code: 'EISDIR' });
   });
 

@@ -14,6 +14,7 @@ import {
   editorPluginPaths,
   excludeFilter,
   filterCoreSettings,
+  filterSettingsSchemaFile,
   godotBuild,
   iosPluginNames,
   macosEntitlements,
@@ -40,7 +41,11 @@ vi.mock('../../../../src/commands/data/api.ts', async (orig) => ({ ...(await ori
 vi.mock('../../../../src/commands/generate/api.ts', async (orig) => ({ ...(await orig<object>()), moduleFilesWithoutDev: vi.fn() }));
 
 /** The STG and PROD module files of the mocked `moduleFilesWithoutDev`: no QACore setting `uiCheckScreens`, no `cheat`. */
-const WITHOUT_DEV = { coreSettings: '{"a": 1, "environments.DEV.serverUrl": "d", "environments.STG.serverUrl": "s"}\n', serverModules: '["routing"]\n' };
+const WITHOUT_DEV = {
+  coreSettings: '{"a": 1, "environments.DEV.serverUrl": "d", "environments.STG.serverUrl": "s"}\n',
+  coreSettingsSchema: '{"properties": {"a": {"type": "integer"}}, "required": ["a"]}\n',
+  serverModules: '["routing"]\n',
+};
 beforeEach(() => {
   vi.mocked(moduleFilesWithoutDev).mockReset();
   vi.mocked(moduleFilesWithoutDev).mockResolvedValue(WITHOUT_DEV);
@@ -83,6 +88,32 @@ describe('workspace edits', () => {
     expect(JSON.parse(readFileSync(join(root, 'client/generated/core_settings.json'), 'utf8'))).toEqual({ 'environments.STG.serverUrl': 's', a: 1, environments: { STG: 2 } });
     expect(JSON.parse(readFileSync(join(root, 'client/generated/core_settings_types.json'), 'utf8'))).toEqual({ 'environments.STG.serverUrl': 'string', a: 'number' });
     await filterCoreSettings(tmp(), 'DEV');
+  });
+
+  it('drops the properties of the other environments from a settings schema, in properties and in required', async () => {
+    const root = tmp();
+    const path = join(root, 'server/generated/core_settings_schema.json');
+    const property = { type: 'string' };
+    write(root, 'server/generated/core_settings_schema.json', {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: { a: { type: 'integer' }, 'environments.DEV.serverUrl': property, 'environments.STG.serverUrl': property, 'environments.PROD.serverUrl': property, environments: { type: 'object' } },
+      required: ['a', 'environments.DEV.serverUrl', 'environments.STG.serverUrl', 'environments.PROD.serverUrl', 'environments'],
+      additionalProperties: false,
+    });
+    await filterSettingsSchemaFile(path, 'STG');
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: { a: { type: 'integer' }, 'environments.STG.serverUrl': property, environments: { type: 'object' } },
+      required: ['a', 'environments.STG.serverUrl', 'environments'],
+      additionalProperties: false,
+    });
+    // no file: nothing to filter
+    await filterSettingsSchemaFile(join(root, 'none.json'), 'DEV');
+    expect(existsSync(join(root, 'none.json'))).toBe(false);
+    write(root, 'bad.json', { properties: [] });
+    await expect(filterSettingsSchemaFile(join(root, 'bad.json'), 'DEV')).rejects.toThrow(`settings schema without a properties object and a required array: ${join(root, 'bad.json')}`);
   });
 
   it('writes the STG and PROD core settings file without the DEV modules and keeps the DEV one', async () => {

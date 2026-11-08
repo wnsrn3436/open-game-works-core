@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { coreGameValues, coreSettingTypes, emptyValue, schemaDefault } from '../../../../src/commands/generate/lib/core-settings.ts';
+import { coreGameValues, coreSettingTypes, emptyValue, envPaths, schemaDefault, schemaProperties, settingsSchema, typeSchema } from '../../../../src/commands/generate/lib/core-settings.ts';
 import { isPlainObject, mergeSettings, type JsonObject } from '../../../../src/lib/json.ts';
 import type { SpecModule } from '../../../../src/commands/generate/lib/core-spec.ts';
 import { realHarness } from '../../../helpers/workspace.ts';
@@ -144,5 +144,44 @@ describe('coreSettingTypes', () => {
   it('fails on a key that two rows give different types', () => {
     const modules = [module('A', [['A.gap', 'number', 'core']]), module('B', [['A.gap', 'integer', 'core']])];
     expect(() => coreSettingTypes(modules, {})).toThrow('core spec settings key A.gap has type number and, in B, type integer');
+  });
+});
+
+describe('typeSchema', () => {
+  it('gives the property of each spec settings type: its JSON type, array items, null with ?', () => {
+    for (const type of ['integer', 'number', 'string', 'boolean', 'object']) expect(typeSchema(type)).toEqual({ type });
+    expect(typeSchema('string?')).toEqual({ type: ['string', 'null'] });
+    expect(typeSchema('array<string>')).toEqual({ type: 'array', items: { type: 'string' } });
+    expect(typeSchema('array<array<integer>>?')).toEqual({ type: ['array', 'null'], items: { type: 'array', items: { type: 'integer' } } });
+    expect(typeSchema('array<object?>')).toEqual({ type: 'array', items: { type: ['object', 'null'] } });
+  });
+
+  it('fails on an unknown type', () => {
+    for (const type of ['text', 'array<>', 'array<text>', 'Array<string>', '?']) expect(() => typeSchema(type)).toThrow('unknown settings type in core spec');
+  });
+});
+
+describe('settingsSchema, schemaProperties and envPaths', () => {
+  it('makes a draft 2020-12 object schema without other keys', () => {
+    expect(settingsSchema({ a: { type: 'integer' }, b: { type: 'string' } }, ['a'])).toEqual({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: { a: { type: 'integer' }, b: { type: 'string' } },
+      required: ['a'],
+      additionalProperties: false,
+    });
+  });
+
+  it('reads the properties of a core settings schema: none without the file, a failure without a properties object', () => {
+    expect(schemaProperties({ properties: { a: { type: 'integer' } } }, 'x.json')).toEqual({ a: { type: 'integer' } });
+    expect(schemaProperties(null, 'x.json')).toEqual({});
+    for (const schema of [{}, { properties: [] }, [], 'a']) expect(() => schemaProperties(schema, 'x.json')).toThrow('core settings schema has no properties object: x.json');
+  });
+
+  it('puts each environment in place of every <ENV> of a key', () => {
+    expect(envPaths('environments.<ENV>.a', ['DEV', 'PROD'])).toEqual(['environments.DEV.a', 'environments.PROD.a']);
+    expect(envPaths('<ENV>.<ENV>', ['STG'])).toEqual(['STG.STG']);
+    expect(envPaths('a.b', ['DEV'])).toEqual(['a.b']);
+    expect(envPaths('environments.<ENV>.a', [])).toEqual([]);
   });
 });

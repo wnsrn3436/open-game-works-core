@@ -2,11 +2,14 @@ import { mkdir, readdir, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, formatJson, isNotFound, writeIfChanged } from '../../lib/fsx.ts';
+import { exists, formatJson, isNotFound, readJsonIfExists, writeIfChanged } from '../../lib/fsx.ts';
 import { checkoutLock } from '../../lib/git.ts';
 import { resolveCoreImpl } from '../../lib/game.ts';
+import type { JsonObject } from '../../lib/json.ts';
 import { withLock } from '../../lib/lock.ts';
-import { SETTING_TYPES_FILE } from './lib/main-checkout.ts';
+import { ENVS } from '../build/lib/names.ts';
+import { envPaths, schemaProperties, settingsSchema, typeSchema } from '../generate/lib/core-settings.ts';
+import { SETTING_TYPES_FILE, SETTINGS_SCHEMA_FILE } from './lib/main-checkout.ts';
 import { buildFromHarness } from './lib/spec-build.ts';
 
 export interface CoreSpecBuild {
@@ -14,6 +17,8 @@ export interface CoreSpecBuild {
   modules: Map<string, unknown>;
   /** The `type` of every distinct settings `key` of all modules, in byte order of `key`. */
   settingTypes: Map<string, string>;
+  /** The `type` of every distinct game settings path (`key` of a `source` `game` settings row) of all modules, in byte order. */
+  gameSettings: Map<string, string>;
   /** One line per violation of the tool-read form: `<spec file>:<line>: <reason>`. */
   errors: string[];
 }
@@ -27,6 +32,8 @@ export interface CoreSpecWrite extends CoreSpecBuild {
   deleted: string[];
   /** Whether `SETTING_TYPES_FILE` was written because its bytes differed. */
   settingTypesWritten: boolean;
+  /** Whether `SETTINGS_SCHEMA_FILE` was written because its bytes differed. */
+  settingsSchemaWritten: boolean;
 }
 
 function quoted(text: string): string {
@@ -52,22 +59,39 @@ ${entries}};
 export async function buildCoreSpec(ctx: Context): Promise<CoreSpecBuild> {
   const ws = await ctx.workspace();
   const result = await buildFromHarness(ws.harness);
-  return { modules: result.modules, settingTypes: result.settingTypes, errors: result.errors };
+  return { modules: result.modules, settingTypes: result.settingTypes, gameSettings: result.gameSettings, errors: result.errors };
 }
 
 /**
- * `ogw core spec`: writes `core-spec/` and `SETTING_TYPES_FILE` of `open-game-works-core-impl/` (or the core worktree the
- * command runs in). Writes nothing when the specs break the tool-read form; `errors` then lists every violation.
+ * The settings schema `SETTINGS_SCHEMA_FILE` of the core checkout `coreImpl` (ogw.md `## core spec and core test`): one
+ * property per core settings key of `settings/core-settings.schema.json` (none without that file), all of them in
+ * `required`, and one property, not in `required`, per game settings path of `gameSettings`, a path with `<ENV>` once
+ * per `DEV`, `STG`, `PROD` in its place.
+ */
+async function implSettingsSchema(coreImpl: string, gameSettings: ReadonlyMap<string, string>): Promise<JsonObject> {
+  const path = join(coreImpl, 'settings', 'core-settings.schema.json');
+  const properties: JsonObject = { ...schemaProperties(await readJsonIfExists(path), path) };
+  const required = Object.keys(properties);
+  for (const [key, type] of gameSettings) for (const item of envPaths(key, ENVS)) properties[item] = typeSchema(type);
+  return settingsSchema(properties, required);
+}
+
+/**
+ * `ogw core spec`: writes `core-spec/`, `SETTING_TYPES_FILE` and `SETTINGS_SCHEMA_FILE` of `open-game-works-core-impl/`
+ * (or the core worktree the command runs in). Writes nothing when the specs break the tool-read form; `errors` then
+ * lists every violation.
  */
 export async function writeCoreSpec(ctx: Context): Promise<CoreSpecWrite> {
   const build = await buildCoreSpec(ctx);
   const ws = await ctx.workspace();
   const coreImpl = await resolveCoreImpl(ws, ctx.cwd, ctx.env);
   const dir = join(coreImpl, 'core-spec');
-  if (build.errors.length > 0) return { ...build, dir, written: [], deleted: [], settingTypesWritten: false };
+  if (build.errors.length > 0) return { ...build, dir, written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false };
   if (!exists(coreImpl)) throw new OgwError(`core implementation folder not found: ${coreImpl}`);
   // One writer per `core-spec/` at a time: the delete step would otherwise remove another run's temp files.
   return withLock(await checkoutLock(coreImpl, 'ogw-core-spec.lock', { env: ctx.env }), async () => {
+    // made before any file is written: a core settings schema it cannot read leaves every file as it was
+    const schema = formatJson(await implSettingsSchema(coreImpl, build.gameSettings));
     await mkdir(dir, { recursive: true });
     const written: string[] = [];
     for (const [name, module] of build.modules) {
@@ -94,6 +118,9 @@ export async function writeCoreSpec(ctx: Context): Promise<CoreSpecWrite> {
       await mkdir(dirname(typesPath), { recursive: true });
       settingTypesWritten = await writeIfChanged(typesPath, renderSettingTypes(build.settingTypes));
     }
-    return { ...build, dir, written, deleted: deleted.sort(), settingTypesWritten };
+    const schemaPath = join(coreImpl, SETTINGS_SCHEMA_FILE);
+    await mkdir(dirname(schemaPath), { recursive: true });
+    const settingsSchemaWritten = await writeIfChanged(schemaPath, schema);
+    return { ...build, dir, written, deleted: deleted.sort(), settingTypesWritten, settingsSchemaWritten };
   });
 }

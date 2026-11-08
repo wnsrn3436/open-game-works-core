@@ -11,7 +11,7 @@ import { writeFileAtomic } from '../../../lib/fsx.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { filesBelow } from '../../deploy/lib/target.ts';
 import { moduleFilesWithoutDev } from '../../generate/api.ts';
-import { filterCoreSettingsFile } from './godot.ts';
+import { filterCoreSettingsFile, filterSettingsSchemaFile } from './godot.ts';
 import { buildTagName, type Env } from './names.ts';
 import { ghcrLogin, imageDigest } from './registry.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
@@ -30,9 +30,10 @@ function repositoryOf(settings: GameSettings): { repository: string; platform: s
 
 /**
  * Runs `fn` on the build context of the server image: a copy of `server/` (without `node_modules/`) in a temporary
- * folder. For STG its `generated/core_settings.json` and `generated/server_modules.json` are made from the used modules
- * without their DEV modules (`core` skill `## module`), and `generated/core_settings.json` keeps only this
- * environment's `<ENV>` items.
+ * folder (ogw.md `## server image`). For STG its `generated/core_settings.json`, `generated/core_settings_schema.json`
+ * and `generated/server_modules.json` are made from the used modules without their DEV modules (`core` skill
+ * `## module`), and `generated/core_settings.json` keeps only this environment's `<ENV>` items and
+ * `generated/core_settings_schema.json` only their properties.
  */
 async function withServerContext<T>(ctx: Context, game: GameRepo, env: Env, fn: (server: string, dir: string) => Promise<T>): Promise<T> {
   const dir = await newPrivateTempFolder('ogw-server-image-', ctx.env);
@@ -42,9 +43,11 @@ async function withServerContext<T>(ctx: Context, game: GameRepo, env: Env, fn: 
     if (env !== 'DEV') {
       const files = await moduleFilesWithoutDev(ctx, game);
       await writeFileAtomic(join(server, 'generated', 'core_settings.json'), files.coreSettings);
+      await writeFileAtomic(join(server, 'generated', 'core_settings_schema.json'), files.coreSettingsSchema);
       await writeFileAtomic(join(server, 'generated', 'server_modules.json'), files.serverModules);
     }
     await filterCoreSettingsFile(join(server, 'generated', 'core_settings.json'), env);
+    await filterSettingsSchemaFile(join(server, 'generated', 'core_settings_schema.json'), env);
     return await fn(server, dir);
   } finally {
     await rm(dir, { recursive: true, force: true });

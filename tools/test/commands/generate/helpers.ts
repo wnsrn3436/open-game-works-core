@@ -246,6 +246,8 @@ process.exitCode = b.exitCode || 0;
 export interface ReleaseOptions {
   modules?: ModuleDef[];
   coreSettings?: object;
+  /** `core-settings.schema.json`; `coreSettingsSchemaOf(coreSettings)` when not given, no file when null. */
+  coreSettingsSchema?: object | null;
   licenses?: object;
   clientCore?: Record<string, string>;
   serverCore?: Record<string, string>;
@@ -256,11 +258,26 @@ export interface ReleaseOptions {
   protoName?: string;
 }
 
+/** A `core-settings.schema.json` of `coreSettings`: one property per key, of the JSON type of its value, all keys in `required`. */
+export function coreSettingsSchemaOf(coreSettings: object): object {
+  const jsonType = (value: unknown): string => (Array.isArray(value) ? 'array' : value === null ? 'null' : Number.isInteger(value) ? 'integer' : typeof value);
+  const keys = Object.keys(coreSettings).filter((key) => key !== '$schema');
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    properties: Object.fromEntries(keys.map((key) => [key, { type: jsonType((coreSettings as Record<string, unknown>)[key]) }])),
+    required: keys,
+    additionalProperties: false,
+  };
+}
+
 /** A release folder `open-game-works-core-releases/<version>/` with its assets already extracted. */
 export function makeRelease(ws: TestWorkspace, version: string, options: ReleaseOptions = {}): string {
   const dir = join(ws.coreReleases, version);
   write(join(dir, 'core-spec.json'), specJson(version, options.modules));
-  write(join(dir, 'core-settings.json'), options.coreSettings ?? { 'NetworkCore.retryCount': 3, 'NetworkCore.timeouts': { connectMs: 1000, readMs: 2000 } });
+  const coreSettings = options.coreSettings ?? { 'NetworkCore.retryCount': 3, 'NetworkCore.timeouts': { connectMs: 1000, readMs: 2000 } };
+  write(join(dir, 'core-settings.json'), coreSettings);
+  if (options.coreSettingsSchema !== null) write(join(dir, 'core-settings.schema.json'), options.coreSettingsSchema ?? coreSettingsSchemaOf(coreSettings));
   write(join(dir, 'licenses.json'), options.licenses ?? {
     components: [
       { name: 'Godot Engine', version: '4.5.1', license: 'MIT', url: 'https://godotengine.org', notice: 'c', platforms: ['android'], modules: [] },

@@ -48,12 +48,17 @@ vi.mock('../../../src/lib/jobs.ts', async (orig) => ({ ...(await orig<object>())
 
 const DOCKER = `case "$1 $2" in
   "login ghcr.io") cat > /dev/null;;
-  "buildx build") case "$*" in *type=cacheonly*) touch "$FAKE_DIR/warmed"; [ -n "$FAKE_WARM_FAIL" ] && { echo "cache build failed" >&2; exit 1; }; [ -n "$FAKE_WARM_HANG" ] && { echo $$ > "$FAKE_DIR/warm.pid"; while :; do sleep 0.1; done; }; exit 0;; *type=tar,dest=*) for a; do case "$a" in type=tar,dest=*) cp "$FAKE_IMAGE_TAR" "\${a#type=tar,dest=}";; esac; done; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/tar_core_settings.json"; cp "$last/generated/server_modules.json" "$FAKE_DIR/tar_server_modules.json"; exit 0;; esac; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/server_core_settings.json"; ls "$last" > "$FAKE_DIR/server_ls"; echo "$last" > "$FAKE_DIR/server_context";;
+  "buildx build") case "$*" in *type=cacheonly*) touch "$FAKE_DIR/warmed"; [ -n "$FAKE_WARM_FAIL" ] && { echo "cache build failed" >&2; exit 1; }; [ -n "$FAKE_WARM_HANG" ] && { echo $$ > "$FAKE_DIR/warm.pid"; while :; do sleep 0.1; done; }; exit 0;; *type=tar,dest=*) for a; do case "$a" in type=tar,dest=*) cp "$FAKE_IMAGE_TAR" "\${a#type=tar,dest=}";; esac; done; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/tar_core_settings.json"; cp "$last/generated/core_settings_schema.json" "$FAKE_DIR/tar_core_settings_schema.json"; cp "$last/generated/server_modules.json" "$FAKE_DIR/tar_server_modules.json"; exit 0;; esac; for last; do :; done; cp "$last/generated/core_settings.json" "$FAKE_DIR/server_core_settings.json"; cp "$last/generated/core_settings_schema.json" "$FAKE_DIR/server_core_settings_schema.json"; ls "$last" > "$FAKE_DIR/server_ls"; echo "$last" > "$FAKE_DIR/server_context";;
   "buildx imagetools") case "$*" in *Manifest*) echo '{"digest":"sha256:pushed"}';; *) echo '{"config":{"Labels":{"ogw.compat_client_data_version":"'"$FAKE_LABEL"'"}}}';; esac;;
 esac`;
 const GH = `case "$1 $2" in "auth token") echo tok;; "api user") echo me;; esac`;
 
 let release = '';
+
+/** A settings schema of `core_settings_schema.json` form with one integer property per key, all in `required`. */
+function settingsSchema(keys: string[]): object {
+  return { type: 'object', properties: Object.fromEntries(keys.map((key) => [key, { type: 'integer' }])), required: keys, additionalProperties: false };
+}
 
 /** `ogw data` fake: data versions come from `data/version.txt` of the checkout. */
 function fakeData(): void {
@@ -80,7 +85,11 @@ beforeEach(() => {
   vi.mocked(gameModules).mockResolvedValue({ client: [], server: [] });
   vi.mocked(mergeReleaseSettings).mockResolvedValue({ 'admin-api.switchCacheMs': 1000, 'matchmaker.reportMarginMs': 500 });
   vi.mocked(moduleFilesWithoutDev).mockReset();
-  vi.mocked(moduleFilesWithoutDev).mockResolvedValue({ coreSettings: '{"b": 2, "environments.STG.serverUrl": "s", "environments.PROD.serverUrl": "p"}\n', serverModules: '["routing"]\n' });
+  vi.mocked(moduleFilesWithoutDev).mockResolvedValue({
+    coreSettings: '{"b": 2, "environments.STG.serverUrl": "s", "environments.PROD.serverUrl": "p"}\n',
+    coreSettingsSchema: `${JSON.stringify(settingsSchema(['b', 'environments.STG.serverUrl', 'environments.PROD.serverUrl']))}\n`,
+    serverModules: '["routing"]\n',
+  });
   vi.mocked(coreReleaseOfGame).mockImplementation(() => Promise.resolve({ version: '1.0.0', dir: release, local: false }));
   vi.mocked(coreRelease).mockImplementation((_c, version) => Promise.resolve({ version, dir: join(release, version), local: false }));
   vi.mocked(extractedAsset).mockImplementation(() => Promise.resolve(release));
@@ -106,6 +115,7 @@ function prepare(ws: TestWorkspace, patch: Record<string, unknown> = {}): { dir:
     'server/core/Dockerfile': 'FROM node',
     'server/node_modules/x/index.js': 'x',
     'server/generated/core_settings.json': { a: 1, 'environments.DEV.serverUrl': 'd', 'environments.PROD.serverUrl': 'p', environments: { DEV: 1, STG: 2 } },
+    'server/generated/core_settings_schema.json': settingsSchema(['a', 'environments.DEV.serverUrl', 'environments.PROD.serverUrl', 'environments']),
     'server/generated/server_modules.json': ['cheat', 'routing'],
   });
   setSecrets(ws, { 'ogw/g/DEV/devAccess': 'DEV-ACCESS-VALUE', 'ogw/g/DEV/db': 'DB-CONNECTION' });
@@ -152,10 +162,13 @@ describe('build run', () => {
     expect(existsSync(context)).toBe(false);
     expect(calls).toContain(`docker buildx build --platform linux/amd64 --file ${join(context, 'core/Dockerfile')} --build-arg OGW_ENV=DEV --label ogw.compat_client_data_version= --tag ghcr.io/example/game-server:dev-0.1.0 --push ${context}`);
     expect(JSON.parse(readFileSync(join(fakeDir, 'server_core_settings.json'), 'utf8'))).toEqual({ a: 1, 'environments.DEV.serverUrl': 'd', environments: { DEV: 1 } });
+    // the settings schema keeps the properties of the items the core settings file keeps
+    expect(JSON.parse(readFileSync(join(fakeDir, 'server_core_settings_schema.json'), 'utf8'))).toEqual(settingsSchema(['a', 'environments.DEV.serverUrl', 'environments']));
     expect(readFileSync(join(fakeDir, 'server_ls'), 'utf8').split('\n').filter(Boolean)).toEqual(['build', 'core', 'generated']);
     // DEV keeps the prepared modules of `ogw generate`: the DEV module cheat stays
     expect(vi.mocked(moduleFilesWithoutDev)).not.toHaveBeenCalled();
     expect(JSON.parse(readFileSync(join(dir, 'server/generated/core_settings.json'), 'utf8'))).toMatchObject({ 'environments.PROD.serverUrl': 'p' });
+    expect(JSON.parse(readFileSync(join(dir, 'server/generated/core_settings_schema.json'), 'utf8'))).toEqual(settingsSchema(['a', 'environments.DEV.serverUrl', 'environments.PROD.serverUrl', 'environments']));
     expect(vi.mocked(staticCheck).mock.calls[0]?.[2]).toEqual({ debugText: false });
     expect(out.stdout).toContain('check device performance: unknown\n  harness settings testDevices has no android device');
     expect(out.stdout).toContain('server image ghcr.io/example/game-server:dev-0.1.0@sha256:pushed');
@@ -652,6 +665,7 @@ describe('build run', () => {
     );
     // the STG build context has the core settings file and server module list of the used modules, without DEV modules
     expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_core_settings.json'), 'utf8'))).toEqual({ b: 2, 'environments.STG.serverUrl': 's' });
+    expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_core_settings_schema.json'), 'utf8'))).toEqual(settingsSchema(['b', 'environments.STG.serverUrl']));
     expect(JSON.parse(readFileSync(join(ws.root, 'fake-bin', 'tar_server_modules.json'), 'utf8'))).toEqual(['routing']);
     expect(JSON.parse(readFileSync(join(dir, 'server/generated/server_modules.json'), 'utf8'))).toEqual(['cheat', 'routing']);
 

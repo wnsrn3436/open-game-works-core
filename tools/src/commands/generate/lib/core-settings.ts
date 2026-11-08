@@ -57,9 +57,45 @@ function valueAt(settings: unknown, segments: readonly string[]): unknown {
   return current;
 }
 
+/** The paths of a settings row key: one per environment of `envs` in place of `<ENV>` when it has `<ENV>`. */
+export function envPaths(key: string, envs: readonly string[]): string[] {
+  return key.includes(ENV) ? envs.map((env) => key.replaceAll(ENV, env)) : [key];
+}
+
 /** The keys of a settings row key: one per environment of game settings `environments` when it has `<ENV>`. */
 function rowPaths(key: string, settings: GameSettings): string[] {
-  return key.includes(ENV) ? Object.keys(settings.environments ?? {}).map((env) => key.replaceAll(ENV, env)) : [key];
+  return envPaths(key, Object.keys(settings.environments ?? {}));
+}
+
+/**
+ * The property of a spec settings type in a settings schema (`server-core` SKILL `## generated code`): `integer`,
+ * `number`, `string`, `boolean`, `object` as that JSON type, `array<T>` as an array whose `items` is T, and a type with
+ * `?` that also accepts `null`.
+ */
+export function typeSchema(type: string): JsonObject {
+  if (type.endsWith('?')) {
+    const base = typeSchema(type.slice(0, -1));
+    return { ...base, type: [base.type, 'null'] };
+  }
+  if (type === 'integer' || type === 'number' || type === 'string' || type === 'boolean' || type === 'object') return { type };
+  const item = /^array<(.+)>$/.exec(type)?.[1];
+  if (item !== undefined) return { type: 'array', items: typeSchema(item) };
+  throw new OgwError(`unknown settings type in core spec: ${type}`);
+}
+
+/**
+ * A settings schema `core_settings_schema.json` (`server-core` SKILL `## generated code`): a JSON Schema draft 2020-12
+ * object schema of `properties`, with `required` and no other key.
+ */
+export function settingsSchema(properties: JsonObject, required: readonly string[]): JsonObject {
+  return { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', properties, required: [...required], additionalProperties: false };
+}
+
+/** The `properties` of the core settings schema `core-settings.schema.json` read from `path`; none when `schema` is null (no file). */
+export function schemaProperties(schema: unknown, path: string): JsonObject {
+  if (schema === null) return {};
+  if (!isPlainObject(schema) || !isPlainObject(schema.properties)) throw new OgwError(`core settings schema has no properties object: ${path}`);
+  return schema.properties;
 }
 
 /**

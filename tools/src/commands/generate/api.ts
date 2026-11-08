@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { exists, formatJson, readJson } from '../../lib/fsx.ts';
+import { exists, formatJson, readJson, readJsonIfExists } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import { checkoutLock } from '../../lib/git.ts';
 import { isPlainObject, mergeSettings, type JsonObject } from '../../lib/json.ts';
@@ -14,7 +14,7 @@ import { gutPackage, isCorePlugin, packageDir, pluginsFor } from '../core/lib/en
 import { hostPlatform, type EngineJson } from '../core/lib/impl.ts';
 import { applyPlan, emptyPlan, type Applied, type Plan } from './lib/apply.ts';
 import { clientModuleTableOrder, devCodeModules, moduleListOrder, readCoreSpec, usedModules, type CoreSpec, type SpecModule } from './lib/core-spec.ts';
-import { coreGameValues, coreSettingTypes } from './lib/core-settings.ts';
+import { coreGameValues, coreSettingTypes, schemaProperties, settingsSchema, typeSchema } from './lib/core-settings.ts';
 import { BOOT_GD, BOOT_TSCN, CLIENT_GITIGNORE, coreModulesGd, devFeatures, devRegistration, RESOURCE_LIST_IMPORT } from './lib/godot-files.ts';
 import { contentSettings, projectGodot } from './lib/project.ts';
 import { gameLicenses, godotResourceKeys, readResourceRows, resourceKeyGd, resourceKeyTs, type ResourceRow } from './lib/resources.ts';
@@ -92,14 +92,46 @@ async function coreFolders(ctx: Context, inputs: Inputs, engine: string, plan: P
   await enginePackages(ctx, inputs.release, engine, client, plan);
 }
 
+/** The items of a core settings file: the core settings values and the core-read game settings values, by key. */
+interface CoreSettingsItems {
+  core: JsonObject;
+  game: JsonObject;
+}
+
 /**
- * The contents of a core settings file (`client-core` Godot `## folder`): the core settings of `settingsDir`'s
+ * The items of a core settings file (`client-core` Godot `## folder`): the core settings of `settingsDir`'s
  * `core-settings.json` without `$schema`, the game settings `core` over them, and the core-read game settings values.
  */
-export async function coreSettingsFile(ctx: Context, settingsDir: string, modules: readonly SpecModule[], settings: GameSettings): Promise<string> {
+async function coreSettingsItems(ctx: Context, settingsDir: string, modules: readonly SpecModule[], settings: GameSettings): Promise<CoreSettingsItems> {
   const schema = (await loadSchema(schemaPath('game-settings', ctx.env))) as JsonObject;
   const core = Object.fromEntries(Object.entries(await mergeReleaseSettings(settingsDir, settings.core)).filter(([key]) => key !== '$schema'));
-  return formatJson({ ...core, ...coreGameValues(modules, settings, schema) });
+  return { core, game: coreGameValues(modules, settings, schema) };
+}
+
+/** The contents of a core settings file (`client-core` Godot `## folder`) of `settingsDir`'s core settings. */
+export async function coreSettingsFile(ctx: Context, settingsDir: string, modules: readonly SpecModule[], settings: GameSettings): Promise<string> {
+  const items = await coreSettingsItems(ctx, settingsDir, modules, settings);
+  return formatJson({ ...items.core, ...items.game });
+}
+
+/**
+ * The settings schema of a core settings file (`server-core` SKILL `## generated code`): one property per key of the
+ * file, all in `required`. A core settings key has its property in `core-settings.schema.json` of `settingsDir`, and a
+ * core-read game settings item the property of the type of its settings row. A core settings key without a property
+ * fails.
+ */
+async function coreSettingsSchemaFile(settingsDir: string, items: CoreSettingsItems, modules: readonly SpecModule[], settings: GameSettings): Promise<string> {
+  const path = join(settingsDir, 'core-settings.schema.json');
+  const coreProperties = schemaProperties(await readJsonIfExists(path), path);
+  const types = coreSettingTypes(modules, settings);
+  const properties: JsonObject = {};
+  for (const key of Object.keys({ ...items.core, ...items.game })) {
+    const type = Object.hasOwn(items.game, key) ? types[key] : undefined;
+    if (type !== undefined) properties[key] = typeSchema(type);
+    else if (Object.hasOwn(coreProperties, key)) properties[key] = coreProperties[key];
+    else throw new OgwError(`core settings key ${key} has no property in ${path}`);
+  }
+  return formatJson(settingsSchema(properties, Object.keys(properties)));
 }
 
 /** The contents of a core settings type file (`client-core` Godot `## module`) for the core settings file of the same inputs. */
@@ -107,19 +139,31 @@ export function coreSettingTypesFile(modules: readonly SpecModule[], settings: G
   return formatJson(coreSettingTypes(modules, settings));
 }
 
-/**
- * The core settings file and the server module list of the `modules`: the used modules for an STG or PROD build, the
- * used modules and their DEV modules where DEV code goes in (`core` skill `## module`).
- */
-async function moduleFiles(ctx: Context, releaseDir: string, modules: readonly SpecModule[], settings: GameSettings): Promise<{ coreSettings: string; serverModules: string }> {
-  return { coreSettings: await coreSettingsFile(ctx, releaseDir, modules, settings), serverModules: formatJson(splitModules(modules).server) };
+/** The files made from the prepared modules: the core settings file, its settings schema and the server module list. */
+export interface ModuleFiles {
+  coreSettings: string;
+  coreSettingsSchema: string;
+  serverModules: string;
 }
 
 /**
- * The core settings file and the server module list of an STG or PROD build of the checkout: made from the used modules
- * only, without the DEV modules that `ogw generate` writes them with.
+ * The core settings file, its settings schema and the server module list of the `modules`: the used modules for an STG
+ * or PROD build, the used modules and their DEV modules where DEV code goes in (`core` skill `## module`).
  */
-export async function moduleFilesWithoutDev(ctx: Context, game: GameRepo): Promise<{ coreSettings: string; serverModules: string }> {
+async function moduleFiles(ctx: Context, releaseDir: string, modules: readonly SpecModule[], settings: GameSettings): Promise<ModuleFiles> {
+  const items = await coreSettingsItems(ctx, releaseDir, modules, settings);
+  return {
+    coreSettings: formatJson({ ...items.core, ...items.game }),
+    coreSettingsSchema: await coreSettingsSchemaFile(releaseDir, items, modules, settings),
+    serverModules: formatJson(splitModules(modules).server),
+  };
+}
+
+/**
+ * The core settings file, its settings schema and the server module list of an STG or PROD build of the checkout: made
+ * from the used modules only, without the DEV modules that `ogw generate` writes them with.
+ */
+export async function moduleFilesWithoutDev(ctx: Context, game: GameRepo): Promise<ModuleFiles> {
   const settings = await loadGameSettings(game.root);
   const release = await coreReleaseOfGame(ctx, game);
   return moduleFiles(ctx, release.dir, usedModules(await readCoreSpec(release.dir), settings), settings);
@@ -131,6 +175,7 @@ async function generatedFiles(ctx: Context, inputs: Inputs, plan: Plan): Promise
   plan.files.set('client/generated/core_settings.json', dev.coreSettings);
   plan.files.set('client/generated/core_settings_types.json', coreSettingTypesFile(devModules, settings));
   plan.files.set('server/generated/core_settings.json', dev.coreSettings);
+  plan.files.set('server/generated/core_settings_schema.json', dev.coreSettingsSchema);
   const keyList = formatJson(godotResourceKeys(resources, join(root, 'resource')));
   plan.files.set('client/generated/resource_keys.json', keyList);
   plan.files.set('server/generated/resource_keys.json', keyList);

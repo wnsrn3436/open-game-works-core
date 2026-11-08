@@ -55,7 +55,7 @@ vi.mock('../../../src/commands/core/lib/server-layout.ts', async (importOriginal
 vi.mock('../../../src/commands/core/lib/server-tests.ts', () => ({ serverModuleTest: vi.fn() }));
 
 beforeEach(() => {
-  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
+  vi.mocked(writeCoreSpec).mockReset().mockResolvedValue({ modules: new Map(), settingTypes: new Map(), gameSettings: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false });
   vi.mocked(baseProtoErrors).mockReset().mockResolvedValue([]);
   vi.mocked(serverModuleTest).mockReset();
   vi.mocked(runToolTest).mockReset();
@@ -629,9 +629,9 @@ describe('ogw core test godot', () => {
 describe('ogw core test preflight', () => {
   it('stops before the tests when a step fails', async () => {
     const { ws, env, log } = setup();
-    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: ['skills/a.md:1: bad'], dir: '', written: [], deleted: [], settingTypesWritten: false });
+    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), settingTypes: new Map(), gameSettings: new Map(), errors: ['skills/a.md:1: bad'], dir: '', written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false });
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stderr).toContain('ogw core spec failed; no test ran:\nskills/a.md:1: bad');
-    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), settingTypes: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false });
+    vi.mocked(writeCoreSpec).mockResolvedValue({ modules: new Map(), settingTypes: new Map(), gameSettings: new Map(), errors: [], dir: '', written: [], deleted: [], settingTypesWritten: false, settingsSchemaWritten: false });
     vi.mocked(baseProtoErrors).mockResolvedValue(['x.md:3: CoreError Y differs']);
     expect((await ogw(ws, ['core', 'test', 'godot'], { env })).stderr).toContain('base proto check failed; no test ran:\nx.md:3: CoreError Y differs');
     vi.mocked(baseProtoErrors).mockResolvedValue([]);

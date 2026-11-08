@@ -45,10 +45,23 @@ const RESOURCES = [
 
 const RESERVED_STRING = '"desc",,,\nAll,All,,\nid(key),tstring<id>,,\nid,text,,\n[app_name],내 게임,,\n[other],x,,\n';
 
+/** The core settings schema of the release of `setup`: its properties carry keywords that the settings schema copies as they are. */
+const CORE_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: {
+    'NetworkCore.retryCount': { type: 'integer', minimum: 1 },
+    'NetworkCore.timeouts': { type: 'object', properties: { connectMs: { type: 'integer' }, readMs: { type: 'integer' } }, 'x-owner': 'human' },
+  },
+  required: ['NetworkCore.retryCount', 'NetworkCore.timeouts'],
+  additionalProperties: false,
+};
+
 function setup(files: Record<string, string | object> = {}): { ws: TestWorkspace; root: string; release: string } {
   const ws = makeWorkspace();
   const host = hostPlatform();
   const release = makeRelease(ws, '1.0.0', {
+    coreSettingsSchema: CORE_SCHEMA,
     plugins: {
       [`ogw-secure-storage/${host}/addons/ogw-secure-storage/lib.gdextension`]: 'ext',
       'ogw-iap-google/android/addons/ogw-iap-google/x.aar': 'aar',
@@ -117,6 +130,35 @@ describe('planGenerate', () => {
       'environments.PROD.devAllowedCidrs': 'array<string>',
     });
     expect(plan.files.has('server/generated/core_settings_types.json')).toBe(false);
+    // the settings schema of the server core settings file: one property per key of that file, in its order, all of them
+    // in required; a core settings key with its property in the release core-settings.schema.json, a game settings item
+    // with the property of the type of its settings row
+    const serverSettings = Object.keys(JSON.parse(file('server/generated/core_settings.json')) as object);
+    const settingsSchema = JSON.parse(file('server/generated/core_settings_schema.json')) as { properties: object; required: string[] };
+    expect(settingsSchema).toEqual({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: {
+        'NetworkCore.retryCount': { type: 'integer', minimum: 1 },
+        'NetworkCore.timeouts': CORE_SCHEMA.properties['NetworkCore.timeouts'],
+        firstScene: { type: 'string' },
+        gamepadSupported: { type: 'boolean' },
+        maxResolution: { type: ['array', 'null'], items: { type: 'integer' } },
+        appId: { type: 'string' },
+        titleScene: { type: 'string' },
+        uiCheckScreens: { type: 'array', items: { type: 'object' } },
+        'environments.DEV.serverUrl': { type: 'string' },
+        'environments.STG.serverUrl': { type: 'string' },
+        'environments.PROD.serverUrl': { type: 'string' },
+        'environments.DEV.devAllowedCidrs': { type: 'array', items: { type: 'string' } },
+        'environments.STG.devAllowedCidrs': { type: 'array', items: { type: 'string' } },
+        'environments.PROD.devAllowedCidrs': { type: 'array', items: { type: 'string' } },
+      },
+      required: serverSettings,
+      additionalProperties: false,
+    });
+    expect(Object.keys(settingsSchema.properties)).toEqual(serverSettings);
+    expect(plan.files.has('client/generated/core_settings_schema.json')).toBe(false);
     expect(JSON.parse(file('client/generated/resource_keys.json'))).toEqual({
       'app_icon/main': { path: 'res://resource/app_icon/main.png', variants: 1 },
       'scene/lobby/main': { path: 'res://resource/scene/lobby/main.tscn', variants: 1 },
@@ -227,6 +269,25 @@ describe('planGenerate', () => {
     await expect(planGenerate(ctx, await ctx.game('g'))).rejects.toThrow('engine.json has no gut item');
   });
 
+  it('fails on a core settings key without a property in the release core settings schema, and on an unknown settings type', async () => {
+    const ws = makeWorkspace();
+    const ctx = ctxOf(ws);
+    const release = makeRelease(ws, '1.0.0');
+    // game settings core holds a key that the core settings schema of that core version does not have
+    makeGame(ws, 'a', { 'settings.json': { ...GAME_SETTINGS, core: { 'NetworkCore.gone': 1 } } });
+    await expect(planGenerate(ctx, await ctx.game('a'))).rejects.toThrow(`core settings key NetworkCore.gone has no property in ${join(release, 'core-settings.schema.json')}`);
+    // a release without core-settings.schema.json: its core settings keys have no property
+    makeRelease(ws, '2.0.0', { coreSettingsSchema: null });
+    makeGame(ws, 'b', { 'settings.json': { ...GAME_SETTINGS, coreVersion: '2.0.0' } });
+    await expect(planGenerate(ctx, await ctx.game('b'))).rejects.toThrow(`core settings key NetworkCore.retryCount has no property in ${join(ws.coreReleases, '2.0.0', 'core-settings.schema.json')}`);
+    makeRelease(ws, '3.0.0', { coreSettingsSchema: { type: 'object' } });
+    makeGame(ws, 'c', { 'settings.json': { ...GAME_SETTINGS, coreVersion: '3.0.0' } });
+    await expect(planGenerate(ctx, await ctx.game('c'))).rejects.toThrow(`core settings schema has no properties object: ${join(ws.coreReleases, '3.0.0', 'core-settings.schema.json')}`);
+    makeRelease(ws, '4.0.0', { modules: [{ name: 'BootstrapCore', side: 'client', settings: [{ key: 'firstScene', type: 'text', source: 'game', owner: 'none' }] }, { name: 'routing', side: 'server' }, { name: 'migration', side: 'server' }, { name: 'user-snapshot-clone', side: 'server' }] });
+    makeGame(ws, 'd', { 'settings.json': { ...GAME_SETTINGS, coreVersion: '4.0.0', coreModules: { client: [], server: [] } } });
+    await expect(planGenerate(ctx, await ctx.game('d'))).rejects.toThrow('unknown settings type in core spec: text');
+  });
+
   it('fails on another engine, a bad baseResolution, a bad project_settings.cfg and a bad core settings file', async () => {
     const ws = makeWorkspace();
     const release = makeRelease(ws, '1.0.0');
@@ -255,6 +316,7 @@ describe('runGenerate and ogw generate', () => {
       'client/generated/core_modules.gd',
       'client/generated/resource_key.gd',
       'server/generated/core_settings.json',
+      'server/generated/core_settings_schema.json',
       'server/generated/server_modules.json',
       'server/generated/resource_keys.json',
       'server/generated/resource_key.ts',
@@ -335,7 +397,7 @@ describe('mergedCoreSettings and gameModules', () => {
 });
 
 describe('moduleFilesWithoutDev', () => {
-  it('makes the STG and PROD core settings file and server module list of the used modules only', async () => {
+  it('makes the STG and PROD core settings file, its settings schema and server module list of the used modules only', async () => {
     const { ws } = setup();
     const ctx = ctxOf(ws);
     const files = await moduleFilesWithoutDev(ctx, await ctx.game('g'));
@@ -351,6 +413,19 @@ describe('moduleFilesWithoutDev', () => {
       'environments.STG.serverUrl': '',
       'environments.PROD.serverUrl': 'https://prod',
     });
+    const schema = JSON.parse(files.coreSettingsSchema) as { properties: object; required: string[] };
+    expect(schema.properties).toEqual({
+      'NetworkCore.retryCount': { type: 'integer', minimum: 1 },
+      'NetworkCore.timeouts': CORE_SCHEMA.properties['NetworkCore.timeouts'],
+      firstScene: { type: 'string' },
+      gamepadSupported: { type: 'boolean' },
+      maxResolution: { type: ['array', 'null'], items: { type: 'integer' } },
+      appId: { type: 'string' },
+      'environments.DEV.serverUrl': { type: 'string' },
+      'environments.STG.serverUrl': { type: 'string' },
+      'environments.PROD.serverUrl': { type: 'string' },
+    });
+    expect(schema.required).toEqual(Object.keys(JSON.parse(files.coreSettings) as object));
   });
 });
 
