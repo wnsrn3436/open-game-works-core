@@ -18,11 +18,20 @@ import { settingsLine } from './lib/settings-lines.ts';
  */
 export const NAME = 'option entry';
 
-const ALWAYS = ['AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code'];
+const ALWAYS = [
+  'AuthCore.open_terms_document',
+  'AuthCore.withdraw',
+  'AuthCore.get_public_code',
+  'NativeUiCore.copy_text',
+  'UICore.open_licenses',
+  'AuthCore.issue_deletion_code',
+  'SoundCore.reset_volume_settings',
+];
 const LANGUAGE = ['LocalizationCore.list_languages', 'LocalizationCore.get_language', 'LocalizationCore.select_language', 'BootstrapCore.request_restart'];
 const SCREEN_MODE = ['ResolutionCore.is_screen_mode_supported', 'ResolutionCore.get_screen_mode', 'ResolutionCore.set_screen_mode'];
 const KEY_BINDINGS = ['InputCore.get_keys', 'InputCore.wait_key', 'InputCore.set_keys', 'InputCore.cancel_wait_key', 'InputCore.reset_keys'];
 const PAD_BINDINGS = ['InputCore.get_pad_buttons', 'InputCore.wait_pad_button', 'InputCore.set_pad_buttons', 'InputCore.cancel_wait_key', 'InputCore.reset_pad_buttons'];
+const TEXT_SCALE = ['AccessibilityCore.list_text_scales', 'AccessibilityCore.get_settings', 'AccessibilityCore.set_text_scale'];
 const SCREEN_MODE_PLATFORMS = ['windows', 'macos', 'linux'];
 const KEYBOARD_PLATFORMS = ['windows', 'macos', 'linux', 'web'];
 
@@ -143,7 +152,10 @@ async function requirements(sc: StaticContext, scan: CodeScan): Promise<Requirem
   return req;
 }
 
-/** The entries of the standard options: language, screen mode, volume, haptics, accessibility and bindings. */
+/**
+ * The entries of the standard options: language, screen mode, volume, haptics, accessibility, bindings, and the
+ * `AccessibilityCore` part of `reset`. The `SoundCore` part of `reset` is an entry every game has.
+ */
 async function standardRequirements(sc: StaticContext, scan: CodeScan, settings: Record<string, unknown>, value: (path: string) => string): Promise<Requirement[]> {
   const req: Requirement[] = [];
   const languages = Array.isArray(settings.supportedLanguages) ? (settings.supportedLanguages as unknown[]) : [];
@@ -154,6 +166,11 @@ async function standardRequirements(sc: StaticContext, scan: CodeScan, settings:
   for (const [chain, needs] of CALL_ENTRIES) {
     const where = scan.firstCall.get(chain);
     if (where !== undefined) req.push({ needs: chains(needs), where });
+  }
+  if ((await sc.modules()).client.includes('AccessibilityCore')) {
+    req.push({ needs: chains(['AccessibilityCore.reset_settings']), where: value('coreModules') });
+    const scales = (await sc.coreSettings())['AccessibilityCore.textScales'];
+    if (Array.isArray(scales) && scales.length >= 2) req.push({ needs: chains(TEXT_SCALE), where: value('core.AccessibilityCore.textScales') });
   }
   const actions = (await inputMapActions(sc)).filter((a) => !CORE_ACTIONS.includes(a.name));
   const keyAction = actions.find((a) => a.keys);

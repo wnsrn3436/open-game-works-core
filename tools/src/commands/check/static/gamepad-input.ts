@@ -24,6 +24,12 @@ const PAD_NAMES = new Set([
   'InputCore.set_pad_buttons',
   'InputCore.reset_pad_buttons',
   'InputCore.wait_pad_button',
+  'InputCore.set_pad_axis_inverted',
+  'InputCore.is_pad_axis_inverted',
+  'InputCore.set_pad_axis_sensitivity',
+  'InputCore.get_pad_axis_sensitivity',
+  'InputCore.list_pad_axis_sensitivities',
+  'InputCore.reset_pad_axes',
   'GamepadConnectionChangedEvent',
 ]);
 

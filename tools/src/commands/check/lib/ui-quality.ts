@@ -73,6 +73,8 @@ export interface UiElement {
   rect: Rect;
   text: string;
   fontSize: number;
+  /** `font_weight`: the OpenType `wght` of the text; null when the `list_ui` of the core gives none. */
+  fontWeight: number | null;
   clipped: boolean;
   owner: string;
   button: boolean;
@@ -100,6 +102,7 @@ export function toElements(result: unknown): UiElement[] {
     rect: toRect(e.rect),
     text: typeof e.text === 'string' ? e.text : '',
     fontSize: num(e.font_size),
+    fontWeight: typeof e.font_weight === 'number' ? e.font_weight : null,
     clipped: e.clipped === true,
     owner: String(e.owner),
     button: e.button === true,
@@ -148,6 +151,14 @@ const PANEL_MIN_SIDE = 64;
 
 /** The smallest `font_size` of large text, in CSS pixels (ogw.md `## UI quality`). */
 const LARGE_TEXT_CSS_PX = 24;
+/** The smallest `font_size` of bold large text, in CSS pixels, and the smallest `font_weight` of bold. */
+const LARGE_BOLD_TEXT_CSS_PX = 18.66;
+const BOLD_WEIGHT = 700;
+
+/** Large text (ogw.md `## UI quality`) of an element with text, `css` being its `font_size` in CSS size: without a `font_weight`, only from 24. */
+function isLargeText(e: UiElement, css: number): boolean {
+  return css >= LARGE_TEXT_CSS_PX || (e.fontWeight !== null && e.fontWeight >= BOLD_WEIGHT && css >= LARGE_BOLD_TEXT_CSS_PX);
+}
 
 /** The platforms whose UI quality check judges touch targets (ogw.md `## UI quality`). */
 const TOUCH_PLATFORMS: readonly string[] = ['android', 'ios'];
@@ -260,7 +271,7 @@ export function presentationProblems(
     // text under a modal panel or popup is not seen; text under one whose modal is off stays measured
     if (e.dimmed || e.modalCovered || !inside(e.rect, image.width, image.height)) continue;
     const contrast = rectContrast(image, e.rect);
-    const min = css >= LARGE_TEXT_CSS_PX ? limits.minLargeContrast : limits.minContrast;
+    const min = isLargeText(e, css) ? limits.minLargeContrast : limits.minContrast;
     if (contrast !== null && contrast < min) problems.push({ owner: e.owner, message: `low contrast ${e.path}: ${contrast.toFixed(2)}:1, under ${String(min)}:1 for ${css.toFixed(1)} CSS px text` });
   }
   for (const body of panelBodies(elements, sceneKey, image, pixelRatio)) {

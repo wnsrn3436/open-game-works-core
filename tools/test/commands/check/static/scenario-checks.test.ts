@@ -6,9 +6,12 @@ import * as sharedFormula from '../../../../src/commands/check/static/shared-for
 import { absentLines, lines, memContext, sorted } from './helpers.ts';
 
 const modules = vi.hoisted(() => ({ value: { client: [] as string[], server: [] as string[] } }));
+/** The merged core settings the static context reads. */
+const coreSettings = vi.hoisted((): { value: Record<string, unknown> } => ({ value: {} }));
 
 vi.mock('../../../../src/commands/generate/api.ts', () => ({
   gameModules: () => Promise.resolve(modules.value),
+  mergedCoreSettings: () => Promise.resolve(coreSettings.value),
 }));
 
 const step = (fields: object): object => ({ timeoutMs: 1000, ...fields });
@@ -241,7 +244,7 @@ const lineOf = (text: string, prefix: string): number => text.split('\n').findIn
 describe('option entry', () => {
   const ALL_CALLS = [
     'AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses',
-    'AuthCore.issue_deletion_code', ...UI_VOLUME,
+    'AuthCore.issue_deletion_code', 'SoundCore.reset_volume_settings', ...UI_VOLUME,
   ];
   const code = (calls: string[]): string => `class_name OptionsPanel\nfunc f() -> void:\n${calls.map((c) => `\t${c.includes('(') ? c : `${c}()`}`).join('\n')}\n`;
 
@@ -256,6 +259,9 @@ describe('option entry', () => {
     expect(absentLines(await optionEntry.run(sc))).toEqual(['client/features:1 | option entry: no `AuthCore.open_terms_document` call in client content code']);
     const ok = memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': code(ALL_CALLS) });
     expect(await optionEntry.run(ok)).toEqual([]);
+    // the reset entry every game has resets the volume settings
+    const noReset = memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': code(ALL_CALLS.filter((c) => c !== 'SoundCore.reset_volume_settings')) });
+    expect(absentLines(await optionEntry.run(noReset))).toEqual(['client/features:1 | option entry: no `SoundCore.reset_volume_settings` call in client content code']);
   });
 
   it('requires a volume of the Ui bus that UICore plays', async () => {
@@ -312,7 +318,12 @@ describe('option entry', () => {
 
   it('requires the standard option calls from settings, calls and the input map', async () => {
     modules.value = { client: [...BASE_MODULES, 'AccessibilityCore', 'CameraCore', 'ScreenEffectCore'], server: [] };
-    const settingsText = JSON.stringify({ supportedLanguages: ['ko', 'en'], buildPlatforms: ['android', 'macos'], gamepadSupported: true }, null, 2);
+    coreSettings.value = { 'AccessibilityCore.textScales': [1000, 1250] };
+    const settingsText = JSON.stringify(
+      { supportedLanguages: ['ko', 'en'], buildPlatforms: ['android', 'macos'], gamepadSupported: true, coreModules: { client: ['AccessibilityCore'] }, core: { 'AccessibilityCore.textScales': [1000, 1250] } },
+      null,
+      2,
+    );
     const projectText = project({ ...CORE_INPUT, aim: ['InputEventJoypadMotion'], jump: ['InputEventKey', 'InputEventJoypadButton'] });
     const files = { 'settings.json': settingsText, 'client/project.godot': projectText, 'client/features/play/play_scene.gd': PLAY };
     const s = (key: string): string => `settings.json:${String(lineOf(settingsText, `  "${key}"`))}`;
@@ -331,6 +342,9 @@ describe('option entry', () => {
       ...missing(p(7), calls(['AccessibilityCore.get_settings', 'AccessibilityCore.set_subtitles'])),
       ...missing(p(8), calls(['AccessibilityCore.set_reduce_shake'])),
       ...missing(p(9), calls(['AccessibilityCore.set_reduce_flash'])),
+      ...missing(s('coreModules'), calls(['AccessibilityCore.reset_settings'])),
+      // get_settings is reported once, at the first entry that needs it
+      ...missing(`settings.json:${String(lineOf(settingsText, '    "AccessibilityCore.textScales"'))}`, calls(['AccessibilityCore.list_text_scales', 'AccessibilityCore.set_text_scale'])),
       ...missing(godot('jump'), calls(['InputCore.get_keys', 'InputCore.wait_key', 'InputCore.set_keys', 'InputCore.cancel_wait_key', 'InputCore.reset_keys'])),
       ...missing(godot('aim'), calls(['InputCore.get_pad_buttons', 'InputCore.wait_pad_button', 'InputCore.set_pad_buttons', 'InputCore.reset_pad_buttons'])),
     ]));
@@ -338,11 +352,41 @@ describe('option entry', () => {
       ...ALL_CALLS, ...LANGUAGE_CALLS, ...SCREEN_MODE_CALLS,
       ...['BGM', 'SFX', 'VOICE'].flatMap((b) => [`SoundCore.get_volume(SoundCore.SoundBus.${b})`, `SoundCore.set_volume(SoundCore.SoundBus.${b}, 1.0)`]),
       'SoundCore.is_haptic_enabled', 'SoundCore.set_haptic_enabled(true)', 'AccessibilityCore.get_settings', 'AccessibilityCore.set_subtitles(true)',
-      'AccessibilityCore.set_reduce_shake(true)', 'AccessibilityCore.set_reduce_flash(true)', 'InputCore.get_keys(&"jump", keys)', 'InputCore.wait_key',
+      'AccessibilityCore.set_reduce_shake(true)', 'AccessibilityCore.set_reduce_flash(true)', 'AccessibilityCore.reset_settings',
+      'AccessibilityCore.list_text_scales(scales)', 'AccessibilityCore.set_text_scale(1250)', 'InputCore.get_keys(&"jump", keys)', 'InputCore.wait_key',
       'InputCore.set_keys(&"jump", keys)', 'InputCore.cancel_wait_key', 'InputCore.reset_keys', 'InputCore.get_pad_buttons(&"jump", keys)',
       'InputCore.wait_pad_button', 'InputCore.set_pad_buttons(&"jump", keys)', 'InputCore.reset_pad_buttons',
     ];
     expect(await optionEntry.run(memContext({ ...files, 'client/features/options/options_panel.gd': code(options) }))).toEqual([]);
+  });
+
+  it('requires the text scale entry when AccessibilityCore is used and the merged AccessibilityCore.textScales has 2 or more values', async () => {
+    const options = (calls: string[]): string => code([...ALL_CALLS, ...calls]);
+    const textScale = ['list_text_scales', 'get_settings', 'set_text_scale'];
+    const missing = (where: string, ops: string[]): string[] => ops.map((op) => `${where} | option entry: no \`AccessibilityCore.${op}\` call in client content code`);
+    // without AccessibilityCore, neither text scale nor its part of reset, whatever the text scales
+    modules.value = { client: BASE_MODULES, server: [] };
+    coreSettings.value = { 'AccessibilityCore.textScales': [1000, 1250, 1500] };
+    expect(await optionEntry.run(memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': options([]) }))).toEqual([]);
+    modules.value = { client: [...BASE_MODULES, 'AccessibilityCore'], server: [] };
+    // one text scale: no choice to offer, only the reset of the accessibility options
+    coreSettings.value = { 'AccessibilityCore.textScales': [1000] };
+    expect(absentLines(await optionEntry.run(memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': options([]) })))).toEqual(missing('settings.json:1', ['reset_settings']));
+    // the text scales of the core settings, which game settings `core` does not override: at the value that holds their place
+    coreSettings.value = { 'AccessibilityCore.textScales': [1000, 1250, 1500] };
+    const settingsText = JSON.stringify({ engine: 'godot', coreModules: { client: ['AccessibilityCore'] }, core: { 'NetworkCore.retryCount': 2 } }, null, 2);
+    const coreLine = `settings.json:${String(lineOf(settingsText, '  "core"'))}`;
+    expect(absentLines(await optionEntry.run(memContext({ 'settings.json': settingsText, 'client/features/options/options_panel.gd': options([]) })))).toEqual(sorted([
+      ...missing(`settings.json:${String(lineOf(settingsText, '  "coreModules"'))}`, ['reset_settings']),
+      ...missing(coreLine, textScale),
+    ]));
+    expect(absentLines(await optionEntry.run(memContext({ 'settings.json': '{}', 'client/features/options/options_panel.gd': options(['AccessibilityCore.reset_settings', 'AccessibilityCore.get_settings']) })))).toEqual(
+      missing('settings.json:1', ['list_text_scales', 'set_text_scale']),
+    );
+    const all = options(['AccessibilityCore.reset_settings', 'AccessibilityCore.list_text_scales(scales)', 'AccessibilityCore.get_settings', 'AccessibilityCore.set_text_scale(1500)']);
+    expect(await optionEntry.run(memContext({ 'settings.json': settingsText, 'client/features/options/options_panel.gd': all }))).toEqual([]);
+    // calls in DEV code and regression tests do not count
+    expect(absentLines(await optionEntry.run(memContext({ 'settings.json': settingsText, 'client/features/options/options_panel.gd': options([]), 'client/dev/x.gd': all, 'client/tests/x.gd': all })))).toHaveLength(4);
   });
 
   it('points at the line of the settings value by its path, not at another line that holds its name', async () => {
@@ -413,8 +457,8 @@ describe('option entry', () => {
     });
     const bad = (where: string, op: string): string => `${where} | option entry: the \`SoundBus\` argument of \`SoundCore.${op}\` is not a \`SoundCore.SoundBus\` element`;
     expect(lines(await optionEntry.run(sc))).toEqual([
-      bad('client/features/options/options_panel.gd:11', 'set_volume'),
-      bad('client/features/options/options_panel.gd:12', 'get_volume'),
+      bad('client/features/options/options_panel.gd:12', 'set_volume'),
+      bad('client/features/options/options_panel.gd:13', 'get_volume'),
       bad('client/features/play/play_scene.gd:3', 'play'),
       bad('client/features/play/play_scene.gd:4', 'play'),
     ]);
@@ -461,6 +505,17 @@ describe('gamepad input', () => {
     ]);
     expect(lines(await gamepadInput.run(memContext({ ...files, 'settings.json': '{}' })))).toEqual(expected);
     expect(lines(await gamepadInput.run(memContext({ ...files, 'settings.json': '{"gamepadSupported": false}' })))).toEqual(expected);
+    expect(await gamepadInput.run(memContext({ ...files, 'settings.json': '{"gamepadSupported": true}' }))).toEqual([]);
+  });
+
+  it('reports the stick axis option operations of InputCore while gamepadSupported is not true', async () => {
+    const ops = ['set_pad_axis_inverted(&"right_y", true)', 'is_pad_axis_inverted(&"right_y")', 'set_pad_axis_sensitivity(&"right_x", 2000)', 'get_pad_axis_sensitivity(&"right_x")', 'list_pad_axis_sensitivities(buffer)', 'reset_pad_axes()'];
+    const content = ['class_name PlayOptions', 'func f(buffer: PackedInt32Array) -> void:', ...ops.map((op) => `\tInputCore.${op}`), ''].join('\n');
+    const files = { 'client/project.godot': project(CORE_INPUT), 'client/features/options/stick_options.gd': content, 'client/dev/pad.gd': content };
+    const unsupported = 'while game settings `gamepadSupported` is not `true`';
+    expect(lines(await gamepadInput.run(memContext({ ...files, 'settings.json': '{}' })))).toEqual(
+      sorted(ops.map((op, i) => `client/features/options/stick_options.gd:${String(i + 3)} | gamepad input: \`InputCore.${op.slice(0, op.indexOf('('))}\` is gamepad input ${unsupported}`)),
+    );
     expect(await gamepadInput.run(memContext({ ...files, 'settings.json': '{"gamepadSupported": true}' }))).toEqual([]);
   });
 

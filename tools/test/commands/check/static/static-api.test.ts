@@ -40,7 +40,7 @@ vi.mock('../../../../src/commands/settings/api.ts', () => ({
 
 const ALWAYS = [
   'AuthCore.open_terms_document', 'AuthCore.withdraw', 'AuthCore.get_public_code', 'NativeUiCore.copy_text', 'UICore.open_licenses', 'AuthCore.issue_deletion_code',
-  'SoundCore.get_volume(SoundCore.SoundBus.UI)', 'SoundCore.set_volume(SoundCore.SoundBus.UI, 1.0)',
+  'SoundCore.reset_volume_settings', 'SoundCore.get_volume(SoundCore.SoundBus.UI)', 'SoundCore.set_volume(SoundCore.SoundBus.UI, 1.0)',
 ];
 
 async function setup(

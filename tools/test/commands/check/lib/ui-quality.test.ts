@@ -108,6 +108,24 @@ describe('UI quality presentation conditions', () => {
     ]);
   });
 
+  it('holds text of 18.66 CSS pixels or more with a font_weight of 700 or more to minLargeContrast, and text without a font_weight only from 24', () => {
+    // the same text pixels of luminance 0.125 over black: 3.50:1, between minLargeContrast 3 and minContrast 4.5
+    const image = canvas(400, 100, [0, 0, 0], [[0, 0, 400, 10, [99, 99, 99]]]);
+    const limits = { ...LIMITS, maxFontSizes: 10, minFontSize: 0 };
+    const low = (extra: Record<string, unknown>, pixelRatio = 1): string[] =>
+      presentationProblems(elements([el('hud/title', { text: 'T', rect: [0, 0, 400, 40], owner: 'run', ...extra })]), image, 'run', limits, pixelRatio).map((p) => p.message);
+    expect(low({ font_size: 18.66, font_weight: 700 })).toEqual([]);
+    expect(low({ font_size: 18.66, font_weight: 900 })).toEqual([]);
+    // 56 window pixels at pixel ratio 3 are 18.67 CSS pixels
+    expect(low({ font_size: 56, font_weight: 700 }, 3)).toEqual([]);
+    expect(low({ font_size: 18.6, font_weight: 700 })).toEqual(['low contrast hud/title: 3.50:1, under 4.5:1 for 18.6 CSS px text']);
+    expect(low({ font_size: 18.66, font_weight: 699 })).toEqual(['low contrast hud/title: 3.50:1, under 4.5:1 for 18.7 CSS px text']);
+    // a core whose list_ui gives no font_weight: large text only from 24
+    expect(low({ font_size: 18.66 })).toEqual(['low contrast hud/title: 3.50:1, under 4.5:1 for 18.7 CSS px text']);
+    expect(low({ font_size: 24 })).toEqual([]);
+    expect(low({ font_size: 24, font_weight: 400 })).toEqual([]);
+  });
+
   it('finds text whose font_size in CSS pixels (window pixels ÷ pixelRatio) is under minFontSize', () => {
     const image = canvas(400, 200, [0, 0, 0]);
     const limits = { ...NO_LIMITS, minFontSize: 18 };
@@ -205,11 +223,13 @@ describe('UI quality presentation conditions', () => {
 describe('UI quality rules', () => {
   it('toElements reads [x, y, w, h] rects and defaults', () => {
     expect(toElements([{ path: 'a', rect: [1, 2, 3, 4], text: 5, owner: 'o' }])).toEqual([
-      { path: 'a', rect: { x: 1, y: 2, w: 3, h: 4 }, text: '', fontSize: 0, clipped: false, owner: 'o', button: false, padAction: false, modalCovered: false, dimmed: false, textInput: false, focused: false },
+      { path: 'a', rect: { x: 1, y: 2, w: 3, h: 4 }, text: '', fontSize: 0, fontWeight: null, clipped: false, owner: 'o', button: false, padAction: false, modalCovered: false, dimmed: false, textInput: false, focused: false },
     ]);
     expect(toElements([el('b', { rect: [1, 2, 'x'], button: true, pad_action: true, modal_covered: true, dimmed: true, text_input: true, focused: true, clipped: true })])[0]).toMatchObject({
       rect: { x: 1, y: 2, w: 0, h: 0 }, button: true, padAction: true, modalCovered: true, dimmed: true, textInput: true, focused: true, clipped: true,
     });
+    expect(toElements([el('w', { font_size: 20, font_weight: 700 })])[0]).toMatchObject({ fontSize: 20, fontWeight: 700 });
+    expect(toElements([el('v', { font_weight: '700' })])[0]?.fontWeight).toBeNull();
     expect(toElements([{ path: 'c', rect: null }])[0]?.rect).toEqual({ x: 0, y: 0, w: 0, h: 0 });
     expect(toElements([{ path: 'd', rect: { x: 1, y: 2, w: 3, h: 4 } }])[0]?.rect).toEqual({ x: 0, y: 0, w: 0, h: 0 });
     expect(toElements('x')).toEqual([]);
