@@ -242,7 +242,7 @@ none
 | `wait_pad_button` while waiting | button none | error |
 | a name that is not a stick axis name for `set_pad_axis_inverted`, `is_pad_axis_inverted`, `set_pad_axis_sensitivity`, `get_pad_axis_sensitivity` | failure value. The stick axis options stay as they are | error |
 | a value of `set_pad_axis_sensitivity` not in `InputCore.padAxisSensitivities` | `false`. The sensitivity stays as it is | error |
-| `InputCore.padAxisSensitivities` has no element or more than 10 elements, has no 1000, an element less than 1, or a repeated element | `init` fails | error |
+| `InputCore.padAxisSensitivities` has no element or more than 10 elements, has no 1000, an element less than 1 or more than 10000, or a repeated element | `init` fails | error |
 | an action or a saved stick axis option element that `load_keys` did not apply | none | warn |
 
 ## settings
@@ -258,7 +258,7 @@ none
 | `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions that `set_pad_buttons` accepts for one action |
 | `InputCore.padAxisWaitThreshold` | number | core | content | direction strength at which `wait_pad_button` passes a gamepad axis direction. More than 0 and at most 1 |
 | `InputCore.padAxisDeadzone` | number | core | content | a gamepad axis direction magnitude less than this value counts as strength 0. At least 0 and less than 1 |
-| `InputCore.padAxisSensitivities` | array<integer> | core | content | list of allowed stick axis sensitivity permille values. It has 1 to 10 elements, it holds 1000, each element is 1 or more, and no element repeats. The core settings schema checks this range |
+| `InputCore.padAxisSensitivities` | array<integer> | core | content | list of allowed stick axis sensitivity permille values. It has 1 to 10 elements, it holds 1000, each element is 1 to 10000, and no element repeats. The core settings schema checks this range |
 
 ## data
 
