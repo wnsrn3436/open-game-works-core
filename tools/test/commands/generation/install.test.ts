@@ -1,10 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toolProgram } from '../../../src/commands/env/api.ts';
 import { sha256Text } from '../../../src/commands/env/lib/files.ts';
 import { setNet } from '../../../src/commands/env/lib/net.ts';
-import { cliWrapper, globMatch, hfDigest, installedFrom, pipRequirements, projectScript, withMethodLock, type MethodMarker } from '../../../src/commands/generation/lib/install.ts';
+import { cliWrapper, globMatch, hfDigest, installedFrom, installKey, methodMarker, pipRequirements, projectScript, withMethodLock, type MethodMarker } from '../../../src/commands/generation/lib/install.ts';
 import { loadSchema, validateAgainst } from '../../../src/lib/settings.ts';
 import { sourceUrl } from '../../../src/commands/generation/list.ts';
 import { createContext } from '../../../src/lib/command.ts';
@@ -187,8 +187,8 @@ describe('ogw generation install', () => {
 
     const folder = async (name: string): Promise<string> => installFolder(ws, methods.find((m) => m.name === name) as MethodLike, env);
     const [fontsDir, imgDir, spriteDir] = [await folder('font-catalog'), await folder('img'), await folder('sprite')];
-    // `.ogw/generation/<method>/<install key>/`
-    expect(fontsDir).toMatch(new RegExp(`^${join(ws.root, '.ogw', 'generation', 'font-catalog')}/[0-9a-f]{16}$`));
+    // `.ogw/generation-install/<method>/<install key>/`
+    expect(fontsDir).toMatch(new RegExp(`^${join(ws.root, '.ogw', 'generation-install', 'font-catalog')}/[0-9a-f]{16}$`));
     expect(existsSync(join(fontsDir, 'git', '0', 'ofl', 'notosans', 'NotoSans[wght].ttf'))).toBe(true);
     expect(existsSync(join(fontsDir, 'git', '0', 'ofl', 'other'))).toBe(false);
     expect(readFileSync(join(imgDir, 'hf', '1', 'sub', 'b.bin'), 'utf8')).toBe('bbb');
@@ -531,6 +531,60 @@ describe('ogw generation install', () => {
     // the other install keeps its marker and files
     expect(readFileSync(join(methodFolder, 'installed.json'), 'utf8')).toBe(JSON.stringify(other));
     expect(readFileSync(join(methodFolder, 'hf', '0', 'a.json'), 'utf8')).toBe('{}');
+  });
+
+  it('keeps its install when a harness before the install keys empties .ogw/generation/<method>/ to install that method', async () => {
+    const method: MethodLike = { name: 'p', kind: 'local-model', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins: [{ kind: 'pip', source: 'p==1' }] };
+    const { ws, env, log } = workspace({ resourceGeneration: [method] });
+    expect((await ogw(ws, ['generation', 'install', 'p'], { env })).stdout).toContain('method p: installed');
+    const folder = await installFolder(ws, method, env);
+    expect(folder.startsWith(`${join(ws.root, '.ogw', 'generation-install', 'p')}/`)).toBe(true);
+    const marker = readFileSync(join(folder, 'installed.json'), 'utf8');
+    // the install of that harness: every entry of its method folder but `.reuse` removed, then its own install written there
+    const older = join(ws.root, '.ogw', 'generation', 'p');
+    mkdirSync(older, { recursive: true });
+    for (const name of readdirSync(older)) if (name !== '.reuse') rmSync(join(older, name), { recursive: true, force: true });
+    writeFileSync(join(older, 'installed.json'), JSON.stringify({ name: 'p', pins: JSON.stringify([{ kind: 'pip', source: 'p==0' }]), git: [], hf: [], files: null, python: null, cli: null, skill: null }));
+    expect(readFileSync(join(folder, 'installed.json'), 'utf8')).toBe(marker);
+    // this checkout still has its install: a second install runs nothing
+    writeFileSync(log, '');
+    expect((await ogw(ws, ['generation', 'install', 'p'], { env })).stdout).toContain('method p: installed');
+    expect(readFileSync(log, 'utf8')).toBe('');
+  });
+
+  it('takes an install folder of .ogw/generation/<method>/<install key>/ only as another install to link hf files from', async () => {
+    const pins = [{ kind: 'hf', source: 'o/m', revision: REV }];
+    const method: MethodLike = { name: 'm', kind: 'local-model', resourceTypes: ['bgm'], safetyTimeoutMs: 1, license: 'X', pins };
+    const { ws, env } = workspace({ resourceGeneration: [method] });
+    const siblings = [{ rfilename: 'a.json' }, { rfilename: 'w/big.bin', lfs: { sha256: sha('big') } }];
+    const net = fakeNet({
+      [`https://huggingface.co/api/models/o/m/revision/${REV}?blobs=true`]: { sha: REV, siblings },
+      [`https://huggingface.co/o/m/resolve/${REV}/a.json`]: '{}',
+      [`https://huggingface.co/o/m/resolve/${REV}/w/big.bin`]: 'big',
+    });
+    setNet(net);
+    // a complete install of these pins under `.ogw/generation/<method>/`, in the folder of the same install key
+    const ctx = createContext({ cwd: ws.root, env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    const generationMethod = settingsMethods(ws)[0] as unknown as Parameters<typeof methodMarker>[1];
+    const older = join(ws.root, '.ogw', 'generation', 'm', await installKey(ctx, generationMethod));
+    mkdirSync(join(older, 'hf', '0', 'w'), { recursive: true });
+    writeFileSync(join(older, 'hf', '0', 'w', 'big.bin'), 'big');
+    writeFileSync(join(older, 'hf', '0', 'a.json'), '{}');
+    const marker = JSON.stringify({ name: 'm', pins: JSON.stringify(pins), git: [], hf: [{ source: 'o/m', dir: join(older, 'hf', '0') }], files: null, python: null, cli: null, skill: null });
+    writeFileSync(join(older, 'installed.json'), marker);
+    // it is not the install of this checkout
+    expect(await methodMarker(ctx, generationMethod)).toBeNull();
+    const run = await ogw(ws, ['generation', 'install', 'm', '--json'], { env });
+    expect((JSON.parse(run.stdout) as { methods: Record<string, unknown> }).methods.m).toMatchObject({ installed: true });
+    const folder = await installFolder(ws, method, env);
+    expect(folder).toBe(join(ws.root, '.ogw', 'generation-install', 'm', basename(older)));
+    expect(await methodMarker(ctx, generationMethod)).toMatchObject({ name: 'm', hf: [{ source: 'o/m', dir: join(folder, 'hf', '0') }] });
+    // its LFS file is linked, the small file is downloaded, and its folder keeps every file
+    const gets = (path: string): number => net.calls.filter((c) => c === `GET https://huggingface.co/o/m/resolve/${REV}/${path}`).length;
+    expect([gets('w/big.bin'), gets('a.json')]).toEqual([0, 1]);
+    expect(statSync(join(folder, 'hf', '0', 'w', 'big.bin')).ino).toBe(statSync(join(older, 'hf', '0', 'w', 'big.bin')).ino);
+    expect(readFileSync(join(older, 'installed.json'), 'utf8')).toBe(marker);
+    expect(readFileSync(join(older, 'hf', '0', 'a.json'), 'utf8')).toBe('{}');
   });
 
   it('sends the token of an hf pin secret, installs an hf pin without sha256 and records its SHA-256', async () => {

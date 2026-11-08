@@ -1,4 +1,4 @@
-// Two checkouts of the harness on one host that share the generation folder (ogw.md `## generation install`): through
+// Two checkouts of the harness on one host that share the install root .ogw/generation-install (ogw.md `## generation install`): through
 // one workspace root, or through a symbolic link to another workspace's folder. The tests use only ogw commands and
 // the files the install leaves.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -95,16 +95,16 @@ describe('installs of two checkouts of the harness on one host', () => {
     expect(readFileSync(join(ws.root, 'calls.log'), 'utf8')).toBe('');
   });
 
-  it('keeps the install of one workspace when another workspace that links its generation folder installs, and after that workspace is gone', async () => {
+  it('keeps the install of one workspace when another workspace that links its install root .ogw/generation-install installs, and after that workspace is gone', async () => {
     const same = settings(sharedFolder(), '7');
     const one = makeWorkspace(same);
     const two = makeWorkspace(same);
     setNet(fakeNet({ 'https://dl/ffmpeg-7': FFMPEG }));
     for (const ws of [one, two]) makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
-    // workspace two reaches the generation folder of workspace one through a symbolic link; each has its own tools
-    mkdirSync(join(one.root, '.ogw', 'generation'), { recursive: true });
+    // workspace two reaches the install root of workspace one through a symbolic link; each has its own tools
+    mkdirSync(join(one.root, '.ogw', 'generation-install'), { recursive: true });
     mkdirSync(join(two.root, '.ogw'), { recursive: true });
-    symlinkSync(join(one.root, '.ogw', 'generation'), join(two.root, '.ogw', 'generation'));
+    symlinkSync(join(one.root, '.ogw', 'generation-install'), join(two.root, '.ogw', 'generation-install'));
     const envOne = checkoutEnv(one, one.harness);
     const envTwo = checkoutEnv(two, two.harness);
 
@@ -125,7 +125,7 @@ describe('installs of two checkouts of the harness on one host', () => {
     const list = await ogw(one, ['generation', 'list', 'cat', '--json'], { env: envOne });
     // a local repository has no source URL: the list fails on that, after it found the installed files
     expect(list.stderr).toContain('no source URL for a file of git repository');
-    const catFolder = join(one.root, '.ogw', 'generation', 'cat');
+    const catFolder = join(one.root, '.ogw', 'generation-install', 'cat');
     const markers = readdirSync(catFolder).filter((name) => existsSync(join(catFolder, name, 'installed.json')));
     expect(markers).toHaveLength(1);
     expect(readFileSync(join(catFolder, markers[0] as string, 'installed.json'), 'utf8')).not.toContain(two.root);

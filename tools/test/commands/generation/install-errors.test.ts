@@ -155,8 +155,8 @@ describe('methodMarker and installedFrom', () => {
 describe('install folder', () => {
   it('takes the real path of the deepest folder that exists, and throws a real path that cannot be read', async () => {
     const { ws, env } = setup();
-    // `.ogw/generation/` is not there yet: the folder is that of the workspace with the rest after it
-    expect(await installFolder(ws, method([HF]), env)).toMatch(new RegExp(`^${ws.root}/\\.ogw/generation/m/[0-9a-f]{16}$`));
+    // `.ogw/generation-install/` is not there yet: the folder is that of the workspace with the rest after it
+    expect(await installFolder(ws, method([HF]), env)).toMatch(new RegExp(`^${ws.root}/\\.ogw/generation-install/m/[0-9a-f]{16}$`));
     vi.mocked(fsPromises.realpath).mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied, realpath'), { code: 'EACCES' }));
     await expect(installFolder(ws, method([HF]), env)).rejects.toThrow('EACCES: permission denied, realpath');
   });

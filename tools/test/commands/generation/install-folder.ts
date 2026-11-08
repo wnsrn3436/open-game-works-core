@@ -1,4 +1,4 @@
-// The install folder of a generation method in tests: `.ogw/generation/<method>/<install key>/` (ogw.md `## generation install`).
+// The install folder of a generation method in tests: `.ogw/generation-install/<method>/<install key>/` (ogw.md `## generation install`).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { methodDir } from '../../../src/commands/generation/lib/install.ts';

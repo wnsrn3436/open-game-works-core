@@ -43,9 +43,17 @@ async function realPathOf(path: string): Promise<string> {
   return parent === path ? path : join(await realPathOf(parent), basename(path));
 }
 
-/** `.ogw/generation/` of the workspace root by its real path (ogw.md `## generation install`). */
-async function generationDir(ctx: Context): Promise<string> {
-  return realPathOf(join(await dataDir(ctx), 'generation'));
+/**
+ * `.ogw/generation-install/` of the workspace root by its real path, which holds the install folders (ogw.md `## generation
+ * install`): not `.ogw/generation/`, whose method folders the install of a harness before the install keys empties.
+ */
+async function installRoot(ctx: Context): Promise<string> {
+  return realPathOf(join(await dataDir(ctx), 'generation-install'));
+}
+
+/** `.ogw/generation/<method>/` of the workspace root by its real path: the folder of the installs of a harness before the install folders of `installRoot`. */
+async function olderMethodFolder(ctx: Context, method: GenerationMethod): Promise<string> {
+  return realPathOf(join(await dataDir(ctx), 'generation', safeSegment(method.name)));
 }
 
 /** The `tools.ffmpeg` program a method's `cli` puts on PATH, by its real path: for a method with `provider`, else null. */
@@ -71,9 +79,9 @@ export async function installKey(ctx: Context, method: GenerationMethod): Promis
   return sha256Text(identity).slice(0, 16);
 }
 
-/** The install folder of a method on this checkout: `.ogw/generation/<method>/<install key>/` by its real path. */
+/** The install folder of a method on this checkout: `.ogw/generation-install/<method>/<install key>/` by its real path. */
 export async function methodDir(ctx: Context, method: GenerationMethod): Promise<string> {
-  return join(await generationDir(ctx), safeSegment(method.name), await installKey(ctx, method));
+  return join(await installRoot(ctx), safeSegment(method.name), await installKey(ctx, method));
 }
 
 /** Each hf pin of `pins` with a `sha256` that differs from the SHA-256 of the files of that pin the install of `marker` got. */
@@ -491,7 +499,7 @@ async function installMethodLocked(ctx: Context, method: GenerationMethod): Prom
   const pins = method.pins ?? [];
   const conflict = await digestConflict(dir, pins);
   if (conflict !== null) return conflict;
-  const others = await otherInstallHf(method, dir, pins);
+  const others = await otherInstallHf(ctx, method, dir, pins);
   const reuse = await keepHfFolders(dir, pins);
   const lfs = new Map<number, string[]>();
   return refillFolder(
@@ -568,17 +576,24 @@ async function keepHfFiles(dir: string, pins: readonly GenerationPin[], lfs: Rea
   return true;
 }
 
+/** The folders in `parent` other than `dir`; none when `parent` does not exist. */
+async function foldersIn(parent: string, dir: string): Promise<string[]> {
+  const entries = await readdir(parent, { withFileTypes: true }).catch(whenNotFound([]));
+  return entries.filter((e) => e.isDirectory()).map((e) => join(parent, e.name)).filter((folder) => folder !== dir);
+}
+
 /**
  * The hf folders of the other installs of the method that each hf pin of `pins` can take its LFS files from, by pin
- * index: `hf/<i>/` of `.ogw/generation/<method>/` and of each folder in it other than the install folder `dir`, whose
- * `installed.json` names the method and whose pin `<i>` is an hf pin with the same `source` and `revision`.
+ * index: `hf/<i>/` of each folder of `.ogw/generation-install/<method>/` other than the install folder `dir`, of
+ * `.ogw/generation/<method>/` and of each folder in it, whose `installed.json` names the method and whose pin `<i>` is an
+ * hf pin with the same `source` and `revision`. The folders under `.ogw/generation/` are only read: no install of this
+ * harness is there.
  */
-async function otherInstallHf(method: GenerationMethod, dir: string, pins: readonly GenerationPin[]): Promise<Map<number, string[]>> {
-  const methodFolder = dirname(dir);
-  const folders = [methodFolder, ...(await readdir(methodFolder, { withFileTypes: true }).catch(whenNotFound([]))).filter((e) => e.isDirectory()).map((e) => join(methodFolder, e.name))];
+async function otherInstallHf(ctx: Context, method: GenerationMethod, dir: string, pins: readonly GenerationPin[]): Promise<Map<number, string[]>> {
+  const older = await olderMethodFolder(ctx, method);
+  const folders = [...(await foldersIn(dirname(dir), dir)), older, ...(await foldersIn(older, dir))];
   const found = new Map<number, string[]>();
   for (const folder of folders) {
-    if (folder === dir) continue;
     const marker = await readJsonIfExists<MethodMarker>(join(folder, 'installed.json'));
     if (marker?.name !== method.name) continue;
     const theirs = previousPinsOf(marker);
