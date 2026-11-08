@@ -254,31 +254,42 @@ describe('ogw game check', () => {
 
   it('checks DEV and STG deploy on one host', async () => {
     const sameHost = (s: Settings) => (s.environments.STG.deploy.host = s.environments.DEV.deploy.host);
+    const ports = 'environments: DEV and STG deploy on the same host need deploy.port values that differ by 2 or more';
     expect(
       await errors((s) => {
         sameHost(s);
         s.environments.STG.deploy.dir = '/srv/dev';
       }),
-    ).toEqual([
-      'environments: DEV and STG deploy on the same host need different deploy.dir',
-      'environments: DEV and STG deploy on the same host need different deploy.port',
-    ]);
-    expect(await errors((s) => sameHost(s))).toEqual(['environments: DEV and STG deploy on the same host need different deploy.port']);
+    ).toEqual(['environments: DEV and STG deploy on the same host need different deploy.dir', ports]);
+    expect(await errors((s) => sameHost(s))).toEqual([ports]);
     expect(
       await errors((s) => {
         sameHost(s);
-        s.environments.STG.deploy.port = 8081;
+        s.environments.STG.deploy.port = s.environments.DEV.deploy.port + 2;
         s.environments.STG.deploy.dir = '/srv/dev';
       }),
     ).toEqual(['environments: DEV and STG deploy on the same host need different deploy.dir']);
-    expect(
-      (
-        await check((s) => {
+    // deploy.port + 1 is the ops port of that environment
+    for (const offset of [1, -1]) {
+      expect(
+        await errors((s) => {
           sameHost(s);
-          s.environments.STG.deploy.port = 8081;
-        })
-      ).code,
-    ).toBe(0);
+          s.environments.STG.deploy.port = s.environments.DEV.deploy.port + offset;
+        }),
+      ).toEqual([ports]);
+    }
+    for (const offset of [2, -2]) {
+      expect(
+        (
+          await check((s) => {
+            sameHost(s);
+            s.environments.STG.deploy.port = s.environments.DEV.deploy.port + offset;
+          })
+        ).code,
+      ).toBe(0);
+    }
+    // on two hosts the ports may be the same
+    expect((await check((s) => (s.environments.STG.deploy.port = s.environments.DEV.deploy.port))).code).toBe(0);
   });
 
   it('checks login-apple next to login-google for ios', async () => {

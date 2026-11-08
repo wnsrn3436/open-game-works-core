@@ -7,12 +7,14 @@ export interface ProdOrders {
   deploy: string[];
   rollback: string[];
   maintenance: string;
+  restore: string[];
 }
 
 /** Marker texts in `build` `## deploy`. */
 const DEPLOY_MARKER = 'A human deploys PROD';
 const ROLLBACK_MARKER = 'also carries the rollback order below';
 const MAINTENANCE_MARKER = 'also carries the maintenance order: ';
+const RESTORE_MARKER = 'also carries the restore order below';
 
 function numberedAfter(lines: readonly string[], marker: string): string[] {
   const start = lines.findIndex((line) => line.includes(marker));
@@ -26,7 +28,7 @@ function numberedAfter(lines: readonly string[], marker: string): string[] {
   return steps;
 }
 
-/** The PROD deploy order, rollback order and maintenance order exactly as `build` `## deploy` gives them. */
+/** The PROD deploy order, rollback order, maintenance order and restore order exactly as `build` `## deploy` gives them. */
 export async function readProdOrders(env: NodeJS.ProcessEnv): Promise<ProdOrders> {
   const text = await readText(join(harnessRoot(env), 'skills', 'build', 'SKILL.md'));
   const lines = text.split(/\r?\n/);
@@ -38,5 +40,6 @@ export async function readProdOrders(env: NodeJS.ProcessEnv): Promise<ProdOrders
     deploy: numberedAfter(lines, DEPLOY_MARKER),
     rollback: numberedAfter(lines, ROLLBACK_MARKER),
     maintenance: maintenanceLine.slice(maintenanceLine.indexOf(MAINTENANCE_MARKER) + MAINTENANCE_MARKER.length),
+    restore: numberedAfter(lines, RESTORE_MARKER),
   };
 }

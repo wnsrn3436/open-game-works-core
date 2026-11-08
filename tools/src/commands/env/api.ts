@@ -18,8 +18,9 @@ import { hostPlatform } from './lib/host.ts';
 import { readMarker, type InstallResult } from './lib/install.ts';
 import { dockerBuildx, firstLine, ghStatus, runIfPresent } from './lib/probe.ts';
 import { downloadFor, installedToolProgram, postgresPresent } from './lib/tools.ts';
+import { walgProgram } from './lib/walg.ts';
 
-export { buildToolDir, dockerBuildx, ghStatus, hostPlatform, postgresPresent };
+export { buildToolDir, dockerBuildx, ghStatus, hostPlatform, postgresPresent, walgProgram };
 
 /** Absolute path of the engine executable of that version on this host, or null when it is not installed. */
 export function enginePath(ctx: Context, engine: string, version: string): Promise<string | null> {

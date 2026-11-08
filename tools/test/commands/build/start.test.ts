@@ -9,7 +9,7 @@ import { runData } from '../../../src/commands/data/api.ts';
 import { planDevStg } from '../../../src/commands/build/lib/plan.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { OgwError } from '../../../src/lib/errors.ts';
-import { ogw, makeWorkspace, testSettings, type TestWorkspace, sh } from '../../helpers/workspace.ts';
+import { ogw, makeWorkspace, realToolsWithout, testSettings, type TestWorkspace, sh } from '../../helpers/workspace.ts';
 import { addSecrets, commit, fakeBin, git, openBuildRun, runsOf, setSecrets, setupGame, write } from './helpers.ts';
 
 vi.mock('../../../src/commands/core/api.ts', async (orig) => ({ ...(await orig<object>()), coreRelease: vi.fn(), coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
@@ -34,6 +34,14 @@ const GH = `case "$1 $2" in
   "api user") echo me;;
 esac`;
 
+/** Harness settings with a `tools.walg` pin: the DB backup rule applies to PROD builds and once a PROD tag exists. */
+const WALG = { tools: { ...realToolsWithout('walg'), walg: { version: '3.0.9', downloads: [{ platform: 'linux-x64', url: 'https://example.com/wal-g', sha256: 'a'.repeat(64) }] } } };
+
+/** The result file of a passed PROD restore test that started `ageMs` ago (`ogw backup test`). */
+function restoreTest(dir: string, ageMs = 0, result = 'pass'): void {
+  write(dir, 'builds/prod-backup-test.json', { started_at: Date.now() - ageMs, result, reason: null, base_backup: 'base_1', base_backup_finished_at: 1 });
+}
+
 let coreDir = '';
 const NATIVE_PLUGINS = [{ name: 'ogw-secure-storage', platforms: ['android', 'ios', 'macos', 'windows', 'linux'] }];
 
@@ -53,6 +61,7 @@ function prepare(ws: TestWorkspace, coreSpec: object[] = [], coreSettings: objec
     ...deployed('DEV', ['db', 'atk', 'usk', 'deploySsh', 'dbPassword', 'devAccess', 'adminOgw']),
     ...deployed('STG', ['db', 'atk', 'usk', 'deploySsh', 'dbPassword', 'adminOgw']),
     'ogw/g/PROD/adminOgw': 's',
+    'ogw/g/PROD/backupKey': 's',
     // the loop steps of the build run play and judge agents with Claude Code
     'ogw/harness/claude-code-oauth-token': 'token',
   });
@@ -75,7 +84,7 @@ describe('build start preconditions', () => {
     setupGame(local);
     expect((await ogw(local, ['build', 'start', 'g', 'DEV'])).stderr).toContain('useLocalCore is true');
 
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     write(dir, 'dirty.txt', 'x');
@@ -88,7 +97,7 @@ describe('build start preconditions', () => {
   });
 
   it('refuses a game whose core is not the core of the harness, before anything is made', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     sh(ws.harness, 'git', ['tag', 'core-v1.1.0']);
@@ -100,7 +109,7 @@ describe('build start preconditions', () => {
   });
 
   it('refuses while a gameplay video of the reference is missing, before anything is made', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     git(dir, 'rm', '-q', 'records/setup/reference/hollow.mp4');
@@ -113,7 +122,7 @@ describe('build start preconditions', () => {
   });
 
   it('reports every host problem and makes nothing', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = { ...prepare(ws), FAKE_NO_IMAGE: '1', FAKE_NO_BUILDX: '1', FAKE_SCOPE: '' };
     setSecrets(ws, {});
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
@@ -162,7 +171,7 @@ describe('build start preconditions', () => {
   });
 
   it('needs every secret ogw deploy writes: each environment secret and the secret of every operator', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     setSecrets(ws, { 'ogw/g/DEV/deploySsh': 'k', 'ogw/g/DEV/adminOgw': 's' });
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
@@ -181,7 +190,7 @@ describe('build start preconditions', () => {
   });
 
   it('treats an empty operator ogw secret as missing, as ogw admin does', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     setSecrets(ws, { 'ogw/g/DEV/deploySsh': 'k', 'ogw/g/DEV/adminOgw': '' });
     setupGame(ws);
@@ -192,7 +201,7 @@ describe('build start preconditions', () => {
   });
 
   it('runs the human checks on main and makes nothing when one fails', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
     const environments = settings.environments as Record<string, Record<string, unknown>>;
@@ -209,7 +218,7 @@ describe('build start preconditions', () => {
     expect(git(dir, 'branch', '--list')).toBe('* main');
   });
   it('refuses on a missing build stage value of the environment or outside any environment, before the host checks', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = { ...prepare(ws), FAKE_NO_BUILDX: '1' };
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
     const environments = settings.environments as Record<string, Record<string, unknown>>;
@@ -225,26 +234,26 @@ describe('build start preconditions', () => {
   });
 
   it('builds DEV android, windows and macos without signing, and needs it for ios, STG, and a DEV macos with login-apple', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = { ...prepare(ws), OGW_HOST_PLATFORM: 'macos-arm64' };
     setupGame(ws, 'g', { buildPlatforms: ['android', 'windows', 'macos'] });
     const dev = await ogw(ws, ['build', 'start', 'g', 'DEV', '--json'], { env });
     expect(dev.code).toBe(0);
     expect(dev.stdout).not.toContain('signing');
     expect(dev.stderr).not.toContain('signing');
-    const stgWs = makeWorkspace();
+    const stgWs = makeWorkspace(WALG);
     const stgEnv = { ...prepare(stgWs), OGW_HOST_PLATFORM: 'macos-arm64' };
     setupGame(stgWs, 'g', { buildPlatforms: ['android', 'windows', 'macos'] });
     const stg = await ogw(stgWs, ['build', 'start', 'g', 'STG', '--json'], { env: stgEnv });
     expect((JSON.parse(stg.stdout) as { data: { missing: string[] } }).data.missing).toEqual(['signing.android: missing', 'signing.windows: missing', 'signing.macos: missing']);
 
-    const ios = makeWorkspace();
+    const ios = makeWorkspace(WALG);
     const iosEnv = { ...prepare(ios), OGW_HOST_PLATFORM: 'macos-arm64' };
     setupGame(ios, 'g', { buildPlatforms: ['ios'] });
     const iosOut = await ogw(ios, ['build', 'start', 'g', 'DEV', '--json'], { env: iosEnv });
     expect((JSON.parse(iosOut.stdout) as { data: { missing: string[] } }).data.missing).toEqual(['appleTeamId: missing', 'signing.ios: missing']);
 
-    const apple = makeWorkspace();
+    const apple = makeWorkspace(WALG);
     const appleEnv = { ...prepare(apple), OGW_HOST_PLATFORM: 'macos-arm64' };
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
     const environments = settings.environments as Record<string, Record<string, unknown>>;
@@ -255,7 +264,7 @@ describe('build start preconditions', () => {
   });
 
   it('needs adapters.turn of the environment for a relay-only realtime game, and the PROD values at a STG build', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws, [], { 'BootstrapCore.realtimeRelayOnly': true });
     setupGame(ws);
     const dev = await ogw(ws, ['build', 'start', 'g', 'DEV', '--json'], { env });
@@ -266,7 +275,7 @@ describe('build start preconditions', () => {
   });
 
   it('needs the PROD updatePublicKeys at a STG build', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
     const environments = settings.environments as Record<string, Record<string, unknown>>;
@@ -279,7 +288,7 @@ describe('build start preconditions', () => {
   });
 
   it('ignores a missing build stage value of another environment', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
     const environments = settings.environments as Record<string, Record<string, unknown>>;
@@ -293,7 +302,7 @@ describe('build start preconditions', () => {
 
 describe('build start DEV and STG', () => {
   it('starts 0.1.0 from main HEAD and opens the run', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     const head = git(dir, 'rev-parse', 'HEAD');
@@ -312,7 +321,7 @@ describe('build start DEV and STG', () => {
   });
 
   it('refuses an STG build whose core release lacks a native plugin the platforms need, and not a DEV build', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({ godot: '4.5.1.stable', buildTools: [], plugins: [{ name: 'ogw-native-ui', platforms: ['linux'] }] }));
@@ -325,7 +334,7 @@ describe('build start DEV and STG', () => {
   });
 
   it('refuses an STG macos build whose provisioning profile does not grant <appleTeamId>.<appId>, before anything is made', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = { ...prepare(ws), OGW_HOST_PLATFORM: 'macos-arm64' };
     const signing = { macos: { certificate: 'c', certificatePassword: 'cp', provisioningProfile: 'pp', notaryApiKey: 'n' } };
     const dir = setupGame(ws, 'g', { buildPlatforms: ['macos'], appleTeamId: 'TEAM123456', macosNotary: { keyId: 'K', issuerId: 'I' }, signing });
@@ -345,7 +354,7 @@ describe('build start DEV and STG', () => {
   });
 
   it('registers the run only while main is still the planned start commit', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     const original = await vi.importActual<typeof import('../../../src/commands/build/lib/plan.ts')>('../../../src/commands/build/lib/plan.ts');
@@ -364,7 +373,7 @@ describe('build start DEV and STG', () => {
   });
 
   it('raises the patch of the highest tag, checks --version, renames a failed branch and folder', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     git(dir, 'tag', 'stg-1.2.3');
@@ -387,7 +396,7 @@ describe('build start DEV and STG', () => {
   });
 
   it('takes --version above the highest tag', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     setupGame(ws);
     const out = await ogw(ws, ['build', 'start', 'g', 'DEV', '--version', '2.0.0'], { env });
@@ -395,7 +404,7 @@ describe('build start DEV and STG', () => {
   });
 
   it('numbers bundle patches and needs the app version tag', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     expect((await ogw(ws, ['build', 'start', 'g', 'DEV', '--bundle-for', '1.0.0', '--version', '1.0.1'], { env })).stderr).toContain('--bundle-for takes no --version');
@@ -421,7 +430,7 @@ describe('build start PROD', () => {
   }
 
   it('starts from the most recent stg tag commit and checks the STG server image', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const { dir, stg } = prodGame(ws);
     const bin = fakeBin(ws, {});
@@ -437,7 +446,7 @@ describe('build start PROD', () => {
   });
 
   it('checks the core of the stg tag commit, not of main, against the core of the harness', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     write(dir, 'records/loops/build-stg-1.1.0/end.md', '## result\n\ndone\n\n## compatibility base\n\nnone\n');
@@ -461,12 +470,13 @@ describe('build start PROD', () => {
   });
 
   it('stops without the STG image, with a stale compatibility base, or an existing PROD tag', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const { dir } = prodGame(ws, 'prod-0.9.0');
     const stale = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
     expect(stale.stderr).toContain('compatibility base prod-0.9.0 is not the last PROD build none: a new STG build is needed');
     git(dir, 'tag', 'prod-0.9.0', 'main~2');
+    restoreTest(dir);
     expect((await ogw(ws, ['build', 'start', 'g', 'PROD'], { env: { ...env, FAKE_NO_REMOTE: '1' } })).stderr).toContain(
       'server image ghcr.io/example/game-server:stg-1.1.0 is not in the registry',
     );
@@ -476,7 +486,7 @@ describe('build start PROD', () => {
   });
 
   it('needs a stg tag on main, a missing end.md, and a version above the last PROD build', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     expect((await ogw(ws, ['build', 'start', 'g', 'PROD'], { env })).stderr).toContain('no main commit has the stg tag');
@@ -490,8 +500,73 @@ describe('build start PROD', () => {
     );
   });
 
+  it('needs backup, its secret and tools.walg for PROD and, once a PROD tag exists, for DEV and STG', async () => {
+    const settings = await import('./helpers.ts').then((h) => h.gameSettings());
+    const environments = settings.environments as Record<string, Record<string, unknown>>;
+    delete environments.PROD?.backup;
+    delete (environments.PROD?.secrets as Record<string, unknown>).backup;
+    const ws = makeWorkspace({ tools: realToolsWithout('walg') });
+    const env = prepare(ws);
+    const dir = setupGame(ws, 'g', { environments });
+    // DEV before the first PROD build: each build empties its DB
+    expect(await ogw(ws, ['build', 'start', 'g', 'DEV'], { env })).toMatchObject({ code: 0, stderr: '' });
+    git(dir, 'checkout', '--quiet', 'main');
+    const { changeRuns } = await import('../../../src/lib/runstate.ts');
+    const close = async (): Promise<void> => {
+      await changeRuns(await import('./helpers.ts').then((h) => h.gameRepo(ws)), (runs) => {
+        for (const r of runs) r.closedAt = 1;
+      });
+    };
+    await close();
+    write(dir, 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nnone\n');
+    commit(dir, 'stg build');
+    git(dir, 'tag', 'stg-1.1.0');
+    const prod = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
+    expect(prod.code).toBe(1);
+    expect(prod.stderr).toContain('game settings environments.PROD.backup is missing\ngame settings environments.PROD.secrets.backup is missing\nharness settings tools.walg is missing\n');
+    // without a PROD tag there is no restore test to read
+    expect(prod.stderr).not.toContain('backup-test');
+    git(dir, 'tag', 'prod-1.0.0', 'main~1');
+    const dev = await ogw(ws, ['build', 'start', 'g', 'DEV'], { env });
+    expect(dev.stderr).toContain('game settings environments.DEV.backup is missing\ngame settings environments.DEV.secrets.backup is missing\nharness settings tools.walg is missing\n');
+    expect(dev.stderr).not.toContain('PROD.backup');
+
+    const ws2 = makeWorkspace(WALG);
+    const env2 = prepare(ws2);
+    setupGame(ws2);
+    write(join(ws2.games, 'g'), 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nnone\n');
+    commit(join(ws2.games, 'g'), 'stg build');
+    git(join(ws2.games, 'g'), 'tag', 'stg-1.1.0');
+    setSecrets(ws2, { 'ogw/g/PROD/adminOgw': 's', 'ogw/harness/claude-code-oauth-token': 'token' });
+    const secret = await ogw(ws2, ['build', 'start', 'g', 'PROD'], { env: env2 });
+    expect(secret.stderr).toBe('secret backup of PROD is not in the secret store\n');
+  });
+
+  it('needs, once a PROD tag exists, a passed PROD restore test that started within restoreTestIntervalMs', async () => {
+    const ws = makeWorkspace(WALG);
+    const env = prepare(ws);
+    const dir = setupGame(ws);
+    git(dir, 'tag', 'prod-1.0.0');
+    write(dir, 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nprod-1.0.0\n');
+    commit(dir, 'stg build');
+    git(dir, 'tag', 'stg-1.1.0');
+    const start = (): Promise<{ code: number; stderr: string }> => ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
+    expect((await start()).stderr).toBe('builds/prod-backup-test.json is missing: run ogw backup test g PROD\n');
+    restoreTest(dir, 0, 'fail');
+    expect((await start()).stderr).toBe('the last restore test of PROD (builds/prod-backup-test.json) is fail, not pass\n');
+    restoreTest(dir, 0, 'unknown');
+    expect((await start()).stderr).toBe('the last restore test of PROD (builds/prod-backup-test.json) is unknown, not pass\n');
+    // restoreTestIntervalMs is 30 days by default
+    restoreTest(dir, 2_592_000_000 + 60_000);
+    expect((await start()).stderr).toBe(
+      'the last passed restore test of PROD (builds/prod-backup-test.json) started more than restoreTestIntervalMs 2592000000 ms ago: run ogw backup test g PROD\n',
+    );
+    restoreTest(dir, 2_592_000_000 - 60_000);
+    expect(await start()).toMatchObject({ code: 0, stderr: '' });
+  });
+
   it('checks the PROD admin API when the contract version rose', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws, 'g', {}, { 'server/generated/contract/contract.ts': 'export const CONTRACT_VERSION = 1;\n' });
     git(dir, 'tag', 'prod-1.0.0');
@@ -499,6 +574,7 @@ describe('build start PROD', () => {
     write(dir, 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nprod-1.0.0\n');
     commit(dir, 'v2');
     git(dir, 'tag', 'stg-1.1.0');
+    restoreTest(dir);
     vi.mocked(adminCall).mockRejectedValueOnce(new OgwError('401 unauthorized'));
     const out = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
     expect(out.stderr).toContain('PROD admin operation sample_user_ids failed: 401 unauthorized');
@@ -509,7 +585,7 @@ describe('build start PROD', () => {
 
 describe('build start tools and PROD bundle patches', () => {
   it('checks the build tools of the chosen platforms on this host', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     writeFileSync(join(coreDir, 'engine.json'), JSON.stringify({
       godot: '4.5.1.stable',
@@ -528,13 +604,14 @@ describe('build start tools and PROD bundle patches', () => {
   });
 
   it('starts a PROD bundle patch from the stg bundle tag and skips the image check without data', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws, 'g', {}, { 'data/v.txt': 'p1-d1' });
     git(dir, 'tag', 'prod-1.0.0');
     write(dir, 'records/loops/build-stg-1.0.0-bundle-2/end.md', '## compatibility base\n\nprod-1.0.0\n');
     const bundle = commit(dir, 'stg bundle');
     git(dir, 'tag', 'stg-1.0.0-bundle-2');
+    restoreTest(dir);
     vi.mocked(runData).mockImplementation((_c, repo: GameRepo) => {
       const v = readFileSync(join(repo.root, 'data', 'v.txt'), 'utf8').trim();
       write(repo.root, 'client/build/data/data_version', v);
@@ -567,7 +644,7 @@ describe('build start host checks of build procedure 1', () => {
   }
 
   it('probes an installed build tool with downloads and a version printed on stderr', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = { ...prepare(ws), OGW_HOST_PLATFORM: 'macos-arm64' };
     const download = { platform: 'macos-arm64', url: 'https://example.com/jdk.tar.gz', sha256: 'a'.repeat(64) };
     engineJson([
@@ -591,7 +668,7 @@ describe('build start host checks of build procedure 1', () => {
   });
 
   it('needs a Mac host for ios and macos', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = { ...prepare(ws), OGW_HOST_PLATFORM: 'linux-x64' };
     setupGame(ws);
     const out = await ogw(ws, ['build', 'start', 'g', 'DEV', 'ios'], { env });
@@ -602,7 +679,7 @@ describe('build start host checks of build procedure 1', () => {
   });
 
   it('needs every signing secret, updatePublicKeys, and the PROD operator secret once a PROD tag exists', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     setSecrets(ws, { 'ogw/g/DEV/deploySsh': 'k', 'ogw/g/DEV/adminOgw': 's', 'ogw/g/signing/keystore': 'x' });
     const settings = await import('./helpers.ts').then((h) => h.gameSettings());
@@ -620,7 +697,7 @@ describe('build start host checks of build procedure 1', () => {
   });
 
   it('needs the PROD operator secret when the contract version rose', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws, 'g', {}, { 'server/generated/contract/contract.ts': 'export const CONTRACT_VERSION = 1;\n' });
     git(dir, 'tag', 'prod-1.0.0');
@@ -628,7 +705,8 @@ describe('build start host checks of build procedure 1', () => {
     write(dir, 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nprod-1.0.0\n');
     commit(dir, 'v2');
     git(dir, 'tag', 'stg-1.1.0');
-    setSecrets(ws, { 'ogw/harness/claude-code-oauth-token': 'token' });
+    restoreTest(dir);
+    setSecrets(ws, { 'ogw/harness/claude-code-oauth-token': 'token', 'ogw/g/PROD/backupKey': 's' });
     const out = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
     expect(out.code).toBe(1);
     expect(out.stderr).toContain('secret ogw/g/PROD/adminOgw is not in the secret store');
@@ -638,7 +716,7 @@ describe('build start host checks of build procedure 1', () => {
 
 describe('build start settings and run registration', () => {
   it('reads the settings of main HEAD and runs the human checks on main from another branch', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     const main = git(dir, 'rev-parse', 'HEAD');
@@ -655,7 +733,7 @@ describe('build start settings and run registration', () => {
   });
 
   it('reads the PROD settings of the stg tag commit, not of main HEAD', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     write(dir, 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nnone\n');
@@ -671,7 +749,7 @@ describe('build start settings and run registration', () => {
   });
 
   it('registers the run under the run file lock and makes no branch when another run opened meanwhile', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     const { changeRuns, newRunState } = await import('../../../src/lib/runstate.ts');
@@ -691,7 +769,7 @@ describe('build start settings and run registration', () => {
   });
 
   it('runs the human checks in a worktree of main and leaves the checkout of a run that opened meanwhile', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     const main = git(dir, 'rev-parse', 'HEAD');

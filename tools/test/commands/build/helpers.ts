@@ -37,7 +37,8 @@ export function gameSettings(patch: Record<string, unknown> = {}): Record<string
       PROD: {
         ...env({ serverUrl: 'https://prod.example.com', adapters: { cdn: 'cdn-r2' } }),
         cdnR2: { accountId: 'acct', bucket: 'game', accessKeyId: 'key', publicBaseUrl: 'https://cdn.example.com' },
-        secrets: { db: 'db', accessTokenKey: 'atk', updateSigningKey: 'usk', cdn: 'cdn' },
+        secrets: { db: 'db', accessTokenKey: 'atk', updateSigningKey: 'usk', cdn: 'cdn', backup: 'backupKey' },
+        backup: { endpoint: 'https://s3.example.com', bucket: 'backups', prefix: 'g/prod', accessKeyId: 'AKID' },
         deploy: undefined,
       },
     },

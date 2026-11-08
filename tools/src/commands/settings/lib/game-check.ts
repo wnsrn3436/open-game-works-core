@@ -124,7 +124,10 @@ function deployIssues(settings: GameSettings): Issue[] {
   if (!isPlainObject(dev) || !isPlainObject(stg) || dev.host !== stg.host) return [];
   const issues: Issue[] = [];
   if (dev.dir === stg.dir) issues.push({ message: 'environments: DEV and STG deploy on the same host need different deploy.dir' });
-  if (dev.port === stg.port) issues.push({ message: 'environments: DEV and STG deploy on the same host need different deploy.port' });
+  // `ogw deploy` also opens deploy.port + 1 for the ops port
+  if (typeof dev.port === 'number' && typeof stg.port === 'number' && Math.abs(dev.port - stg.port) < 2) {
+    issues.push({ message: 'environments: DEV and STG deploy on the same host need deploy.port values that differ by 2 or more' });
+  }
   return issues;
 }
 

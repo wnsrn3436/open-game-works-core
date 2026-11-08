@@ -245,7 +245,7 @@ none
     expect(text).toContain('## human\n\nnone');
   });
 
-  it('writes the PROD deploy, rollback and maintenance orders', async () => {
+  it('writes the PROD deploy, rollback, maintenance and restore orders', async () => {
     const ws = makeWorkspace();
     const dir = setupGame(ws);
     write(dir, 'records/loops/build-prod-1.0.0/end.md', '## server image\n\n- digest: sha256:old\n');
@@ -278,7 +278,10 @@ none
     expect(text).toContain('rollback order\n\n1. Posts a notice');
     expect(text).toContain('   - previous server image: - digest: sha256:old\n3. ');
     expect(text).toContain('   - update.json: builds/prod-1.1.0/update/update.json\n\nmaintenance order\n\nTurns on the kill switches as in PROD deploy 3');
-    expect(text).toContain('turns off those kill switches\n   - match wait ms: 95000\n');
+    expect(text).toContain('turns off those kill switches\n   - match wait ms: 95000\n\nrestore order\n\n1. Posts a notice whose `kind` is `Maintenance`');
+    expect(text).toContain('\n2. Into an empty data directory, fetches with `wal-g backup-fetch` the newest base backup that finished before T');
+    expect(text).toContain('\n4. Makes a base backup of the recovered DB with `wal-g backup-push`');
+    expect(text).toMatch(/\n5\. Starts the server processes by PROD deploy 4\. [^\n]*Then deletes the data directory of 1\n\n## human\n/);
   });
 
   it('marks PROD steps that do not apply', async () => {

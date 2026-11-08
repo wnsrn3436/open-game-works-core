@@ -15,9 +15,9 @@ export interface DeployHost {
 
 export interface SshSession {
   /** Runs a shell command on the host. */
-  exec(command: string, options?: { input?: string; timeoutMs?: number }): Promise<RunResult>;
+  exec(command: string, options?: { input?: string | Uint8Array; timeoutMs?: number }): Promise<RunResult>;
   /** Like exec; fails when the command does not end with 0. */
-  execOk(command: string, options?: { input?: string; timeoutMs?: number }): Promise<string>;
+  execOk(command: string, options?: { input?: string | Uint8Array; timeoutMs?: number }): Promise<string>;
   close(): Promise<void>;
 }
 

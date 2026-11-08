@@ -163,6 +163,8 @@ export interface HarnessSettings {
     chromium?: ToolPin;
     gdtoolkit?: PythonToolPin;
     ffmpeg?: ToolPin;
+    /** WAL-G of the DB backup rule; its downloads are per Linux platform of the deploy host and of this host's Docker. */
+    walg?: ToolPin;
   };
 }
 

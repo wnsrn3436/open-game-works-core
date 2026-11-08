@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
-import { readJson } from '../../../lib/fsx.ts';
+import { readJson, readJsonIfExists } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { gameSecretService, type SecretScope } from '../../../lib/secrets.ts';
 import type { GameSettings, HarnessSettings } from '../../../lib/settings.ts';
@@ -145,6 +145,45 @@ function deployProblems(ctx: Context, input: HostCheckInput): string[] {
   return problems;
 }
 
+/** The result file of `ogw backup test` of an environment in the game repo (`ogw.md` `## backup test`). */
+export function backupTestFile(env: Env): string {
+  return `builds/${env.toLowerCase()}-backup-test.json`;
+}
+
+/** PROD with a PROD tag: the last restore test passed and started within the last `restoreTestIntervalMs` of PROD `backup`. */
+async function restoreTestProblems(input: HostCheckInput, backup: Record<string, unknown>): Promise<string[]> {
+  const shown = backupTestFile('PROD');
+  const last = await readJsonIfExists<{ started_at?: unknown; result?: unknown }>(join(input.game.root, shown));
+  if (last === null) return [`${shown} is missing: run ogw backup test ${input.game.name} PROD`];
+  if (last.result !== 'pass') return [`the last restore test of PROD (${shown}) is ${String(last.result)}, not pass`];
+  const interval = backup.restoreTestIntervalMs;
+  if (typeof interval !== 'number') return ['game settings environments.PROD.backup.restoreTestIntervalMs is missing'];
+  if (typeof last.started_at !== 'number') return [`${shown} has no started_at`];
+  if (last.started_at < Date.now() - interval) {
+    return [`the last passed restore test of PROD (${shown}) started more than restoreTestIntervalMs ${String(interval)} ms ago: run ogw backup test ${input.game.name} PROD`];
+  }
+  return [];
+}
+
+/**
+ * The DB backup rule of `build` `## deploy` applies to PROD, and to DEV and STG while a PROD tag exists: their `backup`,
+ * its secret (DEV and STG: `deploySecretProblems` checks every secret of `secrets`) and `tools.walg`.
+ */
+async function backupProblems(ctx: Context, input: HostCheckInput): Promise<string[]> {
+  const { env, settings, game } = input;
+  if (env !== 'PROD' && !input.hasProdTag) return [];
+  const envSettings = settings.environments?.[env] ?? {};
+  const problems: string[] = [];
+  const backup = envSettings.backup as Record<string, unknown> | undefined;
+  if (backup === undefined) problems.push(`game settings environments.${env}.backup is missing`);
+  const secret = (envSettings.secrets as Record<string, string> | undefined)?.backup;
+  if (secret === undefined) problems.push(`game settings environments.${env}.secrets.backup is missing`);
+  else if (env === 'PROD' && !secretPresent(ctx, game.name, env, secret)) problems.push(`secret backup of ${env} is not in the secret store`);
+  if (input.harness.tools.walg === undefined) problems.push('harness settings tools.walg is missing');
+  if (env === 'PROD' && input.hasProdTag && backup !== undefined) problems.push(...(await restoreTestProblems(input, backup)));
+  return problems;
+}
+
 /** Host and settings checks of ogw.md `## build start`, before anything is made. */
 export async function hostProblems(ctx: Context, input: HostCheckInput): Promise<string[]> {
   const problems: string[] = [];
@@ -155,6 +194,7 @@ export async function hostProblems(ctx: Context, input: HostCheckInput): Promise
   problems.push(...(await toolProblems(ctx, input)));
   problems.push(...(await dockerProblems(ctx, input)));
   problems.push(...deployProblems(ctx, input));
+  problems.push(...(await backupProblems(ctx, input)));
   // the loop steps of the build run play and judge agents
   const tokenMissing = missingLoginToken(ctx, input.harness);
   if (tokenMissing !== null) problems.push(tokenMissing);

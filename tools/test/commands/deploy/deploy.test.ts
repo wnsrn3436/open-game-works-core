@@ -11,7 +11,9 @@ import { putObject } from '../../../src/commands/deploy/lib/s3.ts';
 import { gameModules, mergedCoreSettings } from '../../../src/commands/generate/api.ts';
 import type { CommandDef } from '../../../src/lib/command.ts';
 import { OgwError } from '../../../src/lib/errors.ts';
-import { ogw, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
+import { setNet } from '../../../src/commands/env/lib/net.ts';
+import { ogw, makeWorkspace, realToolsWithout, type TestWorkspace } from '../../helpers/workspace.ts';
+import { fakeNet } from '../env/fakes.ts';
 import { env as envSettings, fakeBin, gameSettings, git, setSecrets, setupGame, write } from '../build/helpers.ts';
 
 vi.mock('../../../src/commands/admin/api.ts', async (orig) => ({ ...(await orig<object>()), adminCall: vi.fn(), adminSend: vi.fn() }));
@@ -27,6 +29,11 @@ for a in "$@"; do
 done
 for last; do :; done
 case "$last" in
+  *"/bin/.wal-g.tmp"*) cat > "$FAKE_DIR/wal-g"; exit 0;;
+  *"bin/wal-g'; fi"*) [ -n "$FAKE_WALG_HASH" ] && echo "$FAKE_WALG_HASH  /srv/game/bin/wal-g"; exit 0;;
+  *txid_current*) echo 7; exit 0;;
+  *pg_switch_wal*) echo 000000010000000000000003; exit 0;;
+  *pg_stat_archiver*) echo "\${FAKE_ARCHIVED-000000010000000000000004}"; exit 0;;
   test\\ -f*) [ -n "$FAKE_SSH_DOWN" ] && { echo "Host key verification failed." >&2; exit 255; }; [ -n "$FAKE_COMPOSE" ] && exit 0; exit 1;;
   mkdir*) cat > "$FAKE_DIR/compose.yaml";;
   *sha256sum*) [ -n "$FAKE_HASH_FAIL" ] && { echo "sha256sum: dbPassword: Permission denied" >&2; exit 1; }; [ -n "$FAKE_HASHES" ] && printf '%s\\n' "$FAKE_HASHES"; exit 0;;
@@ -39,8 +46,17 @@ esac`;
 const SECRETS: Record<string, string> = {
   'ogw/g/DEV/deploySsh': 'PRIVATE KEY',
   'ogw/g/DEV/cdn': 'R2SECRET',
-  ...Object.fromEntries(['db', 'atk', 'usk', 'dbPassword', 'devAccess', 'adminOgw'].map((name) => [`ogw/g/DEV/${name}`, `${name}-value`])),
+  ...Object.fromEntries(['db', 'atk', 'usk', 'dbPassword', 'devAccess', 'adminOgw', 'backupKey'].map((name) => [`ogw/g/DEV/${name}`, `${name}-value`])),
 };
+
+/** The WAL-G release binary that harness settings `tools.walg` pins for linux-x64, served by the fake network. */
+const WALG_URL = 'https://github.com/wal-g/wal-g/releases/download/v3.0.9/wal-g-pg-22.04-amd64';
+const WALG_BYTES = Buffer.from('WALG-BINARY');
+const WALG_SHA256 = createHash('sha256').update(WALG_BYTES).digest('hex');
+const WALG_SETTINGS = { tools: { ...realToolsWithout('walg'), walg: { version: '3.0.9', downloads: [{ platform: 'linux-x64', url: WALG_URL, sha256: WALG_SHA256 }] } } };
+
+/** The `backup` of the DEV settings of `setup`; `region` and `retentionMs` take the schema defaults. */
+const BACKUP = { endpoint: 'https://s3.example.com', bucket: 'bk', prefix: 'g/dev', accessKeyId: 'AKID', walSwitchMs: 1000, baseBackupIntervalMs: 3_600_000 };
 
 let server: Server;
 let serverUrl = '';
@@ -63,10 +79,12 @@ beforeEach(async () => {
   vi.mocked(gameModules).mockResolvedValue({ client: [], server: [] });
   vi.mocked(mergedCoreSettings).mockResolvedValue({ 'game-update': { fileMaxAgeMs: 86_400_500 } });
   cloneCommands.length = 0;
+  setNet(fakeNet({ [WALG_URL]: WALG_BYTES }));
 });
 
 afterEach(() => {
   server.close();
+  setNet(null);
 });
 
 function adminScript(handlers: Record<string, (body: unknown) => unknown>): void {
@@ -98,8 +116,9 @@ function setup(ws: TestWorkspace, opts: { web?: boolean; serverImage?: boolean; 
   const environments = settings.environments as Record<string, Record<string, unknown>>;
   environments.DEV = envSettings({
     serverUrl,
-    secrets: { db: 'db', accessTokenKey: 'atk', updateSigningKey: 'usk', deploySsh: 'deploySsh', dbPassword: 'dbPassword', devAccess: 'devAccess', cdn: 'cdn' },
+    secrets: { db: 'db', accessTokenKey: 'atk', updateSigningKey: 'usk', deploySsh: 'deploySsh', dbPassword: 'dbPassword', devAccess: 'devAccess', cdn: 'cdn', backup: 'backupKey' },
     cdnR2: { accountId: 'acc', bucket: 'bkt', accessKeyId: 'AK', publicBaseUrl: 'https://cdn.example.com' },
+    backup: BACKUP,
   });
   const dir = setupGame(ws, 'g', { environments });
   write(dir, `builds/dev-${version}/build-run.json`, {
@@ -123,14 +142,14 @@ function setup(ws: TestWorkspace, opts: { web?: boolean; serverImage?: boolean; 
 
 describe('deploy', () => {
   it('refuses PROD and a missing build', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     setupGame(ws);
     expect((await ogw(ws, ['deploy', 'g', 'PROD', '1.0.0'])).stderr).toContain('ogw deploy does not take PROD');
     expect((await ogw(ws, ['deploy', 'g', 'DEV', '1.0.0'])).stderr).toContain('build dev-1.0.0 not found');
   });
 
   it('deploys a first DEV build: compose, update files, deploy list', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { fake, env } = setup(ws);
     adminScript({ publish_deploy_list: () => ({ sequence: 1 }) });
     const out = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env });
@@ -151,7 +170,7 @@ describe('deploy', () => {
     expect(log).toContain("cd '/srv/game' && docker compose pull");
     expect(log).toContain("cd '/srv/game' && docker compose up --detach --force-recreate\n");
     // secret files: every secret but deploySsh, value and one line break, through stdin
-    for (const name of ['adminOgw', 'atk', 'cdn', 'db', 'dbPassword', 'devAccess', 'usk']) {
+    for (const name of ['adminOgw', 'atk', 'backupKey', 'cdn', 'db', 'dbPassword', 'devAccess', 'usk']) {
       expect(readFileSync(join(fake, `secret-${name}`), 'utf8')).toBe(`${SECRETS[`ogw/g/DEV/${name}`] as string}\n`);
     }
     expect(existsSync(join(fake, 'secret-deploySsh'))).toBe(false);
@@ -159,7 +178,7 @@ describe('deploy', () => {
     expect(log).toContain("cd '/srv/game/secrets' && chmod 600 -- 'dbPassword'");
     // a host file that exists but cannot be hashed fails the loop
     expect(log).toContain('sha256sum -- "$f" || exit 1; fi; done');
-    expect(log).toContain("cd '/srv/game/secrets' && chmod 644 -- 'adminOgw' 'atk' 'cdn' 'db' 'devAccess' 'usk'");
+    expect(log).toContain("cd '/srv/game/secrets' && chmod 644 -- 'adminOgw' 'atk' 'backupKey' 'cdn' 'db' 'devAccess' 'usk'");
     for (const value of Object.values(SECRETS)) expect(log).not.toContain(value);
     expect(out.stdout).not.toContain('-value');
     const compose = readFileSync(join(fake, 'compose.yaml'), 'utf8');
@@ -168,12 +187,18 @@ describe('deploy', () => {
     expect(compose).toContain('max-size: "104857600"\n        max-file: "5"');
     expect(compose).toContain('      - "adminOgw"\n      - "atk"\n      - "cdn"\n      - "db"\n      - "devAccess"\n      - "usk"\n');
     expect(compose).not.toContain('- "deploySsh"');
+    expect(compose).toContain('    ports:\n      - "127.0.0.1:8080:8080"\n      - "127.0.0.1:8081:9464"\n');
+    // without a PROD tag the DB backup rule does not apply: no WAL archiving, no backup service, no WAL-G binary
+    expect(compose).not.toContain('backup');
+    expect(compose).not.toContain('archive_mode');
+    expect(log).not.toContain('wal-g');
+    expect(log).not.toContain('pg_switch_wal');
   });
 
   it('writes only the secret files whose content differs, recreates the containers only then, and keeps a PROD-tag dbPassword', async () => {
     const hash = (name: string): string => createHash('sha256').update(`${SECRETS[`ogw/g/DEV/${name}`] as string}\n`).digest('hex');
-    const names = ['adminOgw', 'atk', 'cdn', 'db', 'dbPassword', 'devAccess', 'usk'];
-    const ws = makeWorkspace();
+    const names = ['adminOgw', 'atk', 'backupKey', 'cdn', 'db', 'dbPassword', 'devAccess', 'usk'];
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, fake, env } = setup(ws);
     adminScript({});
     const same = names.map((name) => `${hash(name)}  ${name}`).join('\n');
@@ -211,7 +236,7 @@ describe('deploy', () => {
   });
 
   it('stops at step 3 naming every secret missing from the secret store, before it writes any', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { fake, env } = setup(ws);
     setSecrets(ws, Object.fromEntries(Object.entries(SECRETS).filter(([key]) => !key.endsWith('/db') && !key.endsWith('/usk'))));
     adminScript({});
@@ -221,7 +246,7 @@ describe('deploy', () => {
   });
 
   it('wipes the DB of an existing deploy without PROD tag and keeps the app of the read deploy list', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { env } = setup(ws, { web: true });
     const app = { web: { min_version: '0.1.0', recommended_version: '0.2.0', store_url: 'https://x' } };
     adminScript({ get_deploy_list: () => ({ deploy_list: { app, patches: { '0.1.0': { data_version: 'compat', data_files: [], translation_files: [], bundle_files: [] } } } }) });
@@ -243,7 +268,7 @@ describe('deploy', () => {
   });
 
   it('with a PROD tag: uploads first, migrates, keeps the DB, and sweeps clones', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, env } = setup(ws);
     git(dir, 'tag', 'prod-0.1.0');
     const sweep = vi.fn<CommandDef['run']>(() => Promise.resolve({ text: 'swept' }));
@@ -263,7 +288,7 @@ describe('deploy', () => {
   });
 
   it('stops and names the failed step', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { env } = setup(ws);
     adminScript({});
     const up = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_UP_FAIL: '1' } });
@@ -277,7 +302,7 @@ describe('deploy', () => {
   });
 
   it('names the failure of the last request when the server does not answer at all', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { env } = setup(ws);
     adminScript({});
     // nothing listens at serverUrl any more: each request fails to connect
@@ -292,7 +317,7 @@ describe('deploy', () => {
   });
 
   it('stops before any step when the deploy list cannot be read', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, env, fake } = setup(ws);
     const down = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_SSH_DOWN: '1' } });
     expect(down.stderr).toContain('failed step: 0. get_deploy_list\ncannot reach the deploy host: Host key verification failed.');
@@ -323,7 +348,7 @@ describe('deploy', () => {
       new OgwError('admin operation get_deploy_list failed: HTTP 502', 1, { operation: 'get_deploy_list', status: 502, body: { message: 'bad gateway' } }),
     ];
     for (const failure of failures) {
-      const ws = makeWorkspace();
+      const ws = makeWorkspace(WALG_SETTINGS);
       const { dir, env } = setup(ws);
       write(dir, 'builds/dev-deploy-list.json', { app, patches: { '0.1.0': stale } });
       vi.mocked(adminCall).mockReset();
@@ -336,7 +361,7 @@ describe('deploy', () => {
       expect(Object.keys(publish.patches)).toEqual(['0.2.0']);
     }
     // A bundle patch without a server image keeps the running server and its DB: the same failure stops it.
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, env } = setup(ws, { noData: true, version: '0.2.0-bundle-1' });
     write(dir, 'builds/dev-0.2.0-bundle-1/patch/patch.json', { data_version: 'c', data_files: [], translation_files: [], bundle_files: [] });
     write(dir, 'builds/dev-deploy-list.json', { app, patches: { '0.1.0': stale } });
@@ -348,7 +373,7 @@ describe('deploy', () => {
     const actual = await vi.importActual<{ adminCall: typeof adminCall }>('../../../src/commands/admin/api.ts');
     const app = { android: { min_version: '0.1.0', recommended_version: '0.2.0', store_url: 'https://play' } };
     const run = async (operatorSecret: boolean): Promise<{ out: Awaited<ReturnType<typeof ogw>>; log: string }> => {
-      const ws = makeWorkspace();
+      const ws = makeWorkspace(WALG_SETTINGS);
       const { dir, env, fake } = setup(ws);
       write(dir, 'builds/dev-deploy-list.json', { app, patches: {} });
       if (!operatorSecret) setSecrets(ws, Object.fromEntries(Object.entries(SECRETS).filter(([key]) => key !== 'ogw/g/DEV/adminOgw')));
@@ -371,7 +396,7 @@ describe('deploy', () => {
     const app = { android: { min_version: '0.1.0', recommended_version: '0.2.0', store_url: 'https://play' } };
     const stale = { data_version: 'compat', data_files: [], translation_files: [], bundle_files: [] };
     const published = async (prodTag: boolean): Promise<{ code: number; app: unknown; patches: string[] }> => {
-      const ws = makeWorkspace();
+      const ws = makeWorkspace(WALG_SETTINGS);
       const { dir, env } = setup(ws);
       write(dir, 'builds/dev-deploy-list.json', { app, patches: { '0.1.0': stale } });
       vi.mocked(adminCall).mockReset();
@@ -394,7 +419,7 @@ describe('deploy', () => {
   });
 
   it('keeps the app of the deploy list read before an earlier deploy removed the DB volume and stopped', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, env } = setup(ws);
     const app = { android: { min_version: '0.1.0', recommended_version: '0.2.0', store_url: 'https://play' } };
     const stale = { data_version: 'compat', data_files: [], translation_files: [], bundle_files: [] };
@@ -418,7 +443,7 @@ describe('deploy', () => {
   });
 
   it('with a PROD tag and no compose.yaml on the host: starts the server before uploading the update files', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, env } = setup(ws);
     git(dir, 'tag', 'prod-0.1.0');
     cloneCommands.push({ name: ['clone', 'sweep'], usage: '', run: () => Promise.resolve({ text: 'swept' }) });
@@ -431,7 +456,7 @@ describe('deploy', () => {
 
   it('stops at a failed deploy list publish, web upload or clone sweep and runs no later step', async () => {
     const run = async (fail: 'publish' | 'web' | 'sweep'): Promise<{ code: number; stderr: string; puts: number; sweeps: number }> => {
-      const ws = makeWorkspace();
+      const ws = makeWorkspace(WALG_SETTINGS);
       const { dir, env } = setup(ws, { web: true });
       git(dir, 'tag', 'prod-0.1.0');
       const sweep = vi.fn<CommandDef['run']>(() => Promise.resolve(fail === 'sweep' ? { exitCode: 1, text: 'clone c1 failed' } : { text: 'swept' }));
@@ -455,7 +480,7 @@ describe('deploy', () => {
   });
 
   it('starts the server with --matchmaker for a realtime game', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { fake, env } = setup(ws);
     vi.mocked(gameModules).mockResolvedValue({ client: ['RealtimeCore'], server: ['matchmaker'] });
     adminScript({});
@@ -467,7 +492,7 @@ describe('deploy', () => {
   });
 
   it('skips the server steps for a bundle patch without data and fails a failed migration', async () => {
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(WALG_SETTINGS);
     const { dir, env } = setup(ws, { noData: true, version: '0.2.0-bundle-1' });
     const patch = { data_version: 'c', data_files: [], translation_files: [], bundle_files: [{ bundle: 'patch_1', name: 'patch_1.pck', size: 1, sha256: 'p' }] };
     write(dir, 'builds/dev-0.2.0-bundle-1/patch/patch.json', patch);
@@ -481,11 +506,114 @@ describe('deploy', () => {
     const publish = calls().at(-1)?.[1] as { patches: Record<string, unknown> };
     expect(publish.patches).toEqual({ '0.1.0': kept, '0.2.0': patch });
 
-    const ws2 = makeWorkspace();
+    const ws2 = makeWorkspace(WALG_SETTINGS);
     const second = setup(ws2);
     git(second.dir, 'tag', 'prod-0.1.0');
     adminScript({ get_migration_batch: () => ({ status: 'STOPPED' }) });
     const failed = await ogw(ws2, ['deploy', 'g', 'DEV', '0.2.0'], { env: second.env });
     expect(failed.stderr).toContain('failed step: 5. start_migration_batch\nmigration batch ended STOPPED');
+  });
+});
+
+describe('deploy DB backup rule', () => {
+  /** A DEV deploy of `setup` with a PROD tag on a host that has `compose.yaml`. */
+  function prodTagged(ws: TestWorkspace, change?: (settings: Record<string, unknown>) => void): { dir: string; fake: string; env: NodeJS.ProcessEnv } {
+    const made = setup(ws);
+    if (change) {
+      const settings = JSON.parse(readFileSync(join(made.dir, 'settings.json'), 'utf8')) as Record<string, unknown>;
+      change(settings);
+      write(made.dir, 'settings.json', settings);
+    }
+    git(made.dir, 'tag', 'prod-0.1.0');
+    cloneCommands.push({ name: ['clone', 'sweep'], usage: '', run: () => Promise.resolve({ text: 'swept' }) });
+    adminScript({ get_migration_batch: () => ({ status: 'DONE' }) });
+    return { ...made, env: { ...made.env, FAKE_COMPOSE: '1' } };
+  }
+
+  const devEnv = (settings: Record<string, unknown>): Record<string, unknown> => (settings.environments as Record<string, Record<string, unknown>>).DEV as Record<string, unknown>;
+
+  it('with a PROD tag: puts the WAL-G binary, archives WAL, adds the backup service, then checks the archiving', async () => {
+    const ws = makeWorkspace(WALG_SETTINGS);
+    const { fake, env } = prodTagged(ws);
+    const out = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env });
+    expect(out).toMatchObject({ code: 0, stderr: '' });
+    expect(readFileSync(join(fake, 'wal-g'), 'utf8')).toBe('WALG-BINARY');
+    const log = readFileSync(join(fake, 'calls.log'), 'utf8');
+    expect(log).toContain("umask 022 && mkdir -p '/srv/game/bin' && cat > '/srv/game/bin/.wal-g.tmp' && chmod 755 '/srv/game/bin/.wal-g.tmp' && mv -f '/srv/game/bin/.wal-g.tmp' '/srv/game/bin/wal-g'");
+    const lines = log.split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    // the binary is on the host before the containers start, and the archiving is checked once the server answers
+    expect(at('/bin/.wal-g.tmp')).toBeLessThan(at('docker compose up'));
+    expect(at('docker compose up --detach --force-recreate')).toBeGreaterThan(-1);
+    expect(at('docker compose up')).toBeLessThan(at("docker compose exec -T db psql -X -U postgres -At -c 'SELECT txid_current()'"));
+    expect(at('SELECT txid_current()')).toBeLessThan(at("psql -X -U postgres -At -c 'SELECT pg_walfile_name(pg_switch_wal())'"));
+    expect(at('pg_switch_wal')).toBeLessThan(at("-c 'SELECT last_archived_wal FROM pg_stat_archiver'"));
+    const compose = readFileSync(join(fake, 'compose.yaml'), 'utf8');
+    expect(compose).toContain('"archive_mode=on", "-c", "archive_timeout=1", "-c", "archive_command=AWS_SECRET_ACCESS_KEY=\\"$$(cat \'/run/secrets/backupKey\')\\" wal-g wal-push %p"]');
+    // region and retentionMs are the schema defaults
+    expect(compose).toContain('      WALG_S3_PREFIX: "s3://bk/g/dev"\n      AWS_ENDPOINT: "https://s3.example.com"\n      AWS_REGION: "auto"\n      AWS_ACCESS_KEY_ID: "AKID"\n');
+    expect(compose).toContain('-ge 3600000 ]');
+    expect(compose).toContain('< $$now - 1209600000 ORDER BY');
+    expect(compose).toContain('  backup:\n');
+    expect(compose).toContain('        source: "/srv/game/bin/wal-g"\n        target: "/usr/local/bin/wal-g"\n        read_only: true\n');
+    const server = compose.slice(compose.indexOf('  server:\n'), compose.indexOf('volumes:\n  db-data'));
+    expect(server).not.toContain('backupKey');
+    for (const value of Object.values(SECRETS)) expect(compose).not.toContain(value);
+  });
+
+  it('puts the WAL-G binary only when the host has another one, and recreates the containers only then', async () => {
+    const ws = makeWorkspace(WALG_SETTINGS);
+    const { fake, env } = prodTagged(ws);
+    const hashes = Object.entries(SECRETS)
+      .filter(([key]) => !key.endsWith('/deploySsh'))
+      .map(([key, value]) => `${createHash('sha256').update(`${value}\n`).digest('hex')}  ${key.split('/').at(-1) as string}`)
+      .join('\n');
+    expect((await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: hashes, FAKE_WALG_HASH: WALG_SHA256 } })).code).toBe(0);
+    let log = readFileSync(join(fake, 'calls.log'), 'utf8');
+    expect(existsSync(join(fake, 'wal-g'))).toBe(false);
+    expect(log).toContain("if [ -f '/srv/game/bin/wal-g' ]; then sha256sum -- '/srv/game/bin/wal-g'; fi");
+    expect(log).toContain("cd '/srv/game' && docker compose up --detach\n");
+    expect((await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: hashes, FAKE_WALG_HASH: '0'.repeat(64) } })).code).toBe(0);
+    log = readFileSync(join(fake, 'calls.log'), 'utf8');
+    expect(readFileSync(join(fake, 'wal-g'), 'utf8')).toBe('WALG-BINARY');
+    expect(log).toContain("cd '/srv/game' && docker compose up --detach --force-recreate\n");
+  });
+
+  it('fails step 3 unless the switched WAL segment, or a later one, is archived within walSwitchMs', async () => {
+    for (const archived of ['000000010000000000000002', '', '00000002.history']) {
+      const ws = makeWorkspace(WALG_SETTINGS);
+      const { env } = prodTagged(ws);
+      const out = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_ARCHIVED: archived } });
+      expect(out.stderr).toContain(
+        `failed step: 3. docker compose up\nWAL archiving: segment 000000010000000000000003 was not archived within walSwitchMs 1000 ms of the switch (last_archived_wal ${archived || 'none'})`,
+      );
+      expect(calls().map(([op]) => op)).not.toContain('start_migration_batch');
+    }
+    for (const archived of ['000000010000000000000003', '000000020000000000000001']) {
+      const ws = makeWorkspace(WALG_SETTINGS);
+      const { env } = prodTagged(ws);
+      expect(await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_ARCHIVED: archived } })).toMatchObject({ code: 0, stderr: '' });
+    }
+  });
+
+  it('stops step 3 before the host is touched without backup, secrets.backup or tools.walg, or a download for serverImage.platform', async () => {
+    const run = async (settingsPatch: Record<string, unknown>, change?: (settings: Record<string, unknown>) => void): Promise<{ stderr: string; log: string }> => {
+      const ws = makeWorkspace(settingsPatch);
+      const { fake, env } = prodTagged(ws, change);
+      const out = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env });
+      expect(out.code).toBe(1);
+      return { stderr: out.stderr, log: readFileSync(join(fake, 'calls.log'), 'utf8') };
+    };
+    const noBackup = await run(WALG_SETTINGS, (s) => delete devEnv(s).backup);
+    expect(noBackup.stderr).toContain('failed step: 3. docker compose up\ngame settings environments.DEV.backup is missing');
+    expect(noBackup.log).not.toContain('/srv/game/secrets');
+    const noSecret = await run(WALG_SETTINGS, (s) => delete (devEnv(s).secrets as Record<string, unknown>).backup);
+    expect(noSecret.stderr).toContain('failed step: 3. docker compose up\ngame settings environments.DEV.secrets.backup is missing');
+    const noWalg = await run({ tools: realToolsWithout('walg') });
+    expect(noWalg.stderr).toContain('failed step: 3. docker compose up\nharness settings tools.walg is missing');
+    expect(noWalg.log).not.toContain('/srv/game/secrets');
+    const arm = await run(WALG_SETTINGS, (s) => (s.serverImage = { repository: 'ghcr.io/example/game-server', platform: 'linux/arm64' }));
+    expect(arm.stderr).toContain('failed step: 3. docker compose up\nharness settings tools.walg has no linux-arm64 download');
+    expect(arm.log).not.toContain('/srv/game/secrets');
   });
 });

@@ -5,7 +5,7 @@ import { readProdOrders } from '../../../../src/commands/build/lib/prodorder.ts'
 import { makeWorkspace } from '../../../helpers/workspace.ts';
 
 describe('readProdOrders', () => {
-  it('reads the English deploy, rollback and maintenance orders', async () => {
+  it('reads the English deploy, rollback, maintenance and restore orders', async () => {
     const ws = makeWorkspace();
     mkdirSync(join(ws.harness, 'skills', 'build'), { recursive: true });
     writeFileSync(join(ws.harness, 'skills', 'build', 'SKILL.md'), [
@@ -22,7 +22,12 @@ describe('readProdOrders', () => {
       '',
       'The report also carries the maintenance order: switch, then wait',
       '',
+      'The report also carries the restore order below, which recovers the DB to T.',
+      '',
+      '1. stop',
+      '2. fetch',
+      '',
     ].join('\n'));
-    expect(await readProdOrders(ws.env)).toEqual({ deploy: ['first', 'second'], rollback: ['back'], maintenance: 'switch, then wait' });
+    expect(await readProdOrders(ws.env)).toEqual({ deploy: ['first', 'second'], rollback: ['back'], maintenance: 'switch, then wait', restore: ['stop', 'fetch'] });
   });
 });

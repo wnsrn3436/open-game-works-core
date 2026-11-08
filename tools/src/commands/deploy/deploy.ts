@@ -12,12 +12,13 @@ import { envLower, parseEnv } from '../build/lib/names.ts';
 import { commands as cloneCommands } from '../clone/index.ts';
 import { gameModules, mergedCoreSettings } from '../generate/api.ts';
 import { FAILED_STEP } from './api.ts';
-import { composeYaml } from './lib/compose.ts';
+import { composeYaml, type ComposeBackup } from './lib/compose.ts';
 import { nextDeployList, type DeployList } from './lib/deploylist.ts';
 import { contentTypeOf, putObject } from './lib/s3.ts';
 import { openSsh, shellQuote, type SshSession } from './lib/ssh.ts';
 import { envSecret, filesBelow, loadDeployTarget, type DeployTarget } from './lib/target.ts';
 import { gameSecretService } from '../../lib/secrets.ts';
+import { walgProgram } from '../env/api.ts';
 
 /** Polling of the server start and the migration batch. Tests shorten it. */
 export const POLL = { intervalMs: 2000, serverStartMs: LIMITS.httpMs, migrationMs: LIMITS.programMs };
@@ -108,7 +109,7 @@ async function putUpdateFiles(ctx: Context, t: DeployTarget): Promise<void> {
 
 function serverSecrets(t: DeployTarget): string[] {
   const secrets = (t.envSettings.secrets ?? {}) as Record<string, string>;
-  const names = Object.entries(secrets).filter(([key]) => key !== 'deploySsh' && key !== 'dbPassword').map(([, name]) => name);
+  const names = Object.entries(secrets).filter(([key]) => key !== 'deploySsh' && key !== 'dbPassword' && key !== 'backup').map(([, name]) => name);
   const operators = (t.envSettings.adminOperators ?? []) as { secret: string }[];
   return [...names, ...operators.map((op) => op.secret)];
 }
@@ -121,13 +122,14 @@ interface SecretFile {
 }
 
 /**
- * The secret files of `build` `## deploy` secret file rule from this host's secret store: `serverSecrets` and
- * `dbPassword`. Fails naming every missing secret before the host is touched.
+ * The secret files of `build` `## deploy` secret file rule from this host's secret store: `serverSecrets`,
+ * `dbPassword` and `backup`. Fails naming every missing secret before the host is touched.
  */
 export function secretFiles(ctx: Context, t: DeployTarget): SecretFile[] {
-  const dbPassword = (t.envSettings.secrets as Record<string, string> | undefined)?.dbPassword;
+  const secrets = t.envSettings.secrets as Record<string, string> | undefined;
+  const dbPassword = secrets?.dbPassword;
   if (dbPassword === undefined) throw new OgwError(`game settings environments.${t.env}.secrets.dbPassword is missing`);
-  const names = [...new Set([dbPassword, ...serverSecrets(t)])].sort();
+  const names = [...new Set([dbPassword, ...serverSecrets(t), ...(secrets?.backup === undefined ? [] : [secrets.backup])])].sort();
   const missing: string[] = [];
   const files: SecretFile[] = [];
   for (const name of names) {
@@ -179,6 +181,37 @@ async function writeSecretFiles(ctx: Context, t: DeployTarget, ssh: SshSession):
   return changed.length > 0;
 }
 
+/** With a PROD tag, the WAL-G settings of the DB backup rule from the environment's `backup` (schema defaults filled in). */
+export function composeBackup(t: Pick<DeployTarget, 'env' | 'envSettings' | 'hasProdTag'>): ComposeBackup | null {
+  if (!t.hasProdTag) return null;
+  const backup = t.envSettings.backup as Omit<ComposeBackup, 'secret'> | undefined;
+  if (backup === undefined) throw new OgwError(`game settings environments.${t.env}.backup is missing`);
+  const secret = (t.envSettings.secrets as Record<string, string> | undefined)?.backup;
+  if (secret === undefined) throw new OgwError(`game settings environments.${t.env}.secrets.backup is missing`);
+  return { ...backup, secret };
+}
+
+/** The platform of the deploy host: game settings `serverImage.platform`. */
+function serverPlatform(t: DeployTarget): string {
+  const platform = (t.settings.serverImage as { platform?: unknown } | undefined)?.platform;
+  if (typeof platform !== 'string') throw new OgwError('game settings serverImage.platform is missing');
+  return platform;
+}
+
+/**
+ * Puts the WAL-G binary of `tools.walg` for `serverImage.platform` at `<dir>/bin/wal-g` when the host's file differs.
+ * Returns whether it was written: a container keeps the file it mounted, so a new one needs new containers.
+ */
+async function putWalg(t: DeployTarget, ssh: SshSession, program: string): Promise<boolean> {
+  const bytes = await readFile(program);
+  const target = `${t.host.dir}/bin/wal-g`;
+  const onHost = await ssh.execOk(`if [ -f ${shellQuote(target)} ]; then sha256sum -- ${shellQuote(target)}; fi`);
+  if (onHost.trim().split(/\s/)[0] === createHash('sha256').update(bytes).digest('hex')) return false;
+  const temp = shellQuote(`${t.host.dir}/bin/.wal-g.tmp`);
+  await ssh.execOk(`umask 022 && mkdir -p ${shellQuote(`${t.host.dir}/bin`)} && cat > ${temp} && chmod 755 ${temp} && mv -f ${temp} ${shellQuote(target)}`, { input: bytes });
+  return true;
+}
+
 async function writeCompose(ctx: Context, t: DeployTarget, ssh: SshSession): Promise<void> {
   const image = t.buildRun.serverImage;
   if (!image) throw new OgwError('the build has no server image');
@@ -199,6 +232,7 @@ async function writeCompose(ctx: Context, t: DeployTarget, ssh: SshSession): Pro
     dbPasswordSecret: dbPassword,
     serverSecrets: serverSecrets(t),
     log: { maxBytes: log.maxBytes, maxFiles: log.maxFiles },
+    backup: composeBackup(t),
   });
   const dir = shellQuote(t.host.dir);
   const file = shellQuote(`${t.host.dir}/compose.yaml`);
@@ -227,14 +261,43 @@ async function waitServer(t: DeployTarget): Promise<void> {
   }
 }
 
+/** The name of a WAL segment file (timeline, log, segment); a `.history` or `.partial` file is none. */
+const WAL_SEGMENT = /^[0-9A-F]{24}$/;
+
+/**
+ * The WAL archiving check of step 3: makes a change, switches the WAL segment, and waits until `pg_stat_archiver`
+ * names that segment or a later one, for at most `walSwitchMs` after the switch.
+ */
+async function checkArchiving(t: DeployTarget, ssh: SshSession, walSwitchMs: number): Promise<void> {
+  const psql = async (sql: string): Promise<string> =>
+    (await ssh.execOk(`cd ${shellQuote(t.host.dir)} && docker compose exec -T db psql -X -U postgres -At -c ${shellQuote(sql)}`)).trim();
+  await psql('SELECT txid_current()');
+  const segment = await psql('SELECT pg_walfile_name(pg_switch_wal())');
+  const switched = Date.now();
+  if (!WAL_SEGMENT.test(segment)) throw new OgwError(`pg_switch_wal gave no WAL segment name: ${segment}`);
+  for (;;) {
+    const last = await psql('SELECT last_archived_wal FROM pg_stat_archiver');
+    if (WAL_SEGMENT.test(last) && last >= segment) return;
+    if (Date.now() - switched >= walSwitchMs) {
+      throw new OgwError(`WAL archiving: segment ${segment} was not archived within walSwitchMs ${String(walSwitchMs)} ms of the switch (last_archived_wal ${last || 'none'})`);
+    }
+    await sleep(POLL.intervalMs);
+  }
+}
+
 async function startServer(ctx: Context, t: DeployTarget, ssh: SshSession): Promise<void> {
+  const backup = composeBackup(t);
+  // fetched before the host is touched: a missing pin or download stops with nothing written
+  const program = backup === null ? null : await walgProgram(ctx, serverPlatform(t));
   const written = await writeSecretFiles(ctx, t, ssh);
+  const walg = program === null ? false : await putWalg(t, ssh, program);
   await writeCompose(ctx, t, ssh);
   const dir = shellQuote(t.host.dir);
   await ssh.execOk(`cd ${dir} && docker compose pull`);
-  // a container reads its secret files when it starts: new files need new containers
-  await ssh.execOk(`cd ${dir} && docker compose up --detach${written ? ' --force-recreate' : ''}`);
+  // a container reads its secret files and its WAL-G binary when it starts: new files need new containers
+  await ssh.execOk(`cd ${dir} && docker compose up --detach${written || walg ? ' --force-recreate' : ''}`);
   await waitServer(t);
+  if (backup !== null) await checkArchiving(t, ssh, backup.walSwitchMs);
 }
 
 async function runMigration(ctx: Context, t: DeployTarget): Promise<void> {

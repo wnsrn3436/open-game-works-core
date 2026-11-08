@@ -226,7 +226,8 @@ export function prodDeployBody(orders: ProdOrders, facts: ProdDeployFacts): stri
     return `${String(i + 1)}. ${annotate(step, notes)}`;
   });
   const wait = `match wait ms: ${String(facts.result.matchWaitMs ?? 'none')}`;
-  return ['deploy order', '', ...deploy, '', 'rollback order', '', ...rollback, '', 'maintenance order', '', orders.maintenance, `   - ${wait}`].join('\n');
+  const restore = orders.restore.map((step, i) => `${String(i + 1)}. ${step}`);
+  return ['deploy order', '', ...deploy, '', 'rollback order', '', ...rollback, '', 'maintenance order', '', orders.maintenance, `   - ${wait}`, '', 'restore order', '', ...restore].join('\n');
 }
 
 /** Lines of the `needs human` items of `records/loops/<run>/assumptions.md` on the branch. */
