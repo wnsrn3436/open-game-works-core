@@ -1,13 +1,5 @@
 {
   "target": "build run",
   "nextId": 2,
-  "items": [
-    {
-      "id": "M1",
-      "severity": "high",
-      "location": "tools/src/commands/instance/lib/launch.ts:178",
-      "problem": "The flash recording of `## runner` (tools/ogw.md:666, changed in dd86197) gives client `main` the launch value `OGW_FRAME_STEP_FPS` with the `--fixed-fps` value, but `clientLaunch` only adds `--resolution`, `--write-movie` and `--fixed-fps`, and nothing under tools/src writes `OGW_FRAME_STEP_FPS` (grep finds no occurrence; the `LaunchValues` fields at launch.ts:159-167 have no such key). With a core whose TimeCore takes the frame step fps only from that launch value (dd86197: godot.md TimeCore engine row removed, InitModules 2 calls `TimeCore.set_frame_step`), the frame step stays off, `get_state` `frame_step_fps` is missing, and the flash check fails every recording at tools/src/commands/check/lib/flash-check.ts:245-248 (`frame_step_fps is missing, not targetFps`). `ogw video` (tools/ogw.md:597) does the same through the same `clientLaunch`. Target: `ogw instance start` / flash check / `ogw video`, not `build run`",
-      "foundBy": "build run round 1"
-    }
-  ]
+  "items": []
 }
