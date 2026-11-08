@@ -43,7 +43,7 @@ core `rpc` request field
 ### session
 
 - A session opens on a successful `Login`, `AutoLogin` or `DevLogin`, and ends when the next session of that user opens, when it is closed with `end_session`, or when its session record is deleted by withdrawal. `end_session` is called on `Logout`, on `auth.revoke_login_tokens` and on the import and the clone wipe of `user-snapshot-clone`. `RefreshToken` does not change the session
-- A user has one session. When a new session opens, the access token and the session signing key of the previous session become invalid. The login token follows the login token rules of `auth` (rotation, expiry, `LogoutOtherDevices`, `auth.revoke_login_tokens`) and does not become invalid when a new session opens
+- A user has one session. When a new session opens, the access token and the session signing key of the previous session become invalid. The login token follows the login token rules of `auth` and does not become invalid when a new session opens
 - session record: `user_id` (`int64`), `session_id` (`string`. base64url of 16 bytes of secure random), `signing_key` (`string`. base64url of 32 bytes of secure random), `started_at` (`int64`. `server-time.now`(ctx)). Registered with `storage.register_table` as table `session_current` (`user` scope, key `user_id`, excluded from snapshots)
 - `start_session` deletes the previous session record of that user and writes a new record
 - `check_current`: `UNAUTHORIZED` when there is no session record, `SESSION_REPLACED` when the session ID of the record differs
@@ -105,7 +105,7 @@ none
 ## test
 
 - After a second login, an access token request of the first session and `RefreshToken` with the login token of the first session are `SESSION_REPLACED`
-- After `Logout`, a request of that session is `UNAUTHORIZED`. The same holds after `auth.revoke_login_tokens` of that user
+- After `Logout`, a request of that session is `UNAUTHORIZED`. The same holds after a successful `auth.revoke_login_tokens` of that user, a user who has an `auth_social_link` row (for a user without one it is `conflict` and changes nothing)
 - A request in which one byte of the body, the request ID, the signature name or the timestamp was changed is `UNAUTHORIZED`
 - A timestamp inside the window boundary gives `pass`, and one 1ms outside it gives `UNAUTHORIZED`
 - `verify_signature` treats the `X-Ogw-Signature` that `sign_request` made as `pass`
