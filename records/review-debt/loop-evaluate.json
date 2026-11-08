@@ -1,0 +1,12 @@
+{
+  "target": "loop evaluate",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/ogw.md:426",
+      "problem": "The shared telemetry runs rule says the k-th run of a commit starts with `--random-base <k>` \"so the two commits play the same worlds run for run\", but the same rule counts the replacing runs on per commit and replaces only the runs of a commit that did not reach a step. When run 2 of this commit does not reach a step and the three baseline runs do, this commit's kept runs are random bases 1, 3, 4 and the baseline's are 1, 2, 3, so the mean and spread of each metric are taken over different worlds. `sideRuns` (tools/src/commands/loop/lib/shared-telemetry.ts:60-74) implements exactly this rule, and evaluate.test.ts:1536 asserts bases 1 to 5 for one commit beside 1 to 3 for the other. The rule existed before this commit range (3417ebc); fixing it means changing the defining document (e.g. replacing by world on both commits, or comparing only the worlds that both commits reached)",
+      "foundBy": "loop evaluate round 1"
+    }
+  ]
+}
