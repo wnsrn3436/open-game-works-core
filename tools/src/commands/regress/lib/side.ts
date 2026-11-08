@@ -12,6 +12,7 @@ import { newId } from '../../../lib/ids.ts';
 import { JobNotFound, readJob } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { run, type RunResult } from '../../../lib/proc.ts';
+import { span, withSpanParent } from '../../../lib/spans.ts';
 import type { AgentSettings } from '../../../lib/settings.ts';
 import { SIDE_WORKTREES } from '../../agent/lib/launch.ts';
 import type { AgentUsage } from '../../agent/lib/usage.ts';
@@ -67,7 +68,9 @@ function lastLine(text: string): string {
 
 /**
  * Runs `ogw <argv>` with the side tool (ogw.md `### side`): the side worktree's tool with `OGW_HARNESS_ROOT` and
- * `OGW_WORKSPACE_ROOT` set, or this harness in this process for the harness repo itself.
+ * `OGW_WORKSPACE_ROOT` set, or this harness in this process for the harness repo itself. The side command is no job of
+ * its own: its steps and waits go in the step span that runs it, the side tool's process given it by its environment
+ * (`withSpanParent`), this process in its async context.
  */
 export async function sideOgw(ctx: Context, side: Side, argv: readonly string[], timeoutMs: number = LIMITS.jobMs): Promise<SideOutput> {
   const env: NodeJS.ProcessEnv = { ...ctx.env };
@@ -93,7 +96,7 @@ export async function sideOgw(ctx: Context, side: Side, argv: readonly string[],
   const ws = await ctx.workspace();
   const result: RunResult = await run(join(side.worktree, 'tools', 'bin', 'ogw'), argv, {
     cwd: ws.root,
-    env: { ...env, OGW_HARNESS_ROOT: side.worktree, OGW_WORKSPACE_ROOT: ws.root },
+    env: { ...withSpanParent(env), OGW_HARNESS_ROOT: side.worktree, OGW_WORKSPACE_ROOT: ws.root },
     timeoutMs,
   });
   return { code: result.timedOut ? 1 : (result.code ?? 1), stdout: result.stdout, stderr: result.timedOut ? `timed out after ${String(timeoutMs)} ms` : result.stderr };
@@ -168,14 +171,17 @@ export interface CheckRequest {
   proof: string | null;
 }
 
-/** `ogw regress check` with the side tool: the check file, or why it could not be made. */
+/**
+ * `ogw regress check` with the side tool, in a step span of its own, which holds its steps and waits: the check file, or
+ * why it could not be made.
+ */
 export async function sideCheck(ctx: Context, side: Side, request: CheckRequest): Promise<{ file: RegressCheckFile; minutes: number } | { error: string }> {
   const argv = ['regress', 'check', request.game, '--commit', request.commit, '--out', request.out];
   if (request.checks !== null) argv.push('--check', ...request.checks);
   if (request.performance) argv.push('--performance');
   if (request.proof !== null) argv.push('--proof', request.proof);
   const started = Date.now();
-  const out = await sideJson(ctx, side, argv);
+  const out = await span('regress check', () => sideJson(ctx, side, argv));
   if ('error' in out) return out;
   return { file: out.data as RegressCheckFile, minutes: (Date.now() - started) / 60_000 };
 }
@@ -185,9 +191,9 @@ export interface ProbeResult {
   reason: string | null;
 }
 
-/** `ogw regress probe` with the side tool; a probe that could not run is `unknown`. */
+/** `ogw regress probe` with the side tool, in a step span of its own as `sideCheck`; a probe that could not run is `unknown`. */
 export async function sideProbe(ctx: Context, side: Side, request: { game: string; commit: string; oracle: string; out: string }): Promise<ProbeResult> {
-  const out = await sideJson(ctx, side, ['regress', 'probe', request.game, '--commit', request.commit, '--oracle', request.oracle, '--out', request.out]);
+  const out = await span('regress probe', () => sideJson(ctx, side, ['regress', 'probe', request.game, '--commit', request.commit, '--oracle', request.oracle, '--out', request.out]));
   return 'error' in out ? { result: 'unknown', reason: out.error } : (out.data as ProbeResult);
 }
 

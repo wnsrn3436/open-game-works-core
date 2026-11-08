@@ -170,7 +170,7 @@
       "minimum": 1
     },
     "performanceLeaseWaitTimeoutMs": {
-      "description": "The maximum duration that the performance measurement of ogw check waits for the performance lease (`### performance lease` of [ogw](../tools/ogw.md)). When it passes, the performance result is unknown",
+      "description": "The maximum duration that the performance measurement of ogw check waits for the performance lease. A measurement of a game with the regression mark waits this long only for the measurement of a game without it and for local-model generation, and at most the time limit of a job for the other measurements of such games and for the instances and heavy steps that hold the lease (`### performance lease` of [ogw](../tools/ogw.md)). When it passes, the performance result is unknown",
       "type": "integer",
       "minimum": 1
     },

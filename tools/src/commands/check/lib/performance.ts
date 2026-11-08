@@ -1,8 +1,9 @@
 import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
 import { OgwError } from '../../../lib/errors.ts';
+import { LIMITS } from '../../../lib/limits.ts';
 import { span } from '../../../lib/spans.ts';
-import { withWriterWithin, type RwLock, type WriterWait } from '../../../lib/rwlock.ts';
+import { withWriterWithin, type RwLock, type WriterWait, type WriterWithinOptions } from '../../../lib/rwlock.ts';
 import { heavyStepsEnd } from '../../generation/lib/lease.ts';
 import { leaseHoldersEnd } from '../../instance/api.ts';
 import { automationRequest } from '../../instance/automation.ts';
@@ -304,6 +305,12 @@ export interface PerformanceOptions extends InstanceCheckOptions {
   sampleMs: number;
   /** The performance lease, with harness settings `performanceLeaseWaitTimeoutMs` as its wait (ogw.md `### performance lease`). */
   lease: RwLock;
+  /**
+   * The game has the regression mark: its measurement, a regress measurement, waits for the other regress measurements in
+   * the regress measurement lock, and for the instances and heavy steps that hold the lease, at most the time limit of a
+   * job (`measurementWaits`).
+   */
+  regress: boolean;
 }
 
 interface SceneLoad {
@@ -480,6 +487,7 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
 
 /** The message of the `unknown` items of a measurement that did not get the performance lease, by what it waited for. */
 const LEASE_BUSY: Record<WriterWait, string> = {
+  queue: 'host busy: performance measurement',
   writer: 'host busy: performance measurement',
   readers: 'host busy: local generation',
   others: 'host busy: regress instance',
@@ -489,10 +497,29 @@ const LEASE_BUSY: Record<WriterWait, string> = {
 const STEPS_BUSY = 'host busy: regress check';
 
 /**
+ * The lock beside the performance lease under which the measurements of games with the regression mark take the lease
+ * one at a time (ogw.md `### performance lease`): they wait for each other there, not on the lease.
+ */
+export function regressMeasurements(lease: RwLock): string {
+  return `${lease.base}-regress.lock`;
+}
+
+/**
+ * How a measurement waits for the lease besides `lease.waitMs` (`withWriterWithin`): a regress measurement waits in the
+ * regress measurement lock, and for the instances and heavy steps that hold the lease, at most the time limit of a job.
+ */
+export function measurementWaits(options: Pick<PerformanceOptions, 'lease' | 'regress'>): WriterWithinOptions {
+  return options.regress ? { queue: { path: regressMeasurements(options.lease), waitMs: LIMITS.jobMs }, othersWaitMs: LIMITS.jobMs } : {};
+}
+
+/**
  * performance of every platform profile, one profile at a time so that no other instance of the check runs beside the
  * measured one (ogw.md `## performance`), holding the performance lease exclusively across all of them, once the
- * instances and then the heavy steps that hold it shared have ended (ogw.md `### performance lease`). When the lease does
- * not come within its wait, nothing is measured and each item is `unknown`, with the host load read during the wait.
+ * instances and then the heavy steps that hold it shared have ended (ogw.md `### performance lease`). A measurement of a
+ * game with the regression mark (`regress`) takes the regress measurement lock first and waits for it, and for those
+ * instances and heavy steps, at most the time limit of a job: those holders are the regression suite's own work, which
+ * ends. When the lease does not come within its wait, nothing is measured and each item is `unknown`, with the host load
+ * read during the wait.
  */
 export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
   const each = async (): Promise<CheckResult[]> => {
@@ -514,6 +541,7 @@ export async function performanceChecks(ctx: Context, game: string, platforms: r
     othersBusy = STEPS_BUSY;
     return heavyStepsEnd(options.lease, deadline);
   };
+  const waits = measurementWaits(options);
   try {
     const leased = await withWriterWithin(
       options.lease,
@@ -522,6 +550,7 @@ export async function performanceChecks(ctx: Context, game: string, platforms: r
         return each();
       },
       othersEnd,
+      waits,
     );
     if (leased.ran) return leased.value;
     return await unknown(leased.waited === 'others' ? othersBusy : LEASE_BUSY[leased.waited]);

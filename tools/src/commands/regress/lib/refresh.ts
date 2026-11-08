@@ -22,7 +22,7 @@ import { translationLanguages } from '../../loop/dispatch.ts';
 import type { JobRecord } from '../../../lib/jobs.ts';
 import { catchOf, cleanFor, keysOf, targetChecks, type RegressCheckFile } from './keys.ts';
 import { dataTool, stateSettings, upgradeCore } from './ops.ts';
-import { admissionPath, latestPatch, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
+import { admissionPath, latestPatch, listSeeds, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
 import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type FixerRun, type Side } from './side.ts';
 import { checkInputs } from './inputs.ts';
 import { every, regressPool, type RegressPool } from './pool.ts';
@@ -266,15 +266,22 @@ interface KeptBaseCheck extends RegressCheckFile {
   checkInputs: string;
 }
 
+/** Whether a check file holds the items of `performance` (`ogw regress check --performance`). */
+function measuredIn(file: Partial<RegressCheckFile>): boolean {
+  return (file.checks ?? []).some((c) => c.name === 'performance');
+}
+
 /**
  * The base checks kept in the regress repo for `commit` whose check inputs are those of `run`, or null when they are not
- * all there: base checks of other check code, settings or schemas are no evidence for this one.
+ * all there: base checks of other check code, settings or schemas are no evidence for this one, and with `performance`,
+ * for a state with a seed with `performance`, base checks without `performance` items are none either.
  */
-async function keptBaseChecks(run: RefreshRun, state: string, commit: string): Promise<KeptBaseCheck[] | null> {
+async function keptBaseChecks(run: RefreshRun, state: string, commit: string, performance: boolean): Promise<KeptBaseCheck[] | null> {
   const files: KeptBaseCheck[] = [];
   for (let i = 1; i <= ADMISSION_CHECKS; i++) {
     const file = await readJsonIfExists<Partial<KeptBaseCheck>>(join(baseChecksDir(run.repo, run.version), `${state}-base-${String(i)}.json`));
     if (file?.commit !== commit || file.checkInputs !== run.inputs) return null;
+    if (performance && !measuredIn(file)) return null;
     files.push(file as KeptBaseCheck);
   }
   return files;
@@ -282,17 +289,18 @@ async function keptBaseChecks(run: RefreshRun, state: string, commit: string): P
 
 /**
  * The 3 base checks of the base candidate `commit`, together, kept in the regress repo with the harness commit and the
- * check inputs of `run`: all of their files, or none and why for the first of them that did not run. Whether they are
- * clean for a seed is its admission's (ogw.md `### admission` 1).
+ * check inputs of `run`: all of their files, or none and why for the first of them that did not run. They measure
+ * performance only with `performance`: only a seed with `performance` reads the performance of its base. Whether they
+ * are clean for a seed is its admission's (ogw.md `### admission` 1).
  */
-async function checkBase(ctx: Context, run: RefreshRun, state: string, commit: string): Promise<{ files: KeptBaseCheck[]; failures: string[]; text: string }> {
+async function checkBase(ctx: Context, run: RefreshRun, state: string, commit: string, performance: boolean): Promise<{ files: KeptBaseCheck[]; failures: string[]; text: string }> {
   const dir = baseChecksDir(run.repo, run.version);
   const numbers = Array.from({ length: ADMISSION_CHECKS }, (_, i) => i + 1);
   try {
     const checked = await every(
       numbers.map(async (k): Promise<{ k: number; error: string } | { k: number; kept: KeptBaseCheck }> => {
         const out = join(dir, `${state}-base-${String(k)}.json`);
-        const one = await span(`base check ${String(k)}`, () => run.pool.check(true, () => sideCheck(ctx, run.self, { game: stateGame(state), commit, out, checks: null, performance: true, proof: null })));
+        const one = await span(`base check ${String(k)}`, () => run.pool.check(performance, () => sideCheck(ctx, run.self, { game: stateGame(state), commit, out, checks: null, performance, proof: null })));
         if ('error' in one) return { k, error: one.error };
         const kept: KeptBaseCheck = { commit: one.file.commit, harness: run.self.commit, checkInputs: run.inputs, checks: one.file.checks, fixTestProof: one.file.fixTestProof };
         await writeJsonAtomic(out, kept);
@@ -310,8 +318,11 @@ async function checkBase(ctx: Context, run: RefreshRun, state: string, commit: s
   }
 }
 
-/** Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 4). */
-async function refreshState(ctx: Context, run: RefreshRun, state: string, settings: Readonly<Record<string, unknown>>): Promise<StateRefresh> {
+/**
+ * Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 4); its base checks measure
+ * performance with `performance` (`checkBase`).
+ */
+async function refreshState(ctx: Context, run: RefreshRun, state: string, settings: Readonly<Record<string, unknown>>, performance: boolean): Promise<StateRefresh> {
   const { version } = run;
   const game = await ctx.game(stateGame(state));
   const tag = baseTag(version);
@@ -321,9 +332,9 @@ async function refreshState(ctx: Context, run: RefreshRun, state: string, settin
     out.from = await coreVersionAt(ctx, game.root, base);
     out.tag = tag;
     out.base = base;
-    out.baseChecks = (await keptBaseChecks(run, state, base)) ?? [];
+    out.baseChecks = (await keptBaseChecks(run, state, base, performance)) ?? [];
     if (out.baseChecks.length === 0) {
-      const checked = await checkBase(ctx, run, state, base);
+      const checked = await checkBase(ctx, run, state, base, performance);
       out.baseChecks = checked.files;
       out.failures = checked.failures;
       out.checks = checked.text;
@@ -351,7 +362,7 @@ async function refreshState(ctx: Context, run: RefreshRun, state: string, settin
   out.jobs.push(...translated.jobs.map((id) => ({ id, role: 'translation' as const })));
   if (!translated.ok) return out;
   const commit = await head(game.root, { env: ctx.env });
-  const checked = await checkBase(ctx, run, state, commit);
+  const checked = await checkBase(ctx, run, state, commit, performance);
   out.checks = checked.text;
   out.failures = checked.failures;
   out.baseChecks = checked.files;
@@ -397,7 +408,10 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
   const states = onlyStates ?? entries.map((s) => s.state);
   const ws = await ctx.workspace();
   const run: RefreshRun = { repo, self, version, inputs: await checkInputs(ctx, ws.harness, self.commit), pool: regressPool((await ctx.settings()).regress.parallel) };
-  const refreshing = new Map(states.map((state) => [state, span(`state ${state}`, () => refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {}))]));
+  // the base of a state is measured only when a seed of the state has `performance`: no other seed reads it
+  const all = await listSeeds(repo);
+  const measured = (state: string): boolean => all.some((s) => s.manifest.state === state && s.manifest.performance);
+  const refreshing = new Map(states.map((state) => [state, span(`state ${state}`, () => refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {}, measured(state)))]));
   const admitting = seeds.map((seed) => span(`seed ${seed.id}`, async (): Promise<SeedRefresh> => {
     const state = await refreshing.get(seed.manifest.state);
     if (state === undefined || state.base === null || state.tag === null || state.baseChecks.length === 0) {

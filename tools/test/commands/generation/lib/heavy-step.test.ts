@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
+import { measurementWaits } from '../../../../src/commands/check/lib/performance.ts';
 import { heavyStepsEnd, performanceLeaseBase, withHeavyStep } from '../../../../src/commands/generation/lib/lease.ts';
 import { writeMark } from '../../../../src/commands/regress/lib/mark.ts';
 import { hostBootId, pidNamespace } from '../../../../src/lib/proc.ts';
@@ -91,6 +92,28 @@ describe('a heavy step of a check', () => {
     second.end();
     await second.done;
     expect(order).toEqual(['first step', 'measurement', 'measurement ends', 'second step']);
+  });
+
+  it('starts after the regress measurements that wait when it comes: they run back to back, the next one waiting in the regress measurement lock', async () => {
+    const { ctx, marked, lease } = await games();
+    const order: string[] = [];
+    const measure = (name: string, ms: number): Promise<unknown> =>
+      withWriterWithin(lease, async () => {
+        order.push(name);
+        await sleep(ms);
+        order.push(`${name} ends`);
+      }, (deadline) => heavyStepsEnd(lease, deadline), measurementWaits({ lease, regress: true }));
+    const first = measure('first', 400);
+    await until(() => order.includes('first'));
+    const second = measure('second', 100);
+    await sleep(100);
+    const step = withHeavyStep(ctx, marked, () => Promise.resolve(order.push('step')));
+    await first;
+    // the measurement that waits keeps the lease from the heavy step when the one that held it ends
+    expect(await writerHoldsOrWaits(lease)).toBe(true);
+    await Promise.all([second, step]);
+    expect(order).toEqual(['first', 'first ends', 'second', 'second ends', 'step']);
+    expect(await writerHoldsOrWaits(lease)).toBe(false);
   });
 
   it('inside another runs at once while a measurement waits, as the outer one holds the lease', async () => {

@@ -203,9 +203,10 @@ describe('ogw regress refresh and admission', () => {
     expect(admission).toMatchObject({ result: 'admitted', base, catch: ['caught', 'caught', 'caught'], reference: null, oracle: null, reason: null });
     expect(sh(state, 'git', ['show', `${String(admission.seeded)}:client/a.gd`])).toBe('var x = leak\n');
     expect(readFileSync(join(ws.regress, 'seeds/S01/patch-1.0.0.diff'), 'utf8')).toContain('+var x = leak');
-    // 3 base checks of every check, 3 checks of the target checks of the seeded commit
+    // 3 base checks of every check, 3 checks of the target checks of the seeded commit; no seed of the state has
+    // performance, so no base check measures it
     expect(vi.mocked(regressChecks).mock.calls.map((c) => [...(c[3].only ?? ['all'])].join(','))).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
-    expect(vi.mocked(regressChecks).mock.calls.slice(0, 3).every((c) => c[3].performance)).toBe(true);
+    expect(vi.mocked(regressChecks).mock.calls.map((c) => c[3].performance)).toEqual([false, false, false, false, false, false]);
     expect(existsSync(join(ws.regress, 'records/refresh-1.0.0/lc-base-1.json'))).toBe(true);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
     expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | base-1.0.0 |');
@@ -552,6 +553,42 @@ describe('ogw regress refresh and admission', () => {
     expect(kept().map(([, harness, inputs]) => [harness, inputs])).toEqual(Array<string[]>(3).fill([harnessHead(), await inputsOf()]));
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
   });
+
+  it('checks the base of a state again with performance for a seed with performance when the kept base checks have none, and keeps those that have it', async () => {
+    const ws = makeWorkspace();
+    const commit = sourceGame(ws, 'src');
+    bootstrap(ws, commit, { S01: { manifest: MANIFEST, patch: patchOf('leak') } });
+    // the fake checks of `fakeChecks`, with a performance item when the check measures
+    const checks = vi.mocked(regressChecks).getMockImplementation();
+    vi.mocked(regressChecks).mockImplementation(async (...args) => {
+      const done = await (checks as NonNullable<typeof checks>)(...args);
+      return args[3].performance ? { ...done, checks: [...done.checks, item('performance', 'pass', [], 'macos')] } : done;
+    });
+    const calls = (): string[] => vi.mocked(regressChecks).mock.calls.map((c) => `${[...(c[3].only ?? ['all'])].join(',')}${c[3].performance ? ' measured' : ''}`);
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    expect(calls()).toEqual(['all', 'all', 'all', 'no blocker', 'no blocker', 'no blocker']);
+    const seedFolder = (id: string, manifest: object): string => {
+      const folder = join(ws.root, 'new-seeds', id);
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'seed.json'), JSON.stringify(manifest));
+      writeFileSync(join(folder, 'patch-1.0.0.diff'), patchOf('leak'));
+      return folder;
+    };
+    // a seed with performance reads the performance of the base, which the kept base checks do not hold
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'seed', seedFolder('S13', { ...MANIFEST, performance: true })])).stdout).toBe('seed S13: admitted\n');
+    expect(calls()).toEqual(['all measured', 'all measured', 'all measured', 'no blocker measured', 'no blocker measured', 'no blocker measured']);
+    // the kept base checks now hold it: a later seed, with performance or without, takes them
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'seed', seedFolder('S14', MANIFEST)])).stdout).toBe('seed S14: admitted\n');
+    expect(calls()).toEqual(['no blocker', 'no blocker', 'no blocker']);
+    // a refresh of the state with a seed with performance measures its base, and takes kept base checks that hold it
+    vi.mocked(regressChecks).mockClear();
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
+    expect(calls().filter((c) => c.startsWith('all'))).toEqual([]);
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | base-1.0.0 |');
+  });
 });
 
 describe('ogw regress refresh: the order of the admissions', () => {
@@ -615,6 +652,21 @@ describe('ogw regress refresh: the order of the admissions', () => {
     expect(overlaps(admissions.map((s) => ({ ...s, group: 'all' })), true).some((pair) => pair.includes('leakS21') && pair.includes('leakS22'))).toBe(true);
     expect(overlaps(admissions, false)).not.toEqual([]);
     expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toMatch(/\| S21 \| admitted [^\n]*\n\| S22 \| admitted [^\n]*\n\| S23 \| admitted [^\n]*\n\| S24 \| admitted /);
+  });
+
+  it('measures the performance of the base of a state only when a seed of the state has performance', async () => {
+    const ws = makeWorkspace();
+    twoStates(ws, ['S22']);
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // the base checks check every check; those of a seeded commit only its target check
+    const measured = (only: 'base' | 'seeded'): string[] =>
+      vi.mocked(regressChecks).mock.calls.filter((c) => (c[3].only === null) === (only === 'base')).map((c) => `${c[1].name} ${String(c[3].performance)}`).sort();
+    expect(measured('base')).toEqual([...Array<string>(3).fill('ogw-regress-lc true'), ...Array<string>(3).fill('ogw-regress-lc2 false')]);
+    // a seeded commit is measured when its seed has performance
+    expect(measured('seeded').filter((c) => c.endsWith('true'))).toHaveLength(3);
   });
 
   it('runs at most regress.parallel checks at a time', async () => {

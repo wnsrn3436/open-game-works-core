@@ -5,7 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../../src/commands/index.ts';
 import type { CommandDef } from '../../../src/lib/command.ts';
-import type { JobRecord } from '../../../src/lib/jobs.ts';
+import { readJob, waitJob, type JobRecord } from '../../../src/lib/jobs.ts';
 import { withLock, withLockWithin } from '../../../src/lib/lock.ts';
 import { span, type SpanLine } from '../../../src/lib/spans.ts';
 import { makeGame, ogw } from '../../helpers/workspace.ts';
@@ -322,6 +322,40 @@ describe('ogw time', () => {
     expect(root.children.map((c) => c.name)).toEqual(['first', 'second']);
     expect(root.children[1]?.waits.map((w) => w.on)).toEqual([lock]);
     expect(root.children[1]?.waits[0]?.ms).toBeGreaterThanOrEqual(150);
+  });
+
+  it('records the steps of a process of no job in the step span that its environment names, with the jobs it starts, and passes that span to no process it starts', async () => {
+    const ws = jobWorkspace();
+    const seen: (string | undefined)[][] = [];
+    const side: CommandDef = {
+      name: ['side'],
+      usage: 'ogw side',
+      background: { timeLimitMs: () => 60_000 },
+      run: async (ctx) => {
+        await span('inside', () => sleep(20));
+        seen.push([ctx.env.OGW_PARENT_JOB, ctx.env.OGW_PARENT_SPAN]);
+        return { text: 'ok' };
+      },
+    };
+    const started = Date.now();
+    writeJob(ws.jobs, { id: 'r1', startedAt: started });
+    // the step span of job r1 that starts the side command, as the process of r1 writes it
+    const s1: SpanLine = { id: 's1', name: 'regress check', parent: null, start: started, end: null };
+    writeFileSync(join(ws.jobs, 'r1.spans.jsonl'), `${JSON.stringify(s1)}\n`);
+    const parent = { OGW_PARENT_JOB: 'r1', OGW_PARENT_SPAN: 's1' };
+    expect(await ogw(ws, ['side'], { commands: [...commands, side], env: { ...ws.env, ...parent } })).toMatchObject({ code: 0, stdout: 'ok\n' });
+    expect(seen).toEqual([[undefined, undefined]]);
+    const background = await ogw(ws, ['side', '--background', '--json'], { commands: [...commands, side], env: { ...ws.env, ...parent } });
+    expect(background.code).toBe(0);
+    const child = (JSON.parse(background.stdout) as { job: string }).job;
+    await waitJob(child, 30_000, ws.env);
+    expect(await readJob(child, ws.env)).toMatchObject({ parentJob: 'r1', parentSpan: 's1' });
+    writeFileSync(join(ws.jobs, 'r1.spans.jsonl'), `${JSON.stringify({ ...s1, end: Date.now() })}\n`, { flag: 'a' });
+    writeJob(ws.jobs, { id: 'r1', startedAt: started, endedAt: Date.now(), status: 'done', exitCode: 0 });
+    const data = await timeOf(ws, ['r1']);
+    const root = data.root as unknown as { children: { key: string; name: string; children: { kind: string; name: string; key: string }[] }[] };
+    expect(root.children.map((c) => c.key)).toEqual(['r1/s1']);
+    expect(root.children[0]?.children.map((c) => `${c.kind} ${c.name}`)).toEqual(['step inside', `job ogw side`]);
   });
 
   it('fails a job command whose spans file cannot be written when it ends, after letting go of the lock it waited for', async () => {

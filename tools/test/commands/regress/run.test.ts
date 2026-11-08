@@ -145,12 +145,13 @@ describe('ogw regress run', () => {
     expect(vi.mocked(sideAgent)).not.toHaveBeenCalled();
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
     expect(sh(ws.regress, 'git', ['log', '-1', '--format=%s']).trim()).toMatch(/^regress run \d+$/);
-    // per side: one base check of the state and one check of each seeded commit, all checks, the base with performance
+    // per side: one base check of the state and one check of each seeded commit, all checks; no seed has performance,
+    // so neither the base nor a seeded commit is measured
     const calls = vi.mocked(sideCheck).mock.calls.map((c) => [c[1].name, c[2].checks, c[2].performance]);
     expect(calls.filter((c) => c[0] === 'before')).toHaveLength(4);
     // the after side catches S07b, which is to be missed: its seeded commit is checked once more too
     expect(calls.filter((c) => c[0] === 'after')).toHaveLength(4);
-    expect(calls.filter((c) => c[2] === true)).toHaveLength(2);
+    expect(calls.filter((c) => c[2] === true)).toHaveLength(0);
     expect(vi.mocked(removeSide)).toHaveBeenCalledTimes(2);
   });
 
@@ -192,6 +193,24 @@ describe('ogw regress run', () => {
     expect(report).toMatch(/\| S01 \| lc \| caught \| caught \(pipeline none\) \| caught \(pipeline none\) \|/);
   });
 
+  it('measures the base of a state only when an admitted seed of the state has performance, on each side', async () => {
+    const ws = makeWorkspace();
+    await admitted(ws, true);
+    const head = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
+    const spans: (Span & { performance: boolean })[] = [];
+    timedChecks(ws, spans, () => false);
+    const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // lc2 has S09 with performance; lc has no seed with it
+    const measured = spans.filter((s) => s.performance).map((s) => s.key).sort();
+    expect(measured).toEqual(['after S09.json', 'after lc2-base.json', 'before S09.json', 'before lc2-base.json']);
+    // with --seeds S08, no seed of lc2 that the run reads has performance
+    spans.length = 0;
+    expect((await ogw(ws, ['regress', 'run', '--before', head, '--catch-only', '--seeds', 'S08'])).code).toBe(0);
+    expect(spans.map((s) => `${s.key} ${String(s.performance)}`).sort()).toEqual(['after S08.json false', 'after lc2-base.json false', 'before S08.json false', 'before lc2-base.json false']);
+  });
+
   it('with a side tool whose instances do not hold the performance lease, checks the catch with performance alone', async () => {
     const ws = makeWorkspace();
     await admitted(ws, true);
@@ -202,8 +221,8 @@ describe('ogw regress run', () => {
     const run = await ogw(ws, ['regress', 'run', '--before', head, '--catch-only']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    // the base checks and the checks of S09 have performance
-    expect(spans.filter((s) => s.performance).map((s) => s.key).sort()).toEqual(['after S09.json', 'after lc-base.json', 'after lc2-base.json', 'before S09.json', 'before lc-base.json', 'before lc2-base.json']);
+    // the base checks of lc2, whose seed S09 has performance, and the checks of S09 have performance
+    expect(spans.filter((s) => s.performance).map((s) => s.key).sort()).toEqual(['after S09.json', 'after lc2-base.json', 'before S09.json', 'before lc2-base.json']);
     for (const span of spans.filter((s) => s.performance)) expect(runningBeside(spans, span)).toEqual([]);
     expect(overlaps(spans.filter((s) => !s.performance), false)).not.toEqual([]);
   });

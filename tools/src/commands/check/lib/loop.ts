@@ -24,6 +24,7 @@ import { rowSimulationCheck } from './row-simulation.ts';
 import { makeTelemetryRuns } from './telemetry-runs.ts';
 import type { FixTestProof } from '../../loop/lib/files.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
+import { readMark } from '../../regress/lib/mark.ts';
 import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
 export { CHECK_ORDER };
@@ -186,13 +187,14 @@ export async function gameChecks(
   set: CheckSet,
   alongside: readonly WorkBeside[] = [],
 ): Promise<CheckResult[]> {
-  const [slots, modules, scenario, merged, leaseBase, harness] = await Promise.all([
+  const [slots, modules, scenario, merged, leaseBase, harness, mark] = await Promise.all([
     options.slots ?? slotsOf(ctx),
     gameModules(ctx, game),
     readScenario(game.root),
     mergedCoreSettings(ctx, game),
     performanceLeaseBase(ctx),
     ctx.settings(),
+    readMark(game.commonDir),
   ]);
   const instance: InstanceCheckOptions = { evidence, slots, db: options.db, pollMs: options.pollMs };
   const profiles = platformProfiles(settings.buildPlatforms ?? []);
@@ -205,6 +207,7 @@ export async function gameChecks(
     probe,
     sampleMs: options.sampleMs,
     lease: { base: leaseBase, waitMs: harness.performanceLeaseWaitTimeoutMs },
+    regress: mark !== null,
   };
   const ui = { ...instance, ...uiSettings(settings), maxTextScale: maxTextScale(merged, modules.client), scenario };
   // One import before the instances start, with the engine packages put in first: an instance skips its import once

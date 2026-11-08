@@ -1,6 +1,6 @@
 // Spans and waits of a job (ogw.md `## time`): the steps a command names nest by async context, each lock, slot and
 // ledger helper records its waits on the path that names what it waits for, and a killed job keeps what it wrote.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -73,6 +73,21 @@ describe('span', () => {
       expect(end?.end).toBeGreaterThanOrEqual(start?.start ?? Infinity);
     }
     expect(lines).toHaveLength(6);
+  });
+
+  it('makes ids of the pid, a tag of the process and a count, so that a later process with the same pid writes other ids', async () => {
+    const file = join(tempDir(), 'j2.spans.jsonl');
+    await inJob('j2', file, () => span('one', () => span('two', () => Promise.resolve())));
+    const ids = [...new Set(linesOf(file).map((line) => line.id))];
+    expect(ids).toHaveLength(2);
+    for (const id of ids) expect(id).toMatch(new RegExp(`^${process.pid.toString(36)}[0-9a-f]{6}\\.[0-9a-z]+$`));
+    // another process: its own tag
+    const spans = pathToFileURL(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'lib', 'spans.ts')).href;
+    const script = `import { inJob, span } from ${JSON.stringify(spans)};\nawait inJob('j2', ${JSON.stringify(file)}, () => span('three', () => Promise.resolve()));`;
+    const other = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    expect(other.status, other.stderr).toBe(0);
+    const tags = new Set(linesOf(file).map((line) => line.id.replace(/\.[0-9a-z]+$/, '').slice(-6)));
+    expect(tags.size).toBe(2);
   });
 
   it('marks a step that throws as failed and passes the error on', async () => {

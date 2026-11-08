@@ -2,7 +2,8 @@ import { chmodSync, existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { regressChecks } from '../../../src/commands/check/api.ts';
-import { makeSide, removeSide, requireSameCore, sideAgent, sideCheck, sideOgw, type Side } from '../../../src/commands/regress/lib/side.ts';
+import { makeSide, removeSide, requireSameCore, sideAgent, sideCheck, sideOgw, sideProbe, type Side } from '../../../src/commands/regress/lib/side.ts';
+import { inJob, span } from '../../../src/lib/spans.ts';
 import { joinedNames, promptBytes } from '../../../src/commands/regress/side-commands.ts';
 import { ogw, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { ctxOf, item, sourceGame, write } from './helpers.ts';
@@ -115,6 +116,25 @@ describe('side commands', () => {
   it('joins the words of multi-word check names', () => {
     expect(joinedNames(['no', 'blocker', 'UI quality', 'static', 'check'])).toEqual(['no blocker', 'UI quality', 'static check']);
     expect(joinedNames(['bogus'])).toEqual(['bogus']);
+  });
+
+  it('gives the side tool the step span of its own that runs it, and none outside a job', async () => {
+    const ws = makeWorkspace();
+    const probe = `if [ "$1 $2" = "regress probe" ]; then printf '{"result":"pass","reason":"%s %s"}' "$OGW_PARENT_JOB" "$OGW_PARENT_SPAN"; exit 0; fi`;
+    const commit = fakeSideTool(ws, `${probe}\n${INFO}`);
+    const side = await makeSide(ctxOf(ws), { name: 'after', commit, agents: {} });
+    expect(side.unknown).toBeNull();
+    const request = { game: 'g', commit: 'c', oracle: '/oracle', out: '/probe.json' };
+    const spans = join(ws.root, 'r1.spans.jsonl');
+    const probed = await inJob('r1', spans, () => span('seed-run', () => sideProbe(ctxOf(ws), side, request)));
+    const lines = readFileSync(spans, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { id: string; name?: string; parent: string | null });
+    const seedRun = lines.find((l) => l.name === 'seed-run');
+    const own = lines.find((l) => l.name === 'regress probe');
+    expect(own?.parent).toBe(seedRun?.id);
+    expect(probed.reason).toBe(`r1 ${String(own?.id)}`);
+    // outside a job the side tool gets none, also when the environment of this process named one
+    expect((await sideProbe(ctxOf(ws, { OGW_PARENT_JOB: 'x1', OGW_PARENT_SPAN: 'y' }), side, request)).reason).toBe(' ');
+    await removeSide(ctxOf(ws), side);
   });
 
   it('a side check that fails or prints no JSON is an error, and a side agent that fails is failed with its reason', async () => {

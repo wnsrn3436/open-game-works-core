@@ -59,7 +59,8 @@ interface Catching {
 /**
  * The catch of each admitted seed by one side (`### regress run` 2): the check of the base of each state and the first
  * check of each seeded commit together, the catch of a seed once the check of the base of its state has ended, and the
- * second check of a catch that is not its `expect`.
+ * second check of a catch that is not its `expect`. The check of a base measures performance only when an admitted seed
+ * of its state has `performance`: no other seed reads it.
  */
 function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], folder: string, pool: RegressPool): Catching {
   const out: SideCatch = { base: new Map(), seeded: new Map(), catches: new Map() };
@@ -69,9 +70,10 @@ function catchPhase(ctx: Context, side: Side, admitted: readonly Admitted[], fol
     const state = seed.manifest.state;
     if (bases.has(state)) continue;
     const path = join(folder, `${state}-base.json`);
+    const performance = admitted.some((a) => a.seed.manifest.state === state && a.seed.manifest.performance);
     bases.set(
       state,
-      span(`${side.name} base check ${state}`, () => pool.check(true, () => sideCheck(ctx, side, { game: stateGame(state), commit: admission.base as string, out: path, checks: null, performance: true, proof: null }))).then((checked): Checked => {
+      span(`${side.name} base check ${state}`, () => pool.check(performance, () => sideCheck(ctx, side, { game: stateGame(state), commit: admission.base as string, out: path, checks: null, performance, proof: null }))).then((checked): Checked => {
         const result = 'file' in checked ? { file: checked.file, path } : checked;
         out.base.set(state, result);
         return result;
