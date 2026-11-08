@@ -77,6 +77,7 @@ Writes diagnostic logs to the log file, and collects error logs and analytics ev
 ### send
 
 - `error` logs go into the error queue, and events that `track_event` received go into the event queue. When a queue has `LogCore.errorQueueMaxCount`, `LogCore.eventQueueMaxCount` items, the item is not put in and the dropped count increases by 1
+- The `LogEntry` that goes into the error queue holds U+FFFD in place of each U+0000 of `tag`, `message` and `stack_trace`, because the server rejects a string with U+0000 (validator rule `nul` of `validation`) and with it the whole `ReportClientErrors` that holds the batch. The log line keeps the `\0` escape of the original
 - When there is a sender and one or more queues are not empty, it calls the sender
   - The interval between two calls is `LogCore.sendIntervalMs` or more, and it calls in the earliest frame that interval allows
   - It does not call inside log operations and `track_event`
@@ -94,7 +95,7 @@ Writes diagnostic logs to the log file, and collects error logs and analytics ev
   - The event name passes `UtilCore.is_snake_case` and is `LogCore.eventNameMaxLength` code points or less
   - The event name does not start with `core_`. `core_` names are core analytics events that server core modules emit
   - The number of parameters is `LogCore.eventParamMaxCount` or less, and the parameter names are snake_case, `LogCore.eventParamNameMaxLength` code points or less, and differ from each other
-  - String values are `LogCore.eventStringMaxLength` code points or less. Float64 values are not NaN or infinite
+  - String values are `LogCore.eventStringMaxLength` code points or less and hold no U+0000, which the server would reject together with the whole `ReportAnalyticsEvents`. Float64 values are not NaN or infinite
 - The `time` of an event is the device time when `track_event` was called
 - Content code defines the meaning of event names and parameters. e.g. `stage_clear`(`stage_id`, `elapsed_ms`)
 
@@ -188,6 +189,7 @@ none
 - An `error` log written during a sender call is not in later `LogBatch` values and is in the log file
 - `track_event` returns `false` and does not put in the event for a name that is not snake_case, a name starting with `core_`, duplicate parameter names, a parameter name longer than `LogCore.eventParamNameMaxLength`, a parameter count and string over the limit, NaN. Failures of the same name give one `error` log
 - `message` of the `LogBatch` is cut to `LogCore.sendTextMaxLength` code points, and `tag` to `LogCore.sendTagMaxLength` code points
+- An `error` log whose tag and message hold U+0000 is in the next `LogBatch` with U+FFFD in place of each U+0000 of `tag` and `message` and with the same code point counts, and its log line holds `\0` in those places. `track_event` with a string value that holds U+0000 returns `false`, does not put in the event and gives one `error` log
 - When the log folder cannot be created, `init` returns `true`, and the item with tag `LogCore` and later `error` logs are passed to the sender
 - When `init` runs after an exit without `release`, one `abnormal exit` `error` log is left, and when `init` runs after `release`, it is not left
 - When `release` is called after `notify_app_state(quit)`, there is no `log/running` and no LogCore failure. The same holds for `release` after `notify_app_state(background)`

@@ -203,6 +203,7 @@ format argument
 | `is_update_reboot` | none | whether the boot of the current `boot_stage` is an update reboot | `false` | test |
 
 - launch value: a value that the runner passes when it starts the client of a dev run. How it is passed is in the engine-specific implementation rules. In the browser runtime the launch values are passed with the page when it is opened, not with the export, so one export runs as many dev runs as pages opened with different launch values. A launch value that the runner did not pass takes the value that the export holds, when it holds one (engine-specific implementation rules)
+- Every launch value is text: a number is passed as its decimal text (e.g. `OGW_RANDOM_BASE` `"42"`). A passed value that is not text (in a launch value file, a value that is not a JSON string, e.g. `OGW_RANDOM_BASE` as the JSON number `42`) is fatal in `InitModules` 1, as a launch value check failure
 
   | launch value | meaning |
   |---|---|
@@ -282,7 +283,7 @@ format argument
 - In a dev run outside a browser, when `OGW_PLATFORM` is `web` and `OGW_DEV_ACCOUNT` is an empty string, `platform` of `get_build_info` is `web`, `boot_login` is `Success` through new account login and login token save, and `boot_stage` becomes `Done`
 - When `PushCore` is in the module list, a build whose build info `platform` is `android` or `ios` passes the notification adapter of that platform with `set_notification_adapter`, a dev run passes the fake notification adapter, and a build of any other platform passes none
 - In a dev run, the value of launch value `OGW_DEV_ACCESS` is passed to `NetworkCore.set_dev_access`, so `X-Ogw-Dev-Access` of a cheat command request of `QACore` is that value
-- In a dev run with `OGW_RANDOM_BASE` `42`, `InitModules` 2 calls `TimeCore.set_random_base`(42) before `TimeCore` `init`, in the first boot and in the boot after a restart, so the first `TimeCore.make_random_seed`(`a`) of each boot is `UtilCore.make_purpose_seed`(`a`, 42). With `OGW_RANDOM_BASE` an empty string, `set_random_base` is not called. `OGW_RANDOM_BASE` `1.5`, `+1` and `9223372036854775808` are fatal
+- In a dev run with `OGW_RANDOM_BASE` `42`, `InitModules` 2 calls `TimeCore.set_random_base`(42) before `TimeCore` `init`, in the first boot and in the boot after a restart, so the first `TimeCore.make_random_seed`(`a`) of each boot is `UtilCore.make_purpose_seed`(`a`, 42). With `OGW_RANDOM_BASE` an empty string, `set_random_base` is not called. `OGW_RANDOM_BASE` `"1.5"`, `"+1"` and `"9223372036854775808"`, and `OGW_RANDOM_BASE` or `OGW_INSTANCE_ID` given in the launch value file as the JSON number `1`, are fatal
 - In the browser runtime, a DEV export opened by a page that passes the launch value `OGW_INSTANCE_ID` `i1` (engine-specific implementation rules) has `instance_id` `i1` in `get_build_info`, and a launch value that the page does not pass and the export holds takes the value of the export
 - STG and PROD builds have no `get_launch_value`, fake adapter or DEV registration list call
 - In the environments that include DEV code, `start_boot` called without `BootTestReplacements` with a module list without `QACore` does `init` of `QACore` as the last of the module list. `start_boot` given `BootTestReplacements` does not `init` `QACore`
