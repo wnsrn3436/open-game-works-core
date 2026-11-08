@@ -10,6 +10,7 @@ import { span } from '../../../lib/spans.ts';
 import { jobTimeSection } from '../../time/api.ts';
 import { exists, readJsonIfExists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
+import { withoutExtension } from '../../../lib/paths.ts';
 import { commitPaths, git, gitRaw, head, revParse, showFile, tagExists, worktreeAdd, worktreeRemove } from '../../../lib/git.ts';
 import { newId } from '../../../lib/ids.ts';
 import { placeholderFailures } from '../../check/api.ts';
@@ -23,11 +24,12 @@ import type { JobRecord } from '../../../lib/jobs.ts';
 import { catchOf, cleanFor, keysOf, targetChecks, type RegressCheckFile } from './keys.ts';
 import { dataTool, stateSettings, upgradeCore } from './ops.ts';
 import { admissionPath, latestPatch, listSeeds, readStates, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
-import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type FixerRun, type Side } from './side.ts';
+import { jobFacts, sideAgent, sideCheck, sideMerge, sideProbe, type FixerRun, type ProbeResult, type Side } from './side.ts';
 import { checkInputs } from './inputs.ts';
 import { every, regressPool, type RegressPool } from './pool.ts';
 import { addedFailures } from './expect.ts';
 import { rebasable, rebaseSeed, rebaseText, type SeedRebase } from './rebase.ts';
+import { baseDefects, baseFixInput, type BaseCheckAt } from './base-fix.ts';
 
 /** The number of checks of a base and of a seeded commit at admission. */
 export const ADMISSION_CHECKS = 3;
@@ -116,7 +118,7 @@ async function applySeed(ctx: Context, input: AdmitInput, state: GameRepo): Prom
  * the same number, and its text for the stale reason: an `unknown` catch with why (the error of a check that did not
  * run, or the reason of the catch).
  */
-async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<{ catches: string[]; texts: string[]; files: (RegressCheckFile | null)[] }> {
+async function admissionCatches(ctx: Context, input: AdmitInput, state: string, seeded: string, work: string): Promise<{ catches: string[]; texts: string[]; files: (RegressCheckFile | null)[]; seen: SeenCheck[] }> {
   const manifest = input.seed.manifest;
   const { self, pool } = input.run;
   const checks = manifest.expect === 'caught' ? targetChecks(manifest) : null;
@@ -127,14 +129,14 @@ async function admissionCatches(ctx: Context, input: AdmitInput, state: string, 
       const base = input.baseChecks[i] ?? input.baseChecks[0];
       const file = 'file' in checked ? checked.file : null;
       const result = !('file' in checked) ? { catch: 'unknown', reason: checked.error } : base === undefined ? { catch: 'unknown', reason: 'no base check' } : catchOf(manifest, base, checked.file);
-      return { ...result, file };
+      return { ...result, file, seen: 'file' in checked ? { file: checked.file } : { error: checked.error } };
     }),
   );
-  return { catches: results.map((r) => r.catch), texts: results.map((r) => (r.catch === 'unknown' ? `unknown (${r.reason ?? ''})` : r.catch)), files: results.map((r) => r.file) };
+  return { catches: results.map((r) => r.catch), texts: results.map((r) => (r.catch === 'unknown' ? `unknown (${r.reason ?? ''})` : r.catch)), files: results.map((r) => r.file), seen: results.map((r) => r.seen) };
 }
 
 /** Step 4 of admission: the probes of the seeded commit and of the reference commit, together, beside the checks of step 3. */
-async function admissionOracle(ctx: Context, input: AdmitInput, state: string, seeded: string, reference: string, work: string): Promise<{ oracle: NonNullable<Admission['oracle']>; reason: string | null }> {
+async function admissionOracle(ctx: Context, input: AdmitInput, state: string, seeded: string, reference: string, work: string): Promise<{ oracle: NonNullable<Admission['oracle']>; reason: string | null; probes: SeenProbes }> {
   const { self, pool, repo } = input.run;
   const folder = join(seedDir(repo, input.seed.id), 'oracle');
   const [onSeeded, onReference] = await every([
@@ -143,7 +145,7 @@ async function admissionOracle(ctx: Context, input: AdmitInput, state: string, s
   ]);
   const ok = onSeeded.result === 'fail' && onReference.result === 'pass';
   const reason = ok ? null : `oracle: seeded ${onSeeded.result} (${onSeeded.reason ?? ''}), reference ${onReference.result} (${onReference.reason ?? ''})`;
-  return { oracle: { seeded: onSeeded.result, reference: onReference.result }, reason };
+  return { oracle: { seeded: onSeeded.result, reference: onReference.result }, reason, probes: { seeded: onSeeded, reference: onReference } };
 }
 
 /** Step 1 of admission: why a base check is not clean for the seed, from the first that is not, or null when each is. */
@@ -155,20 +157,44 @@ function baseNotClean(seed: Seed, baseChecks: readonly RegressCheckFile[]): stri
   return null;
 }
 
+/** A check of step 3 of admission: its check file, or why it did not run. */
+export type SeenCheck = { file: RegressCheckFile } | { error: string };
+
+/** The probes of step 4 of admission, on the seeded and on the reference commit. */
+export interface SeenProbes {
+  seeded: ProbeResult;
+  reference: ProbeResult;
+}
+
+/** An admission with what its steps 3 and 4 saw, which the next round of the seed agent gets (`### seed agent` 5). */
+export interface SeenAdmission {
+  admission: Admission;
+  /** The checks of step 3, or null when it did not run. */
+  checks: SeenCheck[] | null;
+  /** The probes of step 4, or null when it did not run. */
+  probes: SeenProbes | null;
+}
+
 /** Admits a seed at `version` (ogw.md `### admission`); a seed that fails a step is `stale` with the reason. */
 export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admission> {
+  return (await admitSeedSeen(ctx, input)).admission;
+}
+
+/** `admitSeed` with what its checks and probes saw. */
+export async function admitSeedSeen(ctx: Context, input: AdmitInput): Promise<SeenAdmission> {
   const { seed } = input;
   const { version } = input.run;
+  const none = (admission: Admission): SeenAdmission => ({ admission, checks: null, probes: null });
   const unclean = baseNotClean(seed, input.baseChecks);
-  if (unclean !== null) return stale(`base fails target: ${unclean}`, { base: input.base });
+  if (unclean !== null) return none(stale(`base fails target: ${unclean}`, { base: input.base }));
   const state = await ctx.game(stateGame(seed.manifest.state));
   const applied = await applySeed(ctx, input, state);
-  if ('result' in applied) return applied;
+  if ('result' in applied) return none(applied);
   const work = join(await dataDir(ctx), 'regress', `admit-${version}`, seed.id);
   await mkdir(work, { recursive: true });
   const reference = applied.reference;
   // the probes do not wait for the checks of the catch, nor the checks for the probes
-  const [{ catches, texts, files }, probed] = await every([
+  const [{ catches, texts, files, seen }, probed] = await every([
     admissionCatches(ctx, input, state.name, applied.seeded, work),
     reference === null ? Promise.resolve(null) : admissionOracle(ctx, input, state.name, applied.seeded, reference, work),
   ]);
@@ -176,12 +202,13 @@ export async function admitSeed(ctx: Context, input: AdmitInput): Promise<Admiss
   const added = seed.manifest.expect === 'missed' ? addedFailures(files, input.baseChecks) : null;
   const oracle = probed?.oracle ?? null;
   const fields = { base: input.base, seeded: applied.seeded, reference, catch: catches, added, oracle };
-  if (catches.some((c) => c !== seed.manifest.expect)) return stale(`not ${seed.manifest.expect}: ${texts.join(', ')}`, fields);
-  if (probed !== null && probed.reason !== null) return stale(probed.reason, fields);
+  const saw = (admission: Admission): SeenAdmission => ({ admission, checks: seen, probes: probed?.probes ?? null });
+  if (catches.some((c) => c !== seed.manifest.expect)) return saw(stale(`not ${seed.manifest.expect}: ${texts.join(', ')}`, fields));
+  if (probed !== null && probed.reason !== null) return saw(stale(probed.reason, fields));
   const folder = seedDir(input.run.repo, seed.id);
   await writeFileAtomic(join(folder, `patch-${version}.diff`), await git(state.mainRoot, ['diff', '--binary', input.base, applied.seeded], { env: ctx.env }));
   if (applied.reference !== null) await writeFileAtomic(join(folder, `reference-${version}.diff`), await git(state.mainRoot, ['diff', '--binary', applied.seeded, applied.reference], { env: ctx.env }));
-  return { result: 'admitted', ...fields, reason: null, at: Date.now() };
+  return saw({ result: 'admitted', ...fields, reason: null, at: Date.now() });
 }
 
 export interface StateRefresh {
@@ -195,10 +222,12 @@ export interface StateRefresh {
   translation: string;
   checks: string;
   failures: string[];
+  /** The `base fix` column of the record. */
+  fix: string;
   tag: string | null;
   base: string | null;
   baseChecks: RegressCheckFile[];
-  /** The agent jobs of the refresh of this state: its content agent and its translation sub-agents. */
+  /** The agent jobs of the refresh of this state: its content agents and its translation sub-agents. */
   jobs: { id: string; role: 'content' | 'translation' }[];
 }
 
@@ -288,63 +317,163 @@ async function keptBaseChecks(run: RefreshRun, state: string, commit: string, pe
 }
 
 /**
- * The 3 base checks of the base candidate `commit`, together, kept in the regress repo with the harness commit and the
- * check inputs of `run`: all of their files, or none and why for the first of them that did not run. They measure
- * performance only with `performance`: only a seed with `performance` reads the performance of its base. Whether they
- * are clean for a seed is its admission's (ogw.md `### admission` 1).
+ * The folder outside the regress repo where the base checks of a refresh write their check files and evidence, which
+ * the content agent of the base fix reads; the refresh of a state removes those of the state when it ends.
  */
-async function checkBase(ctx: Context, run: RefreshRun, state: string, commit: string, performance: boolean): Promise<{ files: KeptBaseCheck[]; failures: string[]; text: string }> {
-  const dir = baseChecksDir(run.repo, run.version);
-  const numbers = Array.from({ length: ADMISSION_CHECKS }, (_, i) => i + 1);
-  try {
-    const checked = await every(
-      numbers.map(async (k): Promise<{ k: number; error: string } | { k: number; kept: KeptBaseCheck }> => {
-        const out = join(dir, `${state}-base-${String(k)}.json`);
-        const one = await span(`base check ${String(k)}`, () => run.pool.check(performance, () => sideCheck(ctx, run.self, { game: stateGame(state), commit, out, checks: null, performance, proof: null })));
-        if ('error' in one) return { k, error: one.error };
-        const kept: KeptBaseCheck = { commit: one.file.commit, harness: run.self.commit, checkInputs: run.inputs, checks: one.file.checks, fixTestProof: one.file.fixTestProof };
-        await writeJsonAtomic(out, kept);
-        return { k, kept };
-      }),
-    );
-    const failed = checked.find((c) => 'error' in c);
-    if (failed !== undefined && 'error' in failed) return { files: [], failures: [], text: `check ${String(failed.k)}: ${failed.error}` };
-    const files = checked.flatMap((c) => ('kept' in c ? [c.kept] : []));
-    const failures = [...new Set(files.flatMap((f) => [...keysOf(f)]))];
-    return { files, failures, text: `${String(ADMISSION_CHECKS)} checks` };
-  } finally {
-    // the evidence folders of the base checks stay out of the regress repo
-    for (const k of numbers) await rm(join(dir, `${state}-base-${String(k)}`), { recursive: true, force: true });
-  }
+async function baseWorkDir(ctx: Context, version: string): Promise<string> {
+  return join(await dataDir(ctx), 'regress', `refresh-${version}`);
+}
+
+/** The base checks of a base candidate: their kept files and the check files they wrote, in check order. */
+interface CheckedBase {
+  files: KeptBaseCheck[];
+  at: BaseCheckAt[];
+  failures: string[];
+  text: string;
 }
 
 /**
- * Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 4); its base checks measure
- * performance with `performance` (`checkBase`).
+ * The 3 base checks of the base candidate `commit`, together, kept in the regress repo with the harness commit and the
+ * check inputs of `run` once all of them ran: all of their files, or none and why for the first of them that did not
+ * run, which leaves the kept files as they were. They measure performance only with `performance`: only a seed with
+ * `performance` reads the performance of its base. Whether they are clean for a seed is its admission's (ogw.md
+ * `### admission` 1).
  */
-async function refreshState(ctx: Context, run: RefreshRun, state: string, settings: Readonly<Record<string, unknown>>, performance: boolean): Promise<StateRefresh> {
-  const { version } = run;
-  const game = await ctx.game(stateGame(state));
-  const tag = baseTag(version);
-  const out: StateRefresh = { state, from: '', settings: 'none', upgrade: 'none', content: 'none', translation: 'none', checks: 'none', failures: [], tag: null, base: null, baseChecks: [], jobs: [] };
-  if (await tagExists(game.root, tag, { env: ctx.env })) {
-    const base = (await revParse(game.root, `refs/tags/${tag}`, { env: ctx.env })) as string;
-    out.from = await coreVersionAt(ctx, game.root, base);
-    out.tag = tag;
-    out.base = base;
-    out.baseChecks = (await keptBaseChecks(run, state, base, performance)) ?? [];
-    if (out.baseChecks.length === 0) {
-      const checked = await checkBase(ctx, run, state, base, performance);
-      out.baseChecks = checked.files;
-      out.failures = checked.failures;
-      out.checks = checked.text;
-    } else out.checks = 'kept';
+async function checkBase(ctx: Context, run: RefreshRun, state: string, commit: string, performance: boolean): Promise<CheckedBase> {
+  const dir = baseChecksDir(run.repo, run.version);
+  const work = await baseWorkDir(ctx, run.version);
+  const numbers = Array.from({ length: ADMISSION_CHECKS }, (_, i) => i + 1);
+  const checked = await every(
+    numbers.map(async (k): Promise<{ k: number; error: string } | { k: number; kept: KeptBaseCheck; path: string }> => {
+      const out = join(work, `${state}-base-${String(k)}.json`);
+      // the evidence of the base checks before the base fix is not that of these
+      await rm(withoutExtension(out), { recursive: true, force: true });
+      const one = await span(`base check ${String(k)}`, () => run.pool.check(performance, () => sideCheck(ctx, run.self, { game: stateGame(state), commit, out, checks: null, performance, proof: null })));
+      if ('error' in one) return { k, error: one.error };
+      return { k, kept: { commit: one.file.commit, harness: run.self.commit, checkInputs: run.inputs, checks: one.file.checks, fixTestProof: one.file.fixTestProof }, path: out };
+    }),
+  );
+  const failed = checked.find((c) => 'error' in c);
+  if (failed !== undefined && 'error' in failed) return { files: [], at: [], failures: [], text: `check ${String(failed.k)}: ${failed.error}` };
+  const done = checked.flatMap((c) => ('kept' in c ? [c] : []));
+  for (const { k, kept } of done) await writeJsonAtomic(join(dir, `${state}-base-${String(k)}.json`), kept);
+  const files = done.map((c) => c.kept);
+  const failures = [...new Set(files.flatMap((f) => [...keysOf(f)]))];
+  return { files, at: done.map((c) => ({ file: c.kept, path: c.path })), failures, text: `${String(ADMISSION_CHECKS)} checks` };
+}
+
+/** Removes the check files and evidence of the base checks of `state` outside the regress repo (`baseWorkDir`). */
+async function removeBaseWork(ctx: Context, version: string, state: string): Promise<void> {
+  const work = await baseWorkDir(ctx, version);
+  for (let k = 1; k <= ADMISSION_CHECKS; k++) {
+    await rm(join(work, `${state}-base-${String(k)}.json`), { force: true });
+    await rm(join(work, `${state}-base-${String(k)}`), { recursive: true, force: true });
+  }
+}
+
+/** The base checks of a base candidate as the columns and the base checks of the refresh of its state. */
+function takeChecks(out: StateRefresh, checked: CheckedBase): void {
+  out.checks = checked.text;
+  out.failures = checked.failures;
+  out.baseChecks = checked.files;
+}
+
+/** What the base fix of a state works with: its seeds, and the seed-run records and iteration of its content agent. */
+interface BaseFixInput {
+  seeds: readonly Seed[];
+  records: string;
+  iteration: number;
+  performance: boolean;
+}
+
+/**
+ * The base fix (ogw.md `### regress refresh`): when base checks that ran in this refresh fail a target check of a seed
+ * of the state, one content agent on `main` with those failures as its defects, then the 3 base checks again on the
+ * commit it ends on. The base it gives: that commit, whose checks `out` then takes, or `base` when no agent ran, the
+ * agent did not end `done` or a check after it did not run, `main` then reset to `base`.
+ */
+async function fixBase(ctx: Context, run: RefreshRun, game: GameRepo, out: StateRefresh, base: string, checked: CheckedBase, fix: BaseFixInput): Promise<string> {
+  const defects = baseDefects(fix.seeds, checked.at);
+  if (defects.length === 0) return base;
+  const env = { env: ctx.env };
+  const rel = join('records', 'loops', fix.records);
+  await git(game.root, ['checkout', '--quiet', 'main'], env);
+  await writeJsonAtomic(join(game.root, rel, 'defects.json'), { defects, previous: null, recordedBy: 'ogw regress refresh' });
+  const input = join(game.root, rel, `content-input-${String(fix.iteration)}.md`);
+  await writeFileAtomic(input, baseFixInput(defects));
+  await commitPaths(game.root, [rel], `regress refresh ${run.version}: base fix input`, { env: ctx.env, noVerify: true });
+  const ran = await run.pool.work(() => sideAgent(ctx, run.self, { role: 'content', game: game.name, input, seedRun: `${fix.records}:${String(fix.iteration)}` }));
+  if (ran.job !== null) out.jobs.push({ id: ran.job, role: 'content' });
+  const named = `(${ran.job ?? 'no job'}) for ${defects.map((d) => d.id).join(', ')}`;
+  const back = async (text: string): Promise<string> => {
+    await git(game.root, ['checkout', '--quiet', '--force', 'main'], env);
+    await git(game.root, ['reset', '--quiet', '--hard', base], env);
+    out.fix = text;
+    return base;
+  };
+  if (ran.status !== 'done') return back(`failed ${named}: ${ran.reason ?? ''}`);
+  const fixed = (await revParse(game.root, 'refs/heads/main', env)) as string;
+  const again = await span('base checks after the fix', () => checkBase(ctx, run, out.state, fixed, fix.performance));
+  if (again.files.length === 0) return back(`not checked ${named}: ${again.text}`);
+  takeChecks(out, again);
+  out.fix = `done ${named}`;
+  return fixed;
+}
+
+/** The seed-run records of the refresh of a state at `version` (`### regress refresh` 1). */
+function refreshRecords(version: string): string {
+  return `refresh-${version}-${String(Date.now())}`;
+}
+
+/**
+ * A state with the tag of `version`: its kept base checks, or its base checks again, and with checks that ran, the base
+ * fix (`fixBase`), which moves the tag to the commit it gives.
+ */
+async function refreshTagged(ctx: Context, run: RefreshRun, game: GameRepo, out: StateRefresh, performance: boolean, seeds: readonly Seed[] | null): Promise<StateRefresh> {
+  const tag = baseTag(run.version);
+  const base = (await revParse(game.root, `refs/tags/${tag}`, { env: ctx.env })) as string;
+  out.from = await coreVersionAt(ctx, game.root, base);
+  out.tag = tag;
+  out.base = base;
+  const kept = await keptBaseChecks(run, out.state, base, performance);
+  if (kept !== null) {
+    out.baseChecks = kept;
+    out.checks = 'kept';
     return out;
   }
+  const checked = await checkBase(ctx, run, out.state, base, performance);
+  takeChecks(out, checked);
+  if (checked.files.length === 0 || seeds === null) return out;
+  const fixed = await span('base fix', () => fixBase(ctx, run, game, out, base, checked, { seeds, records: refreshRecords(run.version), iteration: 1, performance }));
+  if (fixed !== base) await span('tag', () => git(game.root, ['tag', '--force', tag, fixed], { env: ctx.env }));
+  out.base = fixed;
+  return out;
+}
+
+/**
+ * Brings one state to `version` and tags its base (ogw.md `### regress refresh` 1 to 5); its base checks measure
+ * performance with `performance` (`checkBase`). With `seeds`, the seeds of the state (`ogw regress refresh`), base checks
+ * that ran get the base fix (`fixBase`).
+ */
+async function refreshState(ctx: Context, run: RefreshRun, state: string, settings: Readonly<Record<string, unknown>>, performance: boolean, seeds: readonly Seed[] | null): Promise<StateRefresh> {
+  const game = await ctx.game(stateGame(state));
+  const out: StateRefresh = { state, from: '', settings: 'none', upgrade: 'none', content: 'none', translation: 'none', checks: 'none', failures: [], fix: 'none', tag: null, base: null, baseChecks: [], jobs: [] };
+  try {
+    if (await tagExists(game.root, baseTag(run.version), { env: ctx.env })) return await refreshTagged(ctx, run, game, out, performance, seeds);
+    return await refreshUntagged(ctx, run, game, out, settings, performance, seeds);
+  } finally {
+    await removeBaseWork(ctx, run.version, state);
+  }
+}
+
+/** A state without the tag of `version`: steps 1 to 5 of `### regress refresh`, with the base fix (4) before the tag. */
+async function refreshUntagged(ctx: Context, run: RefreshRun, game: GameRepo, out: StateRefresh, settings: Readonly<Record<string, unknown>>, performance: boolean, seeds: readonly Seed[] | null): Promise<StateRefresh> {
+  const { version } = run;
   await git(game.root, ['checkout', '--quiet', 'main'], { env: ctx.env });
   out.from = await coreVersionAt(ctx, game.root, 'main');
-  // the seed-run records of the refresh of this state, for its content agent and its translation sub-agents
-  const records = `refresh-${version}-${String(Date.now())}`;
+  // the seed-run records of the refresh of this state, for its content agents and its translation sub-agents
+  const records = refreshRecords(version);
+  let contentAgents = 0;
   if (compareVersions(out.from, version) < 0) {
     const written = await span('settings', () => stateSettings(ctx, game, settings, version));
     out.settings = written.text;
@@ -356,20 +485,21 @@ async function refreshState(ctx: Context, run: RefreshRun, state: string, settin
     out.content = content.text;
     if (content.job !== null) out.jobs.push({ id: content.job, role: 'content' });
     if (!content.ok) return out;
+    contentAgents = 1;
   }
   const translated = await span('translation', () => translationPass(ctx, run, game, records));
   out.translation = translated.text;
   out.jobs.push(...translated.jobs.map((id) => ({ id, role: 'translation' as const })));
   if (!translated.ok) return out;
   const commit = await head(game.root, { env: ctx.env });
-  const checked = await checkBase(ctx, run, state, commit, performance);
-  out.checks = checked.text;
-  out.failures = checked.failures;
-  out.baseChecks = checked.files;
+  const checked = await checkBase(ctx, run, out.state, commit, performance);
+  takeChecks(out, checked);
   if (checked.files.length === 0) return out;
-  await span('tag', () => git(game.root, ['tag', tag, commit], { env: ctx.env }));
+  const base = seeds === null ? commit : await span('base fix', () => fixBase(ctx, run, game, out, commit, checked, { seeds, records, iteration: contentAgents + 1, performance }));
+  const tag = baseTag(version);
+  await span('tag', () => git(game.root, ['tag', tag, base], { env: ctx.env }));
   out.tag = tag;
-  out.base = commit;
+  out.base = base;
   return out;
 }
 
@@ -388,10 +518,10 @@ export interface SeedRefresh {
 /** `records/refresh-<v>.md`. */
 export async function refreshRecord(ctx: Context, states: readonly StateRefresh[], seeds: readonly SeedRefresh[]): Promise<string> {
   const jobs: JobRecord[] = [];
-  const seedJobs = seeds.flatMap((s) => (s.rebase?.job === null || s.rebase?.job === undefined ? [] : [{ id: s.rebase.job, role: 'seed' as const }]));
+  const seedJobs = seeds.flatMap((s) => (s.rebase ?? null)?.jobs.map((id) => ({ id, role: 'seed' as const })) ?? []);
   for (const { id, role } of [...states.flatMap((s) => s.jobs), ...seedJobs]) jobs.push({ meta: { role, usage: (await jobFacts(ctx, id)).usage ?? undefined } } as unknown as JobRecord);
   return document([
-    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'translation', 'base checks', 'base failures', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.translation, s.checks, s.failures.join(', ') || 'none', s.tag ?? 'none']))],
+    ['states', states.length === 0 ? 'none' : renderTable(['state', 'from', 'settings', 'upgrade', 'content job', 'translation', 'base checks', 'base failures', 'base fix', 'tag'], states.map((s) => [s.state, s.from, s.settings, s.upgrade, s.content, s.translation, s.checks, s.failures.join(', ') || 'none', s.fix, s.tag ?? 'none']))],
     ['seeds', seeds.length === 0 ? 'none' : renderTable(['seed', 'result', 'reason', 'catch', 'oracle', 'rebase'], seeds.map((s) => [s.seed, s.admission.result, s.admission.reason ?? 'none', s.admission.catch.join(', ') || 'none', s.admission.oracle === null ? 'none' : `seeded ${s.admission.oracle.seeded}, reference ${s.admission.oracle.reference}`, rebaseText(s.rebase)]))],
     ['cost', renderCost(costRows(jobs, true))],
     ['time', await jobTimeSection(ctx)],
@@ -400,8 +530,9 @@ export async function refreshRecord(ctx: Context, states: readonly StateRefresh[
 
 /**
  * Refreshes the states of `seeds` at `version` and admits the seeds (`### regress refresh`), each seed once the refresh of
- * its state has ended. With `rebase` (`ogw regress refresh`), a seed whose admission ends stale for a reason that goes to
- * the seed agent is rebased then (`### seed agent`). The paths it wrote in the regress repo, for the commit.
+ * its state has ended. In `ogw regress refresh` (`onlyStates` null), base checks that ran get the base fix, and a seed
+ * whose admission ends stale for a reason that goes to the seed agent is rebased then (`### seed agent`). The paths it
+ * wrote in the regress repo, for the commit.
  */
 export async function refresh(ctx: Context, repo: string, self: Side, version: string, seeds: readonly Seed[], onlyStates: readonly string[] | null): Promise<{ paths: string[]; states: StateRefresh[]; seeds: SeedRefresh[] }> {
   const entries = await readStates(repo);
@@ -411,7 +542,9 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
   // the base of a state is measured only when a seed of the state has `performance`: no other seed reads it
   const all = await listSeeds(repo);
   const measured = (state: string): boolean => all.some((s) => s.manifest.state === state && s.manifest.performance);
-  const refreshing = new Map(states.map((state) => [state, span(`state ${state}`, () => refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {}, measured(state)))]));
+  // the base fix reads the failures of the base that match a seed of the state, of every seed of the state
+  const fixing = (state: string): Seed[] | null => (onlyStates === null ? all.filter((s) => s.manifest.state === state) : null);
+  const refreshing = new Map(states.map((state) => [state, span(`state ${state}`, () => refreshState(ctx, run, state, entries.find((e) => e.state === state)?.settings ?? {}, measured(state), fixing(state)))]));
   const admitting = seeds.map((seed) => span(`seed ${seed.id}`, async (): Promise<SeedRefresh> => {
     const state = await refreshing.get(seed.manifest.state);
     if (state === undefined || state.base === null || state.tag === null || state.baseChecks.length === 0) {
@@ -422,7 +555,7 @@ export async function refresh(ctx: Context, repo: string, self: Side, version: s
     // `ogw regress seed` and `ogw regress expect` admit as they are; the refresh rebases when its seed's admission ends
     if (onlyStates !== null || !rebasable(admission)) return { seed: seed.id, admission };
     const tag = state.tag;
-    return { seed: seed.id, ...(await span('seed agent', () => rebaseSeed(ctx, { run, tag, admit: () => span('admission', () => admitSeed(ctx, input)) }, seed, admission))) };
+    return { seed: seed.id, ...(await span('seed agent', () => rebaseSeed(ctx, { run, tag, admit: () => span('admission', () => admitSeedSeen(ctx, input)) }, seed, admission))) };
   }));
   const [refreshed, results] = await every([every([...refreshing.values()]), every(admitting)]);
   const paths: string[] = [];

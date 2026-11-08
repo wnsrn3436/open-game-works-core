@@ -445,7 +445,8 @@
         "modelRepeats",
         "parallel",
         "permutations",
-        "level"
+        "level",
+        "seedRounds"
       ],
       "properties": {
         "repeats": {
@@ -473,6 +474,11 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "maximum": 1
+        },
+        "seedRounds": {
+          "description": "The most rounds of the seed agent of one seed in one `ogw regress refresh`, the first included: each round after the first starts when the admission of the rebase of the round before does not admit the seed (`### seed agent` of `## regress` of `tools/ogw.md`)",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

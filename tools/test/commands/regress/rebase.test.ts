@@ -61,18 +61,26 @@ function bootstrap(ws: TestWorkspace, seeds: Record<string, SeedFiles>, states: 
   sh(ws.harness, 'git', ['tag', 'core-v1.0.0']);
 }
 
-/** Fake checks: the leak shows on a checkout whose client/a.gd holds `leak`. */
+/** A leak that the checks find but that is not the seed's: another resource. */
+const DRIP = 'client main error log: 7 error ResourceCore leak: icon/drip';
+
+/** Fake checks: the leak shows on a checkout whose client/a.gd holds `leak`, the leak of another resource on `drip`. */
 function fakeChecks(): void {
   vi.mocked(regressChecks).mockImplementation((_ctx, game) => {
-    const leak = readFileSync(join(game.root, 'client/a.gd'), 'utf8').includes('leak');
-    const blocker: CheckResult = item('no blocker', leak ? 'fail' : 'pass', leak ? [['step 2', LEAK]] : []);
+    const code = readFileSync(join(game.root, 'client/a.gd'), 'utf8');
+    const failures: [string, string][] = code.includes('leak') ? [['step 2', LEAK]] : code.includes('drip') ? [['step 2', DRIP]] : [];
+    const blocker: CheckResult = item('no blocker', failures.length > 0 ? 'fail' : 'pass', failures);
     return Promise.resolve({ checks: [item('regression test', 'pass'), blocker], fixTestProof: [] });
   });
 }
 
 /** What the fake seed agent saw of its folder. */
 interface Seen {
+  id: string;
   folder: string;
+  /** The input file of its round, and the session it continues. */
+  inputPath: string;
+  session: string | null;
   input: string;
   copy: string[];
   branches: string;
@@ -91,14 +99,21 @@ function filesOf(root: string): string[] {
 
 /**
  * A fake seed agent: it records what it saw in its folder, then `act` writes in its copy of the seed and returns the
- * result file, or null to fail as a job that did not end done.
+ * result file, or null to fail as a job that did not end done. The job of round 1 of seed `S01` is `sas01`, that of
+ * round n after it `sas01r<n>`, and its session `s-S01`.
  */
-function fakeSeedAgent(act: (seed: string, folder: string) => string | null): void {
-  vi.mocked(runSeedAgent).mockImplementation((_ctx, folder, input) => {
+function fakeSeedAgent(act: (seed: string, folder: string, round: number) => string | null): void {
+  const rounds = new Map<string, number>();
+  vi.mocked(runSeedAgent).mockImplementation((_ctx, folder, input, session = null) => {
     const base = join(folder, 'base');
-    const id = /^## seed\n\n(.+)$/m.exec(readFileSync(input, 'utf8'))?.[1] ?? '';
+    const id = /^## seed\n\n(.+)$/m.exec(readFileSync(join(folder, 'input.md'), 'utf8'))?.[1] ?? '';
+    const round = (rounds.get(id) ?? 0) + 1;
+    rounds.set(id, round);
     seen.push({
+      id,
       folder,
+      inputPath: input,
+      session,
       input: readFileSync(input, 'utf8'),
       copy: filesOf(join(folder, 'seed')),
       branches: sh(base, 'git', ['for-each-ref', '--format=%(refname)']).trim(),
@@ -108,11 +123,11 @@ function fakeSeedAgent(act: (seed: string, folder: string) => string | null): vo
       code: readFileSync(join(base, 'client/a.gd'), 'utf8'),
     });
     // named by its seed: the seeds are admitted together, so their seed agents start in no fixed order
-    const job = `sa${id.toLowerCase()}`;
-    const result = act(id, folder);
-    if (result === null) return Promise.resolve({ job, status: 'failed', output: null, reason: 'agent CLI ended with code 1' });
+    const job = `sa${id.toLowerCase()}${round === 1 ? '' : `r${String(round)}`}`;
+    const result = act(id, folder, round);
+    if (result === null) return Promise.resolve({ job, status: 'failed', output: null, reason: 'agent CLI ended with code 1', session: `s-${id}` });
     writeFileSync(join(folder, 'result.md'), result);
-    return Promise.resolve({ job, status: 'done', output: join(folder, 'result.md'), reason: null });
+    return Promise.resolve({ job, status: 'done', output: join(folder, 'result.md'), reason: null, session: `s-${id}` });
   });
 }
 
@@ -176,9 +191,12 @@ describe('ogw regress refresh: the seed agent', () => {
     expect(existsSync(agent.folder)).toBe(false);
     expect(record(ws)).toContain('| seed | result | reason | catch | oracle | rebase |');
     expect(record(ws)).toContain('| S00 | admitted | none | caught, caught, caught | none | none |');
-    expect(record(ws)).toContain('| S01 | admitted | none | caught, caught, caught | none | rebased (sas01) |');
+    expect(record(ws)).toContain('| S01 | admitted | none | caught, caught, caught | none | rebased in round 1 (sas01) |');
     expect(record(ws)).toMatch(/\| seed \| 1 \|/);
-    expect(run.stdout).toContain('seed S01: admitted; seed agent: rebased (sas01)\n');
+    expect(run.stdout).toContain('seed S01: admitted; seed agent: rebased in round 1 (sas01)\n');
+    // the first round starts a new session with input.md
+    expect(agent.inputPath).toBe(join(agent.folder, 'input.md'));
+    expect(agent.session).toBeNull();
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
     // the next refresh admits the rebased seed as it is
     vi.mocked(runSeedAgent).mockClear();
@@ -191,10 +209,12 @@ describe('ogw regress refresh: the seed agent', () => {
     const unclean = { ...MANIFEST, match: [{ check: 'regression test', where: '.*', message: '.*' }] };
     bootstrap(ws, { S02: { manifest: MANIFEST, files: { 'patch-0.9.0.diff': patchOf('2') } }, S06: { manifest: unclean, files: { 'patch-0.9.0.diff': patchOf('6') } } });
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
-    // the regression test fails on the base too
+    // the regression test fails on the base too; the content agent of the base fix does not end done, which keeps the base
     vi.mocked(regressChecks).mockResolvedValue({ checks: [item('regression test', 'fail', [['client/tests/test_a.gd', 'boom']]), item('no blocker', 'pass')], fixTestProof: [] });
+    vi.mocked(sideAgent).mockResolvedValue({ job: 'c1', status: 'failed', output: null, reason: 'the agent CLI exited 1' });
     fakeSeedAgent(() => REBASED);
     expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(1);
+    expect(record(ws)).toContain('| failed (c1) for regression-test-client-tests-test-a-gd: the agent CLI exited 1 | base-1.0.0 |');
     expect(readAdmission(ws, 'S02')).toMatchObject({ result: 'stale', reason: 'not caught: missed, missed, missed' });
     expect(readAdmission(ws, 'S06')).toMatchObject({ result: 'stale', reason: expect.stringMatching(/^base fails target: /) as unknown });
     expect(vi.mocked(runSeedAgent)).not.toHaveBeenCalled();
@@ -222,15 +242,15 @@ describe('ogw regress refresh: the seed agent', () => {
     }
     expect(readFileSync(join(ws.regress, 'seeds/S03/seed.json'), 'utf8')).toBe(manifest);
     expect(existsSync(join(ws.regress, 'seeds/S04/notes.txt'))).toBe(false);
-    expect(record(ws)).toContain('| refused (sas03): it changed seed.json, which it may not change |');
-    expect(record(ws)).toContain('| refused (sas04): it changed notes.txt, which it may not change |');
-    expect(record(ws)).toContain('| refused (sas05): it wrote no patch-1.0.0.diff |');
+    expect(record(ws)).toContain('| refused in round 1 (sas03): it changed seed.json, which it may not change |');
+    expect(record(ws)).toContain('| refused in round 1 (sas04): it changed notes.txt, which it may not change |');
+    expect(record(ws)).toContain('| refused in round 1 (sas05): it wrote no patch-1.0.0.diff |');
     // only the seeded commit of the first admission of each was checked: a refused result is not admitted
     expect(vi.mocked(regressChecks)).toHaveBeenCalledTimes(3);
   });
 
-  it('puts back the files of a rebase that admission does not admit, keeping the admission before it, and records why', async () => {
-    const ws = makeWorkspace();
+  it('puts back the files of a rebase that admission does not admit, keeping the admission before it, and records why after the last round', async () => {
+    const ws = makeWorkspace({ regress: { ...(testSettings().regress as object), seedRounds: 2 } });
     bootstrap(ws, { S07: { manifest: MANIFEST, files: { 'patch-0.9.0.diff': patchOf('leak', '9'), 'patch-1.0.0.diff': patchOf('leak', '8') } } });
     expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
     const before = readFileSync(join(ws.regress, 'seeds/S07/patch-1.0.0.diff'), 'utf8');
@@ -243,7 +263,10 @@ describe('ogw regress refresh: the seed agent', () => {
     expect(readAdmission(ws, 'S07')).toMatchObject({ result: 'stale', reason: expect.stringMatching(/^patch does not apply: /) as unknown });
     expect(readFileSync(join(ws.regress, 'seeds/S07/patch-1.0.0.diff'), 'utf8')).toBe(before);
     expect(readFileSync(join(ws.regress, 'seeds/S07/rebase-1.0.0.md'), 'utf8')).toBe(REBASED);
-    expect(record(ws)).toContain('| not admitted (sas07): not caught: missed, missed, missed |');
+    // the rounds stop at regress.seedRounds: two seed agents, each rebase admitted once
+    expect(vi.mocked(runSeedAgent)).toHaveBeenCalledTimes(2);
+    expect(record(ws)).toContain('| not admitted in round 2 (sas07, sas07r2): not caught: missed, missed, missed |');
+    expect(record(ws)).toMatch(/\| seed \| 2 \|/);
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
   });
 
@@ -255,9 +278,9 @@ describe('ogw regress refresh: the seed agent', () => {
     fakeSeedAgent((id) => (id === 'S11' ? '## result\n\nnot rebased\n\n## reason\n\nthe feature is gone\n' : null));
     const run = await ogw(ws, ['regress', 'refresh']);
     expect(run.code).toBe(1);
-    expect(record(ws)).toContain('| not rebased (sas11) |');
-    expect(record(ws)).toContain('| failed (sas12): agent CLI ended with code 1 |');
-    expect(run.stdout).toContain('; seed agent: not rebased (sas11)\n');
+    expect(record(ws)).toContain('| not rebased in round 1 (sas11) |');
+    expect(record(ws)).toContain('| failed in round 1 (sas12): agent CLI ended with code 1 |');
+    expect(run.stdout).toContain('; seed agent: not rebased in round 1 (sas11)\n');
     expect(readFileSync(join(ws.regress, 'seeds/S11/rebase-1.0.0.md'), 'utf8')).toContain('the feature is gone');
     expect(existsSync(join(ws.regress, 'seeds/S12/rebase-1.0.0.md'))).toBe(false);
   });
@@ -290,7 +313,88 @@ describe('ogw regress refresh: the seed agent', () => {
     expect(readFileSync(join(ws.regress, 'seeds/S09/reference-1.0.0.diff'), 'utf8')).toContain('+var x = 1');
     expect(readAdmission(ws, 'S10')).toMatchObject({ result: 'stale', reason: 'oracle: seeded fail (var x = 5), reference fail (var x = 3)' });
     expect(readFileSync(join(ws.regress, 'seeds/S10/oracle/probe.ts'), 'utf8')).toBe('old probe\n');
-    expect(record(ws)).toContain('| refused (sas10): it changed oracle/oracle.json, which it may not change |');
+    expect(record(ws)).toContain('| refused in round 1 (sas10): it changed oracle/oracle.json, which it may not change |');
+  });
+
+  it('admits a seed in a later round: the round continues the session in the same folder with what the admission of the round before saw of that seed alone', async () => {
+    const ws = makeWorkspace();
+    const oracle = { 'patch-0.9.0.diff': patchOf('5'), 'reference-0.9.0.diff': patchOf('3', '5'), 'oracle/oracle.json': '{"probe": "probe.ts", "languages": ["ko"]}', 'oracle/probe.ts': 'probe\n' };
+    bootstrap(ws, { S01: { manifest: MANIFEST, files: { 'patch-0.9.0.diff': patchOf('leak', '9') } }, S08: { manifest: MISSED, files: oracle } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    const state = join(ws.games, 'ogw-regress-lc');
+    // the probe says fail on a seeded 5 and pass on the base code only
+    vi.mocked(sideProbe).mockImplementation((_ctx, _side, request) => {
+      const code = sh(state, 'git', ['show', `${request.commit}:client/a.gd`]).trim();
+      return Promise.resolve(code === 'var x = 1' ? { result: 'pass', reason: null } : { result: 'fail', reason: code });
+    });
+    const projects = join(ws.env.CLAUDE_CONFIG_DIR as string, 'projects');
+    fakeSeedAgent((id, folder, round) => {
+      const copy = join(folder, 'seed');
+      // the session file of Claude Code for the folder, which the end removes with the folder
+      mkdirSync(join(projects, folder.replace(/[^A-Za-z0-9-]/g, '-')), { recursive: true });
+      writeFileSync(join(projects, folder.replace(/[^A-Za-z0-9-]/g, '-'), `s-${id}.jsonl`), 'the seed\n');
+      if (id === 'S01') {
+        // round 1 plants the leak of another resource, which no failure of the seed shows; round 2 the seed's
+        writeFileSync(join(copy, 'patch-1.0.0.diff'), patchOf(round === 1 ? 'drip' : 'leak'));
+        return REBASED;
+      }
+      // round 1 makes a reference fix that leaves 4; round 2 one that gives the base code back
+      writeFileSync(join(copy, 'patch-1.0.0.diff'), patchOf('5'));
+      writeFileSync(join(copy, 'reference-1.0.0.diff'), patchOf(round === 1 ? '4' : '1', '5'));
+      return REBASED;
+    });
+    const run = await ogw(ws, ['regress', 'refresh']);
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(readAdmission(ws, 'S01')).toMatchObject({ result: 'admitted', catch: ['caught', 'caught', 'caught'] });
+    expect(readAdmission(ws, 'S08')).toMatchObject({ result: 'admitted', oracle: { seeded: 'fail', reference: 'pass' } });
+    expect(readFileSync(join(ws.regress, 'seeds/S01/patch-1.0.0.diff'), 'utf8')).toContain('+var x = leak');
+    expect(record(ws)).toContain('| S01 | admitted | none | caught, caught, caught | none | rebased in round 2 (sas01, sas01r2) |');
+    expect(record(ws)).toContain('| S08 | admitted | none | missed, missed, missed | seeded fail, reference pass | rebased in round 2 (sas08, sas08r2) |');
+    expect(record(ws)).toMatch(/\| seed \| 4 \|/);
+    const rounds = (id: string): Seen[] => seen.filter((s) => s.id === id);
+    for (const id of ['S01', 'S08']) {
+      const [first, second] = rounds(id) as [Seen, Seen];
+      expect(rounds(id)).toHaveLength(2);
+      // the same folder, a round input beside input.md, and the session of round 1
+      expect(second.folder).toBe(first.folder);
+      expect(first.session).toBeNull();
+      expect(second.session).toBe(`s-${id}`);
+      expect(second.inputPath).toBe(join(first.folder, 'round-2.md'));
+      expect(existsSync(first.folder)).toBe(false);
+      expect(existsSync(join(projects, first.folder.replace(/[^A-Za-z0-9-]/g, '-')))).toBe(false);
+    }
+    const s01 = (rounds('S01')[1] as Seen).input;
+    const s08 = (rounds('S08')[1] as Seen).input;
+    const checks = (lines: string): string => [1, 2, 3].map((k) => `### check ${String(k)}\n\n${lines}`).join('\n\n');
+    expect(s01).toBe(
+      `## round\n\n2\n\n## first input\n\n${join((rounds('S01')[0] as Seen).folder, 'input.md')}\n\n## stale reason\n\nnot caught: missed, missed, missed\n\n` +
+        `## checks\n\n${checks(`- no blocker: fail\n  - step 2: ${DRIP}`)}\n\n## probes\n\nnone\n`,
+    );
+    expect(s08).toBe(
+      `## round\n\n2\n\n## first input\n\n${join((rounds('S08')[0] as Seen).folder, 'input.md')}\n\n## stale reason\n\noracle: seeded fail (var x = 5), reference fail (var x = 4)\n\n` +
+        `## checks\n\n${checks('none')}\n\n## probes\n\n- seeded: fail: var x = 5\n- reference: fail: var x = 4\n`,
+    );
+    // what the round input holds is of its own seed: no other seed, its checks or its probes
+    expect(s01).not.toMatch(/S08|var x = [45]|seeded:|reference:/);
+    expect(s08).not.toMatch(/S01|leak|no blocker/);
+  });
+
+  it('runs no later round for a seed that the seed agent did not rebase or whose result the tool refused', async () => {
+    const ws = makeWorkspace();
+    const stale = { 'patch-0.9.0.diff': patchOf('leak', '9') };
+    bootstrap(ws, { S11: { manifest: MANIFEST, files: stale }, S14: { manifest: MANIFEST, files: stale } });
+    expect((await ogw(ws, ['regress', 'init'])).code).toBe(0);
+    fakeSeedAgent((id, folder) => {
+      if (id === 'S11') return '## result\n\nnot rebased\n\n## reason\n\nthe feature is gone\n';
+      writeFileSync(join(folder, 'seed', 'seed.json'), '{}');
+      writeFileSync(join(folder, 'seed', 'patch-1.0.0.diff'), patchOf('leak'));
+      return REBASED;
+    });
+    expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(1);
+    expect(vi.mocked(runSeedAgent)).toHaveBeenCalledTimes(2);
+    expect(record(ws)).toContain('| not rebased in round 1 (sas11) |');
+    expect(record(ws)).toContain('| refused in round 1 (sas14): it changed seed.json, which it may not change |');
   });
 
   it('starts no seed agent in ogw regress seed', async () => {
@@ -319,7 +423,7 @@ describe('ogw regress refresh: the seed agent', () => {
       writeFileSync(join(folder, 'seed', 'patch-1.0.0.diff'), patchOf('leak'));
       writeFileSync(join(folder, 'result.md'), REBASED);
       spans.push({ key, group: 'agent', start, end: performance.now() });
-      return { job: `sa${String(n)}`, status: 'done', output: join(folder, 'result.md'), reason: null };
+      return { job: `sa${String(n)}`, status: 'done', output: join(folder, 'result.md'), reason: null, session: null };
     });
   }
 

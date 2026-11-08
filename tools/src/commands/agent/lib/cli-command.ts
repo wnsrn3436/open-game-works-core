@@ -171,9 +171,21 @@ function allowedWriteRules(allowed: Blocked['allowedWrites']): string[] {
   return ['(deny file-write*)', `(allow file-write* ${rules})`];
 }
 
-/** The name of the folder Claude Code uses under its temp root for a session started in `folder`. */
+/**
+ * The name of the folder Claude Code uses under its temp root for a session started in `folder`, and of its project
+ * folder under `projects/` of its config folder, which holds the session files of the sessions started there.
+ */
 export function claudeTempName(folder: string): string {
   return folder.replace(/[^A-Za-z0-9-]/g, '-');
+}
+
+/**
+ * The project folders of Claude Code for `folder` in its config folder (`projects/<claudeTempName>`), named after the
+ * path as given and its real path: where a session started in `folder` keeps its session file.
+ */
+export function claudeProjectFolders(env: NodeJS.ProcessEnv, folder: string): string[] {
+  const projects = join(defaultConfigFolder('claude-code', env), 'projects');
+  return [...new Set([resolve(folder), resolvedPath(folder)].map(claudeTempName))].map((name) => join(projects, name));
 }
 
 /**
@@ -594,8 +606,8 @@ export function firstRunCommand(agent: AgentSettings, session: AgentSession | nu
 }
 
 /**
- * play, judge: the agent CLI command that keeps no session file of its own: Claude Code `--no-session-persistence`,
- * Codex `--ephemeral` before the `-` that reads the prompt from stdin.
+ * play, judge, and a seed agent without a session: the agent CLI command that keeps no session file of its own: Claude
+ * Code `--no-session-persistence`, Codex `--ephemeral` before the `-` that reads the prompt from stdin.
  */
 export function withoutSessionFiles(cli: AgentCli, command: CliCommand): CliCommand {
   if (cli === 'claude-code') return { cmd: command.cmd, args: [...command.args, '--no-session-persistence'] };

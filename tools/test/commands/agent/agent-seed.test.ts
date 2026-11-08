@@ -13,7 +13,7 @@ import { jobLogPaths, readJob } from '../../../src/lib/jobs.ts';
 import { agentCliLog } from '../../../src/commands/agent/lib/meta.ts';
 import { runSeedAgent } from '../../../src/commands/regress/lib/seed-agent.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
-import { ogw, makeGame, makeWorkspace, realHarness, type TestWorkspace } from '../../helpers/workspace.ts';
+import { ogw, makeGame, makeWorkspace, realHarness, testSettings, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeAgentCli } from './helpers.ts';
 
 function ctxOf(ws: TestWorkspace, env: NodeJS.ProcessEnv = {}): Context {
@@ -21,6 +21,11 @@ function ctxOf(ws: TestWorkspace, env: NodeJS.ProcessEnv = {}): Context {
 }
 
 const AGENT: AgentSettings = { cli: 'claude-code', model: 'm', effort: 'high' };
+
+/** The agent settings of the test harness settings. */
+function testSettingsAgents(): Record<string, AgentSettings> {
+  return testSettings().agents as Record<string, AgentSettings>;
+}
 
 describe('ogw agent: seed', () => {
   it('starts only with the folder that ogw regress refresh makes, not on the command line, and gives that folder to no other role', async () => {
@@ -86,7 +91,7 @@ describe('ogw agent: seed', () => {
 });
 
 describe.runIf(process.platform === 'darwin')('ogw agent: the seed agent sandbox', () => {
-  it('runs the seed agent in its folder with no broker and no session, reading neither the harness, the regress repo, the games nor another seed folder, and fails a result out of its format', async () => {
+  it('runs the seed agent in its folder with no broker and in a session of its own, reading neither the harness, the regress repo, the games, another seed folder nor another session, and fails a result out of its format', async () => {
     const ws = makeWorkspace();
     const ctx0 = ctxOf(ws);
     makeGame(ws, 'g', { 'settings.json': {}, 'secret.txt': 'game' });
@@ -103,6 +108,10 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the seed agent sandbox
     mkdirSync(join(folder, 'seed'));
     writeFileSync(join(folder, 'seed', 'seed.json'), '{}');
     writeFileSync(join(folder, 'input.md'), '## seed\n\nS01\n');
+    // the session of another agent, which Claude Code keeps beside the one of the seed agent
+    const projects = join(ws.env.CLAUDE_CONFIG_DIR as string, 'projects');
+    mkdirSync(join(projects, 'other'), { recursive: true });
+    writeFileSync(join(projects, 'other', 'session.jsonl'), 'another session');
     const paths = {
       harness: join(ws.harness, 'AGENTS.md'),
       code: join(realHarness, 'AGENTS.md'),
@@ -112,11 +121,17 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the seed agent sandbox
       other: join(other, 'input.md'),
       own: join(folder, 'seed', 'seed.json'),
       core: join(ws.coreReleases, '1.0.0', 'core.txt'),
+      session: join(projects, 'other', 'session.jsonl'),
     };
     const behavior = [
       `const paths = ${JSON.stringify(paths)};`,
       'const seen = {};',
       "for (const [name, path] of Object.entries(paths)) { try { fs.readFileSync(path); seen[name] = 'read'; } catch { seen[name] = 'blocked'; } }",
+      // the session file of its own session, as Claude Code writes it in the project folder of its folder
+      "const sessionId = process.argv[process.argv.indexOf('--session-id') + 1];",
+      `const own = ${JSON.stringify(projects)} + '/' + process.cwd().replace(/[^A-Za-z0-9-]/g, '-');`,
+      "try { fs.mkdirSync(own, { recursive: true }); fs.writeFileSync(own + '/' + sessionId + '.jsonl', 'the seed'); seen.ownSession = 'written'; } catch { seen.ownSession = 'blocked'; }",
+      `try { fs.writeFileSync(${JSON.stringify(join(projects, 'other', 'more.jsonl'))}, 'x'); seen.otherWrite = 'written'; } catch { seen.otherWrite = 'blocked'; }`,
       'seen.broker = process.env.OGW_BROKER_SOCKET ?? null; seen.tmp = process.env.TMPDIR;',
       "fs.writeFileSync(output, fs.readFileSync(input, 'utf8').includes('BAD') ? '## reason\\n\\n\\n' : '## result\\n\\nnot rebased\\n\\n## reason\\n\\n' + JSON.stringify(seen) + '\\n');",
     ].join('\n');
@@ -135,30 +150,59 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the seed agent sandbox
       other: 'blocked',
       own: 'read',
       core: 'read',
+      session: 'blocked',
+      ownSession: 'written',
+      otherWrite: 'blocked',
       broker: null,
       tmp: join(folder, 'tmp'),
     });
     const call = fake.calls()[0];
     expect(call?.cwd).toBe(folder);
-    expect(call?.argv).toContain('--no-session-persistence');
-    expect(call?.argv).not.toContain('--session-id');
+    expect(call?.argv).not.toContain('--no-session-persistence');
+    expect(call?.argv).toContain('--session-id');
     expect(call?.prompt).toContain('You are the seed agent');
     expect(call?.prompt).not.toContain('## purpose');
     expect(call?.prompt).toContain(`- input: ${folder}/input.md\n- output: ${folder}/result.md\n`);
     const meta = (await readJob(id, ws.env)).meta;
     expect(meta).toMatchObject({ role: 'seed', game: null, run: null, place: { kind: 'seed', dir: folder } });
-    expect(meta.session ?? null).toBeNull();
+    const session = (meta.session as { id: string; resume: boolean }).id;
+    expect(meta.session).toEqual({ id: session, resume: false });
+    expect(call?.argv[call.argv.indexOf('--session-id') + 1]).toBe(session);
     // the folder stays for the refresh, which removes it
     expect(existsSync(folder)).toBe(true);
-    // a result file out of its format fails the job at once: the seed agent keeps no session to continue
+    // the next round continues the session whose file Claude Code keeps, and starts a new one for a session without it
+    writeFileSync(join(folder, 'round-2.md'), '## round\n\n2\n');
+    const round = await startAgentJob(ctx, { role: 'seed', input: join(folder, 'round-2.md'), seedPlace: folder, seedSession: session });
+    expect((await ogw(ws, ['agent', 'wait', round, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
+    expect(fake.calls()[1]?.argv.slice(-2)).toEqual(['--resume', session]);
+    expect(fake.calls()[1]?.prompt).toContain(`- input: ${folder}/round-2.md\n`);
+    expect((await readJob(round, ws.env)).meta.session).toEqual({ id: session, resume: true });
+    const lost = await startAgentJob(ctx, { role: 'seed', input: join(folder, 'round-2.md'), seedPlace: folder, seedSession: 'no-such-session' });
+    expect((await ogw(ws, ['agent', 'wait', lost, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
+    expect(fake.calls()[2]?.argv).toContain('--session-id');
+    expect(fake.calls()[2]?.argv).not.toContain('--resume');
+    expect((await readJob(lost, ws.env)).meta.session).toMatchObject({ resume: false });
+    // a result file out of its format fails the job at once: the seed agent has no fix round
     const second = await newAgentFolder('seed', ws.env);
     writeFileSync(join(second, 'input.md'), '## seed\n\nBAD\n');
     const failed = await startAgentJob(ctx, { role: 'seed', input: join(second, 'input.md'), seedPlace: second });
     const failedWait = await ogw(ws, ['agent', 'wait', failed, '--timeout', '60000'], { env: fake.env });
     expect(failedWait.code).toBe(1);
     expect(failedWait.stdout).toContain('failed: result file: `## result` is not one of `rebased`, `not rebased`; `## reason` is missing or empty\n');
-    expect(fake.calls()).toHaveLength(2);
+    expect(fake.calls()).toHaveLength(4);
     expect((await ogw(ws, ['agent', 'retry', failed], { env: fake.env })).stderr).toContain(`job ${failed} is a seed agent of ogw regress refresh; it is not retried`);
+  }, 120_000);
+
+  it('runs a Codex seed agent with no session file, each round in a new session', async () => {
+    const ws = makeWorkspace({ agents: { ...(testSettingsAgents()), seed: { cli: 'codex', model: 'm', effort: 'high' } } });
+    const fake = fakeAgentCli(ws, "fs.writeFileSync(output, '## result\\n\\nnot rebased\\n\\n## reason\\n\\nr\\n');");
+    const ctx = ctxOf(ws, fake.env);
+    const folder = await newAgentFolder('seed', ws.env);
+    writeFileSync(join(folder, 'input.md'), '## seed\n\nS01\n');
+    const ran = await runSeedAgent(ctx, folder, join(folder, 'input.md'), 'a-session');
+    expect(ran).toMatchObject({ status: 'done', session: null });
+    expect(fake.calls()[0]?.argv).toContain('--ephemeral');
+    expect(fake.calls()[0]?.argv).not.toContain('resume');
   }, 90_000);
 
   it('waits for the job of the seed agent and removes its logs, which hold the seed, keeping its usage; a failure gives its failed line, not the tail of the log', async () => {
@@ -175,6 +219,8 @@ describe.runIf(process.platform === 'darwin')('ogw agent: the seed agent sandbox
     };
     const done = await run('## seed\n\nS01\n');
     expect(done.ran).toMatchObject({ status: 'done', reason: null });
+    // the session of the job, which the next round continues
+    expect(done.ran.session).toBe(((await readJob(done.ran.job as string, ws.env)).meta.session as { id: string }).id);
     expect(readFileSync(done.ran.output as string, 'utf8')).toContain('rebased');
     expect(done.logs).toEqual([]);
     expect((await readJob(done.ran.job as string, ws.env)).meta.usage).toMatchObject({ cli: 'claude-code', model: 'claude-opus-5-5' });

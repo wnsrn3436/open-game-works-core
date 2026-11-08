@@ -167,10 +167,10 @@ describe('ogw regress settings', () => {
     expect(run.stdout).toContain('state lc: no base-2.0.0 (missing: uiCheckScreens.1.pixelRatio; none; none; none; none)');
     expect(run.stdout).toContain('seed S01: stale (base fails target: lc missing: uiCheckScreens.1.pixelRatio; none; none; none; none)');
     const record = readFileSync(join(ws.regress, 'records', 'refresh-2.0.0.md'), 'utf8');
-    expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | tag |');
+    expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | base fix | tag |');
     // the refresh did not run as a job here
     expect(record).toContain('## time\n\nnone: the command does not run as a job\n');
-    expect(record).toContain('| lc | 1.0.0 | missing: uiCheckScreens.1.pixelRatio | none | none | none | none | none | none |');
+    expect(record).toContain('| lc | 1.0.0 | missing: uiCheckScreens.1.pixelRatio | none | none | none | none | none | none | none |');
     // with the value written, the next refresh goes on to the upgrade
     order.length = 0;
     vi.mocked(stateSettings).mockImplementation(() => {
@@ -209,7 +209,7 @@ describe('ogw regress refresh and admission', () => {
     expect(vi.mocked(regressChecks).mock.calls.map((c) => c[3].performance)).toEqual([false, false, false, false, false, false]);
     expect(existsSync(join(ws.regress, 'records/refresh-1.0.0/lc-base-1.json'))).toBe(true);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | base-1.0.0 |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | none | base-1.0.0 |');
     expect(record).toContain('| S01 | admitted | none | caught, caught, caught | none |');
     expect(sh(ws.regress, 'git', ['status', '--porcelain']).trim()).toBe('');
     expect((await ogw(ws, ['regress', 'status'])).stdout).toContain('state lc: base-1.0.0\nseed S01: admitted\n');
@@ -276,7 +276,7 @@ describe('ogw regress refresh and admission', () => {
     // 3 base checks and the 3 checks of S01: a seed the base is not clean for is not applied or checked
     expect(vi.mocked(regressChecks)).toHaveBeenCalledTimes(6);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | no placeholder\\|-\\|data/translations/en.csv\\|translation_missing en reserved_string.text.[controls_bomb] | base-1.0.0 |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | no placeholder\\|-\\|data/translations/en.csv\\|translation_missing en reserved_string.text.[controls_bomb] | none | base-1.0.0 |');
     // a seed given later takes the kept base checks the same way
     const folder = join(ws.root, 'new-seeds', 'S08');
     mkdirSync(folder, { recursive: true });
@@ -447,8 +447,8 @@ describe('ogw regress refresh and admission', () => {
     expect(sh(state, 'git', ['log', '-1', '--format=%s', 'base-1.0.0']).trim()).toMatch(/^translation t(en|ja)$/);
     expect(sh(state, 'git', ['log', '--format=%s', 'base-1.0.0']).split('\n').filter((l) => l.startsWith('translation t')).sort()).toEqual(['translation ten', 'translation tja']);
     const record = readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8');
-    expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | tag |');
-    expect(record).toContain('| lc | 1.0.0 | none | none | none | done (ten, tja) | 3 checks | none | base-1.0.0 |');
+    expect(record).toContain('| state | from | settings | upgrade | content job | translation | base checks | base failures | base fix | tag |');
+    expect(record).toContain('| lc | 1.0.0 | none | none | none | done (ten, tja) | 3 checks | none | none | base-1.0.0 |');
     expect(record).toMatch(/\| translation \| 2 \|/);
   });
 
@@ -465,7 +465,7 @@ describe('ogw regress refresh and admission', () => {
     vi.mocked(sideMerge).mockResolvedValue('ogw agent merge ten: the branch does not merge');
     run = await ogw(ws, ['regress', 'refresh']);
     expect(run.stdout).toContain('state lc: no base-1.0.0 (none; none; none; en: ogw agent merge ten: the branch does not merge; none)');
-    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | en: ogw agent merge ten: the branch does not merge | none | none | none |');
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | en: ogw agent merge ten: the branch does not merge | none | none | none | none |');
     expect(vi.mocked(regressChecks)).not.toHaveBeenCalled();
     expect(sh(join(ws.games, 'ogw-regress-lc'), 'git', ['tag', '--list']).trim()).toBe('');
   });
@@ -512,7 +512,7 @@ describe('ogw regress refresh and admission', () => {
     vi.mocked(regressChecks).mockClear();
     expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
     expect(checked()).toEqual(['no blocker', 'no blocker', 'no blocker']);
-    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | base-1.0.0 |');
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | none | base-1.0.0 |');
     // a harness commit that changes only documents no check reads keeps them
     for (const doc of ['AGENTS.md', 'tools/ogw.md', 'agents/content.md', 'skills/server-content/SKILL.md', 'tools/test/a.test.ts']) write(ws.harness, doc, `changed ${doc}\n`);
     sh(ws.harness, 'git', ['add', '-A']);
@@ -539,7 +539,7 @@ describe('ogw regress refresh and admission', () => {
     const second = harnessHead();
     const secondInputs = await inputsOf();
     expect(kept()).toEqual([[base, second, secondInputs], [base, second, secondInputs], [base, second, secondInputs]]);
-    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | base-1.0.0 |');
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | 3 checks | none | none | base-1.0.0 |');
     // ogw regress seed does the same
     write(ws.harness, 'tools/changed.txt', 'more check code\n');
     sh(ws.harness, 'git', ['commit', '-qam', 'more check code']);
@@ -587,7 +587,7 @@ describe('ogw regress refresh and admission', () => {
     vi.mocked(regressChecks).mockClear();
     expect((await ogw(ws, ['regress', 'refresh'])).code).toBe(0);
     expect(calls().filter((c) => c.startsWith('all'))).toEqual([]);
-    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | base-1.0.0 |');
+    expect(readFileSync(join(ws.regress, 'records/refresh-1.0.0.md'), 'utf8')).toContain('| lc | 1.0.0 | none | none | none | none | kept | none | none | base-1.0.0 |');
   });
 });
 

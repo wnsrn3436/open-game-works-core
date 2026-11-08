@@ -88,7 +88,8 @@
     "modelRepeats": 5,
     "parallel": 6,
     "permutations": 10000,
-    "level": 0.1
+    "level": 0.1,
+    "seedRounds": 3
   },
   "reviewRounds": 4,
   "codeCheck": {

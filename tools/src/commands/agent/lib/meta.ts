@@ -25,6 +25,12 @@ export const GAME_ROLES: readonly Role[] = [
  */
 export const FIX_ROUND_ROLES: readonly Role[] = ['content', 'server-hardening', 'client-hardening', 'review'];
 
+/**
+ * The roles whose job runs in a session of Claude Code (ogw.md `## agent`): the roles with fix rounds, and the seed
+ * agent, whose rounds (`### seed agent` of `## regress`) continue the session of the round before.
+ */
+export const CLAUDE_SESSION_ROLES: readonly Role[] = [...FIX_ROUND_ROLES, 'seed'];
+
 /** Roles that work in a new worktree of the game repo. */
 export const GAME_WORKTREE_ROLES: readonly Role[] = ['resource', 'translation', 'server-hardening', 'client-hardening'];
 

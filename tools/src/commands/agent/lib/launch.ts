@@ -30,6 +30,7 @@ import {
   agentHomeBlocked,
   agentHomeWrites,
   agentSettings,
+  claudeProjectFolders,
   dockerBlocked,
   localSocketsBlocked,
   MACOS_DNS_SOCKET,
@@ -403,12 +404,52 @@ export interface CliToRun {
 }
 
 /**
+ * The agent CLI command of a role outside the agent sandbox: in the sandbox that blocks the other games for a role of
+ * one game that blocks them, else as it is.
+ */
+async function unsandboxedCliToRun(ctx: Context, role: string, agent: AgentSettings, ws: SandboxWorkspace, command: CliCommand, game: string | null): Promise<CliToRun> {
+  const env = { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) };
+  const blocksOthers = game !== null && OTHER_GAMES_BLOCKED_ROLES.includes(role) && SANDBOX_PLATFORMS.includes(process.platform);
+  const others = blocksOthers ? await otherGameFolders(ws, game, await dataDir(ctx)) : [];
+  if (others.length === 0) return { command, wrap: (cli) => cli, env, profileFolder: null, brokerCommand: null, brokerWorker: null };
+  const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
+  try {
+    const profileFile = join(profileFolder, 'sandbox.sb');
+    await writeFile(profileFile, macosFoldersProfile(others));
+    const wrap = (cli: CliCommand): CliCommand => sandboxed(cli, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false });
+    return {
+      command: wrap(command),
+      wrap,
+      env,
+      profileFolder,
+      brokerCommand: null,
+      brokerWorker: null,
+    };
+  } catch (error) {
+    await rm(profileFolder, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/**
+ * What the agent sandbox of `role` blocks: that of play and judge (`forAgent`), that of the seed agent for `seed`, and
+ * with `sessionFolder`, the folder a seed agent of Claude Code with a session starts in, its project folder left open
+ * among the session stores of the other agents, which holds its session file (ogw.md `## agent`).
+ */
+async function roleBlocked(ctx: Context, ws: SandboxWorkspace, role: string, forAgent: Blocked, sessionFolder: string | null): Promise<Blocked> {
+  const forRole = role === 'seed' ? await seedBlocked(ctx, ws, forAgent) : forAgent;
+  if (sessionFolder === null) return forRole;
+  return { ...forRole, exceptFolders: [...(forRole.exceptFolders ?? []), ...claudeProjectFolders(ctx.env, sessionFolder)] };
+}
+
+/**
  * The agent CLI command of `ogw agent` and `ogw env check`; for play, judge and seed in the agent sandbox, with the
  * default config folder (the user's login) and no session file of its own. `cliLog` is the file the CLI output goes
  * to when it is under the agent log folder (`ogw agent`), else null. `socket` is the broker socket (`ogw agent` of play
  * and judge), else null. `folder` is the folder the agent starts in (`ogw agent`, the run of `ogw env check` of a
  * sandboxed role), whose `tmp/` the CLI gets as `TMPDIR`, else null. `game` is the game of the agent, whose role blocks
- * the other games.
+ * the other games. `session` (`ogw agent` of a seed agent with a session): Claude Code keeps its session file, in its
+ * project folder for `folder`, which the sandbox leaves open (ogw.md `## agent`).
  */
 export async function cliToRun(
   ctx: Context,
@@ -419,37 +460,17 @@ export async function cliToRun(
   socket: string | null = null,
   folder: string | null = null,
   game: string | null = null,
+  session = false,
 ): Promise<CliToRun> {
   const command = agentCliCommand(agent);
-  if (!SANDBOXED_ROLES.includes(role)) {
-    const env = { ...withOgwOnPath(ctx.env), ...backgroundWaitEnv(agent) };
-    const blocksOthers = game !== null && OTHER_GAMES_BLOCKED_ROLES.includes(role) && SANDBOX_PLATFORMS.includes(process.platform);
-    const others = blocksOthers ? await otherGameFolders(ws, game, await dataDir(ctx)) : [];
-    if (others.length === 0) return { command, wrap: (cli) => cli, env, profileFolder: null, brokerCommand: null, brokerWorker: null };
-    const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
-    try {
-      const profileFile = join(profileFolder, 'sandbox.sb');
-      await writeFile(profileFile, macosFoldersProfile(others));
-      const wrap = (cli: CliCommand): CliCommand => sandboxed(cli, { folders: others, files: [] }, { macosProfileFile: profileFile, pidNamespace: false });
-      return {
-        command: wrap(command),
-        wrap,
-        env,
-        profileFolder,
-        brokerCommand: null,
-        brokerWorker: null,
-      };
-    } catch (error) {
-      await rm(profileFolder, { recursive: true, force: true });
-      throw error;
-    }
-  }
+  if (!SANDBOXED_ROLES.includes(role)) return unsandboxedCliToRun(ctx, role, agent, ws, command, game);
   const profileFolder = await newPrivateTempFolder(`ogw-${role}-sandbox-`, ctx.env);
   try {
     const writes = allowedWrites(ctx.env, folder);
     const agentFolders = otherAgentFolders(ctx.env, folder);
     const forAgent = await agentBlocked(ws, ctx.env, writes, agentFolders, cliLog, socket);
-    const blocked = role === 'seed' ? await seedBlocked(ctx, ws, forAgent) : forAgent;
+    const sessionFolder = session && agentCli(agent) === 'claude-code' ? folder : null;
+    const blocked = await roleBlocked(ctx, ws, role, forAgent, sessionFolder);
     makeBlocked(blocked);
     const profileFile = join(profileFolder, 'sandbox.sb');
     await writeFile(profileFile, macosProfile(blocked));
@@ -468,7 +489,7 @@ export async function cliToRun(
       brokerCommand = (argv) => inBroker([BROKER_RUN, ...argv]);
       brokerWorker = inBroker([BROKER_WORKER]);
     }
-    const wrap = (cli: CliCommand): CliCommand => sandboxed(withoutSessionFiles(agentCli(agent), cli), blocked, { macosProfileFile: profileFile });
+    const wrap = (cli: CliCommand): CliCommand => sandboxed(sessionFolder !== null ? cli : withoutSessionFiles(agentCli(agent), cli), blocked, { macosProfileFile: profileFile });
     return {
       command: wrap(command),
       wrap,
@@ -766,8 +787,10 @@ async function runPlacedAgent(id: string, ctx: Context, meta: AgentMeta): Promis
   const afterEnv = await afterCliEnv(ctx.env, meta);
   // `runWithBroker` removes the sandbox profile folder this makes
   const agent = jobAgentSettings(meta, () => agentSettings(settings, meta.role));
-  const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder, meta.game);
-  if (!SANDBOXED_ROLES.includes(meta.role)) toRun.command = toRun.wrap(firstRunCommand(agent, meta.session ?? null));
+  // a sandboxed role runs in a session only as a seed agent of Claude Code (ogw.md `## agent`)
+  const session = meta.session ?? null;
+  const toRun = await cliToRun(ctx, meta.role, agent, ws, logPath, socket, meta.folder, meta.game, session !== null);
+  if (!SANDBOXED_ROLES.includes(meta.role) || session !== null) toRun.command = toRun.wrap(firstRunCommand(agent, session));
   const output = meta.output;
   const keepSession = async (session: AgentSession): Promise<void> => {
     await changeAgentMeta(id, ctx.env, (m) => {

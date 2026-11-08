@@ -36,7 +36,8 @@ const UI_KINDS: readonly [RegExp, string][] = [
   [/^flash (?:general|red): /, 'flash'],
 ];
 
-function kebab(text: string): string {
+/** `text` in kebab-case: lower case, each run of other characters than letters and digits one `-`. */
+export function kebab(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 

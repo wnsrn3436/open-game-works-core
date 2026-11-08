@@ -29,6 +29,8 @@ export interface AgentJobOptions {
   variant?: number;
   /** seed: the folder `ogw regress refresh` made for the agent, which holds its input. */
   seedPlace?: string;
+  /** seed: the session of the seed agent of the round before, which this round continues. */
+  seedSession?: string;
 }
 
 /** Starts `ogw agent <role> ... --background` and returns the job id. */

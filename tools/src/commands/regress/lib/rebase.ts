@@ -1,6 +1,7 @@
 /**
  * The seed agent of `ogw regress refresh` (ogw.md `### seed agent` of `## regress`): a seed that a changed base made
- * stale, rebased by the seed agent onto that base, and admitted again with the files it wrote.
+ * stale, rebased by the seed agent onto that base, and admitted again with the files it wrote, in rounds that give the
+ * agent what the admission of its rebase saw.
  */
 import { lstat, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -8,19 +9,23 @@ import type { Context } from '../../../lib/command.ts';
 import { exists, readJsonIfExists, writeFileAtomic } from '../../../lib/fsx.ts';
 import { git } from '../../../lib/git.ts';
 import { section } from '../../../lib/markdown.ts';
-import { claudeTempName } from '../../agent/lib/cli-command.ts';
+import { claudeProjectFolders, claudeTempName } from '../../agent/lib/cli-command.ts';
 import { newAgentFolder } from '../../agent/lib/files.ts';
 import { SEED_RESULTS } from '../../agent/lib/result-format.ts';
 import { document } from '../../loop/lib/markdown.ts';
-import type { RefreshRun } from './refresh.ts';
+import type { RefreshRun, SeenAdmission } from './refresh.ts';
 import { latestPatch, seedDir, stateGame, type Admission, type Seed } from './repo.ts';
+import { roundInput, roundInputName } from './round-input.ts';
 import { runSeedAgent } from './seed-agent.ts';
 
 export type RebaseOutcome = 'rebased' | 'not admitted' | 'not rebased' | 'refused' | 'failed';
 
 /** What the seed agent of a seed came to: the `rebase` cell of the record. */
 export interface SeedRebase {
-  job: string | null;
+  /** The jobs of its rounds, in round order. */
+  jobs: string[];
+  /** The round of the outcome, from 1. */
+  round: number;
   outcome: RebaseOutcome;
   /** The reason of the admission of the rebase (`not admitted`), the paths it may not change (`refused`), or why the job failed. */
   reason: string | null;
@@ -31,10 +36,14 @@ export function rebasable(admission: Admission): boolean {
   return admission.result === 'stale' && /^(?:patch does not apply|oracle)(?::|$)/.test(admission.reason ?? '');
 }
 
-/** The `rebase` cell of `## seeds` of the refresh record: `none`, or `<outcome> (<job>)` with `: <reason>` when it has one. */
+/**
+ * The `rebase` cell of `## seeds` of the refresh record: `none`, or `<outcome> in round <n> (<job>, ...)` with
+ * `: <reason>` when it has one.
+ */
 export function rebaseText(rebase: SeedRebase | null | undefined): string {
   if (rebase === null || rebase === undefined) return 'none';
-  return `${rebase.outcome} (${rebase.job ?? 'no job'})${rebase.reason === null ? '' : `: ${rebase.reason}`}`;
+  const jobs = rebase.jobs.length === 0 ? 'no job' : rebase.jobs.join(', ');
+  return `${rebase.outcome} in round ${String(rebase.round)} (${jobs})${rebase.reason === null ? '' : `: ${rebase.reason}`}`;
 }
 
 /** The files the refresh writes in a seed folder, which the copy for the seed agent leaves out. */
@@ -147,7 +156,7 @@ export interface RebaseContext {
   /** The tag of the base of the state of the seed. */
   tag: string;
   /** Admits the seed at the version on the base of its state again (`### admission`), with the files in its folder. */
-  admit: () => Promise<Admission>;
+  admit: () => Promise<SeenAdmission>;
 }
 
 /** The folder of the seed agent made ready (`### seed agent` 1): the copy of the seed, the clone of the base and the input. */
@@ -190,51 +199,77 @@ function resultOf(text: string): (typeof SEED_RESULTS)[number] | null {
   return SEED_RESULTS.find((r) => r === line) ?? null;
 }
 
+/** A round of the seed agent: what it left, and the session the next round continues. */
+interface Round {
+  work: AgentWork;
+  session: string | null;
+}
+
+/** Runs the seed agent of one round in its folder with `input` and takes what it left (`### seed agent` 2, 3 and 5). */
+async function runRound(ctx: Context, rc: RebaseContext, seed: Seed, folder: string, input: string, session: string | null): Promise<Round> {
+  const ran = await rc.run.pool.work(() => runSeedAgent(ctx, folder, input, session));
+  const failed = (reason: string): Round => ({ work: { kind: 'failed', job: ran.job, reason }, session: ran.session });
+  if (ran.status !== 'done' || ran.output === null || ran.job === null) return failed(ran.reason ?? 'no result file');
+  if (!(await lstat(ran.output)).isFile()) return failed('the result file is not a regular file');
+  const text = await readFile(ran.output, 'utf8');
+  if (resultOf(text) !== 'rebased') return { work: { kind: 'not rebased', job: ran.job, text }, session: ran.session };
+  const taken = await takeFiles(seedDir(rc.run.repo, seed.id), seed, rc.run.version, join(folder, 'seed'));
+  const work: AgentWork = 'refused' in taken ? { kind: 'refused', job: ran.job, text, reason: taken.refused } : { kind: 'rebased', job: ran.job, text, files: taken.files };
+  return { work, session: ran.session };
+}
+
 /**
- * Makes the folder, runs the seed agent in it and takes what it left (`### seed agent` 1 to 3), then removes the folder
- * and the folder of Claude Code for it under its temp root (5).
+ * Removes the folder of the seed agent and the folders of Claude Code for it, under its temp root and in its config
+ * folder, which holds its session (`### seed agent` 6): they hold the seed.
  */
-async function runInFolder(ctx: Context, rc: RebaseContext, seed: Seed, before: Admission): Promise<AgentWork> {
+async function removeFolder(ctx: Context, folder: string): Promise<void> {
+  await rm(folder, { recursive: true, force: true });
+  const uid = process.getuid?.();
+  if (uid !== undefined) await rm(join('/tmp', `claude-${String(uid)}`, claudeTempName(folder)), { recursive: true, force: true });
+  for (const project of claudeProjectFolders(ctx.env, folder)) await rm(project, { recursive: true, force: true });
+}
+
+/**
+ * Rebases one seed whose admission `before` is stale for a reason that goes to the seed agent (`### seed agent`), in at
+ * most harness settings `regress.seedRounds` rounds: each round is the seed agent, as one piece of work of the refresh
+ * (`regress.parallel`), then the files it wrote put into the seed folder and admitted; when admission does not admit
+ * them, they are put back and the next round gives the agent what that admission saw, continuing its session. When no
+ * round is admitted, `before` stays. No other work writes the seed folder or the branches of the seed, so this takes no
+ * lock. It holds no performance lease: it starts no instance and runs no `ogw`.
+ */
+export async function rebaseSeed(ctx: Context, rc: RebaseContext, seed: Seed, before: Admission): Promise<{ admission: Admission; rebase: SeedRebase }> {
+  const limit = (await ctx.settings()).regress.seedRounds;
+  const jobs: string[] = [];
+  const kept = (round: number, outcome: RebaseOutcome, reason: string | null): { admission: Admission; rebase: SeedRebase } => ({ admission: before, rebase: { jobs: [...jobs], round, outcome, reason } });
+  const record = seedDir(rc.run.repo, seed.id);
   const folder = await newAgentFolder('seed', ctx.env);
   try {
     let input: string;
     try {
-      input = await prepareFolder(ctx, rc, seed, before, folder);
+      // its copies and clone are work of the refresh, as its rounds are
+      input = await rc.run.pool.work(() => prepareFolder(ctx, rc, seed, before, folder));
     } catch (error) {
-      return { kind: 'failed', job: null, reason: `its folder could not be made: ${error instanceof Error ? error.message : String(error)}` };
+      return kept(1, 'failed', `its folder could not be made: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const ran = await runSeedAgent(ctx, folder, input);
-    if (ran.status !== 'done' || ran.output === null || ran.job === null) return { kind: 'failed', job: ran.job, reason: ran.reason ?? 'no result file' };
-    if (!(await lstat(ran.output)).isFile()) return { kind: 'failed', job: ran.job, reason: 'the result file is not a regular file' };
-    const text = await readFile(ran.output, 'utf8');
-    if (resultOf(text) !== 'rebased') return { kind: 'not rebased', job: ran.job, text };
-    const taken = await takeFiles(seedDir(rc.run.repo, seed.id), seed, rc.run.version, join(folder, 'seed'));
-    return 'refused' in taken ? { kind: 'refused', job: ran.job, text, reason: taken.refused } : { kind: 'rebased', job: ran.job, text, files: taken.files };
+    let session: string | null = null;
+    for (let round = 1; ; round++) {
+      const ran = await runRound(ctx, rc, seed, folder, input, session);
+      const work = ran.work;
+      if (work.job !== null) jobs.push(work.job);
+      session = ran.session;
+      if (work.kind === 'failed') return kept(round, 'failed', work.reason);
+      await writeFileAtomic(join(record, rebaseRecordName(rc.run.version)), work.text);
+      if (work.kind === 'not rebased') return kept(round, 'not rebased', null);
+      if (work.kind === 'refused') return kept(round, 'refused', work.reason);
+      const restore = await putFiles(record, work.files);
+      const seen = await rc.admit();
+      if (seen.admission.result === 'admitted') return { admission: seen.admission, rebase: { jobs: [...jobs], round, outcome: 'rebased', reason: null } };
+      await restore();
+      if (round >= limit) return kept(round, 'not admitted', seen.admission.reason);
+      input = join(folder, roundInputName(round + 1));
+      await writeFileAtomic(input, roundInput(seed, round + 1, join(folder, 'input.md'), seen));
+    }
   } finally {
-    await rm(folder, { recursive: true, force: true });
-    const uid = process.getuid?.();
-    if (uid !== undefined) await rm(join('/tmp', `claude-${String(uid)}`, claudeTempName(folder)), { recursive: true, force: true });
+    await removeFolder(ctx, folder);
   }
-}
-
-/**
- * Rebases one seed whose admission `before` is stale for a reason that goes to the seed agent (`### seed agent`): the
- * seed agent, as one piece of work of the refresh (`regress.parallel`), then the files it wrote put into the seed folder
- * and admitted; when admission does not admit them, they are put back and `before` stays. No other work writes the seed
- * folder or the branches of the seed, so this takes no lock. It holds no performance lease: it starts no instance and
- * runs no `ogw`.
- */
-export async function rebaseSeed(ctx: Context, rc: RebaseContext, seed: Seed, before: Admission): Promise<{ admission: Admission; rebase: SeedRebase }> {
-  const kept = (rebase: SeedRebase): { admission: Admission; rebase: SeedRebase } => ({ admission: before, rebase });
-  const work = await rc.run.pool.work(() => runInFolder(ctx, rc, seed, before));
-  if (work.kind === 'failed') return kept({ job: work.job, outcome: 'failed', reason: work.reason });
-  const folder = seedDir(rc.run.repo, seed.id);
-  await writeFileAtomic(join(folder, rebaseRecordName(rc.run.version)), work.text);
-  if (work.kind === 'not rebased') return kept({ job: work.job, outcome: 'not rebased', reason: null });
-  if (work.kind === 'refused') return kept({ job: work.job, outcome: 'refused', reason: work.reason });
-  const restore = await putFiles(folder, work.files);
-  const admission = await rc.admit();
-  if (admission.result === 'admitted') return { admission, rebase: { job: work.job, outcome: 'rebased', reason: null } };
-  await restore();
-  return kept({ job: work.job, outcome: 'not admitted', reason: admission.reason });
 }
