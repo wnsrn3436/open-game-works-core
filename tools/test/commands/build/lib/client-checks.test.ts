@@ -302,6 +302,13 @@ describe('web smoke', () => {
     expect((await webSmoke({ ...s.input, env: 'STG' }))?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: cannot remove the worktree'] });
   });
 
+  it('makes the web check export of an STG build a DEV export, whose shell reads the launch value file of the page', async () => {
+    const s = await setup({}, {});
+    s.config({ telemetry: { goal_intervals: [{}] } });
+    await webSmoke({ ...s.input, env: 'STG' });
+    expect(readFileSync(join(s.bin.bin, 'preset.cfg'), 'utf8')).toContain('html/head_include="<script>window.ogwDevExport = true;</script>"');
+  });
+
   it('fails on an error line in the browser console; warns in DEV', async () => {
     const s = await setup({}, { FAKE_CHROMIUM_CONSOLE: JSON.stringify(['1\terror\tnet\tconnection lost\t']) });
     s.config({ telemetry: { goal_intervals: [{}] } });
