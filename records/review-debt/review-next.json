@@ -1,0 +1,12 @@
+{
+  "target": "review next",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/ogw.md:182",
+      "problem": "Commit 24d9e7a (`ogw agent` result format check and fix rounds) adds the rule of `### result format` and the count harness settings `resultFixRounds` = 1 (settings.json, schemas/harness-settings.schema.json), and changes when a review file takes `low` findings (`inputWhole` to `takesLow`, tools/src/commands/review/lib/input.ts:107), but its message is only a subject line with no cause it fixes and no evidence for the rule or for the value 1, as `## harness writing rules` of AGENTS.md requires",
+      "foundBy": "review next round 1"
+    }
+  ]
+}
