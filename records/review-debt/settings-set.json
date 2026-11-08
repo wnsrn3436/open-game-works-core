@@ -1,0 +1,18 @@
+{
+  "target": "settings set",
+  "nextId": 3,
+  "items": [
+    {
+      "id": "D1",
+      "location": "settings.json:54",
+      "problem": "commit 3c7733e adds the criterion `webSmokeDeviceBenchmarkIndex` 438 (the device that web smoke, repeat test and soak test model, ogw.md `## env propose` revision `webSmokeCpuThrottleRate`) without the measurement or specification that gives 438 in its message or anywhere in the harness, against `## harness writing rules` of AGENTS.md (target env propose / build run)",
+      "foundBy": "settings set round 1"
+    },
+    {
+      "id": "D2",
+      "location": "tools/src/commands/settings/lib/target.ts:138",
+      "problem": "`withTarget` reads and writes harness settings outside any lock (only game settings get `withGameSettingsLock`), so `ogw settings set harness ...` running beside `ogw env propose --apply` (tools/src/commands/env/propose.ts:77-82, also read-modify-write of `harnessTarget`) or another `ogw settings set harness` writes from a stale read and drops the other command's change to `settings.json` or `settings.local.json`; this existed before the range",
+      "foundBy": "settings set round 1"
+    }
+  ]
+}
