@@ -333,6 +333,11 @@ export class CheckWorkspaces {
     return this.webFailure;
   }
 
+  /** Resolves once the web check export, when it was started, has ended, whatever its result. */
+  async webExportEnded(): Promise<void> {
+    await this.webExported;
+  }
+
   /** Waits for the preparations and the web check export, deletes the web check export and its copy, then removes the build workspaces. */
   async close(): Promise<void> {
     await Promise.allSettled([...this.made.values(), this.webCopied, this.webExported]);
@@ -369,13 +374,20 @@ export async function withCheckCopy<T>(input: ClientCheckInput, platform: CheckP
 /**
  * `### web smoke` 1 around `use`: runs `use` with the check workspaces of `input` once the copy of their web check
  * export is made (ogw.md `### client checks`: the copy comes before the check instance starts), with the export
- * started, when it is not made yet, beside the check instance that `use` starts; `use` takes it from `webExport`.
+ * started, when it is not made yet, beside the check instance that `use` starts; `use` takes it from `webExport`. It
+ * ends only when the export has ended too, also when `use` ended without it (its check instance did not start), so
+ * that the measured runs of `## build run`, which start when web smoke has made its export or ended, start with no
+ * export loading the host.
  */
 export async function withWebExport<T>(input: ClientCheckInput, use: (input: ClientCheckInput & { workspaces: CheckWorkspaces }) => Promise<T>): Promise<T> {
   return withWorkspacesOf(input, async (own) => {
     await own.workspaces.webCopy();
     own.workspaces.startWebExport();
-    return use(own);
+    try {
+      return await use(own);
+    } finally {
+      await own.workspaces.webExportEnded();
+    }
   });
 }
 

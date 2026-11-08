@@ -3,7 +3,7 @@ import { cp } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clientCheckTiming, withCheckWorkspaces, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
+import { clientCheckTiming, measureGate, withCheckWorkspaces, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
 import { godotCheckExport, godotCheckPrepare } from '../../../../src/commands/build/lib/godot.ts';
 import { blockerKind, repeatPlan, repeatTest, repeatVerdict, runOf, runStats, type RepeatRun } from '../../../../src/commands/build/lib/repeat-test.ts';
 import {
@@ -443,6 +443,36 @@ describe('repeat test', () => {
 });
 
 describe('web smoke', () => {
+  it('ends only when the web check export it started has ended, also when its check instance does not start, so that the measure gate opens after the export', async () => {
+    const s = await setup();
+    const real = await vi.importActual<typeof import('../../../../src/commands/build/lib/godot.ts')>('../../../../src/commands/build/lib/godot.ts');
+    const events: string[] = [];
+    vi.mocked(startInstance).mockImplementation(() => {
+      events.push('instance start failed');
+      return Promise.reject(new Error('no instance slot'));
+    });
+    vi.mocked(godotCheckExport).mockImplementation(async (...args) => {
+      events.push('export start');
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const file = await real.godotCheckExport(...args);
+      events.push('export end');
+      return file;
+    });
+    // the check workspaces of a build run, which outlive web smoke: their close does not wait for its export
+    await withCheckWorkspaces(s.input, async (workspaces) => {
+      const gate = measureGate();
+      const web = webSmoke({ ...s.input, workspaces }, gate.gate).then((result) => {
+        events.push('web smoke ended');
+        return result;
+      });
+      // `ogw build run` lets the measured runs start once the export of web smoke is made or web smoke has ended
+      await gate.exportedOr(web);
+      events.push('gate may open');
+      expect((await web)?.check).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: no instance slot'] });
+    });
+    expect(events).toEqual(['instance start failed', 'export start', 'export end', 'web smoke ended', 'gate may open']);
+  });
+
   it('starts its check instance and the web check export together, and opens the page when both are ready', async () => {
     const s = await setup();
     s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
