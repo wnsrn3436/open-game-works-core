@@ -36,7 +36,7 @@ function remedy(game: string, version: string, harness: string | null): string {
 
 /**
  * Fails when this harness does not support core `version` of `game`: newer than the core version of the harness, or
- * older than harness settings `minCoreVersion` (AGENTS.md `## repo`). With `useLocalCore` there is no check.
+ * older than harness settings `minCoreVersion` (ogw.md `## core version`). With `useLocalCore` there is no check.
  */
 export async function requireSupportedCore(ctx: Context, game: string, version: string): Promise<void> {
   const settings = await ctx.settings();

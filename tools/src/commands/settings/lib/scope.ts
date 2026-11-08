@@ -42,7 +42,7 @@ function withoutPruned(value: JsonObject, segments: Segments): JsonObject {
  * The two files `settings.json` and `settings.local.json` that hold harness settings `next`, from the files `files`
  * now hold. A changed local-scope path (`isLocalScope`) is written to `settings.local.json`, every other changed path
  * to `settings.json`, and a removed value is removed from both files. A path that `settings.local.json` holds and that
- * is not local-scope moves to `settings.json` with its value in `next` (AGENTS.md `## settings`). Fails when the merged
+ * is not local-scope moves to `settings.json` with its value in `next` (ogw.md `## settings`). Fails when the merged
  * files would not be `next`.
  */
 export function routeHarnessWrite(schema: JsonObject, files: HarnessSettingsFiles, next: JsonObject): HarnessSettingsFiles {

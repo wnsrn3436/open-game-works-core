@@ -239,7 +239,7 @@ function covered(area: [number, number, number, number], rects: readonly Rect[])
 }
 
 /**
- * The presentation conditions of one capture (ogw.md `## UI quality`): text sizes, small text, the contrast of text
+ * The presentation conditions of one capture (ogw.md `## UI quality`): text size count, minimum font size, the contrast by text size of text
  * that is not dimmed and empty panels, each with the `owner` of the problem. `pixelRatio` is that of the
  * `uiCheckScreens` item of the capture: text sizes and panel sides are judged in CSS pixels.
  */

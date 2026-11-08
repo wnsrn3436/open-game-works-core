@@ -30,6 +30,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 - instance wait
 - instance measure
 - telemetry compare
+- settings
 - settings path
 - settings describe
 - settings commit
@@ -64,6 +65,7 @@ Defines the internal behavior of the harness tool `ogw` that the agents calling 
 - temp folder
 - PostgreSQL container
 - host
+- core version
 - core upgrade
 - core release
 - core spec and core test
@@ -230,12 +232,12 @@ The tool sets the run name `<command>-<unix ms>`, creates the work branch `loop/
 - If the agent CLI of play or judge in harness settings `agents`, of an item of `loop.judgePanel`, of `loop.confirmJudge` or of `loop.confirmFallback` is Claude Code and the harness secret `claude-code-oauth-token` is not in the secret store of this host, the tool creates nothing and exits with a nonzero code.
 - `--limit <iterations>` sets the iteration limit of the run: the number of the last iteration of the run, an integer of 1 or more. `--until <unix ms>` sets the time limit of the run: a UTC Unix ms later than the current time. For any other value the tool creates nothing and exits with a nonzero code. The run state keeps both, and a limit not given is none. `## loop next` and `## loop verdict` use them, and `ogw loop resume` replaces them
 - pin: a harness commit and run settings that the run state keeps. The tool pins the harness repo HEAD as the pinned harness commit of the run (`## loop next`) and the run settings of harness settings
-- run settings: the values that harness settings, with the schema defaults filled in, hold at the run paths (AGENTS.md `## settings`). A unit of run settings is a path into them that goes down through objects only, so an array or another value is one unit
+- run settings: the values that harness settings, with the schema defaults filled in, hold at the run paths (`## settings`). A unit of run settings is a path into them that goes down through objects only, so an array or another value is one unit
 - While a loop run is open, a command that works on its game (a command given that game, and the jobs and agents of the run) reads each run path from the run settings of the last pin of the run instead of from harness settings. A run path that those run settings do not hold has no value. `ogw settings` reads and writes harness settings themselves
 
 ## loop next
 
-An iteration is a fun iteration or a completeness iteration, and `ogw loop next` prints its kind. A fun iteration tries changes aimed at fun and runs only the checks that block play. A completeness iteration fixes defects and runs every check. The tool decides the kind from the loop iteration records of the run:
+`ogw loop next` prints the kind of the iteration, a fun iteration or a completeness iteration (AGENTS.md `## loop`). The tool decides the kind from the loop iteration records of the run:
 
 - Iteration 1 and a confirmation iteration are completeness iterations
 - After a completeness iteration whose `gate` was `fail`, the next iteration is a completeness iteration
@@ -248,7 +250,7 @@ In a loop run, the tool does not raise the number, and exits with a nonzero code
 - The current iteration number is at least the iteration limit of the run: the smaller of its `--limit` and game settings `loopIterationLimit`, or `loopIterationLimit` when the run has no `--limit`
 - The harness repo HEAD is not the pinned harness commit of the run. The output names both commits. With `--repin`, the tool does not fail for it
 
-In a loop run without `--repin`, the tool compares the harness repo HEAD with the pinned harness commit before it checks the core version of the game against the harness (AGENTS.md `## repo`), so a harness repo HEAD that moved away from the pinned commit fails with the pin output and the run stays open.
+In a loop run without `--repin`, the tool compares the harness repo HEAD with the pinned harness commit before it checks the core version of the game against the harness (`## core version`), so a harness repo HEAD that moved away from the pinned commit fails with the pin output and the run stays open.
 
 repin: a new pin of the harness repo HEAD and of the run settings of harness settings (`## loop start`), made when either differs from the last pin. With `--repin` in a loop run, `ogw loop next` repins for the iteration it starts. It prints `harness: <harness repo HEAD> (repinned from <previous pinned harness commit>)` when the commit changed, and `run settings: <the units whose value changed, joined with ", "> (repinned)` when the run settings changed.
 
@@ -361,17 +363,18 @@ For UI quality check, `ogw check` runs `capture_screen` and `list_ui` of `QACore
   2. Expands reached buttons b one at a time until no unexpanded reached button is left. Expanding: for each gamepad button `dpad_up`, `dpad_down`, `dpad_left`, `dpad_right`, calls `focus_ui`(`path` of b), `pad_button_down` and `pad_button_up` of that gamepad button, and `list_ui`, and adds the elements whose `button` and `focused` are `true` to the reached buttons. When `focus_ui` of b fails, b is not expanded
   3. When every target button is a reached button, that screen is `pass`; otherwise it is `fail`, and the `path` of each target button that is not a reached button goes in the result
 - UI quality check is `pass` when all of the below hold
-  - No capture has an element whose `clipped` is `true` or an overlap. An overlap is two elements whose `text` is not an empty string and whose `owner` is the same, whose `rect`s overlap with an area of 1 or more, and neither of whose `path` is an ancestor of the other's `path`
-  - In each `list_ui` of a keyboard capture, there is one element whose `text_input` and `focused` are `true`, and its `rect` lies fully between the top edge of the window and the top edge of the keyboard (window height − `keyboard`)
-  - When `gamepadSupported` is `true`, gamepad focus check is `pass` on every screen
+  - clipping: no capture has an element whose `clipped` is `true`
+  - overlap: no capture has an overlap. An overlap is two elements whose `text` is not an empty string and whose `owner` is the same, whose `rect`s overlap with an area of 1 or more, and neither of whose `path` is an ancestor of the other's `path`
+  - on-screen keyboard cover: in each `list_ui` of a keyboard capture, there is one element whose `text_input` and `focused` are `true`, and its `rect` lies fully between the top edge of the window and the top edge of the keyboard (window height − `keyboard`)
+  - gamepad focus check: when `gamepadSupported` is `true`, it is `pass` on every screen
   - In each capture at text scale 1000 that is not a keyboard capture, with the values of game settings `uiQuality` (the size of large text and the percentile, the percentages and the side length below are fixed values of the check, not settings):
-    - text sizes: the distinct `font_size` values, rounded to whole pixels, of the elements whose `text` is not an empty string number at most `maxFontSizes`
-    - small text: no element whose `text` is not an empty string has a `font_size` in CSS size under `minFontSize`
-    - contrast: for each element whose `text` is not an empty string, whose `dimmed` and `modal_covered` are `false` and whose `rect` is fully in the window, out of the relative luminances (sRGB) of the capture pixels in its `rect`, the background is the median and the text is the luminance whose distance from the median is at the 99.9th percentile of those distances. Their contrast ratio (lighter + 0.05) ÷ (darker + 0.05) is at least `minLargeContrast` for large text and at least `minContrast` for other text. Text under a panel or popup whose modal is off stays measured
+    - text size count: the distinct `font_size` values, rounded to whole pixels, of the elements whose `text` is not an empty string number at most `maxFontSizes`
+    - minimum font size: no element whose `text` is not an empty string has a `font_size` in CSS size under `minFontSize`
+    - contrast by text size: for each element whose `text` is not an empty string, whose `dimmed` and `modal_covered` are `false` and whose `rect` is fully in the window, out of the relative luminances (sRGB) of the capture pixels in its `rect`, the background is the median and the text is the luminance whose distance from the median is at the 99.9th percentile of those distances. Their contrast ratio (lighter + 0.05) ÷ (darker + 0.05) is at least `minLargeContrast` for large text and at least `minContrast` for other text. Text under a panel or popup whose modal is off stays measured
     - panel body: an element whose `owner` is a popup, panel or system popup key, whose `text` is an empty string, whose `button` and `text_input` are `false`, whose `rect` is at most 90% of the window area and has a shorter side of at least 64 in CSS size (a thinner element is a bar, not a panel), that has a descendant element, and none of whose ancestors is such an element of the same `owner`
     - empty panel: in the `rect` of each panel body, less than `maxEmptyShare` of its area is outside the `rect`s of its descendant elements whose `rect` is smaller than 90% of the panel body `rect`
     - touch target: in the UI quality check of a platform profile whose platform is `android` or `ios`, the `rect` of each target button is at least `minTouchTarget` wide and at least `minTouchTarget` high in CSS size
-  - The flash check of `### flash check` is `pass`
+  - flash check: `### flash check` is `pass`
 - A UI quality check that has no failure of its own and whose flash check is `unknown` is `unknown`, with the `<failure>`s of the flash check. A UI quality check that has failures of its own and whose flash check is `unknown` is `fail` with its own failures
 
 ### flash check
@@ -436,7 +439,7 @@ If `records/setup/reference/reference.md` is missing or a video file that its `#
 - A play agent job and a judge agent job are stopped when they reach harness settings `loop.playTimeLimitMs` and `loop.judgeTimeLimitMs`, and a stopped job is a failed agent
 - `ogw loop evaluate` calls a failed play agent or judge agent again as a new agent with the same input, on newly started instances. When the call-again count reaches harness settings `backgroundRetryLimit`, it calls no more and sets the result of that agent to `failed`. A `failed` judge gives no vote, and its `vs reference` is `unknown`
 - confirmation fallback: when the job of a judge that runs with `loop.confirmJudge` (a judge of the confirmation pair, a success confirmation judge) ends without a judge result whose tables can be read, its agent CLI output (`<id>.cli.log` in `agent-logs/` of the jobs folder) has a limit message of that agent CLI, and harness settings `loop.confirmFallback` is set, `ogw loop evaluate` calls that judge again as a new agent with the same input, on newly started instances, with `loop.confirmFallback` as its agent CLI, model and effort. A judge falls back once. That call is not counted in the call-again count of `backgroundRetryLimit`, and the later calls again of that judge also run with `loop.confirmFallback`. A failure without a limit message is called again with the same agent CLI
-- The play agent and the judge agent are not given `brief.md`, `design.md` or the content agent's report
+- Besides `brief.md` and `design.md` (AGENTS.md `## loop`), the play agent and the judge agent are not given the content agent's report
 - The input of play and judge holds only the fields of its format. The agent cannot read paths other than `playGuide`, `video` and `telemetry`
 
 limit message: a line of the limit text of a job that starts with one of the texts below and says that the usage limit or the rate limit of that agent CLI was hit. The limit text is read from the agent CLI output, which the agent CLIs print as JSON (`## agent`): for Claude Code, each line of the output, with a result object replaced by the text of its `result`; for Codex, each line of the output, the `message` of each event whose `type` is `error`, and the `message` of the `error` of each event whose `type` is `turn.failed`. A Codex line also counts when it starts with `ERROR: ` and then one of the texts, the form `codex exec` prints on stderr. The `’` of the Codex texts is U+2019.
@@ -693,7 +696,7 @@ What the harness tool writes in the engine project of a game. The renderer table
 
 | command | work |
 |---|---|
-| `ogw instance wait <instance>` | Waits until an instance of the input of the judge agent that runs it runs, and prints `ready <instance>`. The evaluation starts some instances of a judge only as the judge gives others back. It ends with exit code 75 when the instance still starts after 60 seconds, and with exit code 1 and the reason when the instance does not run: the evaluation could not start it, or the judge gave it back. It refuses an instance that is not in that input, and a caller that is not a judge agent |
+| `ogw instance wait <instance>` | Waits for an instance of the input of the judge agent that runs it, with the outputs and exit codes that [`judge`](../agents/judge.md) gives. It ends with exit code 75 when the instance still starts after 60 seconds. It refuses an instance that is not in that input, and a caller that is not a judge agent |
 | `ogw instance release <instance>` | Gives back an instance of the input of the judge agent that runs it. The evaluation stops it at its next check of that agent, so that the next agent waiting for instance slots starts sooner. It refuses an instance that is not in that input, and a caller that is not a judge agent |
 
 ## instance measure
@@ -706,6 +709,18 @@ What the harness tool writes in the engine project of a game. The renderer table
 ## telemetry compare
 
 The tool counts an `input_latency_ms` difference of 17 ms or less as no difference.
+
+## settings
+
+How `ogw settings` checks, places and reads harness settings, game settings and core settings.
+
+- Before writing, `ogw settings set` checks the schema, the conditions, the owner of each changed path and the `humanDecided` rule of AGENTS.md `## settings` on the result of writing all its `<path> <JSON value>` pairs, and does not write when a check does not pass
+- Settings are filled one value at a time, so a missing required value does not block a write of `ogw settings set`. `ogw settings list --missing` and `ogw game check` catch missing required values
+- The schema `x-owner` of a path follows the value of the deepest node, among the schema nodes that reach that path, that declares `x-owner`. The lead agent can change every path whose `x-owner` is not `tool`, the content agent the game settings paths whose `x-owner` is `content`, and the core agent core settings. A path whose `x-owner` is `tool` is written only by the harness tool
+- The merge of local harness settings over `settings.json` merges object values key by key and replaces arrays and other values whole. The schema and condition checks of `ogw settings set` run on the merged value. Without `settings.local.json`, `settings.json` alone is harness settings
+- A harness settings path is local-scope when a schema node that reaches it declares `x-scope` `local` (e.g. `humanLanguage`, `agents`, `maxConcurrentInstances`, `loop.judgePanel`). A local-scope path holds a value that depends on the person or the host: a preference, the login of an agent CLI, the capacity or the speed of the host. A criterion of a check result or of the success or stop of a loop (a count, a threshold, a budget, the device a check models) is not local-scope, so that one harness commit decides the same on every host; a local value that a check uses for the speed of the host is measured on the host against such a criterion (e.g. `webSmokeCpuThrottleRate` against `webSmokeDeviceBenchmarkIndex`). `settings.local.json` holds only local-scope paths, and reading harness settings fails while it holds another path. `ogw settings set` writes a local-scope path to `settings.local.json` and every other path to `settings.json`, and moves to `settings.json` each path that `settings.local.json` holds and that is not local-scope. A removed value is removed from both files. The committed values of local-scope paths in `settings.json` are generic defaults for every user
+- A harness settings path is a run path when a schema node that reaches it declares `x-run` `true`: a local-scope path whose value a loop run uses. `ogw loop start` records the values of the run paths in the run state, the commands that work on the game of that run read them from there, and a repin records them again (`## loop start`, `## loop next`)
+- The default of a value that exists only in game settings is in the JSON schema of game settings
 
 ## settings path
 
@@ -827,6 +842,7 @@ How `ogw build start` checks and prepares a build, before anything is made.
 - The tool checks that the game has no unclosed run (loop run or build run), that `git status` of the game repo checkout shows no changes, that harness settings `useLocalCore` is `false`, and that every gameplay video that `records/setup/reference/reference.md` names is in `records/setup/reference/` (`## procedure` 4 of [`build`](../skills/build/SKILL.md) calls the judge agents). Then it checks whether build stage values (items whose `x-stage` is `build` in the game settings schema) of that environment and outside any environment are missing (only the missing values of the same check as `ogw game check <game> --build`. An STG build also looks at the PROD values: a PROD build builds the commit checked in STG. It does not look at the values of any other environment). When values are missing, the tool makes nothing, outputs the missing values and exits with a nonzero code. Then the tool checks that this host is a Mac when the platforms to build include ios or macos; that the `signing` secret of each platform to build that has `signing.<platform>` in game settings is in this host's secret store; that the programs of that platform's `engine.json` `buildTools` whose `hosts` include this host, the engine that `engine.json` of the game settings core version names, and, when the platforms to build include web, the program of harness settings `tools.chromium` are on this host at that version; that this host's Docker has the image of harness settings `tools.postgresql`; that harness secret `claude-code-oauth-token` is in this host's secret store when the agent CLI of play or judge in harness settings `agents`, of an item of `loop.judgePanel`, of `loop.confirmJudge` or of `loop.confirmFallback` is Claude Code (when it is not, a human makes a long-lived token with `claude setup-token` and puts it as one line into `ogw secret set --harness claude-code-oauth-token`); that the major of `tools.postgresql` `tag` equals game settings `postgresqlMajor`; and that game settings have `updatePublicKeys` of that environment (for an STG build, also those of PROD). For DEV and STG it also checks that this host has `docker buildx`, that this host's GitHub CLI login has the `write:packages` scope, and that the secrets of that environment's `secrets` and the `secret` of `adminOperators` are all in this host's secret store (`ogw deploy` writes them by the secret file rule of `build` `## deploy`). For DEV and STG when a PROD tag exists, it also checks the secret of operator `ogw` in PROD `adminOperators`. When any is missing, stops and tells the human. For STG and PROD, the tool then runs check `native plugin` of `build` `## build-time check` for the platforms to build. When it fails, the tool makes nothing, outputs the failures and exits with a nonzero code, and the lead agent stops and tells the human. For DEV and STG, the tool then runs the human checks of `build` `## build-time check` on the HEAD of main. When any fails, the tool makes nothing, outputs the human target of each failed human check and exits with a nonzero code. The lead agent stops and tells the human those human targets. The tool sets the version. When a previous build stopped without a tag and branch `build/<env>-<version>` remains, the tool renames that branch to `build/<env>-<version>-failed-<unix ms>`, and when `builds/<env>-<version>/` exists, renames it to `builds/<env>-<version>-failed-<unix ms>/`. Then it creates branch `build/<env>-<version>`. It creates it from the HEAD of main for DEV and STG and from the main commit that has the `stg-<version>` tag for PROD, and checks out the created branch. It sets the run name to `build-<env>-<version>` and creates `records/loops/<run>/`
   - DEV, STG: with `--version`, the version is that value, and when that value is not higher than the game's highest tag version, stops and tells the human. Without `--version`, the version is the highest tag version with patch raised by 1, and `0.1.0` when there is no tag. Versions are compared by major, minor, then patch. When a `--bundle-for` build has `--version`, stops and tells the human
   - PROD: the commit the build branch is created from is, with `--version`, the commit of main tagged `stg-<that value>`, and without it, the most recent commit of main that has an `stg-<version>` tag. The version is that tag's version. When there is no such commit, when the `prod-<version>` tag already exists, or when it is not a bundle patch and the version is not higher than the version of the last PROD build, stops and reports to the human. When main has no `records/loops/build-stg-<version>/end.md` or its `## compatibility base` differs from the tag of the current last PROD build (`none` when there is no PROD tag), stops and reports to the human that a new STG build is needed. Unless it is a bundle patch without data, the tool also checks with this host's GitHub CLI login that game settings `serverImage.repository` has the server image with image tag `stg-<version>`. When it does not, stops and reports to the human
+  - bundle patch: the version is `<app version>-bundle-<n>` (`## bundle patch` of [`build`](../skills/build/SKILL.md)). In DEV and STG, `<n>` is the sequence number of the bundle patch for that environment and app version, starting from 1, and in PROD it is the `<n>` of the `stg-<app version>-bundle-<n>` tag that the PROD build started from
   - When a PROD tag exists and the contract version of the commit the branch was created from is greater than the contract version of the last PROD build, the tool also checks that the secret of operator `ogw` in PROD `adminOperators` is in this host's secret store and that admin operation `sample_user_ids` (`count` 1) on PROD `serverUrl` succeeds with that operator. Otherwise, stops and tells the human
 
 ## build run
@@ -1259,6 +1275,14 @@ The host secret store where `ogw` keeps secret values.
 - The first 32 hex digits of the SHA-256 of `ogw-host:<id>`, where `<id>` is the machine identifier of the OS in lowercase with `-` removed, are the host id. This keeps the machine identifier out of git. The machine identifier is `IOPlatformUUID` of `ioreg -rd1 -c IOPlatformExpertDevice` on macOS, `/etc/machine-id` on Linux, and `MachineGuid` of the registry `HKLM\SOFTWARE\Microsoft\Cryptography` on Windows
 - host item: an item of the key `hosts` of `settings.json` or `settings.local.json`, keyed by host id, that holds values of that host. Harness settings are read with the host items of this host, the one of `settings.local.json` merged over the one of `settings.json`, without their `name`, merged under the top-level values of `settings.local.json`, and without `hosts` in either file; the next write of harness settings writes both files in that form. The host id is read only when a file holds a host item, and when it cannot be read then, reading harness settings fails
 - `ogw` and the processes that `ogw` starts use IPv4 addresses first among DNS results (`--dns-result-order=ipv4first` in the environment variable `NODE_OPTIONS`)
+
+## core version
+
+How the tool gets the core of a game and which core versions of a game its commands accept. The core version of the harness is that of AGENTS.md `## repo`.
+
+- At dev run and build, the tool looks for the core version of the game in `open-game-works-core-releases/` and, when it is not there, fetches it from the GitHub release. Fetched files are checked by hash
+- When harness settings `useLocalCore` is `true`, the tool uses `open-game-works-core-impl/` instead of the release of the game's core version, and does not start loop iterations or builds
+- A command on a game fails when the core version of the game is higher than the core version of the harness or lower than harness settings `minCoreVersion`, and the commands that run the agents that write or harden game code (`ogw loop next`, `ogw build start`) fail unless it is the core version of the harness. The failure names the ways out: for a game on a lower core, raise the core of the game with `ogw core upgrade` or use the harness at the tag `core-v<core version of the game>`; for a game on a higher core, use the harness at that tag
 
 ## core upgrade
 

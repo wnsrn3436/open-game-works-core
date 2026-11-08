@@ -19,7 +19,7 @@ export const set: CommandDef = {
     const usage = this.usage;
     return withTarget(ctx, args.positionals, usage, async ({ target, rest }) => {
       if (rest.length < 2 || rest.length % 2 !== 0) throw new OgwError(`usage: ${usage}`);
-      // every pair goes into one result, which is checked once (AGENTS.md `## settings`)
+      // every pair goes into one result, which is checked once (ogw.md `## settings`)
       const pairs: [string, unknown][] = [];
       for (let i = 0; i < rest.length; i += 2) pairs.push([rest[i] as string, parseValue(rest[i + 1] as string)]);
       // a `core.` key of game settings is read by the `coreVersion` of the result: the other pairs go in first

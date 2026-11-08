@@ -196,7 +196,7 @@ The TypeScript that the contract tool and the data tool make. One namespace is o
 ## adapter
 
 - Server code uses DB, files, secrets, external services and outgoing HTTP only through adapters
-- The interface of an external service has a fake adapter, a sandbox adapter and a real adapter. The choice is the per-environment `adapters` of game settings. LOCAL has no environment in game settings, and has every adapter key that is in at least one of DEV, STG, PROD, with the value `fake`
+- The adapter of an external service (`adapter` of AGENTS.md `## terms`) is chosen by the per-environment `adapters` of game settings. LOCAL has no environment in game settings, and has every adapter key that is in at least one of DEV, STG, PROD, with the value `fake`
 - The keys of `adapters` are `login-apple`, `login-google`, `iap-apple`, `iap-google`, `ads`, `push-fcm`, `push-apns`, `turn`, `cdn`, `analytics`. Client and server use the same keys. Only the server uses `turn`, `cdn`, `analytics`
 - A real adapter name contains the provider. e.g. `iap-apple`, `cdn-r2`. A sandbox adapter name is the real adapter name with `-sandbox` appended. The fake adapter name is `fake`. The usable names are set by the module spec that uses that key
 - A test helper can set the result of a fake adapter. The module spec that uses an adapter key sets what its fake adapter checks

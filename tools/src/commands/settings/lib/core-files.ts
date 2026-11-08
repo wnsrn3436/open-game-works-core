@@ -49,7 +49,7 @@ async function readArray<T>(path: string): Promise<T[]> {
 
 /**
  * Core settings defaults, schema, constraints and modules of the core release `version`, the `coreVersion` of the game
- * settings of `game`, which this harness must support (AGENTS.md `## repo`).
+ * settings of `game`, which this harness must support (ogw.md `## core version`).
  */
 export async function coreFiles(ctx: Context, version: string, game: string): Promise<CoreFiles> {
   await requireSupportedCore(ctx, game, version);

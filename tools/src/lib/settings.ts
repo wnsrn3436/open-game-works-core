@@ -249,7 +249,7 @@ export async function readHarnessSettingsFiles(env: NodeJS.ProcessEnv = process.
   return withHostItems({ shared: asObject(sharedPath, await readJson(sharedPath)), local: local === null ? null : asObject(localPath, local) }, env);
 }
 
-/** The units (`valueUnits`) of `settings.local.json` that are not local-scope paths, which it does not hold (AGENTS.md `## settings`). */
+/** The units (`valueUnits`) of `settings.local.json` that are not local-scope paths, which it does not hold (ogw.md `## settings`). */
 export function nonLocalUnits(schema: JsonObject, local: JsonObject | null): string[][] {
   return local === null ? [] : valueUnits(local).filter((unit) => !isLocalScope(schema, unit));
 }
@@ -362,7 +362,7 @@ export function withRunSettings(schema: JsonObject, merged: JsonObject, run: Jso
   return out;
 }
 
-/** The merged harness settings; fails when `settings.local.json` holds a path that is not local-scope (AGENTS.md `## settings`). */
+/** The merged harness settings; fails when `settings.local.json` holds a path that is not local-scope (ogw.md `## settings`). */
 async function mergedChecked(schema: JsonObject, env: NodeJS.ProcessEnv): Promise<JsonObject> {
   const files = await readHarnessSettingsFiles(env);
   const outside = nonLocalUnits(schema, files.local).map((unit) => unit.join('.'));

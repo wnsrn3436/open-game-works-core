@@ -154,7 +154,7 @@ export function buildBranch(env: Env, versionName: string): string {
   return `build/${envLower(env)}-${versionName}`;
 }
 
-/** Build tag `<env>-<version>` (AGENTS.md `## branch`); `versionName` is `<version>` or `<app version>-bundle-<n>`. */
+/** Build tag `<env>-<version>` (build `## procedure`); `versionName` is `<version>` or `<app version>-bundle-<n>`. */
 export function buildTagName(env: Env, versionName: string): string {
   return `${envLower(env)}-${versionName}`;
 }

@@ -116,7 +116,7 @@ export function isBuildStage(schema: JsonObject, segments: readonly string[]): b
 
 /**
  * Whether a harness settings path is a local-scope path: a node on the path (after `$ref` and `allOf`) declares
- * `x-scope` `local`. `ogw settings set` writes it to local harness settings (AGENTS.md `## settings`).
+ * `x-scope` `local`. `ogw settings set` writes it to local harness settings (ogw.md `## settings`).
  */
 export function isLocalScope(schema: JsonObject, segments: readonly string[]): boolean {
   return declaredOnPath(schema, segments, 'x-scope', 'local');
@@ -124,7 +124,7 @@ export function isLocalScope(schema: JsonObject, segments: readonly string[]): b
 
 /**
  * Whether a harness settings path is a run path: a node on the path (after `$ref` and `allOf`) declares `x-run`
- * `true`. A loop run records its value (AGENTS.md `## settings`).
+ * `true`. A loop run records its value (ogw.md `## settings`).
  */
 export function isRunPath(schema: JsonObject, segments: readonly string[]): boolean {
   return declaredOnPath(schema, segments, 'x-run', true);

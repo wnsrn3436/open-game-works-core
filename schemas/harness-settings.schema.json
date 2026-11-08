@@ -218,7 +218,7 @@
     },
     "useLocalCore": {
       "x-scope": "local",
-      "description": "When true, the harness tool uses the core in paths.coreImpl instead of the release of the game's core version. AGENTS.md `## repo` defines the behavior",
+      "description": "Whether the harness tool uses the core in paths.coreImpl instead of the release of the game's core version; true only while developing core. tools/ogw.md `## core version` defines the behavior",
       "type": "boolean",
       "default": false
     },

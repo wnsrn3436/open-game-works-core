@@ -84,9 +84,7 @@ A harness for making server and client games of commercial quality, in which AI 
 - This repo holds no game code and no core code. The harness tool (TypeScript) is in `tools/`
 - `README.md`, `README.ko.md` and `.github/media/` of this repo, of `open-game-works-core-impl/` and of each game repo are introductions for humans and not harness files. Agents do not read them or edit them, and harness files do not refer to them
 - `open-game-works-core-impl/`, `open-game-works-core-releases/`, `games/` and `worktrees/` in documents mean the folders that harness settings `paths.coreImpl`, `paths.coreReleases`, `paths.games` and `paths.worktrees` point to. Tools read these paths only from harness settings and do not write them in code
-- A game records only its core version. At dev run and build, the tool looks for that version in `open-game-works-core-releases/` and, when it is not there, fetches it from the GitHub release. Fetched files are checked by hash
-- The specs of this repo are of one core version: the core version of the harness, which is the highest `core-v<version>` tag that the harness HEAD contains (`ogw core release` puts the tag on the harness commit whose specs that core was made from). A command on a game fails when the core version of the game is higher than the core version of the harness or lower than harness settings `minCoreVersion`, and the commands that run the agents that write or harden game code (`ogw loop next`, `ogw build start`) fail unless it is the core version of the harness. The failure names the ways out: for a game on a lower core, raise the core of the game with `ogw core upgrade` or use the harness at the tag `core-v<core version of the game>`; for a game on a higher core, use the harness at that tag
-- When harness settings `useLocalCore` is `true`, the harness tool uses `open-game-works-core-impl/` instead of the release of the game's core version, and does not start loop iterations or builds. It is set to `true` only while developing core
+- A game records only its core version. The specs of this repo are of one core version, the core version of the harness: the highest `core-v<version>` tag that the harness HEAD contains. Loop iterations and builds run only on a game whose core version is the core version of the harness. How the harness tool gets the core of a game and which core versions its commands accept are in `## core version` of [ogw](tools/ogw.md)
 
 A game repo is structured as below.
 
@@ -124,11 +122,10 @@ games/<game>/
 
 - Tables are written in CSV, and the data tool generates data proto and code from the CSV headers
 - Content code does not contain game data values. Code does not write ID names or ID values directly. It uses the generated accessors of reserved IDs
-- There is one ID registry, on the dedicated branch `id-registry` of the game repo. It is one regardless of work branches. The harness tool first creates that branch, and after that only the data tool writes to it. That branch is read by the data tool and by `ogw build run`, which writes build info `ad_units`. Issuing is done one at a time under a file lock. The same ID name gets the same ID value
+- There is one ID registry, on the dedicated branch `id-registry` of the game repo, whatever the work branch. After the harness tool creates that branch, only the data tool writes to it (`## ID` of [data](skills/data/SKILL.md))
 - A text column holds source text in the source language of game settings. The tool makes translation keys. When source text changes, its translations are marked stale
 - Translation is given to one translation sub-agent per language, and they run together. A translation sub-agent receives only the missing translations and stale translations of its language. The loop does not wait for translation and runs with source text
-- The names of targets that have an ID name, and terms the game newly coins, have their translations fixed by the per-game glossary in `data/`. When the name of a target that has an ID name is not in the glossary, a tool check catches it
-- A tool checks that the format arguments (`{count}`) of the source text are in the translation exactly the same
+- The names of targets that have an ID name, and terms the game newly coins, have their translations fixed by the per-game glossary in `data/`
 
 ### resource
 
@@ -166,10 +163,10 @@ Completeness is judged by the five elements below, and all of them are checked b
 | element | meaning | check |
 |---|---|---|
 | no blocker | There is no problem that blocks progress. e.g. crash, softlock, error screen | bot playtest |
-| performance | Target FPS holds, frames come without hitches, and loading time ends within the limit | runtime profiling |
+| performance | Each scene keeps the fps, the frames keep (hitch ratio and long frame), and each scene load ends within game settings `loadingTimeLimitMs`, as `## performance` of [ogw](tools/ogw.md) judges them | runtime profiling |
 | no placeholder | There is no placeholder resource, missing translation or stale translation | project check |
-| full flow | From first launch through tutorial, main loop, save and reconnect, play continues without a break. Reconnect is recovery after a server communication failure, and for a realtime game it also includes reconnection after a peer disconnect during a match, a matchmaker disconnect and an app restart. It also includes room match for a realtime game that starts matches through rooms, and the flow of exchanges with other users for a game that uses `friend`, `guild` or `chat` | bot playtest |
-| UI quality | In every supported resolution, safe area and language, UI is not clipped and does not overlap, and the on-screen keyboard does not cover the text input that has focus. Text keeps to a few sizes, is not too small and stands out from what is behind it, and panels and popups are not mostly empty. When gamepad is supported, the buttons of every screen can be pressed with the gamepad. On `android` and `ios`, every button is at least the minimum touch target size. With default settings, nothing on screen flashes more than three times in any one second over more than a quarter of a 341 × 256 CSS pixel area | capture per resolution, language and on-screen keyboard, gamepad focus check, and flash check of a movie maker recording of the bot playtest scenario |
+| full flow | The bot playtest plays from first launch through tutorial, main loop, save and reconnect without a blocker and reaches its goal. Reconnect is recovery after a server communication failure, and for a realtime game it also includes reconnection after a peer disconnect during a match, a matchmaker disconnect and an app restart. It also includes room match for a realtime game that starts matches through rooms, and the flow of exchanges with other users for a game that uses `friend`, `guild` or `chat` | bot playtest |
+| UI quality | These checks of `## UI quality` of [ogw](tools/ogw.md) pass: in every supported resolution, safe area and language, clipping, overlap, on-screen keyboard cover, text size count, minimum font size, contrast by text size, empty panel and, on `android` and `ios`, touch target; when gamepad is supported, the gamepad focus check; with default settings, the flash check | capture per resolution, language and on-screen keyboard, gamepad focus check, and flash check of a movie maker recording of the bot playtest scenario |
 
 ## hardening and build
 
@@ -204,7 +201,7 @@ The branches of a game repo are run as below.
 - `create game` and `update game` make one work branch per command, and when the loop ends they merge the commit that `ogw loop prepare-merge` picked into main
 - For one game, only one command of `create game`, `update game` and `build` is in progress. While a command is in progress, the harness tool blocks the start of a new command
 - A work branch and a build's branch are merged into main only when the main commit that the branch was made from is the current HEAD of main. Otherwise they are not merged and the human gets a report
-- A build commits the hardening result to main and tags that commit. The tag is `dev-<version>`, `stg-<version>` or `prod-<version>`, and the version format is `<major>.<minor>.<patch>`. The tag of a bundle patch build is `<lowercase environment>-<app version>-bundle-<n>`; in DEV and STG, `<n>` is the sequence number of the bundle patch for that environment and app version, starting from 1, and in PROD it is the `<n>` of the `stg-<app version>-bundle-<n>` tag that the PROD build started from
+- A build commits the hardening result to main and tags that commit with its environment and version (`## procedure` and `## bundle patch` of [build](skills/build/SKILL.md))
 - A PROD build is made only from a commit checked on STG
 - No hotfix branch that branches off a PROD tag is made
 - The `id-registry` branch holds only the ID registry and is not merged with any other branch
@@ -240,8 +237,6 @@ The branches of a game repo are run as below.
 | core agent | Makes and edits core |
 | review agent | Reviews the code of core, contract tool, data tool and harness tool against the defining documents and writes findings. Does not edit code |
 
-- The content agent does not make or edit core. What core does not have is written as content code. When core falls short, the content agent writes a core proposal in `records/` to propose it to the human
-
 ## settings
 
 Settings are kept as JSON, and each settings file has a JSON schema.
@@ -252,13 +247,8 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 | core settings | core default |
 | game settings | `schemas/game-settings.schema.json` defines the items. e.g. engine, core version, core module list, app ID, source language, build platforms, signing, base resolution, terms documents, server address and deploy host per environment, adapter, secret names, core settings overrides |
 
-- Before writing, `ogw settings set` checks the schema, the conditions, the owner permission of the calling role and, for a role other than the lead agent, that no changed path is equal to or below a path of game settings `humanDecided` (the values a human decided), and does not write when a check does not pass. `ogw settings set` takes several `<path> <JSON value>` pairs and checks once the result of writing all of them. Values that keep the conditions only when changed together are written at once
-- Settings are filled one value at a time, so a missing required value does not block a write of `ogw settings set`. `ogw settings list --missing` and `ogw game check` catch missing required values
-- The schema `x-owner` of a path follows the value of the deepest node, among the schema nodes that reach that path, that declares `x-owner`. The lead agent can change every path whose `x-owner` is not `tool`, the content agent the game settings paths whose `x-owner` is `content`, and the core agent core settings. A path whose `x-owner` is `tool` is written only by the harness tool
-- The merge of local harness settings over `settings.json` merges object values key by key and replaces arrays and other values whole. The schema and condition checks of `ogw settings set` run on the merged value. Without `settings.local.json`, `settings.json` alone is harness settings
-- A harness settings path is local-scope when a schema node that reaches it declares `x-scope` `local` (e.g. `humanLanguage`, `agents`, `maxConcurrentInstances`, `loop.judgePanel`). A local-scope path holds a value that depends on the person or the host: a preference, the login of an agent CLI, the capacity or the speed of the host. A criterion of a check result or of the success or stop of a loop (a count, a threshold, a budget, the device a check models) is not local-scope, so that one harness commit decides the same on every host; a local value that a check uses for the speed of the host is measured on the host against such a criterion (e.g. `webSmokeCpuThrottleRate` against `webSmokeDeviceBenchmarkIndex`). `settings.local.json` holds only local-scope paths, and reading harness settings fails while it holds another path. `ogw settings set` writes a local-scope path to `settings.local.json` and every other path to `settings.json`, and moves to `settings.json` each path that `settings.local.json` holds and that is not local-scope. A removed value is removed from both files. The committed values of local-scope paths in `settings.json` are generic defaults for every user
-- A harness settings path is a run path when a schema node that reaches it declares `x-run` `true`: a local-scope path whose value a loop run uses. `ogw loop start` records the values of the run paths in the run state, the commands that work on the game of that run read them from there, and a repin records them again (`## loop start` of [ogw](tools/ogw.md)). A change of a run path reaches an open loop run only with a repin
-- The default of a value that exists only in game settings is in the JSON schema of game settings
+- `ogw settings set` writes only the paths that the schema `x-owner` lets the calling role change, and a role other than the lead agent changes no path equal to or below a path of game settings `humanDecided` (the values a human decided). Values that keep the conditions only when changed together are written in one `ogw settings set` call
+- An open loop run reads the run paths of harness settings (e.g. `agents`) from its pin, so a change of a run path reaches that run only with a repin. The checks of `ogw settings set`, the owners of paths, the merge of local harness settings, local-scope paths and run paths are in `## settings` of [ogw](tools/ogw.md)
 - Secrets go in no settings. Settings hold only the names of secrets, and the values are read from the secret store of the host that runs
 
 ## rules
