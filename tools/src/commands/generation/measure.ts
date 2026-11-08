@@ -99,15 +99,19 @@ async function measureExternal(ctx: Context, method: GenerationMethod, allow: Re
   return measureProvider(ctx, method);
 }
 
-/** ogw.md `## generation measure` for one method. `done` holds the results of the methods measured before it in this run and the kept results. */
+/**
+ * ogw.md `## generation measure` for one method. `done` holds the results of the methods measured before it in this run
+ * and the kept results. A failure of any kind (e.g. an `installed.json` that is not JSON) is the `error` of that method,
+ * so the other methods of the run are still measured and written.
+ */
 export async function measureMethod(ctx: Context, method: GenerationMethod, allow: ReadonlySet<string> = new Set(), done: Results = {}): Promise<MethodResult> {
   const base = { kind: method.kind, steps: [] as MeasuredRun[] };
-  if (method.kind === 'catalog') {
-    if (!(await methodMarker(ctx, method))) return { ...base, error: NOT_INSTALLED };
-    return { ...base, steps: [step('ok')], error: null };
-  }
-  if (method.kind === 'external-service') return measureExternal(ctx, method, allow);
   try {
+    if (method.kind === 'catalog') {
+      if (!(await methodMarker(ctx, method))) return { ...base, error: NOT_INSTALLED };
+      return { ...base, steps: [step('ok')], error: null };
+    }
+    if (method.kind === 'external-service') return await measureExternal(ctx, method, allow);
     if (method.kind === 'procedural' && method.name === RIG_METHOD) return { ...base, steps: [await measureRig(ctx, method, await ctx.settings(), done)], error: null };
     if (method.kind === 'procedural' && method.name !== 'blender') return { ...base, steps: [step('ok')], error: null };
     if (method.kind === 'local-model' && !(await methodMarker(ctx, method))) {

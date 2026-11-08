@@ -12,6 +12,7 @@ import { PROVIDER_PROMPT } from '../../../src/commands/generation/measure.ts';
 import { createContext, type Context } from '../../../src/lib/command.ts';
 import { withMethodLock } from '../../../src/commands/generation/lib/install.ts';
 import { installFolder, installFolderOf, writeInstall, type MethodLike } from './install-folder.ts';
+import { closeRun, openPinnedRun, writeLocalSettings } from './pinned-run.ts';
 import type { GenerationMethod, HarnessSettings } from '../../../src/lib/settings.ts';
 import { LIMITS } from '../../../src/lib/limits.ts';
 import { withWriterWithin } from '../../../src/lib/rwlock.ts';
@@ -269,6 +270,34 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
       { size: null, lengthMs: 10, loop: false, seed: null },
       { size: null, lengthMs: 20, loop: true, seed: null },
     ]);
+  });
+
+  it('calls the method with the stage of the measured that the open loop run of the game pinned, and of harness settings once it is closed', async () => {
+    const stages: unknown[] = [];
+    setJob('flux2-klein', {
+      stages: [],
+      prompt: '',
+      image: false,
+      call: (input) => {
+        stages.push(input.stage);
+        return Promise.resolve({ cmd: '/bin/sh', args: ['-c', 'touch "$1/x"', 'sh', input.out] });
+      },
+    });
+    const { ws, env } = workspace([{ ...methods[0], measured: [{ resolution: 512, result: 'ok' }] }, ...methods.slice(1)]);
+    makeGame(ws, 'g', { 'resource/resources.csv': resources });
+    expect((await ogw(ws, ['generation', 'install', 'flux2-klein'], { env })).code).toBe(0);
+    const g = await openPinnedRun(ws, 'g');
+    // this host measures 1024 px after the run pinned its values
+    writeLocalSettings(ws, { measured: { 'flux2-klein': [{ resolution: 512, result: 'ok' }, { resolution: 1024, result: 'ok' }] } });
+    const prompt = join(ws.root, 'prompt.txt');
+    writeFileSync(prompt, 'p');
+    const call = (out: string): Promise<{ code: number }> => ogw(ws, ['generation', 'run', 'flux2-klein', '--game', 'g', '--key', 'image/hero', '--prompt', prompt, '--out', join(ws.root, out)], { env });
+    expect(await call('o1')).toMatchObject({ code: 0 });
+    expect((await ogw(ws, ['generation', 'methods', 'g', 'image/hero'], { env })).stdout).toBe('flux2-klein local-model resolution 512px fallback\n');
+    await closeRun(g);
+    expect(await call('o2')).toMatchObject({ code: 0 });
+    expect((await ogw(ws, ['generation', 'methods', 'g', 'image/hero'], { env })).stdout).toBe('flux2-klein local-model resolution 1024px\n');
+    expect(stages).toEqual([{ resolution: 512 }, { resolution: 1024 }]);
   });
 
   it('makes the items of --batch in one call that loads the model once, reports each item, and runs a method without a batch call item by item', async () => {
@@ -682,6 +711,30 @@ describe('ogw generation measure: procedural, rig-2d and external-service', () =
     expect(await measure('silent')).toMatchObject({ result: 'failed', detail: 'exited with code 4' });
     const text = await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen'], { env: { ...env, FAKE_MODE: 'fail' } });
     expect(text.stdout).toContain(`    stderr:\n${lastLines.split('\n').map((l) => `      ${l}`).join('\n')}\n`);
+  });
+
+  it('writes a marker that cannot be read as the error of its method, of every kind, and measures and writes the other methods', async () => {
+    const fonts = { name: 'font-catalog', kind: 'catalog', resourceTypes: ['font'], safetyTimeoutMs: 1, license: 'X', pins: [] };
+    const audio = { name: 'audio', kind: 'local-model', resourceTypes: ['sfx'], safetyTimeoutMs: 1, license: 'X', pins: [] };
+    const proc = { name: 'proc', kind: 'procedural', resourceTypes: ['shader'], safetyTimeoutMs: 1, license: 'X' };
+    const { ws, env } = workspace([fonts, audio, external('codex-gen', 'codex'), proc]);
+    const notJson = async (method: MethodLike): Promise<string> => {
+      const file = join(await installFolder(ws, method, env), 'installed.json');
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, '{');
+      return file;
+    };
+    const [fontsMarker, audioMarker] = [await notJson(fonts), await notJson(audio)];
+    // a marker whose pins are not the JSON of pins
+    await installed(ws, external('codex-gen', 'codex'), { cli: providerCli(ws), pins: '[' });
+    const run = await ogw(ws, ['generation', 'measure', '--allow', 'codex-gen', '--json'], { env });
+    expect(run).toMatchObject({ code: 0, stderr: '' });
+    const methods = readMeasure(ws).methods;
+    expect(methods['font-catalog']).toEqual({ kind: 'catalog', steps: [], error: expect.stringMatching(new RegExp(`^invalid JSON in ${fontsMarker}: `)) as unknown });
+    expect(methods.audio).toEqual({ kind: 'local-model', steps: [], error: expect.stringMatching(new RegExp(`^invalid JSON in ${audioMarker}: `)) as unknown });
+    expect(methods['codex-gen']).toEqual({ kind: 'external-service', steps: [], error: expect.stringContaining('JSON') as unknown });
+    expect(methods.proc).toEqual({ kind: 'procedural', steps: [{ result: 'ok', maxMemoryBytes: null, output: null, blocked: [] }], error: null });
+    expect(existsSync(join(ws.root, 'cli-args.txt'))).toBe(false);
   });
 
   it('refuses --allow names that are not external-service methods', async () => {

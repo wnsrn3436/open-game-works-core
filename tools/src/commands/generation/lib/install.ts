@@ -33,8 +33,6 @@ export interface MethodMarker {
   cli: string | null;
   /** `SKILL.md` of the git repository of a `provider` external-service. */
   skill: string | null;
-  /** The real path of the `tools.ffmpeg` program whose folder the `cli` puts at the front of PATH. */
-  ffmpeg?: string | null;
 }
 
 /** The real path of `path`: of its deepest existing folder, with the rest of the path after it. */
@@ -386,7 +384,7 @@ export function cliWrapper(ffmpegDir: string, target: string, windows: boolean):
   return `#!/bin/sh\nPATH=${sh(ffmpegDir)}:"$PATH"\nexport PATH\nexec ${sh(target)} "$@"\n`;
 }
 
-async function providerCli(ctx: Context, method: GenerationMethod, dir: string, gitDir: string, venv: string): Promise<{ cli: string; skill: string; ffmpeg: string }> {
+async function providerCli(ctx: Context, method: GenerationMethod, dir: string, gitDir: string, venv: string): Promise<{ cli: string; skill: string }> {
   const ffmpeg = await cliFfmpeg(ctx, method);
   if (ffmpeg === null) throw new InstallFailure('tools.ffmpeg is not installed');
   const script = projectScript(await readFile(join(gitDir, 'pyproject.toml'), 'utf8').catch(whenNotFound('')));
@@ -397,7 +395,7 @@ async function providerCli(ctx: Context, method: GenerationMethod, dir: string, 
   const cli = join(dir, 'bin', process.platform === 'win32' ? `${script}.cmd` : script);
   await writeFileAtomic(cli, cliWrapper(ffmpegDir, target, process.platform === 'win32'));
   await chmod(cli, 0o755);
-  return { cli, skill, ffmpeg };
+  return { cli, skill };
 }
 
 interface Downloaded {

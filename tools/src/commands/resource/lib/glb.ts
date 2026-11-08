@@ -163,7 +163,7 @@ interface UvTriangle {
   p: bigint[];
   /** Exact bounding box: min x, min y, max x, max y. */
   exactBox: [bigint, bigint, bigint, bigint];
-  /** Approximate bounding box for bucketing. */
+  /** Approximate bounding box, which chooses the pairs to check. */
   box: [number, number, number, number];
   label: string;
 }
@@ -239,48 +239,35 @@ function uvTriangles(glb: Glb, where: string): UvTriangle[] {
   return out;
 }
 
-/** The first pair of triangles of `TEXCOORD_0` whose interiors intersect, as a message, and how many pairs do. */
-export function uvOverlap(glb: Glb, where: string): { pairs: number; first: string } | null {
+/**
+ * The first pair of triangles of `TEXCOORD_0` whose interiors intersect, as `<triangle> and <triangle>`, or null when no
+ * pair does. A sweep over u: the triangles in the order of the lowest u of their box, each checked against the earlier
+ * ones whose box still reaches that u, so that the work follows the pairs whose boxes meet, wherever the UVs lie, and
+ * the check stops at the first overlap.
+ */
+export function uvOverlap(glb: Glb, where: string): string | null {
   const tris = uvTriangles(glb, where);
-  if (tris.length < 2) return null;
-  const minX = Math.min(...tris.map((t) => t.box[0]));
-  const minY = Math.min(...tris.map((t) => t.box[1]));
-  const maxX = Math.max(...tris.map((t) => t.box[2]));
-  const maxY = Math.max(...tris.map((t) => t.box[3]));
-  const cells = Math.max(1, Math.ceil(Math.sqrt(tris.length)));
-  const cellW = (maxX - minX) / cells || 1;
-  const cellH = (maxY - minY) / cells || 1;
-  const cell = (v: number, min: number, size: number): number => Math.min(cells - 1, Math.max(0, Math.floor((v - min) / size)));
-  const grid = new Map<number, number[]>();
-  // one cell more on each side: an approximate box that rounding moved over a cell edge still meets its neighbours
-  tris.forEach((t, i) => {
-    for (let x = Math.max(0, cell(t.box[0], minX, cellW) - 1); x <= Math.min(cells - 1, cell(t.box[2], minX, cellW) + 1); x++) {
-      for (let y = Math.max(0, cell(t.box[1], minY, cellH) - 1); y <= Math.min(cells - 1, cell(t.box[3], minY, cellH) + 1); y++) {
-        const key = x * cells + y;
-        grid.set(key, [...(grid.get(key) ?? []), i]);
-      }
+  const order = tris.map((_, i) => i).sort((a, b) => (tris[a] as UvTriangle).box[0] - (tris[b] as UvTriangle).box[0] || a - b);
+  let active: number[] = [];
+  for (const i of order) {
+    const t = tris[i] as UvTriangle;
+    // the approximate boxes only choose the pairs to check, with a margin for rounding; the exact boxes and points decide
+    active = active.filter((j) => (tris[j] as UvTriangle).box[2] + margin((tris[j] as UvTriangle).box[2]) >= t.box[0]);
+    for (const j of active) {
+      const o = tris[j] as UvTriangle;
+      if (o.box[3] + margin(o.box[3]) < t.box[1] || t.box[3] + margin(t.box[3]) < o.box[1]) continue;
+      const [ba, bb] = [o.exactBox, t.exactBox];
+      if (ba[2] <= bb[0] || bb[2] <= ba[0] || ba[3] <= bb[1] || bb[3] <= ba[1]) continue;
+      if (interiorsIntersect(o.p, t.p)) return j < i ? `${o.label} and ${t.label}` : `${t.label} and ${o.label}`;
     }
-  });
-  const seen = new Set<number>();
-  let pairs = 0;
-  let first = '';
-  for (const members of grid.values()) {
-    for (let a = 0; a < members.length; a++) {
-      for (let b = a + 1; b < members.length; b++) {
-        const [i, j] = [members[a] as number, members[b] as number];
-        const id = Math.min(i, j) * tris.length + Math.max(i, j);
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const [ta, tb] = [tris[i] as UvTriangle, tris[j] as UvTriangle];
-        const [ba, bb] = [ta.exactBox, tb.exactBox];
-        if (ba[2] <= bb[0] || bb[2] <= ba[0] || ba[3] <= bb[1] || bb[3] <= ba[1]) continue;
-        if (!interiorsIntersect(ta.p, tb.p)) continue;
-        pairs++;
-        if (first === '') first = `${ta.label} and ${tb.label}`;
-      }
-    }
+    active.push(i);
   }
-  return pairs === 0 ? null : { pairs, first };
+  return null;
+}
+
+/** A bound on the rounding of an approximate UV coordinate near `v`. */
+function margin(v: number): number {
+  return 1e-9 * (1 + Math.abs(v));
 }
 
 /** The finalize check of a `model` GLB: the problems of its node transforms and its UV overlap. */
@@ -288,7 +275,7 @@ export function modelProblems(data: Buffer, where: string): string[] {
   const glb = readGlb(data, where);
   const out = transformProblems(glb).map((p) => `${where}: ${p}`);
   const overlap = uvOverlap(glb, where);
-  if (overlap) out.push(`${where}: ${String(overlap.pairs)} pairs of TEXCOORD_0 triangles overlap, first ${overlap.first}; unwrap the UVs so that no two faces share UV space`);
+  if (overlap) out.push(`${where}: TEXCOORD_0 triangles overlap: ${overlap}; unwrap the UVs so that no two faces share UV space`);
   return out;
 }
 

@@ -751,7 +751,7 @@ describe('ogw resource finalize', () => {
     const run = await finalize(f, ['model/crate', '--method', 'blender', '--file', moved]);
     expect(run.code).toBe(1);
     expect(run.stderr).toContain(`${moved}: node 0 of mesh 0 has translation [0, 0.5, 0]; apply it to the mesh so that the node transform is the identity`);
-    expect(run.stderr).toContain(`${moved}: 1 pairs of TEXCOORD_0 triangles overlap`);
+    expect(run.stderr).toContain(`${moved}: TEXCOORD_0 triangles overlap: triangle 0 of mesh 0 primitive 0 and triangle 1 of mesh 0 primitive 0; unwrap the UVs`);
     expect(snapshot(f)).toBe(before);
     const clean = work(f, 'clean.glb');
     writeFileSync(clean, glbOf([{ uv: floatUv([0, 0, 0.5, 0, 0, 0.5, 0.5, 0.5]), indices: [0, 1, 2, 1, 3, 2] }]));

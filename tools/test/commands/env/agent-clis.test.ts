@@ -225,6 +225,56 @@ describe('env check: version', () => {
     expect(outside[0]?.reason).toBe(`${join(bin, 'claude')} is not under a Homebrew cask, a Homebrew formula, an npm package or the Claude Code installer`);
   });
 
+  it('reads the installed version from what --version prints whatever its exit code, and names the exit code when it prints none', async () => {
+    const { ws, env } = setup();
+    const cask = join(ws.root, 'opt', 'homebrew', 'Caskroom', 'claude-code@latest', '2.1.296');
+    fakeBin(cask, { claude: 'echo "2.1.296 (Claude Code)"; exit 1' });
+    const links = join(ws.root, 'links');
+    mkdirSync(links);
+    symlinkSync(join(cask, 'claude'), join(links, 'claude'));
+    setNet(fakeNet({ 'https://formulae.brew.sh/api/cask/claude-code@latest.json': { token: 'claude-code@latest', version: '2.1.319' } }));
+    const linked = { ...env, PATH: `${links}:/usr/bin:/bin` };
+    expect(await cliVersionChecks(linked)).toEqual([
+      { cli: 'claude-code', installed: '2.1.296', source: 'Homebrew cask claude-code@latest', latest: '2.1.319', behind: true, update: 'brew upgrade --cask claude-code@latest', reason: null },
+    ]);
+    fakeBin(cask, { claude: 'echo "Claude Code" >&2; exit 3' });
+    expect(await cliVersionChecks(linked)).toEqual([
+      { cli: 'claude-code', installed: null, source: 'Homebrew cask claude-code@latest', latest: null, behind: null, update: 'brew upgrade --cask claude-code@latest', reason: 'claude --version printed no version and ended with code 3' },
+    ]);
+  });
+
+  it('reads the latest version of a Homebrew formula from versions.stable and of the Claude Code installer from its text, and writes the version of each CLI in the text of ogw env check', async () => {
+    const { ws, env, bin } = setup();
+    // claude from the Claude Code installer of the home folder, codex from a Homebrew formula; any other call goes to the fakes of setup
+    const home = join(ws.root, 'home');
+    const installer = join(home, '.local', 'share', 'claude', 'versions');
+    const cellar = join(ws.root, 'opt', 'homebrew', 'Cellar', 'codex', '0.164.0', 'bin');
+    fakeBin(installer, { '2.1.296': `if [ "$1" = --version ]; then echo "2.1.296 (Claude Code)"; exit 0; fi\nexec "${join(bin, 'claude')}" "$@"` });
+    fakeBin(cellar, { codex: `if [ "$1" = --version ]; then echo "codex-cli 0.164.0"; exit 0; fi\nexec "${join(bin, 'codex')}" "$@"` });
+    const links = join(ws.root, 'links');
+    mkdirSync(links);
+    symlinkSync(join(installer, '2.1.296'), join(links, 'claude'));
+    symlinkSync(join(cellar, 'codex'), join(links, 'codex'));
+    const net = fakeNet({
+      'https://downloads.claude.ai/claude-code-releases/latest': '2.1.319\n',
+      // `head` is the version of the HEAD build, not a release
+      'https://formulae.brew.sh/api/formula/codex.json': { name: 'codex', versions: { stable: '0.164.0', head: '0.170.0', bottle: true } },
+    });
+    setNet(net);
+    const linked = { ...env, HOME: home, PATH: `${links}:${bin}:/usr/bin:/bin` };
+    const text = (await ogw(ws, ['env', 'check'], { env: linked })).stdout;
+    expect(text).toContain('\nversion of claude-code: 2.1.296, latest 2.1.319 (Claude Code installer): behind, update with claude update\n');
+    expect(text).toContain('\nversion of codex: 0.164.0, latest 0.164.0 (Homebrew formula codex): latest\n');
+    expect(net.calls).toEqual(expect.arrayContaining(['GET https://downloads.claude.ai/claude-code-releases/latest', 'GET https://formulae.brew.sh/api/formula/codex.json']));
+    // behind is unknown with its reason when the source gives no latest version
+    setNet(fakeNet({ 'https://formulae.brew.sh/api/formula/codex.json': { name: 'codex', versions: { stable: null } } }));
+    const unknown = (await ogw(ws, ['env', 'check'], { env: linked })).stdout;
+    expect(unknown).toContain(
+      '\nversion of claude-code: 2.1.296, latest unknown (Claude Code installer): unknown (cannot read the latest version of Claude Code installer: GET https://downloads.claude.ai/claude-code-releases/latest answered 404)\n',
+    );
+    expect(unknown).toContain('\nversion of codex: 0.164.0, latest unknown (Homebrew formula codex): unknown (Homebrew formula codex gives no latest version)\n');
+  });
+
   it('gives the notice agent-cli-version for an agent CLI behind its latest version', async () => {
     const { ws, env } = setup();
     const version = (cli: 'claude-code' | 'codex', installed: string, latest: string | null, behind: boolean | null): CliVersionCheck => ({

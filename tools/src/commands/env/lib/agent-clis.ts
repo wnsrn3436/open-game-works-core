@@ -199,13 +199,17 @@ export function installSource(real: string, home: string): InstallSource | null 
 async function cliVersion(env: NodeJS.ProcessEnv, cli: AgentCli, program: string, path: string): Promise<CliVersionCheck> {
   const none = { cli, installed: null, source: null, latest: null, behind: null, update: null };
   const printed = await run(program, ['--version'], { env, timeoutMs: LIMITS.shortMs }).catch((error: unknown) => (error as Error).message);
-  const installed = typeof printed === 'string' || printed.code !== 0 ? null : versionIn(`${printed.stdout}\n${printed.stderr}`);
+  // the first version the program prints, whatever its exit code (ogw.md `## env check`)
+  const installed = typeof printed === 'string' ? null : versionIn(`${printed.stdout}\n${printed.stderr}`);
   const real = await realpath(path);
   const from = installSource(real, env.HOME ?? homedir());
   if (from === null) return { ...none, installed, reason: `${real} is not under a Homebrew cask, a Homebrew formula, an npm package or the Claude Code installer` };
   const known = { ...none, installed, source: from.source, update: from.update };
   if (typeof printed === 'string') return { ...known, reason: `cannot run ${program} --version: ${printed}` };
-  if (installed === null) return { ...known, reason: `${program} --version printed no version` };
+  if (installed === null) {
+    const ended = printed.timedOut ? 'passed its time limit' : `ended with code ${String(printed.code ?? printed.signal)}`;
+    return { ...known, reason: `${program} --version printed no version and ${ended}` };
+  }
   const latest = await from.latest().catch((error: unknown) => (error as Error).message);
   if (latest === null) return { ...known, reason: `${from.source} gives no latest version` };
   if (!/^\d+\.\d+\.\d+$/.test(latest)) return { ...known, reason: `cannot read the latest version of ${from.source}: ${latest}` };

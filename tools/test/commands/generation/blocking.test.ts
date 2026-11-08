@@ -100,7 +100,7 @@ describe('blockingMethods', () => {
     // the install of a checkout whose cli puts its own ffmpeg on PATH, while this one has none installed: another key
     const other = join(dirname(await installFolder(ws, SPRITE)), 'f'.repeat(16));
     mkdirSync(other, { recursive: true });
-    writeFileSync(join(other, 'installed.json'), JSON.stringify({ name: 'sprite', pins: JSON.stringify(PINS), git: [], hf: [], files: null, python: null, cli: '/other/bin/sprite-gen', skill: '/other/SKILL.md', ffmpeg: '/other/ffmpeg' }));
+    writeFileSync(join(other, 'installed.json'), JSON.stringify({ name: 'sprite', pins: JSON.stringify(PINS), git: [], hf: [], files: null, python: null, cli: join(other, 'bin', 'sprite-gen'), skill: join(other, 'SKILL.md') }));
     await install(ws, 'flux2-klein');
     expect(await blockingMethods(ctx, game, 'image/hero')).toEqual(['sprite']);
   });

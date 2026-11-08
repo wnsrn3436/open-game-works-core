@@ -3,8 +3,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { chooseStage } from '../../../src/commands/generation/lib/select.ts';
 import { typeRow } from '../../../src/commands/generation/check.ts';
+import { HARNESS_PINS_KEY } from '../../../src/commands/loop/lib/harness-pin.ts';
 import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
+import { setRun } from '../loop/helpers.ts';
 import { installFolder, writeInstall, type MethodLike } from './install-folder.ts';
+import { closeRun, openPinnedRun, writeLocalSettings } from './pinned-run.ts';
 
 const RESOURCES = [
   'key,description,spec,status,method,source,license,attribution,sha256,text_key,speaker,text_hash',
@@ -89,7 +92,7 @@ describe('ogw generation methods', () => {
     const skill = join(dir, 'git', '0', 'SKILL.md');
     const cli = join(dir, 'bin', 'sprite-gen');
     // the install key of a workspace without tools.ffmpeg installed
-    const marker = { name: 'sprite', pins: JSON.stringify(sprite.pins), git: [], hf: [], files: null, python: null, cli, skill, ffmpeg: null };
+    const marker = { name: 'sprite', pins: JSON.stringify(sprite.pins), git: [], hf: [], files: null, python: null, cli, skill };
     writeFileSync(join(dir, 'installed.json'), JSON.stringify(marker));
     const run = await ogw(ws, ['generation', 'methods', 'g', 'sprite_animation/fx', '--json']);
     expect((JSON.parse(run.stdout) as { methods: unknown }).methods).toEqual([{ name: 'sprite', kind: 'external-service', stage: null, skill, cli }, { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: false }, temporary: true }]);
@@ -186,6 +189,34 @@ describe('ogw generation methods', () => {
     // flux2-klein lists only image: none for icon, and for sprite_animation the type condition is excepted
     expect(await given('sub', `${RESOURCES}${row('icon/x', 'placeholder', '')}\n`, 'icon/x')).toEqual(['sub']);
     expect(await given('sub', RESOURCES, 'sprite_animation/fx')).toEqual(['sprite', 'sub', 'grok', 'flux2-klein temporary']);
+  });
+
+  it('reads measured and imageMethod from the pin of the open loop run of the game, and from harness settings once it is closed', async () => {
+    const own = [
+      { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ resolution: 512, jobMs: 10, result: 'ok' }] },
+      { name: 'local', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X' },
+    ];
+    const ws = makeWorkspace({ resourceGeneration: own, imageMethod: 'flux2-klein' });
+    await installLocal(ws, own);
+    makeGame(ws, 'g', { 'resource/resources.csv': RESOURCES });
+    const g = await openPinnedRun(ws, 'g');
+    // this host measures again and chooses another image method after the run pinned its values
+    const flux = [{ resolution: 512, jobMs: 10, result: 'ok' }, { resolution: 1024, jobMs: 20, result: 'ok' }];
+    writeLocalSettings(ws, { imageMethod: 'local', measured: { 'flux2-klein': flux, local: [{ resolution: 1024, jobMs: 5, result: 'ok' }] } });
+    const methodsNow = async (): Promise<unknown> => (JSON.parse((await ogw(ws, ['generation', 'methods', 'g', 'image/hero', '--json'])).stdout) as { methods: unknown }).methods;
+    expect(await methodsNow()).toEqual([{ name: 'flux2-klein', kind: 'local-model', stage: { resolution: 512, jobMs: 10, fallback: true } }]);
+    expect((await ogw(ws, ['generation', 'methods', 'g', 'image/hero'])).stdout).toBe('flux2-klein local-model resolution 512px fallback\n');
+    // a run path that the pin does not hold has no value: no method is measured
+    await setRun(g, (run) => {
+      const pins = run.data[HARNESS_PINS_KEY] as { runSettings: Record<string, unknown> }[];
+      delete (pins[0] as { runSettings: Record<string, unknown> }).runSettings.measured;
+    });
+    expect(await ogw(ws, ['generation', 'methods', 'g', 'image/hero'])).toMatchObject({ code: 0, stdout: 'none\n' });
+    await closeRun(g);
+    expect(await methodsNow()).toEqual([
+      { name: 'local', kind: 'local-model', stage: { resolution: 1024, jobMs: 5, fallback: false } },
+      { name: 'flux2-klein', kind: 'local-model', stage: { resolution: 1024, jobMs: 20, fallback: false }, temporary: true },
+    ]);
   });
 
   it('fails for a key not in resources.csv or a spec that breaks the rules', async () => {
@@ -293,6 +324,43 @@ describe('ogw generation check', () => {
     expect(run).toMatchObject({ code: 0 });
     // an unmeasured flux2-klein is not usable, so ogw generation methods gives it no image key
     expect(run.stdout).toContain('| image | missing | - | - | - | - |\n');
+  });
+
+  it('reads measured and imageMethod from the pin of the open loop run of the game, and from harness settings once it is closed', async () => {
+    const own = [
+      { name: 'flux2-klein', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X', measured: [{ resolution: 512, jobMs: 10, result: 'ok' }] },
+      { name: 'local', kind: 'local-model', resourceTypes: ['image'], safetyTimeoutMs: 1, license: 'X' },
+      { name: 'audio', kind: 'local-model', resourceTypes: ['sfx'], safetyTimeoutMs: 1, license: 'X' },
+    ];
+    const ws = makeWorkspace({ resourceGeneration: own, imageMethod: 'flux2-klein' });
+    await installLocal(ws, own);
+    const root = makeGame(ws, 'g');
+    const g = await openPinnedRun(ws, 'g');
+    // this host measures again and chooses another image method after the run pinned its values
+    writeLocalSettings(ws, {
+      imageMethod: 'local',
+      measured: {
+        'flux2-klein': [{ resolution: 512, jobMs: 10, result: 'ok' }, { resolution: 1024, jobMs: 20, result: 'ok' }],
+        local: [{ resolution: 1024, jobMs: 5, result: 'ok' }],
+        audio: [{ durationMs: 1000, jobMs: 7, result: 'ok' }],
+      },
+    });
+    const args = ['generation', 'check', 'g', '--types', 'image,sfx', '--counts', 'image=2,sfx=3'];
+    const header = ['| type | status | methods | to use | count | time ms |', '|---|---|---|---|---|---|'];
+    const pinned = [...header, '| image | ok | flux2-klein 512px 10ms | flux2-klein (none) | 2 | 20 |', '| sfx | unmeasured | - | - | - | - |', '', 'total time ms: 20', ''].join('\n');
+    expect(await ogw(ws, args)).toMatchObject({ code: 0, stdout: pinned });
+    expect(readFileSync(join(root, 'records', 'setup', 'host-check.md'), 'utf8')).toBe(pinned);
+    await closeRun(g);
+    const local = [
+      ...header,
+      '| image | ok | flux2-klein 1024px 20ms, local 1024px 5ms | local (none), flux2-klein temporary (none) | 2 | 10 |',
+      '| sfx | ok | audio 1000ms 7ms | audio (none) | 3 | 21 |',
+      '',
+      'total time ms: 31',
+      '',
+    ].join('\n');
+    expect(await ogw(ws, args)).toMatchObject({ code: 0, stdout: local });
+    expect(readFileSync(join(root, 'records', 'setup', 'host-check.md'), 'utf8')).toBe(local);
   });
 
   it('writes a dash total when no ok type has a count', async () => {
