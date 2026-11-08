@@ -1,0 +1,12 @@
+{
+  "target": "simulate",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/check/lib/row-simulation.ts:229",
+      "problem": "efficiency. `simulateRows`, which `ogw simulate` calls (tools/src/commands/simulate/simulate.ts:70), runs every row one after another on the one headless instance that `ogw simulate` starts (`for (const unit of plan.units) rows.push(await simulateRow(...))`), although no row needs the result of another row. `## purpose` of AGENTS.md lets work items wait only for a performance measurement or a lock at a shared mutable resource, and lets them run together up to their setting (harness settings `maxConcurrentInstances`). Wall time of `ogw simulate <game> --table <table>` is rows × seeds (game settings `rowSimulationSeeds`, default 20) × the time of one `<feature>.simulate_<table>` call, with free instance slots unused; `rowSimulationCheck` of `ogw check` (row-simulation.ts:251) already spreads the same units over helper instances with `shareUnits`. This behavior existed before the range (the earlier `simulateTable` loop) and the range only reshaped it",
+      "foundBy": "simulate round 1"
+    }
+  ]
+}
