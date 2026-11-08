@@ -99,7 +99,7 @@ As the only path that changes user items, this module owns the transactions and 
 change order. `add_items`, `subtract_items` and `exchange_items` are handled in the order below and end with the failure value of the step that fails. On failure, no balance and no history changes.
 
 1. Input check: `INVALID_AMOUNT`, `UNKNOWN_ITEM`, `UNSUPPORTED_ITEM`. `exchange_items` checks the list to subtract and the list to add separately
-2. `ALREADY_APPLIED` when there is a `once_key` and it is in the same user's `once_key` table: a row whose `once_key` column is the SHA-256 form of it, or, for a row written by core 0.10.0 or earlier, the `once_key` itself
+2. `ALREADY_APPLIED` when there is a `once_key` and it is in the same user's `once_key` table: a row whose `once_key` column is the SHA-256 form of it
 3. Calculation of the balance after the change, per item. The balance before the change of a recovery item is the balance after recovery application. `exchange_items` calculates after combining the amount to subtract and the amount to add of the same item ID value
    - Balance less than 0: `NOT_ENOUGH`
    - Balance more than `max_amount`: `LIMIT_EXCEEDED` when `overflow` is `Reject`; when `Discard`, sets the balance to `max_amount` and records the amount that did not fit as `overflow`. When `Convert`, makes the replacement grant below
@@ -186,7 +186,7 @@ storage and client delivery
 
 - `validate_item_change` judges per-game holding conditions. e.g. a specific item can be held from account level 10
 - The item-ledger operations that can be called inside `validate_item_change` and `after_item_change` are the read operations `get_balance`, `get_recovery`, `get_ends_at`, `check_items`, `preview_add_items`. Read operations answer with the balance saved at that point. In `validate_item_change` it is the balance before the change, in `after_item_change` the balance after the change
-- Calling `add_items`, `subtract_items`, `exchange_items`, `revoke_items` or `set_balance` inside either hook changes nothing and throws, without a log. When the hook catches that throw, the hook and the operation that called it go on. When the hook lets it out, it is a hook failure (core `## hook`): item-ledger leaves one `error` log and ends the operation that called the hook as a failure: the operation throws, and the transaction of ctx rolls back also when a caller catches that throw, so a request answers `INTERNAL` and an out-of-request change is `FAILED`, and nothing of that transaction is saved (core `## hook`: the server returns an internal error response)
+- Calling `add_items`, `subtract_items`, `exchange_items`, `revoke_items` or `set_balance` inside either hook changes nothing and throws, without a log. When the hook catches that throw, the hook and the operation that called it go on. When the hook lets it out, it is a hook failure (core `## hook`): item-ledger leaves one `error` log and ends the operation that called the hook as a failure: it calls `storage.fail_transaction`(ctx) and throws, so the transaction of ctx rolls back also when a caller catches that throw, a request answers `INTERNAL`, an out-of-request change is `FAILED`, and nothing of that transaction is saved (core `## hook`: the server returns an internal error response)
 
 ## event
 

@@ -49,6 +49,7 @@ Handles DB transactions, savepoints, per-user serialization, and the ctx and ctx
 | `run_read_only` | ctx or game tx, function | result of the function | none | `validation`, `admin-api`, `public-profile` |
 | `lock_game_row` | ctx or game tx, table name, key value | none | `FAILED`. A call from a content handler or hook throws | core module, content handler, hook |
 | `after_commit` | ctx or game tx, function | none | an invalid ctx or game tx throws | core module |
+| `fail_transaction` | ctx or game tx | none | an invalid ctx or game tx throws | core module |
 | `on_commit` | ctx or game tx, synchronous function | none | an invalid ctx or game tx throws | core module |
 | `send_user_change` | ctx, target user ID, change name, payload bytes | none | misuse throws | content handler, hook, core module |
 | `register_user_change` | change name, apply function, fail function | none | none. A registration error is a server start failure | `register` of content `server/main.ts`, core module |
@@ -145,6 +146,7 @@ ctx is the handling scope of one user transaction. One request or one out-of-req
   - When the target user has no `user` row or is a withdrawn user, does not call the change function, and the result is `WITHDRAWN`
   - The request time of an out-of-request ctx is the time the transaction opened, and the random seed is made new
   - Changed UserState accumulates as a pending delta
+- `fail_transaction` marks the transaction of the ctx or game tx failed, as a failed statement does (the statement failure rule of `### transaction`): every later `query` and storage operation on it throws, and the transaction rolls back and is `FAILED` when its function ends, also when the function returns normally after catching a throw. A core module calls it when a failure of its own must not be committed whatever the caller catches (e.g. a hook failure of `item-ledger`)
 - `run_request_transaction` opens the user transaction of one request, makes ctx from the input user ID and request fields, and calls the function. When the target user has no `user` row or has `withdrawn_at`, does not call the function, and the result is `WITHDRAWN`. When the function returns `GameError` or `CoreError`, rolls back and returns that value. For any other result, commits and returns that result. So when the result to commit is a number, the function returns the number wrapped in an object. When the function throws, rolls back and throws
 - per-user serialization: transactions of the same user run one at a time. A later transaction waits for the commit or rollback of the earlier transaction. When it waits more than `storage.userLockWaitMs`, `FAILED`, and the request is `INTERNAL`
 - A read inside a transaction sees the values that transaction wrote
@@ -402,6 +404,7 @@ none
 
 ## test
 
+- In the function of `run_request_transaction`, after `put_state` and then `fail_transaction`(ctx), a later `get_state` throws, and when the function catches that throw and returns normally, the result is `FAILED` and the `put_state` is not saved
 - On PostgreSQL, when 50 or more requests that several users send concurrently to the test server and its two peers lock the same `game_state` row with `lock_game_row`, read it and add 1, each request ends with a response or with the `GameError` that the handler returned, the value of the row is the number of accepted requests, and the values that the accepted requests locked and read are each value from 0 to the accepted count − 1 once. Writes of requests that ended with `GameError` do not remain
 - On PostgreSQL, when 50 or more requests that several users send concurrently to the test server and a peer process lock the same `game_state` row with `lock_game_row`, read it and add 1, each request ends with a response or with the `GameError` that the handler returned, and the value of the row is the number of accepted requests
 - On PostgreSQL, a transaction that waited for a free connection is `FAILED` when that wait and the lock wait together exceed `storage.userLockWaitMs`. The same for the statements of `sweep_expired`, and that table is in the failed table list
