@@ -114,7 +114,7 @@ Each frame, it sets the camera position in the order below.
 - The trauma holds a value of at least 0 and at most 1. `shake` adds the received amount to trauma, clamps it to 1, then publishes `CameraShakeStartedEvent`
 - Each frame, before step 3 of `### position calculation order`, it reduces trauma by `CameraCore.shakeDecayPerSecond` × elapsed seconds, stopping at 0, then sets the shake offset and shake rotation from the reduced trauma
 - The shake intensity is trauma². Each offset axis is `CameraCore.shakeMaxOffset` × intensity × noise, and the 2D rotation is `CameraCore.shakeMaxRotationDeg` × intensity × noise. A 3D camera adds no rotation
-- The noise holds a value of at least -1 and at most 1 made with the random of `UtilCore`; per axis it draws the next value at the frequency of `CameraCore.shakeFrequencyHz` and interpolates linearly between values
+- The noise holds a value of at least -1 and at most 1 made with the random of `UtilCore` seeded at `init` with `TimeCore.make_random_seed`(`camera_shake`); per axis it draws the next value at the frequency of `CameraCore.shakeFrequencyHz` and interpolates linearly between values
 - Shake progresses in real elapsed time. It decreases even during a game time pause
 - `stop_shake` sets trauma to 0 and removes the offset and rotation at once
 - shake scale: 1000 at `init`, changed only by `set_shake_scale`. The applied offset and rotation are the values above × shake scale ÷ 1000. At 0 there is no shake offset or rotation, and trauma and `CameraShakeStartedEvent` stay as they are. Attaching and detaching a camera leaves the shake scale as it is, and `release` returns it to 1000

@@ -46,7 +46,7 @@ Stores a user's rating per rating rule defined in data, updates it with an Elo c
 |---|---|
 | `OK` | Applied |
 | `NO_RATING` | The `rating_rule` of the `match_mode` row that is the `mode_id` of the match record is `null` |
-| `INVALID_INPUT` | The participant index is outside the number of participants, or the ctx user is not the user of that index, or `status` is `CONFIRMED` and the number of match ranks differs from the number of participants, or `status` is `FORFEIT` and the match rank list is not empty, or `status` is `PENDING`, or there is a negative match rank |
+| `INVALID_INPUT` | The participant index is outside the number of participants, or the ctx user is not the user of that index, or `status` is `CONFIRMED` and the number of match ranks differs from the number of participants, or `status` is `FORFEIT` and the match rank list is not empty, or `status` is not `CONFIRMED`, `FORFEIT` or `MISMATCH`, or there is a negative match rank |
 | `VOID` | `status` of the match record is `MISMATCH`: the match is void, and the rating does not change |
 
 ## behavior
@@ -190,7 +190,7 @@ reserved ID, reserved string, reserved sound: none
 - For a row whose `season_games` before settle is less than `reward_min_games`, `RefreshRating` writes settle and does not send the season reward mail. When it equals `reward_min_games`, it sends it. The next season's settle of a row made with `set_rating` without matches (`season_games` 0) does not send the reward
 - A rule whose `season_board` is `null` has no settle
 - `INVALID_INPUT` and `NO_RATING` do not change the row
-- `apply_match_outcome` with a match record whose `status` is `MISMATCH` returns `VOID` for every participant, does not change the row and leaves no log
+- `apply_match_outcome` with a match record whose `status` is `MISMATCH` returns `VOID` for every participant, does not change the row and leaves no log, whatever the length of the match rank list; a negative match rank is `INVALID_INPUT` also then
 - In a 1v1 `FORFEIT` match of two participants with the same rating, `apply_match_outcome` with the empty match rank list gives the participant that is not a forfeiter Δ = `validation.floor_div`(2 × K × 500 + 1000, 2000) and the forfeiter Δ = `floor_div`(−2 × K × 500 + 1000, 2000). A non-empty match rank list in a `FORFEIT` match and an empty one in a `CONFIRMED` match are `INVALID_INPUT`
 - In a 3-participant `FORFEIT` match with `team_size` 0 and one forfeiter, m is 2 for the forfeiter and 1 for each other participant, whose only opponent is the forfeiter
 - A `rating_tier` row whose `season_reward` has more elements than `mailbox.maxAttachments` fails server start
