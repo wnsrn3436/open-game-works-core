@@ -120,7 +120,9 @@ describe('build report: late checks', () => {
     write(dir, 'builds/dev-0.2.0/late-checks.json', { commit: 'other', checks: [] });
     const failed = await ogw(ws, ['build', 'report', 'g', '--late']);
     expect(failed.stdout).toContain('check repeat test: unknown\n  repeat test did not run: the late checks job late1 ended (failed, exit code 1) without its result\n');
-    expect(end()).toContain('- repeat test: unknown\n- soak test: unknown\n');
+    // the committed report carries the reason of each unknown under its line
+    const reason = (name: string): string => `  - ${name} did not run: the late checks job late1 ended (failed, exit code 1) without its result`;
+    expect(end()).toContain(['- repeat test: unknown', reason('repeat test'), '- soak test: unknown', reason('soak test'), ''].join('\n'));
     expect((await ogw(ws, ['build', 'report', 'g', '--late', '--result', 'done'])).code).toBe(1);
   });
 

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { IMPORT_CACHE, importKey } from '../../../src/commands/instance/lib/import-cache.ts';
-import { readRecord } from '../../../src/commands/instance/lib/records.ts';
+import { IMPORT_CACHE, importKey, importThroughCache } from '../../../src/commands/instance/lib/import-cache.ts';
+import { listRecords, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { ogw, sh } from '../../helpers/workspace.ts';
 import { mockState } from './mocks/state.ts';
 import { setupRunner, startFor, stopAll, type Runner } from './runner.ts';
@@ -18,9 +19,29 @@ vi.mock('../../../src/commands/instance/lib/launch.ts', async (importOriginal) =
   return { ...real, ...(await import('./mocks/apis.ts')).launchOverrides(real) };
 });
 
+/** Holds the removal of the import cache entry `entry` (a key) until `hold` resolves; reset after each test. */
+const removal = vi.hoisted(() => ({ entry: null as string | null, hold: null as Promise<void> | null, held: false }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...real,
+    rm: async (...args: Parameters<typeof real.rm>) => {
+      if (removal.entry !== null && removal.hold !== null && String(args[0]).endsWith(`${IMPORT_CACHE}/${removal.entry}`)) {
+        removal.held = true;
+        await removal.hold;
+      }
+      return real.rm(...args);
+    },
+  };
+});
+
 let runner: Runner | null = null;
 
 afterEach(async () => {
+  removal.entry = null;
+  removal.hold = null;
+  removal.held = false;
   if (runner) await stopAll(runner);
   runner = null;
 });
@@ -154,5 +175,121 @@ describe('ogw instance start: import cache', () => {
     expect(imports(runner)).toBe(7);
     expect(entries(runner).sort()).toEqual(before);
     await ogw(runner.ws, ['instance', 'stop', own]);
+  });
+});
+
+/** Waits until `done` holds or `ms` passed: the timeout is what a version that never gets there meets. */
+async function until(done: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; !(await done()) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 20));
+  return done();
+}
+
+describe('ogw instance start: import cache eviction', () => {
+  it('removes the entries beyond those kept beside the boot, without the lock of the key: another start of the key copies the new entry meanwhile', async () => {
+    runner = gameRunner({ maxConcurrentInstances: 2 });
+    const commits: string[] = [];
+    for (const n of [1, 2, 3]) {
+      writeFileSync(join(runner.root, 'client', 'main.gd'), `extends Node # ${String(n)}\n`);
+      sh(runner.root, 'git', ['commit', '-q', '-am', String(n)]);
+      commits.push(sh(runner.root, 'git', ['rev-parse', 'HEAD']).trim());
+    }
+    const [first, second, third] = commits as [string, string, string];
+    await ogw(runner.ws, ['instance', 'stop', await startFor(runner, ['--commit', first])]);
+    const oldest = entries(runner)[0] as string;
+    await ogw(runner.ws, ['instance', 'stop', await startFor(runner, ['--commit', second])]);
+    // the start that imports the third commit removes the entry of the first one: that removal waits here
+    let letGo = (): void => undefined;
+    removal.hold = new Promise((resolve) => {
+      letGo = resolve;
+    });
+    removal.entry = oldest;
+    const importing = startFor(runner, ['--commit', third]);
+    try {
+      expect(await until(() => removal.held, 20_000)).toBe(true);
+      // the importing start boots while the removal waits
+      expect(await until(async () => (await listRecords((runner as Runner).ws.env)).some((r) => r.status === 'running'), 20_000)).toBe(true);
+      // another start of the same files takes the lock of the key and copies the new entry
+      const timeout = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          resolve(null);
+        }, 20_000);
+      });
+      const copying = await Promise.race([startFor(runner, ['--commit', third]), timeout]);
+      expect(copying).not.toBeNull();
+      expect(imports(runner)).toBe(3);
+    } finally {
+      letGo();
+    }
+    await importing;
+    expect(entries(runner)).not.toContain(oldest);
+    expect(entries(runner)).toHaveLength(2);
+  });
+});
+
+describe('import cache', () => {
+  /** A checkout with these files under its root. */
+  function checkout(files: Record<string, string>): string {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-import-'));
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    return root;
+  }
+
+  /** A fake import of `root`: `client/.godot/`, a `.uid` file beside `client/main.gd`, and `removes` removed. */
+  function importer(root: string, removes: string[] = []): () => Promise<boolean> {
+    return () => {
+      mkdirSync(join(root, 'client', '.godot'), { recursive: true });
+      writeFileSync(join(root, 'client', '.godot', 'uid_cache.bin'), 'cache');
+      writeFileSync(join(root, 'client', 'main.gd.uid'), 'uid://a\n');
+      for (const path of removes) rmSync(join(root, path));
+      return Promise.resolve(true);
+    };
+  }
+
+  function cacheEntries(commonDir: string): string[] {
+    return readdirSync(join(commonDir, IMPORT_CACHE)).filter((n) => /^[0-9a-f]{64}$/.test(n));
+  }
+
+  const FILES = { 'client/main.gd': 'extends Node\n', 'client/old.gd.import': '[remap]\n' };
+
+  it('fails a copy that fails, and removes the entry and the copied client/.godot/', async () => {
+    const cache = { commonDir: mkdtempSync(join(tmpdir(), 'ogw-common-')), keep: 4 };
+    const made = checkout(FILES);
+    expect((await importThroughCache(cache, made, 'godot', importer(made))).ran).toBe(true);
+    const [key] = cacheEntries(cache.commonDir) as [string];
+    // the entry lacks a file its manifest names: the copy of the products fails after client/.godot/ was copied
+    rmSync(join(cache.commonDir, IMPORT_CACHE, key, 'files', 'client', 'main.gd.uid'));
+    const root = checkout(FILES);
+    const fresh = vi.fn(importer(root));
+    await expect(importThroughCache(cache, root, 'godot', fresh)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(fresh).not.toHaveBeenCalled();
+    expect(existsSync(join(root, 'client', '.godot'))).toBe(false);
+    expect(cacheEntries(cache.commonDir)).toEqual([]);
+  });
+
+  it('gives the checkout a copy without the files the import removed', async () => {
+    const cache = { commonDir: mkdtempSync(join(tmpdir(), 'ogw-common-')), keep: 4 };
+    const made = checkout(FILES);
+    expect((await importThroughCache(cache, made, 'godot', importer(made, ['client/old.gd.import']))).ran).toBe(true);
+    const root = checkout(FILES);
+    expect((await importThroughCache(cache, root, 'godot', importer(root))).ran).toBe(false);
+    expect(existsSync(join(root, 'client', 'old.gd.import'))).toBe(false);
+    expect(readFileSync(join(root, 'client', 'main.gd.uid'), 'utf8')).toBe('uid://a\n');
+    expect(existsSync(join(root, 'client', '.godot', 'uid_cache.bin'))).toBe(true);
+  });
+
+  it('takes into the key the content of a file and of a folder that a link points to outside client/ and resource/', async () => {
+    const root = checkout({ 'client/main.gd': 'extends Node\n' });
+    const outside = checkout({ 'shared.txt': 'a', 'art/b.txt': 'b' });
+    symlinkSync(join(outside, 'shared.txt'), join(root, 'client', 'shared.txt'));
+    symlinkSync(join(outside, 'art'), join(root, 'client', 'art'));
+    const keys = [await importKey(root, 'godot')];
+    writeFileSync(join(outside, 'shared.txt'), 'a2');
+    keys.push(await importKey(root, 'godot'));
+    writeFileSync(join(outside, 'art', 'b.txt'), 'b2');
+    keys.push(await importKey(root, 'godot'));
+    expect(new Set(keys).size).toBe(3);
   });
 });

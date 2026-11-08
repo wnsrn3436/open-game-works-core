@@ -343,18 +343,19 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
   // only the push of the server image waits for the artifact checks
   const image: ImageBuild = { game, settings: b.settings, env: open.env, version: open.version, compat: versions.compat };
   const artifactsDone = { failed: false };
-  const artifacts = span('artifacts', () => buildArtifacts(b, result, withData, { privacy: privacy.ios, file: manifest })).then(
-    async () => {
+  const artifacts = (async (): Promise<void> => {
+    try {
+      await span('artifacts', () => buildArtifacts(b, result, withData, { privacy: privacy.ios, file: manifest }));
       const leaks = await span('artifact secret scan', () => scanArtifacts(game.root, [...b.platforms.map((p) => join(b.outDir, p)), join(b.outDir, 'patch')], list, allowed));
       const secret = result.checks.find((c) => c.name === 'secret');
       if (secret && leaks.length > 0) Object.assign(secret, { result: 'fail', details: [...secret.details, ...leaks] });
       artifactsDone.failed = result.checks.some((c) => blocksBuild(c, open.env));
-    },
-    (error: unknown) => {
+    } catch (error) {
+      // a failure of the build or of its scan fails the run: the work beside it stops as for blocked artifacts
       artifactsDone.failed = true;
       throw error;
-    },
-  );
+    }
+  })();
   // a build whose artifacts failed needs no image and no server side facts: the cache build and the app versions stop
   const stop = (): boolean => artifactsDone.failed;
   const warm = withData && open.env !== 'PROD' ? span('server image cache build', () => warmServerImage(ctx, image, stop)) : Promise.resolve(false);

@@ -527,6 +527,27 @@ describe('ogw loop evaluate', () => {
     expect(fake.agents.filter((a) => a.role === 'judge').every((a) => !('defects' in a.input))).toBe(true);
   });
 
+  it('gives the play agents of a redone iteration the defects to confirm of the list its record starts from', async () => {
+    const defect = (status: string): object => ({
+      id: 'waits', severity: 'major', owner: 'client content', where: 'where waits', what: 'what waits', why: 'y', evidence: [], source: 'play', status, refusedReason: null, repeatedDefect: 0, oscillation: 0,
+    });
+    // the first record of iteration 1 made the defect fixed from an answer of a play: the redo of iteration 1 asks again
+    const files = {
+      [`${R}/defects.json`]: JSON.stringify({
+        defects: [defect('fixed')],
+        previous: { defects: [defect('awaiting confirmation')], previous: null, recordedBy: 'iteration-0' },
+        recordedBy: 'iteration-1',
+      }),
+      [`${R}/content-1.md`]: '## defects\n\nnone\n',
+    };
+    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 }, PASS_ALL, files);
+    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));
+    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
+    const plays = fake.agents.filter((a) => a.role === 'play');
+    expect(plays.length).toBeGreaterThan(0);
+    for (const play of plays) expect(play.input.defects).toEqual([{ id: 'waits', where: 'where waits', what: 'what waits', seen: [] }]);
+  });
+
   it('retries a failed play agent on a new instance and records failed at the limit', async () => {
     const { g } = await loop({ playInstances: 1 }, ['regression test', 'static check', 'no blocker', 'full flow']);
     write(g.root, `${R}/request.md`, 'no moments');

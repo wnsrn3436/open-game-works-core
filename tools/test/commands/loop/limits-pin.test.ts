@@ -7,7 +7,7 @@ import { currentRunSettings } from '../../../src/lib/settings.ts';
 import { RUN_LIMITS_KEY } from '../../../src/commands/loop/lib/run-limits.ts';
 import { listRuns } from '../../../src/lib/runstate.ts';
 import { commitAll, ogw } from '../../helpers/workspace.ts';
-import { commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write, type TestGame } from './helpers.ts';
+import { addJob, commit, currentRun, git, openBuildRun, openLoopRun, read, setRun, setupGame, write, type TestGame } from './helpers.ts';
 
 const mocks = vi.hoisted(() => ({ placeholderFailures: vi.fn(), listInstances: vi.fn(), stopInstance: vi.fn() }));
 vi.mock('../../../src/commands/check/api.ts', async (orig) => ({ ...(await orig<object>()), placeholderFailures: mocks.placeholderFailures }));
@@ -270,8 +270,8 @@ describe('ogw loop verdict with blocking defects and run limits', () => {
 });
 
 describe('ogw loop resume limits and harness pin', () => {
-  async function pinnedRun(iteration: number): Promise<{ g: TestGame; old: string }> {
-    const g = setupGame();
+  async function pinnedRun(iteration: number, settings: Record<string, unknown> = {}): Promise<{ g: TestGame; old: string }> {
+    const g = setupGame(settings);
     const old = git(g.ws.harness, 'rev-parse', 'HEAD');
     const runSettings = await currentRunSettings(g.ws.env);
     await openLoopRun(g, { iteration, data: { [HARNESS_PINS_KEY]: [{ commit: old, iteration: 0, runSettings }], [RUN_LIMITS_KEY]: { iterations: null, until: 9_000_000_000_000 } } });
@@ -315,6 +315,36 @@ describe('ogw loop resume limits and harness pin', () => {
     expect((await ogw(g.ws, ['loop', 'resume', 'g'])).stdout).not.toContain('repinned');
     expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stdout).toContain('run settings: agents.play.model (repinned), counts for iteration 2\n');
     expect(((await currentRun(g)).data[HARNESS_PINS_KEY] as unknown[]).length).toBe(4);
+  });
+
+  it('prints the lines of the repin and the limits when the job wait fails after them, as a resume run again does not', async () => {
+    const { g, old } = await pinnedRun(1, { jobWaitTimeoutMs: 50 });
+    const changed = changeHarness(g);
+    const check = await addJob(g.ws, { command: 'check' });
+    const until = Date.now() + HOUR;
+    const out = await ogw(g.ws, ['loop', 'resume', 'g', '--repin', '--limit', '4', '--until', String(until)]);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toBe(
+      [
+        `harness: ${changed} (repinned from ${old}), counts for iteration 1`,
+        `limits: --limit 4, --until ${String(until)}`,
+        `job ${check.id} is still running; run ogw loop resume again`,
+        '',
+      ].join('\n'),
+    );
+    // the repin is kept: the next resume repins nothing
+    expect(((await currentRun(g)).data[HARNESS_PINS_KEY] as { commit: string }[]).map((p) => p.commit)).toEqual([old, changed]);
+    expect((await ogw(g.ws, ['loop', 'resume', 'g', '--repin'])).stderr).not.toContain('repinned');
+  });
+
+  it('repins only run settings for the current iteration on a harness HEAD of another core: the pinned commit stays', async () => {
+    const { g } = await pinnedRun(1);
+    // the pinned commit, which is the harness repo HEAD, holds the specs of a core other than the game's core 1.0.0
+    git(g.ws.harness, 'tag', 'core-v99.0.0');
+    writeLocal(g, { agents: { play: { model: 'claude-haiku-5-5' } } });
+    const out = await ogw(g.ws, ['loop', 'resume', 'g', '--repin']);
+    expect([out.code, out.stderr]).toEqual([0, '']);
+    expect(out.stdout).toContain('run settings: agents.play.model (repinned), counts for iteration 1\n');
   });
 
   it('refuses a repin for the current iteration to a harness HEAD of another core, with the output of ogw loop next', async () => {

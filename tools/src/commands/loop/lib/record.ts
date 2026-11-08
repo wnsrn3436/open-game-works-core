@@ -9,7 +9,9 @@ import {
   evidenceMetrics,
   fillFromSameId,
   incompleteFindings,
+  iterationLabel,
   namedTests,
+  recordBase,
   recordDefects,
   type Defect,
   type DefectsFile,
@@ -83,7 +85,7 @@ async function labelOf(game: GameRepo, run: RunState, hardening: boolean): Promi
     return { label: `hardening-${String(latest.round)}`, findingsRel: latest.rel, hardening };
   }
   if (run.iteration === 0) throw new OgwError(`run ${run.name} has not started an iteration`);
-  return { label: `iteration-${String(run.iteration)}`, findingsRel: runRel(run, `findings-${String(run.iteration)}.json`), hardening };
+  return { label: iterationLabel(run.iteration), findingsRel: runRel(run, `findings-${String(run.iteration)}.json`), hardening };
 }
 
 /** Results of this record that a confirmation of ogw.md `## loop record` reads. */
@@ -224,10 +226,9 @@ export interface RecordResult {
   label: string;
 }
 
-/** The defect list this record starts from: the one before the earlier record of the same label when this label is recorded again. */
+/** The defect list this record starts from (`recordBase`). */
 async function baseDefects(game: GameRepo, defectsRel: string, label: string): Promise<DefectsFile | null> {
-  const existing = await readJsonIfExists<DefectsFile>(abs(game, defectsRel));
-  return existing && existing.recordedBy === label ? existing.previous : existing;
+  return recordBase(await readJsonIfExists<DefectsFile>(abs(game, defectsRel)), label);
 }
 
 /**

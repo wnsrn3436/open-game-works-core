@@ -115,10 +115,17 @@ async function lastCheckFile(game: GameRepo, branch: string, run: string): Promi
   return { path: best.path, checks: parsed.checks ?? [] };
 }
 
-/** The lines of the checks of `ogw build run`, and of its late checks with their results from `late` or `pending`. */
+/**
+ * The lines of the checks of `ogw build run`, and of its late checks with their results from `late` or `pending`; an
+ * `unknown` late check has the reason it could not be checked under its line.
+ */
 function runCheckLines(result: BuildRunResult | null, late: readonly BuildCheck[]): string[] {
   const lines = (result?.checks ?? []).map((check) => `- ${check.name}: ${check.result}`);
-  for (const name of result?.lateChecks?.names ?? []) lines.push(`- ${name}: ${late.find((c) => c.name === name)?.result ?? 'pending'}`);
+  for (const name of result?.lateChecks?.names ?? []) {
+    const check = late.find((c) => c.name === name);
+    lines.push(`- ${name}: ${check?.result ?? 'pending'}`);
+    if (check?.result === 'unknown') lines.push(...check.details.map((detail) => `  - ${detail}`));
+  }
   return lines;
 }
 

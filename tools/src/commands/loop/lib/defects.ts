@@ -51,6 +51,19 @@ export interface DefectsFile {
   recordedBy: string;
 }
 
+/** The record label of loop iteration `n` (`recordedBy` of `DefectsFile`). */
+export function iterationLabel(n: number): string {
+  return `iteration-${String(n)}`;
+}
+
+/**
+ * The defect list a record of `label` starts from (ogw.md `## loop record`): the one before the earlier record of the
+ * same label when `label` is recorded again, else `file`.
+ */
+export function recordBase(file: DefectsFile | null, label: string): DefectsFile | null {
+  return file && file.recordedBy === label ? file.previous : file;
+}
+
 export interface ReportRow {
   result: string;
   note: string;

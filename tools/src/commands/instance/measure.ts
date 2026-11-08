@@ -114,28 +114,45 @@ async function scenarioHolds(ctx: Context, id: string, scenario: Scenario, targe
  */
 async function countHolds(ctx: Context, target: Target, scenario: Scenario, count: number): Promise<{ holds: boolean; reason: string | null }> {
   const started: InstanceInfo[] = [];
+  let held: { holds: boolean; reason: string | null } | null = null;
+  let thrown: { error: unknown } | null = null;
   try {
-    const starts = await Promise.allSettled(Array.from({ length: count }, () => startInstance(ctx, { ...target.options, ignoreConcurrencyLimit: true })));
-    for (const start of starts) if (start.status === 'fulfilled') started.push(start.value);
-    const failed = starts.findIndex((start) => start.status === 'rejected');
-    if (failed >= 0) {
-      const error = (starts[failed] as PromiseRejectedResult).reason as Error;
-      // one instance that does not start is not a measured count: the measure fails with the reason (ogw.md `## instance measure`)
-      if (count === 1) throw new OgwError(`${target.name}: the first instance did not start: ${error.message}`);
-      return { holds: false, reason: `instance ${String(failed + 1)} of ${String(count)} did not start: ${error.message}` };
-    }
-    const held = await Promise.all(started.map((info) => scenarioHolds(ctx, info.id, scenario, target.targetFps)));
-    return { holds: held.every((h) => h.holds), reason: held.find((h) => h.reason !== null)?.reason ?? null };
-  } finally {
-    // an instance left running would load the next count: a stop that fails fails the measure, after the others stopped
-    const failures: string[] = [];
-    for (const info of started) {
-      await stopInstance(ctx, info.id).catch((error: unknown) => {
-        failures.push(`instance ${info.id}: ${(error as Error).message}`);
-      });
-    }
-    if (failures.length > 0) throw new OgwError(`${target.name}: the measured instances were not all stopped: ${failures.join('; ')}`);
+    held = await measureCount(ctx, target, scenario, count, started);
+  } catch (error) {
+    thrown = { error };
   }
+  // an instance left running would load the next count: a stop that fails fails the measure, after the others stopped
+  // (ogw.md `## instance measure`); an error the count threw stays the error, with the stop failures added to it
+  const failures: string[] = [];
+  for (const info of started) {
+    await stopInstance(ctx, info.id).catch((error: unknown) => {
+      failures.push(`instance ${info.id}: ${(error as Error).message}`);
+    });
+  }
+  const stops = failures.length === 0 ? null : `${target.name}: the measured instances were not all stopped: ${failures.join('; ')}`;
+  if (thrown !== null) {
+    const { error } = thrown;
+    if (stops === null) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new OgwError(`${message}\n${stops}`, error instanceof OgwError ? error.exitCode : 1, error instanceof OgwError ? error.data : undefined);
+  }
+  if (stops !== null) throw new OgwError(stops);
+  return held as { holds: boolean; reason: string | null };
+}
+
+/** Starts the instances of a count into `started` and runs the scenario on each (`countHolds`, which stops them). */
+async function measureCount(ctx: Context, target: Target, scenario: Scenario, count: number, started: InstanceInfo[]): Promise<{ holds: boolean; reason: string | null }> {
+  const starts = await Promise.allSettled(Array.from({ length: count }, () => startInstance(ctx, { ...target.options, ignoreConcurrencyLimit: true })));
+  for (const start of starts) if (start.status === 'fulfilled') started.push(start.value);
+  const failed = starts.findIndex((start) => start.status === 'rejected');
+  if (failed >= 0) {
+    const error = (starts[failed] as PromiseRejectedResult).reason as Error;
+    // one instance that does not start is not a measured count: the measure fails with the reason (ogw.md `## instance measure`)
+    if (count === 1) throw new OgwError(`${target.name}: the first instance did not start: ${error.message}`);
+    return { holds: false, reason: `instance ${String(failed + 1)} of ${String(count)} did not start: ${error.message}` };
+  }
+  const held = await Promise.all(started.map((info) => scenarioHolds(ctx, info.id, scenario, target.targetFps)));
+  return { holds: held.every((h) => h.holds), reason: held.find((h) => h.reason !== null)?.reason ?? null };
 }
 
 /**

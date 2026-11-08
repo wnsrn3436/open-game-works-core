@@ -175,7 +175,9 @@ describe('ogw instance start', () => {
     const { importIfNeeded } = await import('../../../src/commands/instance/lib/prepare.ts');
     const plan = { engine: 'godot', enginePath: mockState.enginePath };
     const ran = await Promise.all([importIfNeeded(ctxOf(runner), plan, runner.root), importIfNeeded(ctxOf(runner), plan, runner.root)]);
-    expect(ran.sort()).toEqual([false, true]);
+    expect(ran.map((r) => r.ran).sort()).toEqual([false, true]);
+    // a checkout without the import cache keeps no entry, so it removes none
+    expect(ran.map((r) => r.evict)).toEqual([null, null]);
     expect(readFileSync(join(runner.logDir, 'import.log'), 'utf8').trim().split('\n')).toHaveLength(1);
   });
 

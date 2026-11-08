@@ -364,6 +364,8 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
   await reserveSlot(ctx, newRecord(id, game, await startingAgent(ctx)), max, settings.instanceWaitTimeoutMs, signal);
   hooks.onReserved?.(id);
   const made: { worktree: string | null } = { worktree: null };
+  // the removal of the import cache entries beyond those kept, beside the boot: its failure, or null once it ended
+  let evicted: Promise<Error | null> = Promise.resolve(null);
   try {
     checkAborted(signal);
     const checkout = await span('worktree', () => checkoutOf(ctx, game, id, options.commit, (path) => {
@@ -385,7 +387,9 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
       fixture: options.fixture === undefined ? undefined : resolve(ctx.cwd, options.fixture),
     }));
     // a fresh `--commit` checkout gets the import of another checkout with the same files (ogw.md `## runner`)
-    await span('import', () => importIfNeeded(ctx, plan, checkout.root, made.worktree === null ? null : { commonDir: game.commonDir, keep: max }));
+    const imported = await span('import', () => importIfNeeded(ctx, plan, checkout.root, made.worktree === null ? null : { commonDir: game.commonDir, keep: max }));
+    const evict = imported.evict;
+    if (evict !== null) evicted = span('import evict', evict).then(() => null, (error: unknown) => (error instanceof Error ? error : new Error(String(error))));
     checkAborted(signal);
     const commit = exists(join(checkout.root, '.git')) ? await head(checkout.root, { env: ctx.env }) : '';
     await updateRecord(id, (r) => {
@@ -416,9 +420,15 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
       await launchSupervisor(id, ctx.env);
       return waitStarted(ctx, id);
     });
-    return await infoOf(booted, ctx.env);
+    const info = await infoOf(booted, ctx.env);
+    const evictFailure = await evicted;
+    if (evictFailure !== null) throw evictFailure;
+    return info;
   } catch (error) {
     const failures = await cleanUpFailedStart(ctx, game, id, made.worktree, hooks);
+    // the start ends only once the removal ended, and a removal that failed fails it too
+    const evictFailure = await evicted;
+    if (evictFailure !== null && evictFailure !== error) failures.push(`removing the import cache entries beyond those kept: ${evictFailure.message}`);
     throw withCleanupFailures(error, failures);
   }
 }

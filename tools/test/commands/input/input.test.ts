@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { parseScript, videoSpanMs } from '../../../src/commands/input/input.ts';
-import { readRecord } from '../../../src/commands/instance/lib/records.ts';
+import { playAccessPath, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { newAgentKey } from '../../../src/lib/agentctx.ts';
 import { jobsDir } from '../../../src/lib/jobs.ts';
 import { ogw } from '../../helpers/workspace.ts';
@@ -174,6 +174,31 @@ describe('ogw input', () => {
     } finally {
       runner.config({ clients: { main: { fail: { tap_anchor: 'anchor not found' } } } });
     }
+  });
+
+  it('puts the first step in when the recording fails before its request was sent, and ends with the video error', async () => {
+    const script = join(runner.ws.root, 'unsent.json');
+    writeFileSync(script, JSON.stringify({ steps: [{ atMs: 2000, command: 'tap', args: ['1', '1'] }, { atMs: 2100, command: 'tap', args: ['2', '2'] }] }));
+    const access = await playAccessPath(id, runner.ws.env);
+    const before = runner.requests('main').length;
+    const running = ogw(runner.ws, ['input', id, '--script', script, '--video', '--json']);
+    // once the capture format is found, the instance stops taking play requests before the first step: the
+    // capture_video request fails before it is sent
+    for (const end = Date.now() + 10_000; Date.now() < end && !runner.requests('main').slice(before).some((r) => r.command === 'capture_screen'); ) await sleep(20);
+    await sleep(200);
+    renameSync(access, `${access}.away`);
+    let run: Awaited<ReturnType<typeof ogw>>;
+    try {
+      run = await running;
+    } finally {
+      renameSync(`${access}.away`, access);
+    }
+    expect(run.code).toBe(1);
+    const data = JSON.parse(run.stdout) as { steps: { atMs: number; ok: boolean; result: unknown }[]; video: unknown; videoError: string };
+    expect(data.steps).toMatchObject([{ atMs: 2000, ok: false, result: { error: `instance ${id} is not running` } }]);
+    expect(data.video).toBeNull();
+    expect(data.videoError).toBe(`instance ${id} is not running`);
+    expect(runner.requests('main').slice(before).map((r) => r.command)).toEqual(['get_state', 'capture_screen']);
   });
 
   it('clicks the center of a visible anchor with the left mouse button, alone and in a script', async () => {

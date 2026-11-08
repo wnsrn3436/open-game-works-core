@@ -13,7 +13,7 @@ import { binaryBuild } from '../../data/lib/binary-build.ts';
 import { requireEngine } from '../../env/api.ts';
 import { gameModules, mergedCoreSettings, runGenerate } from '../../generate/api.ts';
 import { boolCell, intCell, readTable } from './csv.ts';
-import { importThroughCache, type ImportCache } from './import-cache.ts';
+import { importThroughCache, type CachedImport, type ImportCache } from './import-cache.ts';
 import { renderingMethod } from './launch.ts';
 import type { InstancePlan, MatchModeRow } from './records.ts';
 import { FixtureError, parseFixture } from './steps.ts';
@@ -46,19 +46,20 @@ export async function generateIfNeeded(ctx: Context, checkout: GameRepo, fresh: 
 /**
  * The one engine import of a checkout before its first dev run (ogw.md `## runner`):
  * `godot --headless --path client --import` when `client/.godot/` is missing. A fresh `--commit` checkout gets it
- * through the import cache (`cache`): a copy of the import of a checkout with the same files. Returns whether it ran.
+ * through the import cache (`cache`): a copy of the import of a checkout with the same files. Returns whether it ran,
+ * and the removal of the cache entries that its new entry leaves beyond those kept (`CachedImport`).
  */
-export async function importIfNeeded(ctx: Context, plan: { engine: string; enginePath: string }, root: string, cache: ImportCache | null = null): Promise<boolean> {
+export async function importIfNeeded(ctx: Context, plan: { engine: string; enginePath: string }, root: string, cache: ImportCache | null = null): Promise<CachedImport> {
   if (plan.engine !== 'godot') throw new OgwError(`not defined: the dev run of engine ${plan.engine}`);
   const client = join(root, 'client');
-  if (exists(join(client, '.godot'))) return false;
+  if (exists(join(client, '.godot'))) return { ran: false, evict: null };
   // the one locked import of the checkout (`ogw check` shares it): a failed import leaves no `.godot/`
   const importer = async (): Promise<boolean> => {
     const { ran, failed } = await importClientIfMissing(ctx, plan.enginePath, root);
     if (failed !== null) throw new OgwError(`${failed}: ${client}`);
     return ran;
   };
-  return cache === null ? importer() : importThroughCache(cache, root, plan.enginePath, importer);
+  return cache === null ? { ran: await importer(), evict: null } : importThroughCache(cache, root, plan.enginePath, importer);
 }
 
 /** Engine executable of the engine version of the game's core release (`engine.json` of `client-<engine>.zip`). */

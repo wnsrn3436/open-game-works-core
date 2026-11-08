@@ -124,15 +124,20 @@ describe('supervisor runner log and record events', () => {
     return sup;
   }
 
-  it('writes nothing once the instance folder is gone, and throws when the runner log cannot be written for another reason', () => {
+  it('writes nothing once the instance folder is gone, and keeps a runner log that cannot be written for another reason without throwing', () => {
     const base = mkdtempSync(join(tmpdir(), 'ogw-sup-'));
-    expect(() => {
-      supervisor(instanceEnv(), 'gone1', join(base, 'gone')).log('after stop');
-    }).not.toThrow();
+    const gone = supervisor(instanceEnv(), 'gone1', join(base, 'gone'));
+    gone.log('after stop');
+    expect((gone as unknown as { logFailure: Error | null }).logFailure).toBeNull();
     writeFileSync(join(base, 'file'), '');
+    const odd = supervisor(instanceEnv(), 'odd1', join(base, 'file'));
+    // the log runs in event listeners and promise handlers, which have no caller to fail
     expect(() => {
-      supervisor(instanceEnv(), 'odd1', join(base, 'file')).log('line');
-    }).toThrow(/ENOTDIR/);
+      odd.log('line');
+      odd.log('next line');
+    }).not.toThrow();
+    // the first failure is kept for the start or the stop to fail with
+    expect((odd as unknown as { logFailure: Error | null }).logFailure?.message).toMatch(/^ENOTDIR/);
   });
 
   it('writes a record event that cannot be recorded to the runner log, and nothing for a record a stop removed', async () => {

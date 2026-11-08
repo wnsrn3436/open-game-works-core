@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STANDARD_JOBS } from '../../../src/commands/generation/lib/standard.ts';
 import { fpsSampling } from '../../../src/commands/check/lib/performance.ts';
+import { readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { firstCount, measureHost, nextCount } from '../../../src/commands/instance/measure.ts';
 import { ogw, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { installFolderOf } from '../generation/install-folder.ts';
@@ -292,6 +293,24 @@ describe('ogw instance measure', () => {
     expect(run.stderr).toContain('g: the measured instances were not all stopped: instance i1: cannot remove the worktree of i1');
     expect([...state.running]).toEqual(['i1']);
     expect(existsSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'instance-measure.json'))).toBe(false);
+  });
+
+  it('keeps the error of a count that failed and adds the stops that failed after it', async () => {
+    const { ws, env } = setup();
+    state.versions = [];
+    state.stopFails.add('i1');
+    const record = vi.mocked(readRecord).getMockImplementation() as typeof readRecord;
+    // the scenario of instance i1 fails: the count throws, then the stop of i1 fails too
+    vi.mocked(readRecord).mockImplementation((id, e) => (id === 'i1' ? Promise.reject(new Error('the record of i1 broke')) : record(id, e)));
+    try {
+      const run = await ogw(ws, ['instance', 'measure'], { env });
+      expect(run.code).not.toBe(0);
+      expect(run.stderr).toContain('the record of i1 broke\ng: the measured instances were not all stopped: instance i1: cannot remove the worktree of i1');
+      expect([...state.running]).toEqual(['i1']);
+      expect(existsSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'instance-measure.json'))).toBe(false);
+    } finally {
+      vi.mocked(readRecord).mockImplementation(record);
+    }
   });
 
   it('fails without a result when the first instance does not start', async () => {

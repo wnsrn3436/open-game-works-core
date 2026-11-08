@@ -334,6 +334,52 @@ describe('build run', () => {
     expect(result(dir, 'dev-0.2.0').serverImage).toBeNull();
   });
 
+  it('stops the cache build of the server image and the checks of the earlier app versions when the artifact scan fails', { timeout: 30_000 }, async () => {
+    const ws = makeWorkspace();
+    const { dir, env, log } = prepare(ws);
+    for (const version of ['0.1.0', '0.1.1', '0.1.2', '0.1.3']) {
+      write(dir, 'notes.txt', version);
+      commit(dir, version);
+      git(dir, 'tag', `dev-${version}`);
+    }
+    await openBuildRun(ws, dir, { version: '0.2.0', platforms: ['linux'] });
+    const real = vi.mocked(runData).getMockImplementation() as typeof runData;
+    let appBuilds = 0;
+    vi.mocked(runData).mockImplementation(async (ctx, repo, options) => {
+      if (repo.inWorktree) {
+        appBuilds += 1;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return real(ctx, repo, options);
+    });
+    const fake = join(ws.root, 'fake-bin');
+    // a zip archive whose central directory is broken: the scan of the artifacts throws
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(1, 10);
+    const broken = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), end]);
+    vi.mocked(buildPlatforms).mockImplementation(async (_c, input) => {
+      for (let i = 0; i < 250 && !existsSync(join(fake, 'warm.pid')); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      mkdirSync(join(input.outDir, 'linux'), { recursive: true });
+      writeFileSync(join(input.outDir, 'linux', 'g.zip'), broken);
+      return { artifacts: [{ platform: 'linux', path: 'builds/dev-0.2.0/linux' }], devCode: [] };
+    });
+    const cpus = appCheckLimit.count;
+    appCheckLimit.count = () => 1;
+    let out: Awaited<ReturnType<typeof ogw>>;
+    try {
+      out = await ogw(ws, ['build', 'run', 'g'], { env: { ...env, FAKE_WARM_HANG: '1' } });
+    } finally {
+      appCheckLimit.count = cpus;
+    }
+    expect([out.code, out.stderr]).toEqual([1, 'broken zip central directory\n']);
+    // the cache build was killed, and nothing was pushed
+    const pid = Number(readFileSync(join(fake, 'warm.pid'), 'utf8'));
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(readFileSync(log, 'utf8')).not.toContain('--push');
+    expect(appBuilds).toBeLessThanOrEqual(2);
+  });
+
   it('records web smoke with its first loading ms; a DEV warning does not block, a STG failure does', async () => {
     const ws = makeWorkspace();
     const environments = gameSettings().environments as Record<string, Record<string, unknown>>;

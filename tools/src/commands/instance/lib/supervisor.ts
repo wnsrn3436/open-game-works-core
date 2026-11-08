@@ -106,6 +106,8 @@ export class Supervisor {
   private firstConnection: Promise<string | null> | null = null;
   private stopped!: Promise<void>;
   private markStopped!: () => void;
+  /** The first failure to write the runner log; null while none failed. */
+  private logFailure: Error | null = null;
 
   constructor(id: string, env: NodeJS.ProcessEnv) {
     this.id = id;
@@ -115,13 +117,23 @@ export class Supervisor {
     });
   }
 
+  /**
+   * Writes a line to the runner log. It runs in event listeners and promise handlers that have no caller to fail, so a
+   * write that fails does not throw: the first failure is kept, and the start (`run`) or the stop (`/stop`) fails with it.
+   */
   log(line: string): void {
     try {
       appendFileSync(join(this.folder, 'runner.log'), `${new Date().toISOString()} ${line}\n`);
     } catch (error) {
       // the instance folder is gone after stop
-      if (!isNotFound(error)) throw error;
+      if (isNotFound(error)) return;
+      this.logFailure ??= error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  /** Throws the kept failure of the runner log, if any. */
+  private throwLogFailure(): void {
+    if (this.logFailure !== null) throw new OgwError(`runner.log could not be written: ${this.logFailure.message}`);
   }
 
   /**
@@ -146,14 +158,18 @@ export class Supervisor {
     try {
       await this.bootInJob();
       await this.writePlayAccess();
+      // before the record says `running`, which ends the start: a runner log that could not be written fails the start
+      this.log('running');
+      this.throwLogFailure();
       await updateRecord(this.id, (r) => {
         r.status = 'running';
       }, this.env);
-      this.log('running');
     } catch (error) {
-      const message = (error as Error).message;
-      this.log(`start failed: ${message}`);
+      this.log(`start failed: ${(error as Error).message}`);
       await this.shutdown();
+      // a runner log that could not be written during the start fails it too
+      const logged = this.logFailure === null ? null : `runner.log could not be written: ${this.logFailure.message}`;
+      const message = logged === null || logged === (error as Error).message ? (error as Error).message : `${(error as Error).message}\n${logged}`;
       // a stop that came during the start removed the record
       await updateRecord(this.id, (r) => {
         r.status = 'failed';
@@ -247,12 +263,13 @@ export class Supervisor {
       }
       const result = await this.route(req.url ?? '', body);
       send(200, result);
-      if (req.url === '/stop') {
-        await this.closeControl();
-        this.markStopped();
-      }
     } catch (error) {
       send(500, { error: (error as Error).message });
+    }
+    // a stop that failed after it began stops the supervisor too: the instance is stopping either way
+    if (req.url === '/stop' && this.stopping) {
+      await this.closeControl();
+      this.markStopped();
     }
   }
 
@@ -273,6 +290,8 @@ export class Supervisor {
         return {};
       case '/stop':
         await this.shutdown();
+        // the runner log that could not be written while the instance ran: the stop is the caller left to fail with it
+        this.throwLogFailure();
         return {};
       default:
         throw new OgwError(`unknown control path: ${path}`);

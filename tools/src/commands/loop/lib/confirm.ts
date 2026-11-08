@@ -1,6 +1,6 @@
 import type { GameRepo } from '../../../lib/game.ts';
 import type { RunState } from '../../../lib/runstate.ts';
-import { afterReport, type DefectAnswers, type DefectsFile, type ReportRow } from './defects.ts';
+import { afterReport, iterationLabel, recordBase, type DefectAnswers, type DefectsFile, type ReportRow } from './defects.ts';
 import type { CheckFile, EvaluateFile } from './files.ts';
 import { playAnswers } from './results.ts';
 import { readGameText, readRunJson } from './run.ts';
@@ -33,12 +33,13 @@ async function seenLines(game: GameRepo, evidence: readonly string[]): Promise<s
 }
 
 /**
- * The defects to confirm of the iteration (ogw.md `## loop evaluate`): those of `defects.json` of source `play` or
- * `judge` that are `awaiting confirmation` after the status changes by `report`, the `## defects` rows of the content
- * agent report of the iteration, with the fix test proof of `check`, in defect list order.
+ * The defects to confirm of the iteration (ogw.md `## loop evaluate`): those of the defect list that the record of the
+ * iteration starts from (`recordBase`: before an earlier record of the same iteration) of source `play` or `judge` that
+ * are `awaiting confirmation` after the status changes by `report`, the `## defects` rows of the content agent report of
+ * the iteration, with the fix test proof of `check`, in defect list order.
  */
 export async function defectsToConfirm(game: GameRepo, run: RunState, check: CheckFile, report: ReadonlyMap<string, ReportRow>): Promise<PlayDefect[]> {
-  const file = await readRunJson<DefectsFile>(game, run, 'defects.json');
+  const file = recordBase(await readRunJson<DefectsFile>(game, run, 'defects.json'), iterationLabel(run.iteration));
   const proofs = new Map((check.fixTestProof ?? []).map((p) => [p.id, p.result]));
   const out: PlayDefect[] = [];
   for (const defect of file?.defects ?? []) {

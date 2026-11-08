@@ -1,10 +1,11 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listInstances } from '../../../src/commands/instance/api.ts';
-import { listRecords, readRecord } from '../../../src/commands/instance/lib/records.ts';
+import { instanceFolder, listRecords, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { ogw, commitAll, sh } from '../../helpers/workspace.ts';
+import { supervisorHooks } from './mocks/spawn.ts';
 import { mockState } from './mocks/state.ts';
 import { MATCH_MODE_HEADER, setupRunner, startFor, stopAll, type Runner } from './runner.ts';
 
@@ -38,6 +39,7 @@ let runner: Runner | null = null;
 afterEach(async () => {
   worktreeHooks.before = null;
   worktreeHooks.after = null;
+  supervisorHooks.beforeRun = null;
   if (runner) await stopAll(runner);
   runner = null;
 });
@@ -320,6 +322,40 @@ describe('ogw instance start', () => {
     const info = (await listInstances(ctxOf(runner)))[0];
     expect(Object.keys(info?.exited ?? {})).toEqual(['main']);
     expect(readFileSync(join(record.root, 'settings.json'), 'utf8')).toContain('godot');
+  });
+
+  it('goes on when the runner log cannot be written: a client exit is still recorded, and the stop fails with the log failure', async () => {
+    runner = setupRunner();
+    const id = await startFor(runner);
+    const record = await readRecord(id, runner.ws.env);
+    const log = join(await instanceFolder(id, runner.ws.env), 'runner.log');
+    rmSync(log);
+    mkdirSync(log);
+    // the exit listener of the client writes the runner log: it can fail, and the exit is recorded all the same
+    process.kill(record.pids.main as number, 'SIGKILL');
+    for (const end = Date.now() + 5000; Date.now() < end && !('main' in (await readRecord(id, runner.ws.env)).exited); ) await new Promise((r) => setTimeout(r, 20));
+    expect(Object.keys((await readRecord(id, runner.ws.env)).exited)).toEqual(['main']);
+    const stop = await ogw(runner.ws, ['instance', 'stop', id]);
+    expect(stop.code).toBe(0);
+    expect(stop.stderr).toMatch(/^instance [^ ]+: the supervisor did not stop it \(runner\.log could not be written: EISDIR[^\n]*\); its processes are killed\n$/);
+    expect(await listRecords(runner.ws.env)).toEqual([]);
+  });
+
+  it('fails a start whose runner log cannot be written, also with the failure of the start itself', async () => {
+    runner = setupRunner();
+    supervisorHooks.beforeRun = async (id, env) => {
+      mkdirSync(join(await instanceFolder(id, env), 'runner.log'), { recursive: true });
+    };
+    const run = await ogw(runner.ws, ['instance', 'start', 'g']);
+    expect(run.code).toBe(1);
+    expect(run.stderr).toMatch(/^instance start failed: runner\.log could not be written: EISDIR[^\n]*\n$/m);
+    expect(await listRecords(runner.ws.env)).toEqual([]);
+    // a start that fails for another reason keeps that reason first, and still stops and records the failure
+    runner.config({ clients: { main: { exitOnStart: 3 } } });
+    const ended = await ogw(runner.ws, ['instance', 'start', 'g']);
+    expect(ended.code).toBe(1);
+    expect(ended.stderr).toMatch(/^instance start failed: main: the client process ended[^\n]*\nrunner\.log could not be written: EISDIR/m);
+    expect(await listRecords(runner.ws.env)).toEqual([]);
   });
 
   it('commits nothing in the game repo', async () => {

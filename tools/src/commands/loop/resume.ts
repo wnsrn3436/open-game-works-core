@@ -122,21 +122,33 @@ export const loopResume: CommandDef = {
     if (run.kind === 'loop' && (await mergeBranchMerged(game, run, ctx.env))) {
       return { text: 'resume at: end 5', data: { at: 'end 5' } };
     }
-    const lines = await pinAndLimit(ctx, game, run, args);
-    // Jobs first: a running content agent or check job works in this checkout, so it is not stashed under them.
-    lines.push(...(await waitOtherJobs(ctx, game, run)));
-    lines.push(...(await checkoutRunBranch(game, run)));
-    for (const instance of await listInstances(ctx, { game: game.name })) {
-      await stopInstance(ctx, instance.id);
-      lines.push(`stopped instance ${instance.id}`);
+    const pinned = await pinAndLimit(ctx, game, run, args);
+    try {
+      return await resumeRest(ctx, game, run, pinned);
+    } catch (error) {
+      // the repin and the limits are in the run state already, and a resume run again does not print their lines
+      for (const line of pinned) ctx.log(line);
+      throw error;
     }
-    // an interrupted `ogw loop variants` leaves the worktrees of its variant agents; it runs again from step 1
-    const leftovers = await removeVariantLeftovers(ctx, game, run, await runJobs(ctx, game, run));
-    lines.push(...leftovers.removed.map((what) => `removed ${what}`), ...leftovers.notRemoved.map((l) => `not removed ${l.what}: ${l.error}`));
-    lines.push(syncText(await sync(ctx, game, false)));
-    const current = await requireOpenRun(game);
-    const at = current.kind === 'build' ? `build ${await buildStep(ctx, game, current)}` : loopStep(game, current);
-    lines.push(`resume at: ${at}`);
-    return { text: lines.join('\n'), data: { at } };
   },
 };
+
+/** Steps 4 to 9 of ogw.md `## loop resume`, after the lines of steps 2 and 3 (`pinned`). */
+async function resumeRest(ctx: Context, game: GameRepo, run: RunState, pinned: readonly string[]): Promise<{ text: string; data: { at: string } }> {
+  const lines = [...pinned];
+  // Jobs first: a running content agent or check job works in this checkout, so it is not stashed under them.
+  lines.push(...(await waitOtherJobs(ctx, game, run)));
+  lines.push(...(await checkoutRunBranch(game, run)));
+  for (const instance of await listInstances(ctx, { game: game.name })) {
+    await stopInstance(ctx, instance.id);
+    lines.push(`stopped instance ${instance.id}`);
+  }
+  // an interrupted `ogw loop variants` leaves the worktrees of its variant agents; it runs again from step 1
+  const leftovers = await removeVariantLeftovers(ctx, game, run, await runJobs(ctx, game, run));
+  lines.push(...leftovers.removed.map((what) => `removed ${what}`), ...leftovers.notRemoved.map((l) => `not removed ${l.what}: ${l.error}`));
+  lines.push(syncText(await sync(ctx, game, false)));
+  const current = await requireOpenRun(game);
+  const at = current.kind === 'build' ? `build ${await buildStep(ctx, game, current)}` : loopStep(game, current);
+  lines.push(`resume at: ${at}`);
+  return { text: lines.join('\n'), data: { at } };
+}

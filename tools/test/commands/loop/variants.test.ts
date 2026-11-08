@@ -2,8 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateDeps } from '../../../src/commands/loop/lib/evaluate.ts';
+import { HARNESS_PINS_KEY } from '../../../src/commands/loop/lib/harness-pin.ts';
 import { choiceOrder, targetElement, variantDeps, type VariantEntry, type VariantsFile } from '../../../src/commands/loop/lib/variants.ts';
-import { jobPaths } from '../../../src/lib/jobs.ts';
+import { jobPaths, killJob } from '../../../src/lib/jobs.ts';
+import { currentRunSettings } from '../../../src/lib/settings.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { commit, git, openLoopRun, read, readJsonFile, setRun, setupGame, write, type TestGame } from './helpers.ts';
 
@@ -17,6 +19,8 @@ interface FakeJudge {
   output: string;
   /** The variant k this judge judges. */
   k: number;
+  /** The agent CLI, model and effort it was started with. */
+  agent: unknown;
 }
 
 interface Fake {
@@ -112,7 +116,7 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
   const side = (input: Record<string, unknown>, which: 'A' | 'B'): string =>
     fake.instances.find((i) => i.id === (input[which] as { instance: string }).instance)?.commit ?? '';
   return {
-    startAgentJob: vi.fn(async (_ctx: unknown, options: { role: string; input: string; variant?: number; runPlace?: { output: string } }) => {
+    startAgentJob: vi.fn(async (_ctx: unknown, options: { role: string; input: string; variant?: number; runPlace?: { output: string }; agent?: unknown }) => {
       if (options.role === 'content') {
         const k = options.variant as number;
         await fake.starting(k);
@@ -139,7 +143,7 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
       const id = `j${String(fake.judges.length + 1)}`;
       const input = JSON.parse(fs.readFileSync(options.input, 'utf8')) as Record<string, unknown>;
       const k = fake.commits.get(side(input, 'A')) ?? fake.commits.get(side(input, 'B')) ?? 0;
-      fake.judges.push({ id, input, output: options.runPlace?.output ?? '', k });
+      fake.judges.push({ id, input, output: options.runPlace?.output ?? '', k, agent: options.agent });
       return Promise.resolve(id);
     }),
     agentOutcome: vi.fn((_ctx: unknown, id: string) => {
@@ -415,6 +419,64 @@ describe('ogw loop variants', () => {
       [null, false],
     ]);
     expect((await ogw(all.g.ws, ['loop', 'variants', 'g', '--db', 'mysql'])).stderr).toContain('usage: ogw loop variants <game> [--db postgresql]');
+  });
+
+  it('waits for a variant agent that still runs when the judging fails, without killing it, and does not choose it over a judged one', async () => {
+    const { g } = await funIteration({ maxConcurrentInstances: 2 });
+    fake.votes = (k): Record<string, Vote> => (k === 1 ? { 'game feel': 'this' } : {});
+    // the instances of variant 2 do not start; variant 3 runs until the tool waits for the agents the judging left
+    fake.failStart = (c) => fake.commits.get(c) === 2;
+    const realOnSignal = evaluateDeps.onSignal;
+    let watches = 0;
+    evaluateDeps.onSignal = (handler) => {
+      watches++;
+      return realOnSignal(handler);
+    };
+    // the judging watches signals first, then the wait for the variant agents it left
+    fake.ended = (k) => k !== 3 || watches >= 2;
+    vi.mocked(killJob).mockClear();
+    try {
+      const out = await ogw(g.ws, ['loop', 'variants', 'g']);
+      expect([out.code, out.stderr]).toEqual([0, '']);
+    } finally {
+      evaluateDeps.onSignal = realOnSignal;
+    }
+    const v3 = fake.content.find((c) => c.k === 3)?.id as string;
+    expect(vi.mocked(killJob).mock.calls.map((c) => c[0])).not.toContain(v3);
+    const file = readJsonFile(g.root, `${R}/variants-2.json`) as VariantsFile;
+    expect(file.judging).toBe('instance start failed: no server');
+    expect(file.variants.map((v) => [v.k, v.commit !== null, v.judges.length, v.votes === null, v.chosen])).toEqual([
+      [1, true, 2, false, true],
+      [2, true, 0, true, false],
+      [3, true, 0, true, false],
+    ]);
+    expect(file.variants[2]?.job).toBe(v3);
+  });
+
+  it('takes loop.variants and the judge agents from the pin of the run, not from harness settings now', async () => {
+    /** Pins the run of `game` to run settings with `variants` variant agents and another judge model. */
+    const pin = async (game: TestGame, variants: number): Promise<void> => {
+      const runSettings = await currentRunSettings(game.ws.env);
+      const agents = runSettings.agents as Record<string, Record<string, unknown>>;
+      (runSettings.loop as Record<string, unknown>).variants = variants;
+      agents.judge = { ...agents.judge, model: 'claude-haiku-5-5' };
+      await setRun(game, (r) => {
+        r.data[HARNESS_PINS_KEY] = [{ commit: git(game.ws.harness, 'rev-parse', 'HEAD'), iteration: 0, runSettings }];
+      });
+    };
+    // harness settings hold 3 variants and another judge model
+    const { g } = await funIteration();
+    await pin(g, 2);
+    const out = await ogw(g.ws, ['loop', 'variants', 'g']);
+    expect([out.code, out.stderr]).toEqual([0, '']);
+    expect(fake.content.map((c) => c.k)).toEqual([1, 2]);
+    expect(fake.judges.length).toBeGreaterThan(0);
+    for (const judge of fake.judges) expect(judge.agent).toMatchObject({ model: 'claude-haiku-5-5' });
+    const one = await funIteration();
+    fake.content = [];
+    await pin(one.g, 1);
+    expect((await ogw(one.g.ws, ['loop', 'variants', 'g'])).stderr).toBe('harness settings loop.variants is 1; call the content agent\n');
+    expect(fake.content).toEqual([]);
   });
 
   it('fails with the start failure of a variant agent after killing the ones it started, and says a kill that failed', async () => {

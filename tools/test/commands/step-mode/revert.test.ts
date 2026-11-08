@@ -3,9 +3,12 @@ import { automationRequest, botControl } from '../../../src/commands/instance/au
 import { setStepMode } from '../../../src/commands/step-mode/step-mode.ts';
 import { createContext } from '../../../src/lib/command.ts';
 
+/** The clients of the instance in its play access file; reset before each test. */
+const access = vi.hoisted(() => ({ clients: ['main', 'opponent_1'] }));
+
 vi.mock('../../../src/commands/instance/automation.ts', () => ({ automationRequest: vi.fn(), botControl: vi.fn() }));
 vi.mock('../../../src/commands/instance/lib/records.ts', () => ({
-  readPlayAccess: () => Promise.resolve({ clients: ['main', 'opponent_1'] }),
+  readPlayAccess: () => Promise.resolve({ clients: access.clients }),
 }));
 
 const ctx = createContext({ cwd: '/', env: {}, stdin: () => Promise.resolve(''), stderr: () => undefined });
@@ -15,6 +18,7 @@ describe('ogw step-mode revert', () => {
   let sent: string[];
   beforeEach(() => {
     sent = [];
+    access.clients = ['main', 'opponent_1'];
     vi.mocked(botControl).mockReset();
     vi.mocked(botControl).mockResolvedValue();
   });
@@ -46,5 +50,20 @@ describe('ogw step-mode revert', () => {
       Promise.resolve(client === 'opponent_1' && command === 'set_step_mode' ? answer(false, 'in match') : client === 'main' && args[0] === 'on' ? answer(false, 'busy') : answer(true, null)),
     );
     await expect(setStepMode(ctx, 'i1', false)).rejects.toThrow('step mode was not reverted: main: set_step_mode on: main: set_step_mode failed: "busy"');
+  });
+
+  it('reverts the later changed clients after a revert that failed, and adds each failed revert to the failure', async () => {
+    access.clients = ['main', 'opponent_1', 'opponent_2'];
+    vi.mocked(automationRequest).mockImplementation((_c, _id, command, args, client) => {
+      sent.push(`${String(client)} ${command} ${args.join(' ')}`.trim());
+      if (client === 'opponent_2' && command === 'set_step_mode') return Promise.resolve(answer(false, 'in match'));
+      if (command === 'set_step_mode' && args[0] === 'off') return Promise.resolve(answer(false, `${String(client)} busy`));
+      return Promise.resolve(answer(true, null));
+    });
+    await expect(setStepMode(ctx, 'i1', true)).rejects.toThrow(
+      'opponent_2: set_step_mode failed: "in match"\nstep mode was not reverted: main: set_step_mode off: main: set_step_mode failed: "main busy"; opponent_1: set_step_mode off: opponent_1: set_step_mode failed: "opponent_1 busy"',
+    );
+    expect(sent.slice(-2)).toEqual(['main set_step_mode off', 'opponent_1 set_step_mode off']);
+    expect(vi.mocked(botControl).mock.calls.map((c) => c[2])).toEqual(['pause', 'resume']);
   });
 });

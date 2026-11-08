@@ -217,12 +217,22 @@ export interface ImportCache {
   keep: number;
 }
 
+/** What `importThroughCache` did. */
+export interface CachedImport {
+  /** Whether the import ran. */
+  ran: boolean;
+  /**
+   * After an import that made an entry, the removal of the entries beyond those the cache keeps; null otherwise. It
+   * needs no lock of the key, so the start runs it beside its boot and the other starts of the key do not wait for it.
+   */
+  evict: (() => Promise<void>) | null;
+}
+
 /**
  * The engine import of a fresh checkout through the cache: a copy of the entry of its key, or else `importer`, whose
  * import is kept as the entry. The starts of one key take its lock, so one imports and the others copy its entry.
- * Returns whether the import ran.
  */
-export async function importThroughCache(cache: ImportCache, root: string, engine: string, importer: () => Promise<boolean>): Promise<boolean> {
+export async function importThroughCache(cache: ImportCache, root: string, engine: string, importer: () => Promise<boolean>): Promise<CachedImport> {
   const dir = join(cache.commonDir, IMPORT_CACHE);
   await mkdir(dir, { recursive: true });
   const { before, key } = await span('import key', async () => {
@@ -230,20 +240,18 @@ export async function importThroughCache(cache: ImportCache, root: string, engin
     return { before: files, key: keyOf(files, engine) };
   });
   // an import of a large game takes long: the lock waits as long as a job does
-  return withLock(
+  const ran = await withLock(
     join(dir, `${key}.lock`),
     async () => {
       if (await span('import copy', () => takeEntry(dir, key, root))) return false;
-      const ran = await span('import run', importer);
-      if (!ran) return false;
-      await span('import keep', async () => {
-        await keepEntry(dir, key, root, before);
-        await removeOld(dir, cache.keep, key);
-      });
+      if (!(await span('import run', importer))) return false;
+      await span('import keep', () => keepEntry(dir, key, root, before));
       return true;
     },
     LIMITS.jobMs,
   );
+  // `removeOld` skips `key` and takes the lock of each entry it removes
+  return { ran, evict: ran ? () => removeOld(dir, cache.keep, key) : null };
 }
 
 /** The key of the import of the checkout `root` by the engine at `engine`. */
