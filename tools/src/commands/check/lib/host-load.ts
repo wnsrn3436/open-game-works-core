@@ -238,7 +238,7 @@ interface CpuReading {
  * ogw.md `### host load`: reads the host every `intervalMs` until `stop`. With `instance`, the CPU time that the
  * supervisor process of that instance and its descendants used is not counted as host CPU use. A failed reading of the
  * processes is a reading without them (`failedReading`); any other error of a reading stops the readings and `stop`
- * throws it.
+ * throws it (`settle` returns it). The readings end once: a later `stop` or `settle` reads nothing more.
  */
 export class HostLoadSampler {
   private readonly probe: HostProbe;
@@ -252,6 +252,7 @@ export class HostLoadSampler {
   private pending: Promise<void>;
   /** The error that stopped the readings; `stop` throws it. */
   private failure: { error: unknown } | null = null;
+  private stopped: Promise<void> | null = null;
 
   constructor(probe: HostProbe, intervalMs: number, instance: string | null = null) {
     this.probe = probe;
@@ -303,12 +304,30 @@ export class HostLoadSampler {
     this.instancesMax = Math.max(this.instancesMax, instances);
   }
 
+  /** Ends the readings after a last one; once, however often it is called. */
+  private halt(): Promise<void> {
+    this.stopped ??= (async (): Promise<void> => {
+      clearInterval(this.timer);
+      await this.pending;
+      await this.guarded(() => this.sample());
+    })();
+    return this.stopped;
+  }
+
   /** Takes a last reading and returns the maxima; throws the error that stopped the readings. */
   async stop(): Promise<HostLoad> {
-    clearInterval(this.timer);
-    await this.pending;
-    await this.guarded(() => this.sample());
-    if (this.failure !== null) throw this.failure.error;
-    return { cpuMaxPercent: round(this.cpuMax), memoryMaxPercent: round(this.memoryMax), instancesMax: this.instancesMax };
+    const { hostLoad, error } = await this.settle();
+    if (error !== null) throw error.value;
+    return hostLoad;
+  }
+
+  /**
+   * Ends the readings as `stop` does and returns the maxima of the readings taken, with the error that stopped them
+   * (null when none did) instead of throwing it.
+   */
+  async settle(): Promise<{ hostLoad: HostLoad; error: { value: unknown } | null }> {
+    await this.halt();
+    const hostLoad = { cpuMaxPercent: round(this.cpuMax), memoryMaxPercent: round(this.memoryMax), instancesMax: this.instancesMax };
+    return { hostLoad, error: this.failure === null ? null : { value: this.failure.error } };
   }
 }

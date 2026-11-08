@@ -166,6 +166,9 @@ describe('processBlocker', () => {
     serve(client());
     vi.mocked(instanceServerLog).mockResolvedValueOnce('not json\n{"level":"error","message":"bad"}\n');
     expect(await processBlocker(ctx, 'i1')).toBe('server error log: {"level":"error","message":"bad"}');
+    // a JSON value that is no object (content code printed `null`, a number or a list) is no line of the server log format
+    vi.mocked(instanceServerLog).mockResolvedValueOnce('{"level":"info"}\nnull\ntrue\n3\n"error"\n[{"level":"error"}]\n');
+    expect(await processBlocker(ctx, 'i1')).toBeNull();
   });
 
   it('with a cursor, reads the server log from the byte after the last checked line and scans only new client log lines', async () => {

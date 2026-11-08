@@ -153,20 +153,27 @@ export function verdictOf(values: Record<string, number>, targets: Record<string
   return outside.length > 0 ? { verdict: 'out', detail: outside.join(', ') } : { verdict: 'in', detail: '' };
 }
 
-async function runSeeds(ctx: Context, id: string, command: string, row: string, seeds: number, required: string[]): Promise<SeedResult[] | string> {
+/** Why the seeds of a row did not all give a result; `answered` is false when the request of a seed threw. */
+interface SeedError {
+  message: string;
+  answered: boolean;
+}
+
+async function runSeeds(ctx: Context, id: string, command: string, row: string, seeds: number, required: string[]): Promise<SeedResult[] | SeedError> {
   const results: SeedResult[] = [];
   for (let seed = 1; seed <= seeds; seed++) {
+    const error = (message: string, answered = true): SeedError => ({ message: `seed ${String(seed)}: ${message}`, answered });
     let response: Awaited<ReturnType<typeof automationRequest>>;
     try {
       response = await automationRequest(ctx, id, command, [row, String(seed)]);
-    } catch (error) {
-      return `seed ${String(seed)}: ${command} did not answer: ${error instanceof Error ? error.message : String(error)}`;
+    } catch (thrown) {
+      return error(`${command} did not answer: ${thrown instanceof Error ? thrown.message : String(thrown)}`, false);
     }
-    if (!response.ok) return `seed ${String(seed)}: ${command} returned ok false: ${JSON.stringify(response.result)}`;
+    if (!response.ok) return error(`${command} returned ok false: ${JSON.stringify(response.result)}`);
     const result = seedResult(response.result);
-    if (result === null) return `seed ${String(seed)}: result is not {"solved": <bool>, "metrics": {"<snake_case metric, not solve_permille>": <integer>}}`;
+    if (result === null) return error('result is not {"solved": <bool>, "metrics": {"<snake_case metric, not solve_permille>": <integer>}}');
     const absent = required.filter((metric) => !(metric in result.metrics));
-    if (absent.length > 0) return `seed ${String(seed)}: metrics has no ${absent.join(', ')}`;
+    if (absent.length > 0) return error(`metrics has no ${absent.join(', ')}`);
     results.push(result);
   }
   return results;
@@ -180,13 +187,16 @@ interface RowUnit {
   required: string[];
 }
 
-/** The verdict of one row from all its seeds, run in order on the instance `id`. */
-async function simulateRow(ctx: Context, id: string, unit: RowUnit, seeds: number): Promise<RowResult> {
+/**
+ * The verdict of one row from all its seeds, run in order on the instance `id`; `answered` is false when the request of
+ * a seed threw (the client of the instance ended, hangs or closed its automation channel).
+ */
+async function simulateRow(ctx: Context, id: string, unit: RowUnit, seeds: number): Promise<{ result: RowResult; answered: boolean }> {
   const base = { table: unit.table.name, id: unit.row.id, line: unit.row.line, targets: unit.row.targets };
   const results = await runSeeds(ctx, id, unit.command, unit.row.id, seeds, unit.required);
-  if (typeof results === 'string') return { ...base, verdict: 'error', values: {}, detail: results };
+  if (!Array.isArray(results)) return { result: { ...base, verdict: 'error', values: {}, detail: results.message }, answered: results.answered };
   const values = rowValues(results);
-  return { ...base, values, ...verdictOf(values, unit.row.targets) };
+  return { result: { ...base, values, ...verdictOf(values, unit.row.targets) }, answered: true };
 }
 
 async function simulateCommands(ctx: Context, id: string): Promise<{ command: string; table: string }[]> {
@@ -225,7 +235,7 @@ function plannedRows(tables: ReadonlyMap<string, Table>, commands: readonly { co
 export async function simulateRows(ctx: Context, id: string, root: string, options: SimulateOptions): Promise<RowSimulation> {
   const plan = plannedRows(await readTables(root), await simulateCommands(ctx, id), options);
   const rows: RowResult[] = [];
-  for (const unit of plan.units) rows.push(await simulateRow(ctx, id, unit, options.seeds));
+  for (const unit of plan.units) rows.push((await simulateRow(ctx, id, unit, options.seeds)).result);
   return { rows, tables: plan.simulated, missing: plan.missing };
 }
 
@@ -246,7 +256,9 @@ export const ROW_SIMULATION_WHERE = 'data/tables:1';
 /**
  * `row simulation` of `ogw check --loop`: a headless instance apart from the bot playtest reads the commands and runs
  * the rows in order, and helper instances in free slots of the check run rows beside it (ogw.md `### spare slots` of
- * `## check`); each row runs all its seeds on one instance. The rows keep the order of `simulateRows`.
+ * `## check`); each row runs all its seeds on one instance. The rows keep the order of `simulateRows`. The result is
+ * that of the reading instance alone: after a row whose client did not answer, the rows after it run in order on that
+ * row's instance, as they would on the reading instance after that row, and what other instances gave for them is dropped.
  */
 export async function rowSimulationCheck(ctx: Context, game: string, root: string, seeds: number, options: InstanceCheckOptions): Promise<CheckResult> {
   const instanceOptions = { game, client: 'headless' as const, db: options.db };
@@ -255,10 +267,26 @@ export async function rowSimulationCheck(ctx: Context, game: string, root: strin
     const simulation = await withInstance(ctx, options.slots, instanceOptions, async (instance): Promise<RowSimulation> => {
       const plan = plannedRows(await readTables(root), await simulateCommands(ctx, instance.id), { seeds });
       const rows: RowResult[] = [];
+      const simulate = (id: string, i: number): ReturnType<typeof simulateRow> => {
+        const unit = plan.units[i] as RowUnit;
+        return span(`row ${unit.table.name} ${unit.row.id}`, () => simulateRow(ctx, id, unit, seeds));
+      };
+      // the first row, in row order, whose client did not answer: the rows after it are those of its instance
+      let cut = Infinity;
       const runRows = async (id: string, next: () => number | null): Promise<void> => {
         for (let i = next(); i !== null; i = next()) {
-          const unit = plan.units[i] as RowUnit;
-          rows[i] = await span(`row ${unit.table.name} ${unit.row.id}`, () => simulateRow(ctx, id, unit, seeds));
+          const { result, answered } = await simulate(id, i);
+          if (i > cut) continue;
+          rows[i] = result;
+          if (answered) continue;
+          cut = i;
+          shared.stopAfter(i);
+          // until a row before it is found not to answer on another instance, whose instance then runs the rows after it
+          for (let j = i + 1; j < plan.units.length && cut === i; j++) {
+            const later = await simulate(id, j);
+            if (cut === i) rows[j] = later.result;
+          }
+          return;
         }
       };
       const shared = shareUnits(

@@ -272,12 +272,48 @@ describe('flash check recording', () => {
     });
     const resized = await flashCheck(ctx(), 'g', 'ios', options());
     expect(resized.unknown).toBe(true);
-    expect(resized.failures[0]?.message).toBe('flash did not run: a frame of 30000 bytes, not 200x150 RGBA');
+    expect(resized.failures[0]?.message).toBe('flash did not run: frame00000010.png: an image of 100x75, not 200x150 as the first');
     frames = 0;
     expect(await flashCheck(ctx(), 'g', 'ios', options())).toEqual({
       unknown: true,
       failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'flash: the movie maker wrote no image', evidence: [] }],
     });
+    expect(recordings()).toEqual([]);
+  });
+
+  it('is unknown with an image of another shape of the same byte count', async () => {
+    // a 150 × 200 image after 200 × 150 ones: as many bytes, its pixels at other places
+    vi.mocked(startInstance).mockImplementationOnce(async (_c, given: InstanceOptions) => {
+      const file = given.movie?.file ?? '';
+      frames = 10;
+      await writeMovie(file, [200, 150]);
+      for (const n of [10, 11]) writeFileSync(join(dirname(file), `frame${String(n).padStart(8, '0')}.png`), await encodePng({ width: 150, height: 200, data: Buffer.alloc(150 * 200 * 4) }));
+      return { id: 'f1' } as Awaited<ReturnType<typeof startInstance>>;
+    });
+    expect(await flashCheck(ctx(), 'g', 'ios', options())).toEqual({
+      unknown: true,
+      failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'flash did not run: frame00000010.png: an image of 150x200, not 200x150 as the first', evidence: [] }],
+    });
+  });
+
+  it('stops the scenario when an image cannot be read while it runs, and is unknown with the reason', async () => {
+    const steps = Array.from({ length: 3 }, () => ({ kind: 'input', command: 'tap', args: ['1', '1'], timeoutMs: 2000 }));
+    const scenario = parseScenario(JSON.stringify({ steps, goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } })) as Scenario;
+    movie = (n) => (n === 5 ? null : [0, 0, 0]);
+    // each input takes long: the feed reads the unreadable image while the first one runs
+    vi.mocked(automationRequest).mockImplementation(async (_c, _i, command, args) => {
+      calls.push([command, ...args].join(' '));
+      if (command === 'tap') await new Promise((resolve) => setTimeout(resolve, 300));
+      if (command === 'get_state') return ok(state);
+      if (command === 'get_telemetry') return ok({ goal_intervals: [{}] });
+      return ok(command === 'extract_logs' ? [] : null);
+    });
+    const part = await flashCheck(ctx(), 'g', 'ios', options({ scenario }));
+    expect(part.unknown).toBe(true);
+    expect(part.failures.map((f) => [f.where, f.message.replace(/^(flash did not run: frame00000005\.png: cannot read image).*$/, '$1')])).toEqual([
+      ['client/dev/bot/scenario.json:1', 'flash did not run: frame00000005.png: cannot read image'],
+    ]);
+    expect(calls.filter((c) => c === 'tap 1 1')).toHaveLength(1);
     expect(recordings()).toEqual([]);
   });
 

@@ -52,12 +52,15 @@ export function clientErrorLines(log: string): string[] {
 export function serverErrorLines(log: string): string[] {
   return log.split('\n').filter((line) => {
     if (line.trim() === '') return false;
+    let value: unknown;
     try {
-      return (JSON.parse(line) as { level?: unknown }).level === 'error';
+      value = JSON.parse(line);
     } catch (error) {
       // a line that is not JSON (e.g. a stack trace the runtime printed) is not a log line of the server log format
       if (error instanceof SyntaxError) return false;
       throw error;
     }
+    // nor is a JSON value other than an object (`null`, a number, a list that content code printed)
+    return typeof value === 'object' && value !== null && !Array.isArray(value) && (value as { level?: unknown }).level === 'error';
   });
 }

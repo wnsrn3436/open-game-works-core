@@ -1,8 +1,8 @@
 import { CORE_ACTIONS } from './action-reference.ts';
 import { at, finding, type Finding, type StaticContext } from './lib/context.ts';
 import { isClientContentGd, isClientDev, isClientTest } from './lib/files.ts';
-import { exprsOf } from './lib/gd-shared.ts';
-import { chainText } from './lib/gd-walk.ts';
+import type { GdFile } from './lib/gd-ast.ts';
+import type { Token } from './lib/gd-lexer.ts';
 import { inputMapActions, PROJECT_FILE } from './lib/input-map.ts';
 
 /**
@@ -44,13 +44,33 @@ export async function run(sc: StaticContext): Promise<Finding[]> {
   }
   for (const path of sc.filter((p) => isClientContentGd(p) && !isClientDev(p) && !isClientTest(p))) {
     const seen = new Set<string>();
-    for (const { expr } of exprsOf(await sc.gd(path))) {
-      const name = chainText(expr);
-      if (name === null || !PAD_NAMES.has(name)) continue;
-      const where = at(path, expr.line);
+    for (const { name, line } of dottedNames(await sc.gd(path))) {
+      if (!PAD_NAMES.has(name)) continue;
+      const where = at(path, line);
       if (seen.has(`${where} ${name}`)) continue;
       seen.add(`${where} ${name}`);
       out.push(finding(NAME, where, `\`${name}\` is gamepad input ${UNSUPPORTED}`));
+    }
+  }
+  return out;
+}
+
+/**
+ * Each dotted name of a file that does not come after a `.` (`InputCore.InputDevice.GAMEPAD`), with each of its leading
+ * parts (`InputCore`, `InputCore.InputDevice`), at the line of its first name: the names of expressions, types (of
+ * variables, parameters and return values, `is` and `as`) and match patterns alike.
+ */
+function dottedNames(file: GdFile): { name: string; line: number }[] {
+  const out: { name: string; line: number }[] = [];
+  const tokens = file.tokens;
+  const dot = (t: Token | undefined): boolean => t?.type === 'op' && t.text === '.';
+  for (const [i, first] of tokens.entries()) {
+    if (first.type !== 'name' || dot(tokens[i - 1])) continue;
+    let name = first.text;
+    out.push({ name, line: first.line });
+    for (let j = i + 1; dot(tokens[j]) && tokens[j + 1]?.type === 'name'; j += 2) {
+      name = `${name}.${(tokens[j + 1] as Token).text}`;
+      out.push({ name, line: first.line });
     }
   }
   return out;

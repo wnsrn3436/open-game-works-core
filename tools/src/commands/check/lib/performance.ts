@@ -471,9 +471,18 @@ export async function performanceCheck(ctx: Context, game: string, platform: str
       return measure(ctx, instance.id, platform, scenario, options, started.sampler);
     }, options.evidence);
   } catch (error) {
-    const hostLoad = await (started.sampler ?? new HostLoadSampler(options.probe, options.sampleMs)).stop();
-    return withLoad(checkResult('performance', platform, [failure(SCENARIO_WHERE, `performance did not run: ${(error as Error).message}`)], true), hostLoad);
+    return didNotRun(platform, error, started.sampler ?? new HostLoadSampler(options.probe, options.sampleMs));
   }
+}
+
+/**
+ * The `unknown` item of a profile that `error` kept from being measured, with the readings that `sampler` took; a host
+ * reading that failed apart from `error` is given too.
+ */
+async function didNotRun(platform: string, error: unknown, sampler: HostLoadSampler): Promise<CheckResult> {
+  const { hostLoad, error: reading } = await sampler.settle();
+  const errors = reading === null || reading.value === error ? [error] : [error, reading.value];
+  return withLoad(checkResult('performance', platform, errors.map((e) => failure(SCENARIO_WHERE, `performance did not run: ${(e as Error).message}`)), true), hostLoad);
 }
 
 /** The message of the `unknown` items of a measurement that did not get the performance lease, by what it waited for. */
@@ -497,18 +506,15 @@ export async function performanceChecks(ctx: Context, game: string, platforms: r
   // nothing to measure: the items say why without waiting for the lease
   if (platforms.length === 0 || typeof scenario === 'string') return each();
   const waiting = new HostLoadSampler(options.probe, options.sampleMs);
-  const unknown = async (message: string): Promise<CheckResult[]> => {
-    const hostLoad = await waiting.stop();
-    return platforms.map((p) => withLoad(checkResult('performance', p, [failure(SCENARIO_WHERE, message)], true), hostLoad));
-  };
   try {
     const leased = await withWriterWithin(options.lease, async () => {
       await waiting.stop();
       return each();
     });
     if (leased.ran) return leased.value;
-    return await unknown(LEASE_BUSY[leased.waited]);
+    const hostLoad = await waiting.stop();
+    return platforms.map((p) => withLoad(checkResult('performance', p, [failure(SCENARIO_WHERE, LEASE_BUSY[leased.waited])], true), hostLoad));
   } catch (error) {
-    return unknown(`performance did not run: ${(error as Error).message}`);
+    return Promise.all(platforms.map((p) => didNotRun(p, error, waiting)));
   }
 }

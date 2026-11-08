@@ -345,6 +345,9 @@ function unanswered(error: unknown): null {
 /** An open command whose request threw (the client crashed or hangs); the run stops after reporting it. */
 class OpenThrew extends Error {}
 
+/** A unit after a unit that stopped: it is not in the result, so it sends no more requests (ogw.md `## UI quality`). */
+class UnitAborted extends Error {}
+
 /** The number of captures of one UI quality item so far, over all its instances: it numbers their evidence files. */
 interface CaptureCount {
   value: number;
@@ -362,8 +365,10 @@ class UiRun {
   private readonly evidence: Evidence;
   private readonly settleLimitMs: number;
   private readonly pollMs: number;
+  /** Aborted once the unit of this run is after a unit that stopped: every later request throws {@link UnitAborted}. */
+  private readonly signal: AbortSignal | undefined;
 
-  constructor(ctx: Context, id: string, platform: string, options: UiQualityOptions, captures: CaptureCount) {
+  constructor(ctx: Context, id: string, platform: string, options: UiQualityOptions, captures: CaptureCount, signal?: AbortSignal) {
     this.ctx = ctx;
     this.id = id;
     this.platform = platform;
@@ -371,10 +376,26 @@ class UiRun {
     this.settleLimitMs = options.quality.settleLimitMs;
     this.pollMs = options.pollMs;
     this.captures = captures;
+    this.signal = signal;
+  }
+
+  private checkAborted(): void {
+    if (this.signal?.aborted === true) throw new UnitAborted('a unit before this one stopped');
   }
 
   request(command: string, args: string[]): Promise<AutomationResponse> {
+    if (this.signal?.aborted === true) return Promise.reject(new UnitAborted('a unit before this one stopped'));
     return automationRequest(this.ctx, this.id, command, args);
+  }
+
+  /** Waits `ms`, or until the unit of this run is aborted, which throws {@link UnitAborted}. */
+  private async pause(ms: number): Promise<void> {
+    try {
+      await sleep(ms, undefined, this.signal === undefined ? {} : { signal: this.signal });
+    } catch (error) {
+      this.checkAborted();
+      throw error;
+    }
   }
 
   async setup(command: string, args: string[]): Promise<AutomationResponse> {
@@ -386,6 +407,7 @@ class UiRun {
   /** `set_language` through the runner (`restartClient`), which waits for the new boot to reach `Done`. */
   async language(code: string): Promise<void> {
     this.where = unknownSceneWhere(null);
+    this.checkAborted();
     try {
       await restartClient(this.ctx, this.id, 'main', { command: 'set_language', args: [code], timeoutMs: LIMITS.httpMs });
     } catch (error) {
@@ -433,6 +455,7 @@ class UiRun {
     try {
       opened = await this.request(command, []);
     } catch (error) {
+      if (error instanceof UnitAborted) throw error;
       this.where = await this.sceneWhere(command);
       this.report(`${command} failed: ${(error as Error).message}`, context, []);
       throw new OpenThrew(`${command} failed: ${(error as Error).message}`);
@@ -460,7 +483,7 @@ class UiRun {
       if (known && state.ui_flow === false && state.finite_tweens === 0) return;
       const left = until - Date.now();
       if (left <= 0) return;
-      await sleep(known ? Math.min(this.pollMs, left) : left);
+      await this.pause(known ? Math.min(this.pollMs, left) : left);
     }
   }
 }
@@ -628,20 +651,28 @@ async function capturesCheck(ctx: Context, game: string, platform: string, optio
   const count: CaptureCount = { value: 0 };
   let commands: string[] = [];
   const instanceOptions = { game, platform, client: 'window' as const, db: options.db };
+  // the units that run now: a unit that stops aborts those after it, which are not in the result
+  const running = new Map<number, AbortController>();
   // an error other than a stop is thrown after its outcome is kept, so that the instance keeps its logs
   const runUnits = async (id: string, next: () => number | null): Promise<void> => {
     for (let i = next(); i !== null; i = next()) {
-      const run = new UiRun(ctx, id, platform, options, count);
+      const controller = new AbortController();
+      running.set(i, controller);
+      const run = new UiRun(ctx, id, platform, options, count, controller.signal);
       const unit = units[i] as UiUnit;
       try {
         if (unit === 'gamepad') await span(`UI gamepad ${platform}`, () => gamepadCheck(run, options, screens, commands));
         else await span(`UI captures ${platform} ${unit.language}`, () => languageCaptures(run, unit.language, screens, commands, scales, options.quality, touch));
         outcomes[i + 1] = { failures: run.failures, where: run.where, error: null };
       } catch (error) {
+        if (error instanceof UnitAborted) return;
         outcomes[i + 1] = { failures: run.failures, where: run.where, error: { value: error } };
         shared.stopAfter(i);
+        for (const [j, later] of running) if (j > i) later.abort();
         if (!isStop(error)) throw error;
         return;
+      } finally {
+        running.delete(i);
       }
     }
   };

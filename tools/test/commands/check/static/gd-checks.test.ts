@@ -10,17 +10,39 @@ import * as framePolling from '../../../../src/commands/check/static/frame-polli
 import * as literalTiming from '../../../../src/commands/check/static/literal-timing.ts';
 import * as resourceLoad from '../../../../src/commands/check/static/resource-load.ts';
 import * as testInput from '../../../../src/commands/check/static/test-input.ts';
+import { godotGlobalNames } from '../../../../src/commands/check/static/lib/engine.ts';
+import { ClassIndex } from '../../../../src/commands/check/static/lib/gd-types.ts';
 import { CORE_STUBS, lines, memContext, sorted } from './helpers.ts';
 
 vi.mock('../../../../src/commands/check/static/lib/engine.ts', async (original) => ({
   ...(await original<typeof import('../../../../src/commands/check/static/lib/engine.ts')>()),
-  godotGlobalNames: () => Promise.resolve(new Set(['Node', 'Error', 'Side', 'Signal', 'Timer'])),
+  godotGlobalNames: vi.fn(() => Promise.resolve(new Set(['Node', 'Error', 'Side', 'Signal', 'Timer']))),
 }));
 
 
 const gd = (body: string): string => body.replace(/^\n/, '');
 
 describe('forbidden GDScript API', () => {
+  it('starts the Godot global names beside the class index, which it does not wait for', async () => {
+    const order: string[] = [];
+    const build = ClassIndex.build.bind(ClassIndex);
+    const spy = vi.spyOn(ClassIndex, 'build').mockImplementation(async (sc) => {
+      const index = await build(sc);
+      order.push('class index built');
+      return index;
+    });
+    vi.mocked(godotGlobalNames).mockImplementationOnce(() => {
+      order.push('godot global names started');
+      return Promise.resolve(new Set(['Node']));
+    });
+    try {
+      await forbiddenApi.run(memContext({ ...CORE_STUBS, 'client/features/shop/shop_view.gd': 'class_name ShopView\nextends Node\n' }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(order).toEqual(['godot global names started', 'class index built']);
+  });
+
   it('finds class and enum names that are global names of Godot, scene change calls, and fake adapter class names in tests and DEV code', async () => {
     const fake = 'class_name FakeAdsAdapter\nextends AdsAdapter\n\nvar shown: int = 0\n';
     const sc = memContext({

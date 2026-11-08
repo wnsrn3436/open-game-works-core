@@ -111,7 +111,8 @@ async function serverFile(ctx: Context, checkout: GameRepo, file: string, option
     const run = await serverTestRun(ctx, checkout, file, regressionInputs(checkout.root, db?.url ?? null), LIMITS.programMs);
     const results = new Map((run.result?.results ?? []).map((t) => [t.name, t.status]));
     const why = run.timedOut ? 'the run reached its time limit' : run.result === null ? `vitest wrote no report (exit code ${String(run.exitCode)})` : null;
-    return { started: run.result !== null || run.timedOut, why, results };
+    // `runServerTests` returns only once it has run vitest: a failed install or spawn throws before
+    return { started: true, why, results };
   } finally {
     await db?.close();
   }
@@ -119,7 +120,9 @@ async function serverFile(ctx: Context, checkout: GameRepo, file: string, option
 
 /**
  * Runs each of `files` with `run`, into `runs`: in order one after another, and beside that in the spare slots of
- * `slots` (`shareUnits`). Once every run has ended, throws the first error a run threw.
+ * `slots` (`shareUnits`). A run that throws did not start its test runner (e.g. the server dependencies or the
+ * PostgreSQL container could not be set up): its file has that error as why. Once every run has ended, throws the first
+ * error of a helper.
  */
 async function runFiles(ctx: Context, files: readonly string[], run: (file: string) => Promise<FileRun>, runs: Map<string, FileRun>, slots: Slots | undefined): Promise<void> {
   if (files.length === 0) return;
@@ -128,11 +131,7 @@ async function runFiles(ctx: Context, files: readonly string[], run: (file: stri
   const each = async (next: () => number | null): Promise<void> => {
     for (let i = next(); i !== null; i = next()) {
       const file = files[i] as string;
-      try {
-        runs.set(file, await run(file));
-      } catch (error) {
-        errors.push(error);
-      }
+      runs.set(file, await run(file).catch((error: unknown): FileRun => ({ started: false, why: firstLine(error), results: new Map() })));
     }
   };
   if (slots === undefined) await each(() => queue.claim());
@@ -153,30 +152,34 @@ async function runFiles(ctx: Context, files: readonly string[], run: (file: stri
  * Runs each test file of `files` in a run of its own in a worktree of the fix base with the changed test files of `commit`
  * laid over it and its generated files written: the server test files at once, the client test files once the client is
  * imported, each kind one after another and more beside it in spare slots (`runFiles`). A run that cannot set up the
- * worktree reports why for every file.
+ * worktree or its generated files reports why for every file; a failed client import, for every client test file.
  */
 async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: string, changed: readonly Changed[], files: readonly string[], options: ProofOptions): Promise<Map<string, FileRun>> {
   const worktree = join((await ctx.workspace()).worktrees, game.name, `proof-${newId()}`);
   const runs = new Map<string, FileRun>();
   const none = (why: string): Map<string, FileRun> => new Map(files.map((f) => [f, { started: false, why, results: new Map() }]));
   try {
-    await worktreeAdd(game.mainRoot, worktree, base, undefined, { env: ctx.env });
-    const kept = changed.filter((c) => !c.deleted).map((c) => c.path);
-    if (kept.length > 0) await git(worktree, ['checkout', commit, '--', ...kept], { env: ctx.env });
-    for (const c of changed.filter((d) => d.deleted)) await rm(join(worktree, c.path), { force: true });
+    try {
+      await worktreeAdd(game.mainRoot, worktree, base, undefined, { env: ctx.env });
+      const kept = changed.filter((c) => !c.deleted).map((c) => c.path);
+      if (kept.length > 0) await git(worktree, ['checkout', commit, '--', ...kept], { env: ctx.env });
+      for (const c of changed.filter((d) => d.deleted)) await rm(join(worktree, c.path), { force: true });
+    } catch (error) {
+      return none(`the worktree of the fix base could not be made: ${firstLine(error)}`);
+    }
     const checkout: GameRepo = { ...game, root: worktree, inWorktree: true };
     try {
       await generateCheckout(ctx, checkout);
       await binaryBuild(ctx, checkout, 'the generated files of the fix base could not be written');
     } catch (error) {
-      return none((error as Error).message.split('\n')[0] as string);
+      return none(firstLine(error));
     }
     const client = files.filter((f) => f.startsWith('client/'));
     const server = files.filter((f) => !f.startsWith('client/'));
     // the server test files do not wait for the client import
     const clients = async (): Promise<void> => {
       if (client.length === 0) return;
-      const importFailure = await importClient(ctx, options.godot, checkout);
+      const importFailure = await importClient(ctx, options.godot, checkout).catch(firstLine);
       if (importFailure === null) await runFiles(ctx, client, (file) => clientFile(ctx, checkout, file, options), runs, options.slots);
       else for (const file of client) runs.set(file, { started: false, why: `the client import failed: ${importFailure}`, results: new Map() });
     };
@@ -184,8 +187,6 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
     const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
     if (failed !== undefined) throw failed.reason;
     return runs;
-  } catch (error) {
-    return none(`the worktree of the fix base could not be made: ${(error as Error).message.split('\n')[0] as string}`);
   } finally {
     // the proof is decided; a worktree left behind (or one that was never made) changes no result
     await worktreeRemove(game.mainRoot, worktree, { env: ctx.env }).catch(ignoreCleanupError);

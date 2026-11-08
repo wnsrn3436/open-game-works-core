@@ -8,7 +8,8 @@ import { lineOf, ts, tsSource, walkTs } from './lib/ts-source.ts';
  * test skip: a regression test skips or focuses a test. In a `.gd` file of `client/tests/`: a `pending()` call (bare or on
  * `self`), a `skip_script` declared or assigned, and a `should_skip_script()` declared (`client-content` Godot
  * `## regression test`). In a `.ts` file of `server/tests/`: a member `skip`, `only`, `todo`, `skipIf` or `runIf` of a
- * member chain that starts at `describe`, `it`, `test` or `suite` when the file declares no name of that start, and a
+ * member chain that starts at `describe`, `it`, `test` or `suite` when the file declares no name of that start (an import
+ * from `vitest` declares none: it gives the same functions as the globals), and a
  * `skip()` call on the first parameter of the function given to `it` or `test`, also through a destructured `skip`
  * (`server-content` `## regression test`).
  */
@@ -40,7 +41,14 @@ const ROOTS = new Set(['describe', 'it', 'test', 'suite']);
 const SKIP_MEMBERS = new Set(['skip', 'only', 'todo', 'skipIf', 'runIf']);
 const TEST_FUNCTIONS = new Set(['it', 'test']);
 
-/** Names that a file declares: variables, parameters, functions, classes and imports. */
+/** Whether an import clause or one of its names is of an import from `vitest`, whose test functions are those of the globals. */
+function fromVitest(node: ts.ImportClause | ts.ImportSpecifier | ts.NamespaceImport): boolean {
+  const clause = ts.isImportClause(node) ? node : ts.isNamespaceImport(node) ? node.parent : node.parent.parent;
+  const declaration = clause.parent;
+  return ts.isImportDeclaration(declaration) && ts.isStringLiteral(declaration.moduleSpecifier) && declaration.moduleSpecifier.text === 'vitest';
+}
+
+/** Names that a file declares: variables, parameters, functions, classes and imports other than those from `vitest`. */
 function declaredNames(source: ts.SourceFile): Set<string> {
   const names = new Set<string>();
   const bind = (name: ts.BindingName): void => {
@@ -50,8 +58,8 @@ function declaredNames(source: ts.SourceFile): Set<string> {
   walkTs(source, (node) => {
     if (ts.isVariableDeclaration(node) || ts.isParameter(node)) bind(node.name);
     if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) names.add(node.name.text);
-    if (ts.isImportClause(node) && node.name) names.add(node.name.text);
-    if (ts.isImportSpecifier(node) || ts.isNamespaceImport(node)) names.add(node.name.text);
+    if (ts.isImportClause(node) && node.name && !fromVitest(node)) names.add(node.name.text);
+    if ((ts.isImportSpecifier(node) || ts.isNamespaceImport(node)) && !fromVitest(node)) names.add(node.name.text);
   });
   return names;
 }

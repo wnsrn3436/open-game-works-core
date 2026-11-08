@@ -183,6 +183,37 @@ describe('flash judgement of generated frame sequences', () => {
     expect(judge(W, H, 120, (n) => frame(W, H, square(4)(n) ? blue : gray))).toEqual([]);
   });
 
+  /** The 8-bit gray whose relative luminance is nearest `l`. */
+  const grayOf = (l: number): Rgb => {
+    let best = 0;
+    for (let c = 0; c < 256; c++) if (Math.abs(relativeLuminance(c, c, c) - l) < Math.abs(relativeLuminance(best, best, best) - l)) best = c;
+    return [best, best, best];
+  };
+  /** Frames of the colors of `start`, then of `a` and `b` in turns of 7 frames, `a` first (about 4.3 Hz). */
+  const turns = (start: readonly Rgb[], a: Rgb, b: Rgb) => (n: number): Buffer => frame(W, H, start[n] ?? (Math.floor((n - start.length) / 7) % 2 === 0 ? a : b));
+
+  it('measures a general transition from the lowest and the highest since the last one', () => {
+    // a rise to 0.15, then 0.6 and 0.45: each fall is 0.15 below the highest since the rise, 0.6, not below 0.15
+    expect(kinds(judge(W, H, 120, turns([grayOf(0), grayOf(0.15)], grayOf(0.6), grayOf(0.45))))).toEqual(['general']);
+    // a fall to 0.5 and on to 0: each rise to 0.15 is 0.15 above the lowest since the fall, 0, not above 0.5
+    expect(kinds(judge(W, H, 120, turns([grayOf(0.7), grayOf(0.5), grayOf(0)], grayOf(0.15), grayOf(0))))).toEqual(['general']);
+  });
+
+  it('measures the first general transition from the lowest and the highest since the first frame', () => {
+    // 0.5, then 0.44: the rise to 0.56 at frame 2 is 0.12 above the lowest since the first frame, not above the first
+    const rise = flashRuns(judge(W, H, 120, turns([grayOf(0.5), grayOf(0.44)], grayOf(0.56), grayOf(0.44))));
+    expect(rise.map((r) => [r.kind, r.first])).toEqual([['general', 2]]);
+    // 0.5, then 0.56: the fall to 0.44 at frame 2 is 0.12 below the highest since the first frame, not below the first
+    const fall = flashRuns(judge(W, H, 120, turns([grayOf(0.5), grayOf(0.56)], grayOf(0.44), grayOf(0.56))));
+    expect(fall.map((r) => [r.kind, r.first])).toEqual([['general', 2]]);
+  });
+
+  it('takes a frame of the other side that is less red than its reference as the reference', () => {
+    // a pink first frame, then a gray and a red of the gray's luminance: the red is within 0.2 of the pink in
+    // chromaticity and more than 0.2 from the gray, which is less red than the pink
+    expect(kinds(judge(W, H, 120, turns([[180, 90, 90]], [88, 88, 88], [180, 0, 0])))).toEqual(['red']);
+  });
+
   it('measures a change into the red side from the least red frame of the other side', () => {
     // 5 Hz: gray, then a pink that is not saturated and within 0.2 of the red, then the red; from the gray the red is
     // more than 0.2 away, from the pink it is not

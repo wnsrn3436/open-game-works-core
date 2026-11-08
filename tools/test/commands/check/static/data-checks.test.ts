@@ -77,15 +77,27 @@ describe('resource hash', () => {
       'resource/resources.ko.translation': 'stray',
       'resource/icon/sub/ok.png': 'other folder',
       'client/icon/ok.png': 'outside resource/',
+      // files named after a key that its row does not have: one file for a row without variants, one per variant from 1 to `variants`
+      'resource/icon/ok.webp': 'second',
+      'resource/icon/ok.1.png': 'variant of a row without variants',
+      'resource/sfx/hit.3.wav': 'past the variants',
+      'resource/sfx/hit.wav': 'no variant number',
+      'resource/sfx/hit.x.wav': 'not a variant number',
     });
+    const beyond = (path: string, expected: string): string => `${path}:1 | resource hash: \`${path}\` is a file of \`${path.slice('resource/'.length).replace(/(\.[0-9]+)?\.[a-z]+$/, '')}\` beyond the ${expected} of its row in resource/resources.csv; delete the file or change the row`;
+    const one = 'one file `resource/icon/ok.<extension>`';
+    const perVariant = 'one file `resource/sfx/hit.<n>.<extension>` per `<n>` from 1 to 2';
     expect(lines(await resourceHash.run(sc))).toEqual([
       'resource/icon/ok_old.png:1 | resource hash: `resource/icon/ok_old.png` is no file of a row of resource/resources.csv; add its row or delete the file',
       'resource/icon/ok:1 | resource hash: `resource/icon/ok` is no file of a row of resource/resources.csv; add its row or delete the file',
+      beyond('resource/icon/ok.1.png', one),
+      beyond('resource/icon/ok.webp', one),
       'resource/icon/sub/ok.png:1 | resource hash: `resource/icon/sub/ok.png` is no file of a row of resource/resources.csv; add its row or delete the file',
       'resource/resources.ko.translation:1 | resource hash: `resource/resources.ko.translation` is no file of a row of resource/resources.csv; add its row or delete the file',
+      beyond('resource/sfx/hit.3.wav', perVariant),
+      beyond('resource/sfx/hit.wav', perVariant),
+      'resource/sfx/hit.x.wav:1 | resource hash: `resource/sfx/hit.x.wav` is no file of a row of resource/resources.csv; add its row or delete the file',
     ]);
-    expect(resourceHash.isKeyFile('resource/sfx/hit.3.wav', new Set(['sfx/hit']))).toBe(true);
-    expect(resourceHash.isKeyFile('resource/sfx/hit.x.wav', new Set(['sfx/hit']))).toBe(false);
   });
 
   it('does nothing without resources.csv', async () => {

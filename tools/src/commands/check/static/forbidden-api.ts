@@ -264,8 +264,9 @@ export async function checkFile(file: GdFile, index: ClassIndex, names: ContentN
 export async function run(sc: StaticContext): Promise<Finding[]> {
   const paths = sc.filter(isClientContentGd);
   if (paths.length === 0) return [];
-  const index = await classIndex(sc);
-  const names: ContentNames = { globals: await godotGlobalNames(sc), fakes: await fakeAdapterNames(sc) };
+  // none of the three waits for another's result
+  const [index, globals, fakes] = await Promise.all([classIndex(sc), godotGlobalNames(sc), fakeAdapterNames(sc)]);
+  const names: ContentNames = { globals, fakes };
   const results = await Promise.all(paths.map(async (path) => checkFile(await sc.gd(path), index, names)));
   return results.flat();
 }

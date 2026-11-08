@@ -924,6 +924,38 @@ describe('performanceChecks: the performance lease', () => {
     await other;
   });
 
+  it('makes a host reading that fails the unknown item of its platform profile and keeps the items measured before it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+    const platforms: string[] = [];
+    vi.mocked(startInstance).mockImplementation((_ctx, options) => {
+      platforms.push(options.platform ?? '');
+      return Promise.resolve({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
+    });
+    fakeGame({ lobby: 60, battle: 60 }, []);
+    const unreadable = new OgwError('invalid JSON in x.json');
+    // the instance count fails once the instance of the second profile has started
+    const fixed = fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 100 }], [33], [1]);
+    const second: HostProbe = { ...fixed, instances: () => (platforms.includes('web') ? Promise.reject(unreadable) : fixed.instances()) };
+    const results = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root), probe: second }));
+    expect(results.map((r) => [r.platform, r.result])).toEqual([['android', 'pass'], ['web', 'unknown']]);
+    expect(results[1]?.failures).toEqual([{ where: 'client/dev/bot/scenario.json:1', message: 'performance did not run: invalid JSON in x.json', evidence: [] }]);
+    // the readings of the wait for the lease fail: nothing is measured, and every item says why
+    const always = { ...fixedProbe([{ idle: 0, total: 0 }], [33], [1]), instances: () => Promise.reject(unreadable) };
+    const waited = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root), probe: always }));
+    expect(waited.map((r) => [r.platform, r.result, r.failures.map((f) => f.message)])).toEqual([
+      ['android', 'unknown', ['performance did not run: invalid JSON in x.json']],
+      ['web', 'unknown', ['performance did not run: invalid JSON in x.json']],
+    ]);
+    expect(waited[0]?.hostLoad).toEqual({ cpuMaxPercent: 0, memoryMaxPercent: 33, instancesMax: 0 });
+    // one profile alone, and a failed instance start whose host reading fails too: both errors are given
+    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: always }))).failures.map((f) => f.message)).toEqual(['performance did not run: invalid JSON in x.json']);
+    vi.mocked(startInstance).mockRejectedValueOnce(new Error('no port'));
+    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: always }))).failures.map((f) => f.message)).toEqual([
+      'performance did not run: no port',
+      'performance did not run: invalid JSON in x.json',
+    ]);
+  });
+
   it('does not wait for holders left by a process that is gone, nor does a generation', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     const order: string[] = [];

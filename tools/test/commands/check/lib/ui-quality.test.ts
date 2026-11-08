@@ -869,6 +869,29 @@ describe('uiQualityCheck on more instances', () => {
     expect(result.result).toBe('fail');
   });
 
+  it('stops the units after a unit that stops at their next request, instead of running them to their end', async () => {
+    // the first instance stops at its first capture; the units of the other instances are slow
+    const { spans } = perInstance((id) => (id === 'u1' ? 1 : 20));
+    const base = vi.mocked(automationRequest).getMockImplementation();
+    let stoppedAt = Infinity;
+    vi.mocked(automationRequest).mockImplementation(async (c, id, command, args, client) => {
+      if (id === 'u1' && command === 'capture_screen') {
+        stoppedAt = Date.now();
+        return notOk('headless');
+      }
+      return (await base?.(c, id, command, args, client)) ?? ok(null);
+    });
+    const result = await uiQualityCheck(ctx, 'g', 'ios', options(mkdtempSync(join(tmpdir(), 'ogw-ui-')), { slots: new Slots(3) }));
+    expect(result.result).toBe('unknown');
+    expect(result.failures.map((f) => f.message)).toEqual(['capture_screen  failed: "headless"']);
+    // the other instances sent no request after the unit stopped but the get_state polls of the boot wait after the
+    // set_language they had sent (three at most each: the fake client boots on the third)
+    const later = spans.filter((s) => s.id !== 'u1' && s.start > stoppedAt);
+    expect(later.filter((s) => s.command !== 'get_state')).toEqual([]);
+    expect(later.length).toBeLessThanOrEqual(6);
+    for (const id of ['u2', 'u3']) expect(stopInstance).toHaveBeenCalledWith(ctx, id);
+  });
+
   it('leaves out what units after a unit that stops judged on other instances, as one instance would not have run them', async () => {
     let koCaptures = 0;
     // the ko unit of the first instance is slow and its fifth capture fails: en and the gamepad focus check end first

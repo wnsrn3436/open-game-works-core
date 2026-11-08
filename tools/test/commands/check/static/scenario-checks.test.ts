@@ -546,6 +546,38 @@ describe('gamepad input', () => {
     expect(await gamepadInput.run(memContext({ ...files, 'settings.json': '{"gamepadSupported": true}' }))).toEqual([]);
   });
 
+  it('reports the gamepad names in types, type tests, casts and match patterns too', async () => {
+    const content = [
+      'class_name PadHud',
+      'func _on(ev: GamepadConnectionChangedEvent) -> void:',
+      '\tif ev is GamepadConnectionChangedEvent:',
+      '\t\tpass',
+      '\tmatch InputCore.get_device():',
+      '\t\tInputCore.InputDevice.GAMEPAD:',
+      '\t\t\tpass',
+      '\tmatch InputCore.get_prompt_family():',
+      '\t\tGameData.InputPromptFamily.XBOX, GameData.InputPromptFamily.NINTENDO:',
+      '\t\t\tpass',
+      '\tvar pads: Array[GamepadConnectionChangedEvent] = []',
+      '\tprint((ev as GamepadConnectionChangedEvent), pads)',
+      'func _last() -> GamepadConnectionChangedEvent:',
+      '\treturn null',
+      '',
+    ].join('\n');
+    const sc = memContext({ 'settings.json': '{}', 'client/project.godot': project(CORE_INPUT), 'client/features/play/pad_hud.gd': content });
+    const name = (row: number, text: string): string => `client/features/play/pad_hud.gd:${String(row)} | gamepad input: \`${text}\` is gamepad input while game settings \`gamepadSupported\` is not \`true\``;
+    expect(lines(await gamepadInput.run(sc))).toEqual(sorted([
+      name(2, 'GamepadConnectionChangedEvent'),
+      name(3, 'GamepadConnectionChangedEvent'),
+      name(6, 'InputCore.InputDevice.GAMEPAD'),
+      name(9, 'GameData.InputPromptFamily.XBOX'),
+      name(9, 'GameData.InputPromptFamily.NINTENDO'),
+      name(11, 'GamepadConnectionChangedEvent'),
+      name(12, 'GamepadConnectionChangedEvent'),
+      name(13, 'GamepadConnectionChangedEvent'),
+    ]));
+  });
+
   it('reports the stick axis option operations of InputCore while gamepadSupported is not true', async () => {
     const ops = ['set_pad_axis_inverted(&"right_y", true)', 'is_pad_axis_inverted(&"right_y")', 'set_pad_axis_sensitivity(&"right_x", 2000)', 'get_pad_axis_sensitivity(&"right_x")', 'list_pad_axis_sensitivities(buffer)', 'reset_pad_axes()'];
     const content = ['class_name PlayOptions', 'func f(buffer: PackedInt32Array) -> void:', ...ops.map((op) => `\tInputCore.${op}`), ''].join('\n');

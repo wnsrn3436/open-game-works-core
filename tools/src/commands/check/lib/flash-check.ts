@@ -141,6 +141,10 @@ class ImageFeed {
       }
       const image = decoded.image;
       this.detector ??= new FlashDetector(image.width, image.height, this.options.targetFps, fieldGeometry([image.width, image.height], this.screen.window, this.screen.pixelRatio));
+      const { width, height } = this.detector;
+      if (image.width !== width || image.height !== height) {
+        throw new OgwError(`${imageName(n)}: an image of ${String(image.width)}x${String(image.height)}, not ${String(width)}x${String(height)} as the first`);
+      }
       await this.take(this.detector.push(image.data));
       this.next++;
       // the frame `targetFps` before is final now: its image is no longer needed for evidence
@@ -249,13 +253,18 @@ export async function flashCheck(ctx: Context, game: string, platform: string, o
         return { step: unknownPart(SCENARIO_WHERE, why), stopped: null };
       }
       readings.push({ written: await feed.count(), scene: typeof state.scene_key === 'string' ? state.scene_key : '' });
-      const stop = { done: false };
+      // the first error of the feed or the readings: it ends both, stops the scenario after its step and is thrown
+      const stop: { done: boolean; error: { value: unknown } | null } = { done: false, error: null };
+      const fail = (error: unknown): void => {
+        stop.error ??= { value: error };
+        stop.done = true;
+      };
       const feeding = (async () => {
         while (!stop.done) {
           await feed.feed();
           await sleep(flashTiming.feedMs);
         }
-      })();
+      })().catch(fail);
       const reading = (async () => {
         while (!stop.done) {
           await sleep(flashTiming.readingMs);
@@ -263,17 +272,24 @@ export async function flashCheck(ctx: Context, game: string, platform: string, o
           const r = await sceneReading(ctx, instance.id, feed);
           if (r !== null) readings.push(r);
         }
-      })();
+      })().catch(fail);
+      const afterStep = (): Promise<void> => {
+        if (stop.error !== null) throw stop.error.value;
+        return Promise.resolve();
+      };
+      let result: { step: FlashPart | null; stopped: FlashPart | null };
       try {
-        const outcome = await runScenario(ctx, instance.id, scenario, { pollMs: options.pollMs });
+        const outcome = await runScenario(ctx, instance.id, scenario, { pollMs: options.pollMs, afterStep });
         const last = await sceneReading(ctx, instance.id, feed);
         if (last !== null) readings.push(last);
         const stopped = outcome.stop === null ? null : unknownPart(`step ${String(outcome.stop.step)}`, `flash: scenario stopped: ${outcome.stop.message}`);
-        return { step: null, stopped };
+        result = { step: null, stopped };
       } finally {
         stop.done = true;
         await Promise.all([feeding, reading]);
       }
+      if (stop.error !== null) throw stop.error.value;
+      return result;
     }, options.evidence);
     if (recorded.step !== null) return recorded.step;
     // the client has stopped: the images left are whole except perhaps the last

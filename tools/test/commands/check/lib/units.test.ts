@@ -102,6 +102,65 @@ describe('shareUnits', () => {
     expect(failures).toEqual(['no instance', 'no instance', 'no instance', 'no instance']);
   });
 
+  it('a helper gives its slot back after the unit it runs once other work of the check waits for a slot', async () => {
+    const slots = new Slots(2);
+    // the slot of the runner of the caller
+    await slots.acquire();
+    const queue = new UnitQueue(4);
+    const ran: number[] = [];
+    const ends: (() => void)[] = [];
+    const shared = shareUnits(slots, queue, async (next) => {
+      for (let i = next(); i !== null; i = next()) {
+        ran.push(i);
+        await new Promise<void>((resolve) => ends.push(resolve));
+      }
+    }, () => undefined);
+    expect(shared.claim()).toBe(0);
+    await turn();
+    // the helper on the free slot runs unit 1
+    expect(ran).toEqual([1]);
+    let got = false;
+    const other = slots.acquire().then(() => {
+      got = true;
+    });
+    await turn();
+    expect(got).toBe(false);
+    ends.shift()?.();
+    await turn();
+    await turn();
+    // it claimed no unit after the one it ran, and the waiting work got the slot
+    expect(ran).toEqual([1]);
+    expect(got).toBe(true);
+    await other;
+    await shared.helpers();
+    expect([shared.claim(), shared.claim(), shared.claim()]).toEqual([2, 3, null]);
+  });
+
+  it('a helper that is still starting stops once other work of the check waits for a slot', async () => {
+    const slots = new Slots(2);
+    await slots.acquire();
+    const queue = new UnitQueue(3);
+    const signals: AbortSignal[] = [];
+    const shared = shareUnits(slots, queue, (_next, signal) => {
+      signals.push(signal);
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new Error('stopped'));
+        });
+      });
+    }, () => {
+      throw new Error('a stopped helper is no failure');
+    });
+    expect(shared.claim()).toBe(0);
+    expect(signals).toHaveLength(1);
+    const other = slots.acquire();
+    expect(signals[0]?.aborted).toBe(true);
+    // the stopped helper gave its slot back to the waiting work
+    await other;
+    await shared.helpers();
+    expect([shared.claim(), shared.claim(), shared.claim()]).toEqual([1, 2, null]);
+  });
+
   it('stopAfter stops the helpers that are getting ready, and no unit after it is claimed', async () => {
     const slots = new Slots(2);
     const queue = new UnitQueue(5);

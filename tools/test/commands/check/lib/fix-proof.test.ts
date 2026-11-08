@@ -136,6 +136,43 @@ describe('fixTestProofs', () => {
     expect(proofs[1]?.reason).toBe('owner data');
   });
 
+  it('keeps the results of the other test files when the run of one file throws before its test runner starts', async () => {
+    const { ctx, game, run, commit } = await proofGame();
+    const options = { godot: 'godot', runTimeLimitMs: null, startTimeLimitMs: null, slots: new Slots(4) };
+    // the server dependencies cannot be installed: the client tests that fail on the fix base still prove the fix
+    vi.mocked(runServerTests).mockRejectedValue(new Error('server: npm ci failed (1)\nnpm ERR! missing lock'));
+    const [proof] = await fixTestProofs(ctx, game, run, commit, options);
+    expect(proof?.result).toBe('pass');
+    expect(proof?.tests.map((t) => [t.name, t.result, t.reason])).toEqual([
+      ['client/tests/a/test_a.gd::test', 'fail', null],
+      ['client/tests/b/test_b.gd::test', 'fail', null],
+      ['client/tests/c/test_c.gd::test', 'fail', null],
+      ['server/tests/d.test.ts::t', 'unknown', 'server: npm ci failed (1)'],
+      ['server/tests/e.test.ts::t', 'unknown', 'server: npm ci failed (1)'],
+    ]);
+    // an import that throws: the client tests did not start, and the server tests are judged
+    vi.mocked(runServerTests).mockReset().mockResolvedValue({ result: { results: [{ name: 'server/tests/d.test.ts::t', status: 'fail' }] }, timedOut: false, exitCode: 1, output: '' } as unknown as Awaited<ReturnType<typeof runServerTests>>);
+    vi.mocked(importClient).mockRejectedValue(new Error('godot crashed'));
+    const [imported] = await fixTestProofs(ctx, game, run, commit, options);
+    expect(imported?.result).toBe('pass');
+    expect(imported?.tests.map((t) => [t.result, t.reason])).toEqual([
+      ['unknown', 'the client import failed: godot crashed'],
+      ['unknown', 'the client import failed: godot crashed'],
+      ['unknown', 'the client import failed: godot crashed'],
+      ['fail', null],
+      ['fail', 'the run does not report it'],
+    ]);
+  });
+
+  it('fails a named server test whose vitest run ended without a report', async () => {
+    const { ctx, game, run, commit } = await proofGame();
+    writeFileSync(join(game.root, R, 'content-1.md'), '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `server/tests/d.test.ts::t` |\n');
+    vi.mocked(runServerTests).mockResolvedValue({ result: null, timedOut: false, exitCode: 1, output: 'Segmentation fault' });
+    expect(await fixTestProofs(ctx, game, run, commit, { godot: 'godot', runTimeLimitMs: null, startTimeLimitMs: null })).toEqual([
+      { id: 'crash', result: 'pass', reason: null, tests: [{ name: 'server/tests/d.test.ts::t', result: 'fail', reason: 'the run does not report it: vitest wrote no report (exit code 1)' }] },
+    ]);
+  });
+
   it('fails when the content agent report cannot be read, instead of reading it as no fixed row', async () => {
     const { ctx, game, run, commit } = await proofGame();
     rmSync(join(game.root, R, 'content-1.md'));

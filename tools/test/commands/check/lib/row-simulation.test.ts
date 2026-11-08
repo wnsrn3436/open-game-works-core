@@ -14,6 +14,7 @@ import {
   verdictOf,
 } from '../../../../src/commands/check/lib/row-simulation.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
+import { OgwError } from '../../../../src/lib/errors.ts';
 import { fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({ automationRequest: vi.fn() }));
@@ -230,6 +231,40 @@ describe('rowSimulationCheck', () => {
       const runs = seen.filter((s) => s.row === row);
       expect(new Set(runs.map((s) => s.id)).size).toBe(1);
       expect(runs.map((s) => s.seed)).toEqual(['1', '2', '3']);
+    }
+  });
+
+  it('gives the rows after one whose client stops answering the result of one instance that runs them all, whatever the free slots', async () => {
+    const rowsCsv = ['desc,,', 'All,All,None', 'id(key),int,int?', 'id,moves,sim_moves_left_max', ...Array.from({ length: 6 }, (_, i) => `[lv_${String(i + 1)}],10,10`), ''].join('\n');
+    let n = 0;
+    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `r${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
+    vi.mocked(stopInstance).mockResolvedValue();
+    // the command of [lv_2] ends the client of its instance after 5 ms: no request to that instance answers after it,
+    // and each fails at once, sooner than a row of another instance (30 ms)
+    const ended = new Set<string>();
+    const requests: { id: string; row: string; live: boolean }[] = [];
+    vi.mocked(automationRequest).mockImplementation(async (_c, id, command, args) => {
+      if (command === 'list_commands') return ok(commands);
+      const row = args[0] ?? '';
+      requests.push({ id, row, live: !ended.has(id) });
+      if (ended.has(id)) throw new OgwError('the client of the instance does not answer');
+      await new Promise((resolve) => setTimeout(resolve, row === '[lv_2]' ? 5 : 30));
+      if (row === '[lv_2]') ended.add(id);
+      if (ended.has(id)) throw new OgwError('the client of the instance does not answer');
+      return ok({ solved: true, metrics: { moves_left: 1 } });
+    });
+    const run = (slots: Slots): ReturnType<typeof rowSimulationCheck> => rowSimulationCheck(ctx, 'g', gameRoot({ level: rowsCsv }), 1, { evidence, slots, pollMs: 1 });
+    const one = await run(new Slots(1));
+    expect(one.failures.map((f) => f.where)).toEqual([6, 7, 8, 9, 10].map((line) => `data/tables/level.csv:${String(line)}`));
+    expect(one.failures[1]?.message).toBe('error [lv_3]: seed 1: puzzle.simulate_level did not answer: the client of the instance does not answer');
+    for (const slots of [2, 3]) {
+      n = 0;
+      ended.clear();
+      requests.length = 0;
+      expect(await run(new Slots(slots))).toEqual(one);
+      expect(new Set(requests.map((r) => r.id)).size).toBe(slots);
+      // no instance takes a row after the one whose client ended but the instance of that row
+      expect(requests.filter((r) => ['[lv_4]', '[lv_5]', '[lv_6]'].includes(r.row) && r.live)).toEqual([]);
     }
   });
 

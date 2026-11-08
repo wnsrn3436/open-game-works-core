@@ -60,4 +60,21 @@ describe('test skip', () => {
       "server/tests/shop.test.ts:9 | test skip: `later()` skips a test; a regression test runs every test",
     ]);
   });
+
+  it('finds them also when the file imports the test functions from vitest, which declares no name of its own', async () => {
+    const test = [
+      "import { describe, it, expect } from 'vitest';",
+      "import * as helper from '../core/testing/dev/index.ts';",
+      "describe.skip('a', () => {});",
+      "it.only('b', () => { expect(helper).toBeDefined(); });",
+      "it('c', (ctx) => { ctx.skip(); });",
+    ].join('\n');
+    expect(lines(await testSkip.run(memContext({ 'server/tests/shop.test.ts': test })))).toEqual([
+      "server/tests/shop.test.ts:3 | test skip: `describe.skip` skips a test; a regression test runs every test",
+      "server/tests/shop.test.ts:4 | test skip: `it.only` focuses a test, which skips the others; a regression test runs every test",
+      "server/tests/shop.test.ts:5 | test skip: `ctx.skip()` skips a test; a regression test runs every test",
+    ]);
+    // a name imported from another module is a name of the file
+    expect(await testSkip.run(memContext({ 'server/tests/own.test.ts': "import { test } from './own.ts';\ntest.skip();\n" }))).toEqual([]);
+  });
 });
