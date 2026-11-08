@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { ignoreCleanupError, OgwError } from '../../../lib/errors.ts';
-import { exists, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { exists, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { newId } from '../../../lib/ids.ts';
 import { checkoutLock, commonDir } from '../../../lib/git.ts';
 import { withLock } from '../../../lib/lock.ts';
@@ -20,7 +20,7 @@ import { gutPackage, installPackage, isCorePlugin, pluginsFor } from './engine-p
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { renderCoreProjectGodot } from '../../generate/lib/godot-project.ts';
 import { pageInput } from './page-input.ts';
-import { installServiceWorker, WEB_EXPORT_OPTIONS } from '../../../lib/godot-web.ts';
+import { installServiceWorker, launchValueFileError, WEB_EXPORT_OPTIONS, writePageLaunchValues } from '../../../lib/godot-web.ts';
 
 /** Counts and failures of one module test. */
 export interface ModuleOutcome {
@@ -406,10 +406,28 @@ const WEB_RUNNER_SCRIPT = `extends Node
 
 func _ready() -> void:
 	load("res://addons/gut/gut_loader.gd")
-	var cli: Node = (load("res://addons/gut/cli/gut_cli.gd") as GDScript).new()
+	var cli: Node = (load("res://ogw_web_gut_cli.gd") as GDScript).new()
 	get_tree().root.add_child.call_deferred(cli)
 	await cli.ready
 	cli.call("main")
+`;
+/**
+ * The GUT command line runner of the browser run (ogw.md `### Godot core test`): GUT's, with the option `--launch-values`
+ * that it does not use. GUT stops at a command line argument it does not know, and the web shell of client core gives the
+ * launch value file of the page as the user argument `--launch-values=<path>` (`client-core` Godot `## module`).
+ */
+const WEB_GUT_CLI_SCRIPT = `extends "res://addons/gut/cli/gut_cli.gd"
+# ogw browser run: the web shell gives the launch value file of the page as the user argument
+# --launch-values=<path>, which BootstrapCore reads. GUT stops at an argument it does not know, so it knows this one.
+
+
+# untyped, as the GUT function it overrides
+@warning_ignore("untyped_declaration")
+func setup_options(options, font_names):
+	@warning_ignore("unsafe_call_argument")
+	var opts: Object = super(options, font_names)
+	opts.call("add", "--launch-values", "", "Launch value file of the page. Read by BootstrapCore, not by GUT.")
+	return opts
 `;
 const WEB_RUNNER_TSCN = `[gd_scene load_steps=2 format=3]
 
@@ -437,6 +455,7 @@ export async function webExport(ctx: Context, implDir: string, setup: GodotSetup
   await rm(join(copy, '.godot', 'extension_list.cfg'), { force: true });
   // the official web export template is built without path overrides: it ignores `-s` and refuses a scene argument
   await writeFileAtomic(join(copy, 'ogw_web_runner.gd'), WEB_RUNNER_SCRIPT);
+  await writeFileAtomic(join(copy, 'ogw_web_gut_cli.gd'), WEB_GUT_CLI_SCRIPT);
   await writeFileAtomic(join(copy, 'ogw_web_runner.tscn'), WEB_RUNNER_TSCN);
   await writeFileAtomic(join(copy, 'project.godot'), renderCoreProjectGodot(WEB_RUNNER_SCENE));
   const out = join(work, 'web');
@@ -487,6 +506,32 @@ export interface WebOptions {
   timeoutMs: number;
   /** `UnitTestCore.startTimeLimitMs` of the core under test; null for a core without it. */
   startLimitMs: number | null;
+  /** The launch values the page passes (`pageLaunchValues`); absent: the page passes none. */
+  launchValues?: Readonly<Record<string, string>>;
+}
+
+/** The page launch value file of the browser run of `module` (`godot` `## test`), relative to the core checkout. */
+function pageLaunchValueFile(module: string): string {
+  return join('client', 'godot', 'core', moduleFolder(module), 'tests', 'web_launch_values.json');
+}
+
+/**
+ * The launch values of the page of the browser run of `module` in the core checkout `implDir`: `values` of its page
+ * launch value file (null when it has none), or `error` naming the file when that file is not a launch value file.
+ */
+export async function pageLaunchValues(implDir: string, module: string): Promise<{ values: Record<string, string> | null } | { error: string }> {
+  const file = pageLaunchValueFile(module);
+  const text = await readFile(join(implDir, file), 'utf8').catch(whenNotFound(null));
+  if (text === null) return { values: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return { error: `${file}: not JSON: ${error.message}` };
+  }
+  const why = launchValueFileError(value);
+  return why === null ? { values: value as Record<string, string> } : { error: `${file}: ${why}` };
 }
 
 /** How many times a browser run opens its page when the page did not load (the browser cut off an `/app/` file). */
@@ -517,7 +562,7 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
   const appDir = await newPrivateTempFolder('ogw-web-app-', ctx.env);
   const host = await startTestHost(appDir);
   const args = gutOptions(options.module, 'test_');
-  const query = testRunConfigQuery({ ogw_run_id: runId, ogw_test_host: host.url, ogw_core_fixture_dir: 'res://core_fixtures' });
+  const config: TestRunConfig = { ogw_run_id: runId, ogw_test_host: host.url, ogw_core_fixture_dir: 'res://core_fixtures' };
   const profile = await newPrivateTempFolder('ogw-chromium-', ctx.env);
   let stderr = '';
   let browser: ReturnType<typeof spawnTracked> | null = null;
@@ -535,6 +580,7 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
   if (loading) await webLoading.acquire();
   try {
     await appFolder(options.exportDir, appDir, args);
+    const query = await pageQuery(appDir, config, options.launchValues);
     browser = spawnTracked(options.chromium, [
       // without a user gesture the audio context stays suspended, and a test that waits for audio never ends
       '--headless', '--no-first-run', '--autoplay-policy=no-user-gesture-required', '--enable-logging=stderr', '--v=0', `--user-data-dir=${profile}`,
@@ -581,6 +627,15 @@ async function webModuleRun(ctx: Context, options: WebOptions): Promise<{ outcom
     await rm(profile, { recursive: true, force: true }).catch(ignoreCleanupError);
     await rm(appDir, { recursive: true, force: true }).catch(ignoreCleanupError);
   }
+}
+
+/**
+ * The query of the page URL of a browser run: the test run config, and, when the page passes launch values, the launch
+ * value file of the page, which goes on the origin of the page into the page folder `appDir` (ogw.md `### Godot core test`).
+ */
+async function pageQuery(appDir: string, config: TestRunConfig, launchValues: Readonly<Record<string, string>> | undefined): Promise<string> {
+  const query = testRunConfigQuery(config);
+  return launchValues === undefined ? query : `${query}&${await writePageLaunchValues(appDir, '/app/', launchValues)}`;
 }
 
 const RESULT_POLL_MS = 200;

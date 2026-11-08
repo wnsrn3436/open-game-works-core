@@ -1,7 +1,8 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OgwError } from './errors.ts';
 import { writeFileAtomic } from './fsx.ts';
+import { newId } from './ids.ts';
 
 /**
  * The Web preset options of every Godot Web export (`client-core` Godot `## folder`, ogw.md `#### platform`): a
@@ -51,4 +52,28 @@ export async function installServiceWorker(project: string, outDir: string): Pro
   const exportedFile = join(outDir, 'index.service.worker.js');
   const template = await readFile(join(project, WEB_SERVICE_WORKER), 'utf8');
   await writeFileAtomic(exportedFile, filledServiceWorker(template, await readFile(exportedFile, 'utf8')));
+}
+
+/** The page URL query parameter that gives the URL path of the launch value file of the page (`client-core` Godot `## module`). */
+const LAUNCH_VALUES_PARAM = 'ogw_launch_values';
+
+/**
+ * Why `value` is not the content of a launch value file, a JSON object keyed by launch value name whose values are JSON
+ * strings (`client-core` Godot `## module`); null when it is one.
+ */
+export function launchValueFileError(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'not a JSON object';
+  for (const [name, text] of Object.entries(value)) if (typeof text !== 'string') return `the value of ${name} is not a string`;
+  return null;
+}
+
+/**
+ * Writes `values` as the launch value file of a page into `dir`, the folder served at the URL path `urlDir` (ending in
+ * `/`) on the origin of the page, under a name with a new random part, readable by the owner only (launch values may
+ * hold secrets, `OGW_DEV_ACCESS`). Returns the page URL query parameter that names it.
+ */
+export async function writePageLaunchValues(dir: string, urlDir: string, values: Readonly<Record<string, string>>): Promise<string> {
+  const name = `ogw-launch-values-${newId()}.json`;
+  await writeFile(join(dir, name), JSON.stringify(values), { mode: 0o600, flag: 'wx' });
+  return new URLSearchParams({ [LAUNCH_VALUES_PARAM]: `${urlDir}${name}` }).toString();
 }

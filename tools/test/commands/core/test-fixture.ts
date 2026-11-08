@@ -28,7 +28,7 @@ if (exp >= 0) {
   fs.writeFileSync(path.join(path.dirname(out), 'index.wasm'), 'w');
   fs.writeFileSync(path.join(path.dirname(out), 'index.service.worker.js'), 'const CACHE_VERSION = "v1";\\n');
   const project = args[args.indexOf('--path') + 1];
-  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ fixtures: fs.readdirSync(path.join(project, 'core_fixtures')), preset: fs.readFileSync(path.join(project, 'export_presets.cfg'), 'utf8').includes('variant/thread_support=true') && fs.readFileSync(path.join(project, 'export_presets.cfg'), 'utf8').includes('script_export_mode=0'), filter: (/include_filter="([^"]*)"/.exec(fs.readFileSync(path.join(project, 'export_presets.cfg'), 'utf8')) || [])[1], addons: fs.readdirSync(path.join(project, 'addons')), extensionList: fs.existsSync(path.join(project, '.godot', 'extension_list.cfg')), mainScene: (/run\\/main_scene="([^"]*)"/.exec(fs.readFileSync(path.join(project, 'project.godot'), 'utf8')) || [])[1], runner: fs.readFileSync(path.join(project, 'ogw_web_runner.tscn'), 'utf8').includes('res://ogw_web_runner.gd') && fs.readFileSync(path.join(project, 'ogw_web_runner.gd'), 'utf8').includes('res://addons/gut/cli/gut_cli.gd') }) + '\\n');
+  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ fixtures: fs.readdirSync(path.join(project, 'core_fixtures')), preset: fs.readFileSync(path.join(project, 'export_presets.cfg'), 'utf8').includes('variant/thread_support=true') && fs.readFileSync(path.join(project, 'export_presets.cfg'), 'utf8').includes('script_export_mode=0'), filter: (/include_filter="([^"]*)"/.exec(fs.readFileSync(path.join(project, 'export_presets.cfg'), 'utf8')) || [])[1], addons: fs.readdirSync(path.join(project, 'addons')), extensionList: fs.existsSync(path.join(project, '.godot', 'extension_list.cfg')), mainScene: (/run\\/main_scene="([^"]*)"/.exec(fs.readFileSync(path.join(project, 'project.godot'), 'utf8')) || [])[1], runner: fs.readFileSync(path.join(project, 'ogw_web_runner.tscn'), 'utf8').includes('res://ogw_web_runner.gd') && fs.readFileSync(path.join(project, 'ogw_web_runner.gd'), 'utf8').includes('res://ogw_web_gut_cli.gd'), gutCli: fs.existsSync(path.join(project, 'ogw_web_gut_cli.gd')) ? fs.readFileSync(path.join(project, 'ogw_web_gut_cli.gd'), 'utf8') : null }) + '\\n');
   process.exit(0);
 }
 const get = (p) => (args.find((a) => a.startsWith(p)) || '').slice(p.length);
@@ -66,6 +66,10 @@ if (process.env.FAKE_SHARES) fs.appendFileSync(process.env.FAKE_LOG, JSON.string
   const query = new URL(url).searchParams;
   process.stderr.write('[1:INFO:CONSOLE(1)] "' + (query.get('ogw_core_fixture_dir') === 'res://core_fixtures' && !args.some((a) => a.startsWith('-gconfig=') || a === '-s') && process.argv.includes('--autoplay-policy=no-user-gesture-required') ? 'ok' : 'ERROR: fixtures') + '", source: x\\n');
   const folder = get('-gdir=res://core/');
+  // the launch value file of the page, on the origin of the page (\`client-core\` Godot \`## module\`)
+  const launchPath = query.get('ogw_launch_values');
+  const launchValues = launchPath === null ? null : await (await fetch(new URL(launchPath, url))).json();
+  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ page: folder, launchPath, launchValues }) + '\\n');
   await fetch(query.get('ogw_test_host') + '/result', { method: 'PUT', body: JSON.stringify({ run_id: query.get('ogw_run_id'), results: [{ name: folder + '::web', status: 'pass' }], run_failures: [] }) });
   // a release that prints a second after the result, then the release signal and the last line of the run
   if (process.env.FAKE_RELEASE_ERROR) await new Promise((r) => setTimeout(r, 1000));

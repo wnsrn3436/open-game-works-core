@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { startTestHost } from '../../../../src/commands/check/api.ts';
-import { addOutcomes, appFolder, consoleMessages, gutArgs, gutPass, judgeRun, WEB_LOADING_PAGES, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
+import { addOutcomes, appFolder, consoleMessages, gutArgs, gutPass, judgeRun, pageLaunchValues, WEB_LOADING_PAGES, releasedLine, releasedOrDrained, testRunConfigQuery, waitForResult, webModuleTest, withConfigArgs } from '../../../../src/commands/core/lib/godot.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import { chmodSync } from 'node:fs';
 import { runModulePool } from '../../../../src/commands/core/lib/ready-queue.ts';
@@ -51,6 +51,19 @@ describe('browser run helpers', () => {
     } finally {
       await host.close();
     }
+  });
+});
+
+describe('page launch values', () => {
+  it('reads the page launch value file of a module: none, its values whatever their names, or why it is not one', async () => {
+    const implDir = realpathSync(mkdtempSync(join(tmpdir(), 'ogw-impl-')));
+    expect(await pageLaunchValues(implDir, 'BootstrapCore')).toEqual({ values: null });
+    const tests = join(implDir, 'client', 'godot', 'core', 'bootstrap_core', 'tests');
+    mkdirSync(tests, { recursive: true });
+    writeFileSync(join(tests, 'web_launch_values.json'), '{"OGW_INSTANCE_ID": "i1", "error": "a name like another"}');
+    expect(await pageLaunchValues(implDir, 'BootstrapCore')).toEqual({ values: { OGW_INSTANCE_ID: 'i1', error: 'a name like another' } });
+    writeFileSync(join(tests, 'web_launch_values.json'), '{"OGW_INSTANCE_ID": 1}');
+    expect(await pageLaunchValues(implDir, 'BootstrapCore')).toEqual({ error: 'client/godot/core/bootstrap_core/tests/web_launch_values.json: the value of OGW_INSTANCE_ID is not a string' });
   });
 });
 

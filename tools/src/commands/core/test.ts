@@ -18,7 +18,7 @@ import { testAtHead, type TestStart } from './lib/main-checkout.ts';
 import { writeCoreSpec } from './spec-api.ts';
 import { baseProtoErrors } from './lib/base-proto-check.ts';
 import { fixtureIdErrors, licenseErrors } from './lib/content-checks.ts';
-import { nativeModuleTest, resultsDirOf, setupGodot, webExport, webModuleTest, withGodotProject, type ModuleOutcome } from './lib/godot.ts';
+import { nativeModuleTest, pageLaunchValues, resultsDirOf, setupGodot, webExport, webModuleTest, withGodotProject, type ModuleOutcome } from './lib/godot.ts';
 import { type CoreSpecModule, enginesOf, moduleFolder, readCoreSpecDir, readEngineJson, unitTestProcessLimit, unitTestStartLimit } from './lib/impl.ts';
 import { startPostgres } from './lib/postgres.ts';
 import { runModulePool } from './lib/ready-queue.ts';
@@ -155,7 +155,15 @@ async function engineRunner(ctx: Context, implDir: string, target: Extract<Targe
   const chromium = await toolProgram(ctx, 'chromium');
   if (chromium === null) throw new OgwError('harness settings tools.chromium is not on this host; the browser run stops');
   const exportDir = await webExport(ctx, implDir, setup, work);
-  return { run: (module) => webModuleTest(ctx, { chromium, exportDir, module, resultsDir, timeoutMs, startLimitMs }), close: () => Promise.resolve() };
+  return {
+    async run(module) {
+      // a page launch value file that is no launch value file fails the module before its page opens
+      const page = await pageLaunchValues(implDir, module);
+      if ('error' in page) return { tests: 0, passed: 0, failures: [`browser run: ${page.error}`], ran: false };
+      return webModuleTest(ctx, { chromium, exportDir, module, resultsDir, timeoutMs, startLimitMs, ...(page.values === null ? {} : { launchValues: page.values }) });
+    },
+    close: () => Promise.resolve(),
+  };
 }
 
 async function serverRunner(ctx: Context, implDir: string, work: string, file: string | undefined): Promise<Runner> {

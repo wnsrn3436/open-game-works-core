@@ -575,7 +575,7 @@ describe('ogw core test godot', () => {
     expect(JSON.parse(run.stdout)).toMatchObject({ target: 'godot --web', modules: { LogCore: 'pass', UICore: 'pass' }, tests: 2, passed: 2 });
     // the export carries the fixtures and the generated files the core project reads (core settings, data build), and its
     // main scene starts GUT: the web template takes no \`-s\`
-    expect(log()).toContainEqual({ fixtures: ['text-format.json'], preset: true, filter: 'core_fixtures/*.json, generated/*, build/data/*, addons/gut/*.txt', addons: ['gut'], extensionList: false, mainScene: 'res://ogw_web_runner.tscn', runner: true });
+    expect(log()).toContainEqual({ fixtures: ['text-format.json'], preset: true, filter: 'core_fixtures/*.json, generated/*, build/data/*, addons/gut/*.txt', addons: ['gut'], extensionList: false, mainScene: 'res://ogw_web_runner.tscn', runner: true, gutCli: expect.any(String) as string });
     expect(existsSync(join(ws.coreImpl, 'client/godot/core_fixtures'))).toBe(false);
     expect(existsSync(join(ws.coreImpl, 'client/godot/ogw_web_runner.tscn'))).toBe(false);
     expect(readFileSync(join(ws.coreImpl, 'client/godot/project.godot'), 'utf8')).not.toContain('main_scene');
@@ -589,6 +589,41 @@ describe('ogw core test godot', () => {
     vi.mocked(toolProgram).mockResolvedValue(null);
     expect((await ogw(ws, ['core', 'test', 'godot', '--web'], { env })).stderr).toContain('tools.chromium is not on this host');
   });
+
+  it('opens the page of a module with a page launch value file with that file on the origin of the page', async () => {
+    const { ws, env, log } = setup();
+    writeFiles(ws.coreImpl, { 'client/godot/core/log_core/tests/web_launch_values.json': { OGW_INSTANCE_ID: 'i1', OGW_RANDOM_BASE: '42' } });
+    commitAll(ws.coreImpl, 'page launch values');
+    const run = await ogw(ws, ['core', 'test', 'godot', '--web', '--json'], { env });
+    expect(JSON.parse(run.stdout)).toMatchObject({ modules: { LogCore: 'pass', UICore: 'pass' } });
+    const pages = log().filter((c) => (c as { page?: unknown }).page !== undefined);
+    expect(pages).toHaveLength(2);
+    expect(pages).toContainEqual({ page: 'log_core', launchPath: expect.stringMatching(/^\/app\/ogw-launch-values-[0-9a-z]+\.json$/) as string, launchValues: { OGW_INSTANCE_ID: 'i1', OGW_RANDOM_BASE: '42' } });
+    // a module without that file opens its page as before, without the query parameter
+    expect(pages).toContainEqual({ page: 'ui_core', launchPath: null, launchValues: null });
+    // the web shell gives that file to the engine as the user argument --launch-values=<path>, which GUT would refuse
+    const gutCli = (log().find((c) => (c as { gutCli?: unknown }).gutCli !== undefined) as { gutCli: string }).gutCli;
+    expect(gutCli).toContain('extends "res://addons/gut/cli/gut_cli.gd"');
+    expect(gutCli).toContain('"--launch-values"');
+  });
+
+  it('fails a module whose page launch value file is not a JSON object of strings, without opening its page', async () => {
+    const files: [string, string][] = [
+      ['{"OGW_RANDOM_BASE": 42}', 'value of OGW_RANDOM_BASE is not a string'],
+      ['["OGW_INSTANCE_ID"]', 'not a JSON object'],
+      ['{"OGW_INSTANCE_ID": ', 'not JSON'],
+    ];
+    for (const [file, reason] of files) {
+      const { ws, env, log } = setup();
+      writeFiles(ws.coreImpl, { 'client/godot/core/log_core/tests/web_launch_values.json': file });
+      commitAll(ws.coreImpl, 'page launch values');
+      const run = await ogw(ws, ['core', 'test', 'godot', '--web', '--json'], { env });
+      const result = JSON.parse(run.stdout) as { modules: Record<string, string>; failures: Record<string, string[]> };
+      expect(result.modules).toEqual({ LogCore: 'fail', UICore: 'pass' });
+      expect(result.failures.LogCore).toEqual([expect.stringMatching(new RegExp(`^browser run: client/godot/core/log_core/tests/web_launch_values\\.json: .*${reason}`)) as string]);
+      expect(log().filter((c) => (c as { page?: unknown }).page !== undefined)).toEqual([{ page: 'ui_core', launchPath: null, launchValues: null }]);
+    }
+  }, 60_000);
 });
 
 describe('ogw core test preflight', () => {
