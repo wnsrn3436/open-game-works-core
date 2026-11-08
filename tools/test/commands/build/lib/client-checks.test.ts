@@ -18,6 +18,7 @@ import { automationRequest } from '../../../../src/commands/instance/automation.
 import { ClientChannel } from '../../../../src/commands/instance/lib/channel.ts';
 import { createContext } from '../../../../src/lib/command.ts';
 import { makeWorkspace, type TestWorkspace } from '../../../helpers/workspace.ts';
+import { secretFilesDir } from '../../../../src/lib/secret-files.ts';
 import { commit, fakeBin, gameRepo, gameSettings, setSecrets, setupGame, write } from '../helpers.ts';
 
 vi.mock('../../../../src/commands/core/api.ts', async (orig) => ({ ...(await orig<object>()), coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
@@ -44,9 +45,12 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
 const fakes = join(dirname(fileURLToPath(import.meta.url)), '..', 'fakes');
 const GOAL = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
 const SCENARIO = { steps: [{ kind: 'input', command: 'tap', args: ['1', '2'], timeoutMs: 3000 }], goal: GOAL };
-/** Fake Godot: the check export copies `generated/launch_values.json` to the output file and keeps the preset. */
+/**
+ * Fake Godot: the apk export copies `generated/launch_values.json` to the output file, the web export writes a page; both
+ * keep the preset, and `export-launch-values-<output file>` keeps the launch values a copy held at its export.
+ */
 const GODOT = `case "$*" in
-  *--export-*) cp "$3/export_presets.cfg" "$FAKE_DIR/preset.cfg"; [ -f "$3/generated/build_info.json" ] && touch "$FAKE_DIR/build-info"; for last; do :; done; if [ -z "$FAKE_NO_OUTPUT" ]; then cp "$3/generated/launch_values.json" "$last"; case "$last" in *.html) printf 'const CACHE_VERSION = "v1";\n' > "$(dirname "$last")/index.service.worker.js";; esac; fi;;
+  *--export-*) cp "$3/export_presets.cfg" "$FAKE_DIR/preset.cfg"; [ -f "$3/generated/build_info.json" ] && touch "$FAKE_DIR/build-info"; for last; do :; done; [ -f "$3/generated/launch_values.json" ] && cp "$3/generated/launch_values.json" "$FAKE_DIR/export-launch-values-$(basename "$last")"; if [ -z "$FAKE_NO_OUTPUT" ]; then case "$last" in *.html) printf '<html>' > "$last"; printf 'const CACHE_VERSION = "v1";\n' > "$(dirname "$last")/index.service.worker.js";; *) cp "$3/generated/launch_values.json" "$last";; esac; fi;;
 esac`;
 /** Fake adb: the app is the fake client started with the launch values of the installed apk. */
 const ADB = (node: string) => `case "$3" in
@@ -181,7 +185,8 @@ describe('build check helpers', () => {
     write(s.ws.root, 'site/index.html', '<html>');
     write(s.ws.root, 'site/g.wasm', 'wasm');
     write(s.ws.root, 'secret.txt', 'no');
-    const host = await serveFolder(join(s.ws.root, 'site'));
+    write(s.ws.root, 'values/v.json', '{"OGW_PLATFORM":"web"}');
+    const host = await serveFolder(join(s.ws.root, 'site'), { '/ogw-launch-values-1.json': join(s.ws.root, 'values', 'v.json') });
     const get = (path: string, method = 'GET') =>
       new Promise<{ status: number; type: string | undefined; body: string }>((resolve, reject) => {
         const req = request(`${host.url}${path}`, { method }, (res) => {
@@ -202,6 +207,10 @@ describe('build check helpers', () => {
     expect((await get('/%2e%2e/secret.txt')).status).toBe(404);
     expect((await get('/none.js')).status).toBe(404);
     expect((await get('/index.html', 'POST')).status).toBe(404);
+    // a file given by its URL path is served on the same port, and nothing else of its folder
+    expect(await get('/ogw-launch-values-1.json?x=1')).toEqual({ status: 200, type: 'application/octet-stream', body: '{"OGW_PLATFORM":"web"}' });
+    expect((await get('/ogw-launch-values-1.json', 'POST')).status).toBe(404);
+    expect((await get('/v.json')).status).toBe(404);
     // a folder is no file; a file that cannot be read is a server error with its reason, not a missing file
     mkdirSync(join(s.ws.root, 'site', 'sub'));
     expect((await get('/sub')).status).toBe(404);
@@ -268,24 +277,35 @@ describe('build check helpers', () => {
 });
 
 describe('web smoke', () => {
-  it('passes: DEV web export with launch values, headless browser with the throttle, bot playtest, first loading ms', async () => {
+  it('passes: web check export without launch values, the page with the launch value file of its check instance, headless browser with the throttle, bot playtest, first loading ms', async () => {
     const s = await setup();
     s.config({ telemetry: { goal_intervals: [{}], scene_loads: [] } });
     const result = await webSmoke(s.input);
     expect(result?.check).toEqual({ name: 'web smoke', result: 'pass', details: [] });
     expect(result?.loadingMs).toBeGreaterThanOrEqual(0);
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web' });
+    // a check instance has random base 1
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', randomBase: 1 });
     expect(vi.mocked(stopInstance)).toHaveBeenCalledWith(s.input.ctx, 'i1');
+    // the page gets the launch values of its check instance from the launch value file that ogw_launch_values names on its port
     const values = JSON.parse(readFileSync(join(s.bin.bin, 'page-launch-values.json'), 'utf8')) as Record<string, string>;
     expect(values).toEqual({
       OGW_SERVER_URL: 'http://127.0.0.1:4321', OGW_INSTANCE_ID: 'i1', OGW_AUTOMATION_PORT: String(channel?.port), OGW_AUTOMATION_TOKEN: channel?.token,
-      OGW_PLATFORM: 'web', OGW_DEV_ACCESS: 'DEV-ACCESS', OGW_DEV_ACCOUNT: 'main',
+      OGW_PLATFORM: 'web', OGW_DEV_ACCESS: 'DEV-ACCESS', OGW_DEV_ACCOUNT: 'main', OGW_RANDOM_BASE: '1',
     });
+    const opened = chromiumCalls(s).find((c) => c.page !== undefined) as { page: string; launchValues: { path: string; status: number } };
+    expect(opened.page).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+\/index\.html\?ogw_launch_values=%2Fogw-launch-values-[^&/]+\.json$/);
+    expect(opened.launchValues).toMatchObject({ path: expect.stringMatching(/^\/ogw-launch-values-[^/]+\.json$/) as string, status: 200 });
+    // the export holds no launch values: generated/launch_values.json is neither written nor taken out of exclude_filter
+    expect(existsSync(join(s.bin.bin, 'export-launch-values-index.html'))).toBe(false);
+    // the browser reads the current JavaScript heap
+    expect(chromiumCalls(s)[0]?.argv).toContain('--enable-precise-memory-info');
     expect(chromiumCalls(s).find((c) => c.method === 'Emulation.setCPUThrottlingRate')?.params).toEqual({ rate: 4 });
     const preset = readFileSync(join(s.bin.bin, 'preset.cfg'), 'utf8');
     expect(preset).toContain('name="web-dev"\nplatform="Web"\n');
-    expect(preset).toContain('exclude_filter="tests/*,addons/gut/*"\n');
+    expect(preset).toContain('exclude_filter="tests/*,addons/gut/*,generated/launch_values.json"\n');
     expect(existsSync(join(s.bin.bin, 'build-info'))).toBe(false);
+    // the launch value file holds secret values: its secret folder is gone with the page
+    expect(readdirSync(await secretFilesDir(s.input.ctx.env)).filter((name) => name.startsWith('ogw-page-launch-values-'))).toEqual([]);
     expect(readFileSync(s.bin.log, 'utf8')).toMatch(/godot --headless --path \S+\/client --export-debug web-dev \S+\/\.ogw-check\/web\/index\.html\n/);
     expect(s.requests()).toContain('tap 1 2');
     expect(readFileSync(join(s.dir, 'builds/dev-0.1.0/web-smoke/console.log'), 'utf8')).toBe('boot 1 Object  \n');
@@ -420,9 +440,11 @@ describe('device performance', () => {
     const check = await devicePerformance(s.input);
     expect(check).toEqual({ name: 'device performance', result: 'pass', details: [] });
     expect(vi.mocked(udpReaches).mock.calls[0]?.slice(1)).toEqual(['emulator-5554', '192.168.0.9']);
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'android' });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'android', randomBase: 1 });
+    // the apk holds the launch values of its check instance in generated/launch_values.json, which exclude_filter keeps
     const values = JSON.parse(readFileSync(join(s.bin.bin, 'installed.apk'), 'utf8')) as Record<string, string>;
-    expect(values).toMatchObject({ OGW_SERVER_URL: 'http://127.0.0.1:4321', OGW_PLATFORM: 'android', OGW_DEV_ACCESS: 'DEV-ACCESS', OGW_DEV_ACCOUNT: 'main', OGW_INSTANCE_ID: 'i1' });
+    expect(values).toMatchObject({ OGW_SERVER_URL: 'http://127.0.0.1:4321', OGW_PLATFORM: 'android', OGW_DEV_ACCESS: 'DEV-ACCESS', OGW_DEV_ACCOUNT: 'main', OGW_INSTANCE_ID: 'i1', OGW_RANDOM_BASE: '1' });
+    expect(readFileSync(join(s.bin.bin, 'preset.cfg'), 'utf8')).toContain('exclude_filter="tests/*,addons/gut/*"\n');
     const port = values.OGW_AUTOMATION_PORT ?? '';
     const adb = readFileSync(s.bin.log, 'utf8').split('\n').filter((l) => l.startsWith('adb '));
     expect(adb[0]).toMatch(/^adb -s emulator-5554 install -r \S+\/\.ogw-check\/android\/g\.apk$/);

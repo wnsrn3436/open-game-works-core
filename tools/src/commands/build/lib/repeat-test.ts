@@ -1,12 +1,16 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Context } from '../../../lib/command.ts';
+import { OgwError } from '../../../lib/errors.ts';
 import type { CheckResult } from '../../check/api.ts';
 import { readScenario } from '../../check/lib/bot-playtest.ts';
-import { checkResult, failure } from '../../check/lib/evidence.ts';
+import { checkResult, failure, writeEvidence } from '../../check/lib/evidence.ts';
 import { Slots } from '../../check/lib/instances.ts';
 import type { Scenario } from '../../check/lib/scenario.ts';
+import { isRecord } from '../../check/lib/scenario-form.ts';
+import { automationRequest } from '../../instance/automation.ts';
 import type { BuildCheck } from './buildrun.ts';
-import { buildCheckOf, checkoutOf, didNotRun, evidenceOf, launchValuesOf, withCheckCopy, withCheckInstance, withWorkspacesOf, type ClientCheckInput } from './client-check.ts';
+import { buildCheckOf, byteCount, checkoutOf, didNotRun, evidenceOf, withCheckInstance, withWorkspacesOf, type CheckWorkspaces, type ClientCheckInput } from './client-check.ts';
 import { outcome } from './settingschecks.ts';
 import { webRunSettings, webScenario, withWebPage, type WebRun } from './web-smoke.ts';
 
@@ -58,34 +62,83 @@ export function repeatVerdict(env: ClientCheckInput['env'], runs: readonly Repea
   return { name: NAME, result: 'pass', details: [] };
 }
 
+/** The values of the `get_stats` a run reads when its scenario has ended (ogw.md `### repeat test` 1 and 4). */
+export interface RunStats {
+  heapMemoryBytes: number | null;
+  totalMemoryBytes: number | null;
+  maxFrameIntervalMs: number | null;
+}
+
+/** A run and its `get_stats` values; null for a run that read none. */
+export interface RunOutcome {
+  run: RepeatRun;
+  stats: RunStats | null;
+}
+
+/** The values of one `get_stats` result; a value that is not of its type is null. */
+export function runStats(result: unknown): RunStats {
+  const stats = isRecord(result) ? result : {};
+  const interval = stats.max_frame_interval_ms;
+  return {
+    heapMemoryBytes: byteCount(stats.heap_memory_bytes),
+    totalMemoryBytes: byteCount(stats.total_memory_bytes),
+    maxFrameIntervalMs: typeof interval === 'number' && Number.isFinite(interval) && interval >= 0 ? interval : null,
+  };
+}
+
+/** One object of `runs.json` (ogw.md `### repeat test` 4): run `n`, whose check instance had random base `n`. */
+export function runRecord(n: number, { run, stats }: RunOutcome): Record<string, unknown> {
+  return { run: n, randomBase: n, result: run.result, kind: run.kind, heapMemoryBytes: stats?.heapMemoryBytes ?? null, totalMemoryBytes: stats?.totalMemoryBytes ?? null, maxFrameIntervalMs: stats?.maxFrameIntervalMs ?? null };
+}
+
+/** The `get_stats` of a run whose scenario has ended; null when it read none (the request failed or its answer is not `ok`). */
+async function readStats(ctx: Context, id: string): Promise<RunStats | null> {
+  try {
+    const answer = await automationRequest(ctx, id, 'get_stats', []);
+    return answer.ok ? runStats(answer.result) : null;
+  } catch (error) {
+    // a request that the instance did not answer is a run that read none; another error stops the run
+    if (!(error instanceof OgwError)) throw error;
+    return null;
+  }
+}
+
 /**
- * One run: its own copy of the check workspace, then its own check instance, check export and page (ogw.md
- * `### repeat test` 1); the logs of a run that passed are not kept.
+ * Run `n` (ogw.md `### repeat test` 1): its own check instance with random base `n`, and a page of the web check export
+ * with the launch values of that instance. The copy of the web check export comes before the instance starts, and a run
+ * that would only read a failed export starts none. The logs of a run that passed are not kept.
  */
-async function oneRun(input: ClientCheckInput, scenario: Scenario, run: WebRun, n: number): Promise<RepeatRun> {
-  const { ctx } = input;
+async function oneRun(input: ClientCheckInput & { workspaces: CheckWorkspaces }, scenario: Scenario, run: WebRun, n: number): Promise<RunOutcome> {
+  const { ctx, workspaces } = input;
   const evidence = evidenceOf(input, `repeat-test/run-${String(n)}`);
   try {
-    const repeat = await withCheckCopy(input, 'web', `web-run-${String(n)}`, (exportWith) =>
-      withCheckInstance(ctx, input.game, 'web', async (instance, external) => {
-        const file = await exportWith(launchValuesOf(instance, external, 'web'));
-        return withWebPage(ctx, run, file, async (page) => runOf(input.env, (await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence)).results));
-      }, checkoutOf(input)));
-    if (repeat.result === 'pass') await rm(join(evidence.root, evidence.dir ?? ''), { recursive: true, force: true });
+    await workspaces.webCopy();
+    const failed = workspaces.webExportFailure();
+    if (failed !== null) throw failed.error;
+    const repeat = await withCheckInstance(ctx, input.game, 'web', async (instance, _external, values) => {
+      const file = await workspaces.webExport();
+      return withWebPage(ctx, run, file, values, async (page) => {
+        const { results, loadingMs } = await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence);
+        // a boot that did not reach Done ran no scenario
+        return { run: runOf(input.env, results), stats: loadingMs === null ? null : await readStats(ctx, instance.id) };
+      });
+    }, checkoutOf(input), n);
+    if (repeat.run.result === 'pass') await rm(join(evidence.root, evidence.dir ?? ''), { recursive: true, force: true });
     return repeat;
   } catch (error) {
     // a run that could not run to the end is `unknown`; an undefined step still stops the build run (`didNotRun`)
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith('not defined:')) throw error;
-    return { result: 'unknown', kind: null, line: `did not run: ${message}` };
+    return { run: { result: 'unknown', kind: null, line: `did not run: ${message}` }, stats: null };
   }
 }
 
 /**
  * Check `repeat test` (`build` `## build-time check`, ogw.md `### repeat test`): the bot playtest scenario in
- * `repeatPlan.runs` runs, each as a new user on its own DEV web export made in its own copy of the one web check
- * workspace, at most `maxConcurrentInstances` at a time: the exports of the runs are made together. Null when the build
- * has no web platform or is a PROD build.
+ * `repeatPlan.runs` runs, at most `maxConcurrentInstances` at a time, each as a new user on its own check instance
+ * with its own random base and a page of the one web check export of the check workspaces, which starts here, beside the
+ * check instances of the runs, when no web check made it yet. `runs.json` holds the runs. Null when the build has no web
+ * platform or is a PROD build.
  */
 export async function repeatTest(input: ClientCheckInput): Promise<BuildCheck | null> {
   if (!input.platforms.includes('web') || input.env === 'PROD') return null;
@@ -102,6 +155,7 @@ export async function repeatTest(input: ClientCheckInput): Promise<BuildCheck | 
     if (max === null) return didNotRun(NAME, 'harness settings maxConcurrentInstances is null');
     const slots = new Slots(max);
     return await withWorkspacesOf(input, async (shared) => {
+      shared.workspaces.startWebExport();
       const runs = Array.from({ length: repeatPlan.runs }, async (_, i) => {
         await slots.acquire();
         try {
@@ -110,7 +164,9 @@ export async function repeatTest(input: ClientCheckInput): Promise<BuildCheck | 
           slots.release();
         }
       });
-      return repeatVerdict(input.env, await Promise.all(runs));
+      const outcomes = await Promise.all(runs);
+      await writeEvidence(evidenceOf(input, 'repeat-test'), 'runs.json', `${JSON.stringify(outcomes.map((o, i) => runRecord(i + 1, o)), null, 2)}\n`);
+      return repeatVerdict(input.env, outcomes.map((o) => o.run));
     });
   } catch (error) {
     return didNotRun(NAME, error);

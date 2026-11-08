@@ -3,9 +3,9 @@ import { cp } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clientCheckTiming, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
+import { clientCheckTiming, withCheckWorkspaces, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
 import { godotCheckExport, godotCheckPrepare } from '../../../../src/commands/build/lib/godot.ts';
-import { blockerKind, repeatPlan, repeatTest, repeatVerdict, runOf, type RepeatRun } from '../../../../src/commands/build/lib/repeat-test.ts';
+import { blockerKind, repeatPlan, repeatTest, repeatVerdict, runOf, runStats, type RepeatRun } from '../../../../src/commands/build/lib/repeat-test.ts';
 import {
   inversionCounts,
   SOAK,
@@ -20,6 +20,7 @@ import {
   type SoakTick,
   type SoakWindow,
 } from '../../../../src/commands/build/lib/soak-test.ts';
+import { webSmoke } from '../../../../src/commands/build/lib/web-smoke.ts';
 import type { CheckResult } from '../../../../src/commands/check/api.ts';
 import type { FpsTick } from '../../../../src/commands/check/lib/performance.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../../src/commands/core/api.ts';
@@ -69,9 +70,9 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
 const fakes = join(dirname(fileURLToPath(import.meta.url)), '..', 'fakes');
 const GOAL = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
 const SCENARIO = { steps: [{ kind: 'auto', command: 'f.bot_next_input', args: [], until: GOAL, timeoutMs: 3000 }], goal: GOAL };
-/** Fake Godot: the check export copies `generated/launch_values.json` to the output file; the import leaves a marker in `.godot/`. */
+/** Fake Godot: the web check export writes a page; the import leaves a marker in `.godot/`. */
 const GODOT = `case "$*" in
-  *--export-*) for last; do :; done; cp "$3/generated/launch_values.json" "$last"; printf 'const CACHE_VERSION = "v1";\\n' > "$(dirname "$last")/index.service.worker.js";;
+  *--export-*) for last; do :; done; printf '<html>' > "$last"; printf 'const CACHE_VERSION = "v1";\\n' > "$(dirname "$last")/index.service.worker.js";;
   *--import*) mkdir -p "$3/.godot" && touch -t 202001010000 "$3/.godot/imported-once";;
 esac`;
 const MIB = 1024 * 1024;
@@ -79,8 +80,9 @@ const TAP = { ok: true, result: { command: 'tap', args: ['1', '2'] } };
 /** 10 s of frames on time at 60 fps per tick. */
 const FRAMES_OK = Array<number>(625).fill(16);
 
-/** One channel per instance; the instances that run at a time. */
+/** One channel per instance; the random base each instance started with; the instances that run at a time. */
 const channels = new Map<string, ClientChannel>();
+const bases = new Map<string, number | undefined>();
 let running = 0;
 let mostRunning = 0;
 let started = 0;
@@ -134,6 +136,7 @@ async function setup(harness: Record<string, unknown> = {}): Promise<Setup> {
 beforeEach(() => {
   clientCheckTiming.pollMs = 5;
   channels.clear();
+  bases.clear();
   running = 0;
   mostRunning = 0;
   started = 0;
@@ -146,6 +149,7 @@ beforeEach(() => {
   vi.mocked(startInstance).mockImplementation(async (_ctx, options) => {
     started += 1;
     const id = `i${String(started)}`;
+    bases.set(id, (options as { randomBase?: number }).randomBase);
     const channel = new ClientChannel('main');
     await channel.listen();
     channels.set(id, channel);
@@ -175,6 +179,20 @@ afterEach(async () => {
   clientCheckTiming.pollMs = saved.poll;
   for (const channel of channels.values()) await channel.close();
 });
+
+/** The launch values that each page of the fake browser read, by the instance they name. */
+function pageValues(bin: string): Map<string, Record<string, string>> {
+  const pages = readdirSync(bin).filter((name) => /^page-launch-values-[0-9]+\.json$/.test(name));
+  const values = pages.map((name) => JSON.parse(readFileSync(join(bin, name), 'utf8')) as Record<string, string>);
+  return new Map(values.map((v) => [v.OGW_INSTANCE_ID ?? '', v]));
+}
+
+/** `runs.json` of the repeat test of build stg-0.2.0. */
+function runsJson(dir: string): unknown {
+  return JSON.parse(readFileSync(join(dir, 'builds/stg-0.2.0/repeat-test/runs.json'), 'utf8'));
+}
+
+const STATS = { ok: true, result: { static_memory_bytes: 50 * MIB, heap_memory_bytes: 64 * MIB, total_memory_bytes: 80 * MIB, max_frame_interval_ms: 33.5 } };
 
 function result(name: string, value: 'pass' | 'fail' | 'unknown', message = 'm'): CheckResult {
   return { name, platform: null, result: value, failures: value === 'pass' ? [] : [{ where: 'step 2', message, evidence: [] }], warnings: [] };
@@ -215,6 +233,13 @@ describe('repeat test judgement', () => {
     expect(repeatVerdict('STG', [pass, pass])).toEqual({ name: 'repeat test', result: 'pass', details: [] });
   });
 
+  it('keeps the memory and the longest frame of the get_stats of a run, a value that is not of its type as null', () => {
+    expect(runStats(STATS.result)).toEqual({ heapMemoryBytes: 64 * MIB, totalMemoryBytes: 80 * MIB, maxFrameIntervalMs: 33.5 });
+    expect(runStats({ heap_memory_bytes: 1.5, total_memory_bytes: -1, max_frame_interval_ms: '9' })).toEqual({ heapMemoryBytes: null, totalMemoryBytes: null, maxFrameIntervalMs: null });
+    expect(runStats({ heap_memory_bytes: 0, total_memory_bytes: 0, max_frame_interval_ms: 0 })).toEqual({ heapMemoryBytes: 0, totalMemoryBytes: 0, maxFrameIntervalMs: 0 });
+    expect(runStats(null)).toEqual({ heapMemoryBytes: null, totalMemoryBytes: null, maxFrameIntervalMs: null });
+  });
+
   it('runs 36 times: no failed run in 36 bounds the failure rate of a run under 8% at 95% confidence', () => {
     expect(saved.repeat.runs).toBe(36);
     expect(0.92 ** saved.repeat.runs).toBeLessThan(0.05);
@@ -223,24 +248,30 @@ describe('repeat test judgement', () => {
 });
 
 describe('repeat test', () => {
-  it('runs each run on its own instance and export, at most maxConcurrentInstances at a time, and keeps the logs of a failed run', async () => {
+  it('runs run n on its own check instance with random base n, all on the one web check export, at most maxConcurrentInstances at a time; keeps the logs of a failed run and runs.json', async () => {
     const s = await setup();
     repeatPlan.runs = 3;
     // the client of instance i2 reports a softlock: that run fails, the others pass
-    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] }, stateByInstance: { i2: { softlock: { kind: 'NoResponse', elapsed_ms: 9000 } } } });
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP, get_stats: STATS } } }, telemetry: { goal_intervals: [{}] }, stateByInstance: { i2: { softlock: { kind: 'NoResponse', elapsed_ms: 9000 } } } });
     const check = await repeatTest(s.input);
-    // one export per run, each with the launch values of its own instance, into its own folder
-    const exports = vi.mocked(godotCheckExport).mock.calls.map((c) => ({ platform: c[2], id: c[5].OGW_INSTANCE_ID, dir: c[4].split('/').at(-1) }));
-    expect(exports.map((e) => e.platform)).toEqual(['web', 'web', 'web']);
-    expect(new Set(exports.map((e) => e.id))).toEqual(new Set(['i1', 'i2', 'i3']));
-    expect(new Set(exports.map((e) => e.dir))).toEqual(new Set(['web-run-1', 'web-run-2', 'web-run-3']));
-    // the run whose copy was ready second got instance i2
-    const failed = Number(/^web-run-(\d)$/.exec(exports.find((e) => e.id === 'i2')?.dir ?? '')?.[1]);
+    // one export for the three runs, without launch values
+    expect(vi.mocked(godotCheckExport).mock.calls.map((c) => ({ platform: c[2], values: c[5], dir: c[4].split('/').at(-1) }))).toEqual([{ platform: 'web', values: null, dir: 'web' }]);
+    // run n starts its own check instance with random base n, and its page gets the launch values of that instance
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1]).sort((a, b) => ((a as { randomBase?: number }).randomBase ?? 0) - ((b as { randomBase?: number }).randomBase ?? 0))).toEqual(
+      [1, 2, 3].map((randomBase) => ({ game: 'g', client: 'none', externalClient: true, platform: 'web', randomBase })),
+    );
+    const pages = pageValues(s.bin);
+    expect([...pages.keys()].sort()).toEqual(['i1', 'i2', 'i3']);
+    for (const [id, values] of pages) expect(values.OGW_RANDOM_BASE).toBe(String(bases.get(id)));
+    const failed = bases.get('i2') as number;
     expect(check).toEqual({
       name: 'repeat test', result: 'fail',
       details: ['1 of 3 runs failed: crash 0, softlock 1, error log 0, failed goal 0, other 0', `run ${String(failed)}: no blocker: step 1: softlock {"kind":"NoResponse","elapsed_ms":9000}`],
     });
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual(Array(3).fill({ game: 'g', client: 'none', externalClient: true, platform: 'web' }));
+    // one object per run in run order, with the get_stats it read when its scenario ended
+    expect(runsJson(s.dir)).toEqual([1, 2, 3].map((n) => ({
+      run: n, randomBase: n, result: n === failed ? 'fail' : 'pass', kind: n === failed ? 'softlock' : null, heapMemoryBytes: 64 * MIB, totalMemoryBytes: 80 * MIB, maxFrameIntervalMs: 33.5,
+    })));
     expect(started).toBe(3);
     expect(mostRunning).toBeLessThanOrEqual(2);
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(3);
@@ -253,16 +284,23 @@ describe('repeat test', () => {
   it('passes when every run passes; is unknown when a run cannot start; is not run without web or in PROD', async () => {
     const s = await setup();
     repeatPlan.runs = 2;
-    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP, get_stats: STATS } } }, telemetry: { goal_intervals: [{}] } });
     expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'pass', details: [] });
     expect(['run-1', 'run-2'].map((run) => existsSync(join(s.dir, 'builds/stg-0.2.0/repeat-test', run)))).toEqual([false, false]);
-    // the run whose copy is ready first starts the first instance
+    // the first instance start fails: that run read no get_stats
     vi.mocked(startInstance).mockRejectedValueOnce(new Error('no instance slot'));
     const unknown = await repeatTest(s.input);
     expect(unknown).toMatchObject({ name: 'repeat test', result: 'unknown' });
     expect(unknown?.details).toHaveLength(2);
     expect(unknown?.details[0]).toBe('0 of 2 runs failed: crash 0, softlock 0, error log 0, failed goal 0, other 0');
-    expect(unknown?.details[1]).toMatch(/^run [12]: did not run: no instance slot$/);
+    const unrun = Number(/^run ([12]): did not run: no instance slot$/.exec(unknown?.details[1] ?? '')?.[1]);
+    expect(runsJson(s.dir)).toEqual([1, 2].map((n) => (n === unrun
+      ? { run: n, randomBase: n, result: 'unknown', kind: null, heapMemoryBytes: null, totalMemoryBytes: null, maxFrameIntervalMs: null }
+      : { run: n, randomBase: n, result: 'pass', kind: null, heapMemoryBytes: 64 * MIB, totalMemoryBytes: 80 * MIB, maxFrameIntervalMs: 33.5 })));
+    // a get_stats that is not ok is a run that read none
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP }, fail: { get_stats: 'no stats' } } }, telemetry: { goal_intervals: [{}] } });
+    expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'pass', details: [] });
+    expect((runsJson(s.dir) as { heapMemoryBytes: unknown }[]).map((r) => r.heapMemoryBytes)).toEqual([null, null]);
     expect(await repeatTest({ ...s.input, platforms: ['android'] })).toBeNull();
     expect(await repeatTest({ ...s.input, env: 'PROD' })).toBeNull();
     vi.mocked(toolProgram).mockResolvedValue(null);
@@ -285,7 +323,7 @@ describe('repeat test', () => {
       return real.godotCheckPrepare(...args);
     });
     expect(await repeatTest({ ...s.input, checkout })).toEqual({ name: 'repeat test', result: 'pass', details: [] });
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', root: checkout });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', root: checkout, randomBase: 1 });
     expect(heads).toEqual([git(checkout, 'rev-parse', 'HEAD')]);
     expect(heads[0]).not.toBe(git(s.dir, 'rev-parse', 'HEAD'));
   });
@@ -298,7 +336,7 @@ describe('repeat test', () => {
     expect(vi.mocked(startInstance)).not.toHaveBeenCalled();
   });
 
-  it('prepares and imports the web check workspace once, then makes the exports of the runs together, each in its own copy', async () => {
+  it('prepares, imports, copies and exports the web check workspace once for all runs: the copy before the check instances, the export beside them', async () => {
     const s = await setup();
     repeatPlan.runs = 3;
     s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
@@ -315,37 +353,91 @@ describe('repeat test', () => {
       events.push('instance start');
       return (instanceStart as typeof startInstance)(...args);
     });
+    const realCp = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).cp;
     vi.mocked(cp).mockClear();
-    // each export records its start and end around a delay: an export started beside it starts in that delay
-    let exporting = 0;
-    let mostExporting = 0;
-    const copies: string[] = [];
+    vi.mocked(cp).mockImplementation(async (...args) => {
+      if (String(args[1]).includes('/.ogw-copy/')) events.push('copy');
+      return realCp(...args);
+    });
+    // the export lasts long enough for the check instances of the runs to start while it runs
     vi.mocked(godotCheckExport).mockImplementation(async (...args) => {
-      exporting += 1;
-      mostExporting = Math.max(mostExporting, exporting);
-      copies.push(args[3]);
+      events.push('export start');
       // the copy holds the imported workspace with the times of its files, so that the engine imports nothing again
       const marker = 'client/.godot/imported-once';
       expect(statSync(join(args[3], marker)).mtimeMs).toBe(new Date(2020, 0, 1).getTime());
       expect(statSync(join(args[3], marker)).mtimeMs).toBe(statSync(join(args[3], '..', '..', marker)).mtimeMs);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      exporting -= 1;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      events.push('export end');
       return real.godotCheckExport(...args);
     });
-    const check = await repeatTest(s.input);
-    expect(check).toEqual({ name: 'repeat test', result: 'pass', details: [] });
-    // one preparation and one import for the three runs, before any check instance starts
+    try {
+      expect(await repeatTest(s.input)).toEqual({ name: 'repeat test', result: 'pass', details: [] });
+    } finally {
+      vi.mocked(cp).mockImplementation(realCp);
+    }
+    // one preparation, one import, one copy and one export for the three runs
     expect(vi.mocked(godotCheckPrepare)).toHaveBeenCalledTimes(1);
     expect(readFileSync(join(s.bin, 'calls.log'), 'utf8').match(/--import/g)).toHaveLength(1);
+    expect(vi.mocked(godotCheckExport)).toHaveBeenCalledTimes(1);
     expect(events.slice(0, 2)).toEqual(['prepare start', 'prepare end']);
+    expect(events.indexOf('instance start')).toBeGreaterThan(events.lastIndexOf('copy'));
+    // two runs at a time (maxConcurrentInstances 2) start their check instances while the export runs
+    expect(events.slice(events.indexOf('export start'), events.indexOf('export end')).filter((e) => e === 'instance start')).toHaveLength(2);
     expect(events.filter((e) => e === 'instance start')).toHaveLength(3);
-    // two runs at a time (maxConcurrentInstances 2): their exports overlap
-    expect(mostExporting).toBe(2);
-    expect(copies.map((c) => c.split('/').slice(-2).join('/')).sort()).toEqual(['.ogw-copy/web-run-1', '.ogw-copy/web-run-2', '.ogw-copy/web-run-3']);
-    // each copy holds client/ and resource/, cloned where the file system clones, with the file times and the links as they are
+    // the copy holds client/ and resource/, cloned where the file system clones, with the file times and the links as they are
     const copied = vi.mocked(cp).mock.calls.filter((c) => String(c[1]).includes('/.ogw-copy/'));
-    expect(copied.map((c) => String(c[1]).split('/').slice(-2).join('/')).sort()).toEqual(['web-run-1/client', 'web-run-1/resource', 'web-run-2/client', 'web-run-2/resource', 'web-run-3/client', 'web-run-3/resource']);
+    expect(copied.map((c) => String(c[1]).split('/').slice(-2).join('/')).sort()).toEqual(['web/client', 'web/resource']);
     for (const call of copied) expect(call[2]).toEqual({ recursive: true, mode: constants.COPYFILE_FICLONE, preserveTimestamps: true, verbatimSymlinks: true });
+    expect(readdirSync(join(s.ws.worktrees, 'g'))).toEqual([]);
+  });
+
+  it('starts no check instance for a run that would only read a failed web check export; each run did not run with its reason', async () => {
+    const s = await setup();
+    repeatPlan.runs = 3;
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
+    vi.mocked(godotCheckExport).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      throw new Error('export of web made no index.html');
+    });
+    const check = await repeatTest(s.input);
+    expect(check?.result).toBe('unknown');
+    expect(check?.details.slice(1)).toEqual([1, 2, 3].map((n) => `run ${String(n)}: did not run: export of web made no index.html`));
+    // the two runs that started beside the export started their instances; the third saw the failure first
+    expect(started).toBe(2);
+    expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(godotCheckExport)).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one web check export among the web checks of one set of check workspaces, made by the first, and deletes it when they close', async () => {
+    const s = await setup();
+    repeatPlan.runs = 2;
+    Object.assign(soakPlan, { tickMs: 5, cycleTicks: 2, playTicks: 1, windowTicks: 4, windows: 9 });
+    const stats = { ok: true, result: { static_memory_bytes: 100 * MIB, frame_intervals_ms: FRAMES_OK } };
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP, get_stats: stats } } }, telemetry: { goal_intervals: [{}] } });
+    // a build run: web smoke makes it, then repeat test and soak test use it
+    const exported: string[] = [];
+    await withCheckWorkspaces(s.input, async (workspaces) => {
+      const input = { ...s.input, workspaces };
+      expect((await webSmoke(input))?.check.result).toBe('pass');
+      expect(vi.mocked(godotCheckExport)).toHaveBeenCalledTimes(1);
+      const file = await workspaces.webExport();
+      exported.push(file);
+      // the export outlives the check that made it
+      expect(existsSync(file)).toBe(true);
+      expect((await repeatTest(input))?.result).toBe('pass');
+      expect((await soakTest(input))?.result).toBe('pass');
+    });
+    expect(vi.mocked(godotCheckExport)).toHaveBeenCalledTimes(1);
+    expect(exported[0]?.split('/').slice(-3).join('/')).toBe('.ogw-check/web/index.html');
+    expect(existsSync(exported[0] ?? '')).toBe(false);
+    expect(readdirSync(join(s.ws.worktrees, 'g'))).toEqual([]);
+    // a late checks job: repeat test makes it, soak test uses it
+    vi.mocked(godotCheckExport).mockClear();
+    await withCheckWorkspaces(s.input, async (workspaces) => {
+      expect((await repeatTest({ ...s.input, workspaces }))?.result).toBe('pass');
+      expect((await soakTest({ ...s.input, workspaces }))?.result).toBe('pass');
+    });
+    expect(vi.mocked(godotCheckExport)).toHaveBeenCalledTimes(1);
     expect(readdirSync(join(s.ws.worktrees, 'g'))).toEqual([]);
   });
 });
@@ -354,16 +446,23 @@ function frame(patch: Partial<NonNullable<FpsTick>> = {}): NonNullable<FpsTick> 
   return { scene: 'arena', settled: true, loadKey: 'k', fps: 60, boundFps: 59, intervalsMs: FRAMES_OK, budgetMs: 1000 / 60, ...patch };
 }
 
-/** Ticks of a session of `soakPlan.windows` windows; `memory(window, tick in window)` and `frames(window)` give each tick. */
-function session(memory: (w: number, k: number) => number | null, frames: (w: number) => Partial<NonNullable<FpsTick>> = () => ({})): SoakTick[] {
+/**
+ * Ticks of a session of `soakPlan.windows` windows; `memory(window, tick in window)`, `frames(window)` and
+ * `heap(window, tick in window)` (the heap and total memory) give each tick.
+ */
+function session(
+  memory: (w: number, k: number) => number | null,
+  frames: (w: number) => Partial<NonNullable<FpsTick>> = () => ({}),
+  heap: (w: number, k: number) => { heapBytes: number | null; totalBytes: number | null } = () => ({ heapBytes: null, totalBytes: null }),
+): SoakTick[] {
   return Array.from({ length: soakPlan.windows * soakPlan.windowTicks }, (_, n) => {
     const w = Math.floor(n / soakPlan.windowTicks);
-    return { frame: frame(frames(w)), memoryBytes: memory(w, n % soakPlan.windowTicks) };
+    return { frame: frame(frames(w)), memoryBytes: memory(w, n % soakPlan.windowTicks), ...heap(w, n % soakPlan.windowTicks) };
   });
 }
 
 function windows(memoryFloors: (number | null)[], hitchRatios: (number | null)[]): SoakWindow[] {
-  return memoryFloors.map((memoryFloor, i) => ({ window: i + 1, memoryFloor, hitchRatio: hitchRatios[i] ?? null, unknown: [] }));
+  return memoryFloors.map((memoryFloor, i) => ({ window: i + 1, memoryFloor, hitchRatio: hitchRatios[i] ?? null, maxHeapMemoryBytes: null, maxTotalMemoryBytes: null, unknown: [] }));
 }
 
 describe('soak test judgement', () => {
@@ -437,6 +536,16 @@ describe('soak test judgement', () => {
     const loads = session(() => MIB, (w) => (w === 2 ? { settled: false } : {}));
     expect(soakWindows(loads)[1]?.unknown).toEqual(['kept frame intervals add up to 0.00 s, less than 10 s']);
     expect(soakWindows(loads)[2]?.unknown).toEqual([]);
+  });
+
+  it('gives each measured window the largest heap and total memory of its ticks, which are not judged', () => {
+    soakPlan.windowTicks = 4;
+    // the heap grows tick by tick past the memory limit; the total memory is missing in window 2
+    const ticks = session(() => 100 * MIB, () => ({}), (w, k) => ({ heapBytes: (1000 + 400 * w + k) * MIB, totalBytes: w === 2 ? null : (2000 + 400 * w + k) * MIB }));
+    const measured = soakWindows(ticks);
+    expect(measured.map((w) => w.maxHeapMemoryBytes)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((w) => (1000 + 400 * w + 3) * MIB));
+    expect(measured.map((w) => w.maxTotalMemoryBytes)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((w) => (w === 2 ? null : (2000 + 400 * w + 3) * MIB)));
+    expect(soakVerdict('STG', ticks, null)).toEqual({ name: 'soak test', result: 'pass', details: [] });
   });
 
   it('fails on a blocker (DEV warns), is unknown on a stop without a blocker, and fails a leak over missing frames', () => {
@@ -532,8 +641,9 @@ describe('soak test', () => {
   it('plays the scenario, then the ticks and cycles, and passes with a flat memory floor and steady frames', async () => {
     const s = await setup();
     shortPlan();
-    const stats = { ok: true, result: { static_memory_bytes: 100 * MIB, frame_intervals_ms: FRAMES_OK } };
-    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP, get_stats: stats } } }, telemetry: { goal_intervals: [{}] } });
+    // the heap and total memory grow tick by tick: window values only
+    const stats = Array.from({ length: 36 }, (_, n) => ({ ok: true, result: { static_memory_bytes: 100 * MIB, heap_memory_bytes: (200 + n) * MIB, total_memory_bytes: (300 + n) * MIB, frame_intervals_ms: FRAMES_OK } }));
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP }, sequences: { get_stats: stats } } }, telemetry: { goal_intervals: [{}] } });
     expect(await soakTest(s.input)).toEqual({ name: 'soak test', result: 'pass', details: [] });
     const requests = s.requests();
     // one get_stats per tick and one clear_telemetry per cycle: 36 ticks, 18 cycles
@@ -542,8 +652,15 @@ describe('soak test', () => {
     // the bot plays in each play phase, after the scenario's own call
     expect(requests.filter((r) => r === 'f.bot_next_input').length).toBeGreaterThanOrEqual(19);
     expect(requests.indexOf('clear_telemetry')).toBeGreaterThan(requests.indexOf('f.bot_next_input'));
-    const samples = JSON.parse(readFileSync(join(s.dir, 'builds/stg-0.2.0/soak-test/samples.json'), 'utf8')) as { ticks: number; windows: unknown[]; memory: { s: number } };
+    const samples = JSON.parse(readFileSync(join(s.dir, 'builds/stg-0.2.0/soak-test/samples.json'), 'utf8')) as { ticks: number; windows: Record<string, unknown>[]; memory: { s: number } };
     expect([samples.ticks, samples.windows.length, samples.memory.s]).toEqual([36, 8, 0]);
+    // window w holds ticks 4w to 4w + 3: the largest heap and total memory are those of tick 4w + 3
+    expect(samples.windows[0]).toEqual({ window: 1, memoryFloor: 100 * MIB, hitchRatio: 0, maxHeapMemoryBytes: 207 * MIB, maxTotalMemoryBytes: 307 * MIB });
+    expect(samples.windows.map((w) => w.maxHeapMemoryBytes)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((w) => (200 + 4 * w + 3) * MIB));
+    // its page read the current JavaScript heap, and got the launch values of its check instance with random base 1
+    expect(readFileSync(join(s.bin, 'chromium.jsonl'), 'utf8')).toContain('"--enable-precise-memory-info"');
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toMatchObject({ randomBase: 1 });
+    expect(pageValues(s.bin).get('i1')?.OGW_RANDOM_BASE).toBe('1');
     expect(existsSync(join(s.dir, 'builds/stg-0.2.0/soak-test/console.log'))).toBe(true);
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(1);
   });

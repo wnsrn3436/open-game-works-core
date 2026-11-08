@@ -477,10 +477,7 @@ export function missingGdextensionLibraries(output: string): string[] {
   return output.split(/\r?\n/).filter((line) => /No "[^"]+" library found for GDExtension/.test(line)).map((line) => line.trim());
 }
 
-/**
- * Launch values of the DEV export of check `device performance` or `web smoke` (ogw.md `### device performance`,
- * `### web smoke`).
- */
+/** Launch values of a check instance (ogw.md `### client checks`): in the export of `device performance`, or in the launch value file of a web check page. */
 export type LaunchValues = Record<string, string>;
 
 /**
@@ -610,9 +607,10 @@ async function checkPrepare(ctx: Context, input: PlatformBuildInput, platform: '
 
 /**
  * The DEV export (`android-dev` apk, `web-dev` web export) of a build-time check into `outDir`, made in `root`, a copy of
- * the check workspace that `prepared` describes: `generated/launch_values.json` instead of `generated/build_info.json`,
- * and `generated/launch_values.json` taken out of `exclude_filter`. Returns the output file. The caller deletes the copy
- * and the export when the check ends.
+ * the check workspace that `prepared` describes, without `generated/build_info.json`. With `launchValues` (the export of
+ * `device performance`), `generated/launch_values.json` holds them and is taken out of `exclude_filter`; with null (the
+ * web check export, whose pages get their launch values when they open) the export holds none. Returns the output
+ * file. The caller deletes the copy and the export when the checks that use it end.
  */
 export async function godotCheckExport(
   ctx: Context,
@@ -620,13 +618,13 @@ export async function godotCheckExport(
   platform: 'android' | 'web',
   root: string,
   outDir: string,
-  launchValues: LaunchValues,
+  launchValues: LaunchValues | null,
   prepared: CheckPrepared,
 ): Promise<string> {
   await mkdir(outDir, { recursive: true });
   const exportPath = join(outDir, outputFile(input.game.name, platform, 'DEV'));
-  await writeJsonAtomic(join(root, 'client', 'generated', 'launch_values.json'), launchValues);
-  const filter = excludeFilter('DEV').replace(',generated/launch_values.json', '');
+  if (launchValues !== null) await writeJsonAtomic(join(root, 'client', 'generated', 'launch_values.json'), launchValues);
+  const filter = launchValues === null ? excludeFilter('DEV') : excludeFilter('DEV').replace(',generated/launch_values.json', '');
   await span(`check export ${platform}`, () => presetExport(ctx, { ...input, env: 'DEV' }, platform, root, exportPath, { ...prepared, filter, importFirst: false }));
   if (!exists(exportPath)) throw new OgwError(`export of ${platform} made no ${outputFile(input.game.name, platform, 'DEV')}`);
   return exportPath;

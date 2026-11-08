@@ -11,7 +11,7 @@ import { isRecord } from '../../check/lib/scenario-form.ts';
 import { automationRequest, type AutomationResponse } from '../../instance/automation.ts';
 import type { BuildCheck } from './buildrun.ts';
 import type { HeadlessPage } from './chromium.ts';
-import { buildCheckOf, checkoutOf, clientCheckTiming, didNotRun, evidenceOf, launchValuesOf, ranToEnd, withCheckCopy, withCheckInstance, type ClientCheckInput } from './client-check.ts';
+import { buildCheckOf, byteCount, checkoutOf, clientCheckTiming, didNotRun, evidenceOf, ranToEnd, withCheckInstance, withWebCopy, type ClientCheckInput } from './client-check.ts';
 import { outcome } from './settingschecks.ts';
 import { pageBlocker, webRunSettings, webScenario, withWebPage } from './web-smoke.ts';
 
@@ -37,17 +37,27 @@ export const SOAK = {
   maxHitchRise: FRAMES.maxHitchRatio,
 } as const;
 
-/** One tick of the soak: the tick of `## performance` and the `static_memory_bytes` reading (null when it is not a positive number). */
+/**
+ * One tick of the soak: the tick of `## performance`, the `static_memory_bytes` reading (null when it is not a positive
+ * number), and `heap_memory_bytes` and `total_memory_bytes` (null when not an integer of 0 or more).
+ */
 export interface SoakTick {
   frame: NonNullable<FpsTick>;
   memoryBytes: number | null;
+  heapBytes: number | null;
+  totalBytes: number | null;
 }
 
-/** The values of one measured window; null when the window cannot give it, with the reason in `unknown`. */
+/**
+ * The values of one measured window; null when the window cannot give it, with the reason in `unknown` for the judged
+ * ones. The largest heap and total memory of its ticks are not judged (null when no tick of the window has one).
+ */
 export interface SoakWindow {
   window: number;
   memoryFloor: number | null;
   hitchRatio: number | null;
+  maxHeapMemoryBytes: number | null;
+  maxTotalMemoryBytes: number | null;
   unknown: string[];
 }
 
@@ -114,6 +124,19 @@ function windowFrames(frames: readonly FpsTick[], from: number, to: number): { h
   return { hitchRatio: hitchMs / (keptMs / 1000), unknown: [] };
 }
 
+/** The values of `ticks` that are not null. */
+function readings(ticks: readonly SoakTick[], of: (tick: SoakTick) => number | null): number[] {
+  return ticks.flatMap((t) => {
+    const value = of(t);
+    return value === null ? [] : [value];
+  });
+}
+
+/** The largest of `values`, or null without one. */
+function largest(values: readonly number[]): number | null {
+  return values.length === 0 ? null : Math.max(...values);
+}
+
 /** The measured windows (1 to `soakPlan.windows` − 1) of the ticks of a session. */
 export function soakWindows(ticks: readonly SoakTick[]): SoakWindow[] {
   const frames = ticks.map((t) => t.frame);
@@ -121,10 +144,18 @@ export function soakWindows(ticks: readonly SoakTick[]): SoakWindow[] {
     const window = i + 1;
     const from = window * soakPlan.windowTicks;
     const to = from + soakPlan.windowTicks;
-    const readings = ticks.slice(from, to).flatMap((t) => (t.memoryBytes === null ? [] : [t.memoryBytes]));
-    const memoryFloor = readings.length === 0 ? null : Math.min(...readings);
+    const inWindow = ticks.slice(from, to);
+    const floors = readings(inWindow, (t) => t.memoryBytes);
+    const memoryFloor = floors.length === 0 ? null : Math.min(...floors);
     const { hitchRatio, unknown } = windowFrames(frames, from, to);
-    return { window, memoryFloor, hitchRatio, unknown: [...(memoryFloor === null ? ['no static_memory_bytes reading'] : []), ...unknown] };
+    return {
+      window,
+      memoryFloor,
+      hitchRatio,
+      maxHeapMemoryBytes: largest(readings(inWindow, (t) => t.heapBytes)),
+      maxTotalMemoryBytes: largest(readings(inWindow, (t) => t.totalBytes)),
+      unknown: [...(memoryFloor === null ? ['no static_memory_bytes reading'] : []), ...unknown],
+    };
   });
 }
 
@@ -263,8 +294,14 @@ class SoakSession {
       this.end('get_state returned no QAState', false);
       return false;
     }
-    const memory = (stats.result as { static_memory_bytes?: unknown } | null)?.static_memory_bytes;
-    this.ticks.push({ frame: tickOf(state.result, stats.result, this.bound), memoryBytes: typeof memory === 'number' && memory > 0 ? memory : null });
+    const values = isRecord(stats.result) ? stats.result : {};
+    const memory = values.static_memory_bytes;
+    this.ticks.push({
+      frame: tickOf(state.result, stats.result, this.bound),
+      memoryBytes: typeof memory === 'number' && memory > 0 ? memory : null,
+      heapBytes: byteCount(values.heap_memory_bytes),
+      totalBytes: byteCount(values.total_memory_bytes),
+    });
     const found = stateBlocker(state.result);
     if (found !== null) this.end(found, true);
     return this.stop === null && !(await this.blocked());
@@ -347,7 +384,8 @@ export async function soakSession(
 async function keepSamples(evidence: Evidence, ticks: readonly SoakTick[], stop: SessionStop | null): Promise<void> {
   const windows = stop === null ? soakWindows(ticks) : [];
   const { memory, frames } = stop === null ? soakTrends(windows) : { memory: null, frames: null };
-  const record = { ticks: ticks.length, stop, windows: windows.map(({ window, memoryFloor, hitchRatio }) => ({ window, memoryFloor, hitchRatio })), memory, frames };
+  const values = windows.map(({ window, memoryFloor, hitchRatio, maxHeapMemoryBytes, maxTotalMemoryBytes }) => ({ window, memoryFloor, hitchRatio, maxHeapMemoryBytes, maxTotalMemoryBytes }));
+  const record = { ticks: ticks.length, stop, windows: values, memory, frames };
   await writeEvidence(evidence, 'samples.json', `${JSON.stringify(record, null, 2)}\n`);
 }
 
@@ -367,7 +405,8 @@ async function soakOn(input: ClientCheckInput, id: string, page: HeadlessPage, s
 
 /**
  * Check `soak test` (`build` `## build-time check`, ogw.md `### soak test`): the bot playtest scenario and then the soak
- * session on one DEV web export. Null when the build has no web platform or is a PROD build.
+ * session on a page of the web check export of the check workspaces (made here when no web check made it yet). Null
+ * when the build has no web platform or is a PROD build.
  */
 export async function soakTest(input: ClientCheckInput): Promise<BuildCheck | null> {
   if (!input.platforms.includes('web') || input.env === 'PROD') return null;
@@ -380,9 +419,9 @@ export async function soakTest(input: ClientCheckInput): Promise<BuildCheck | nu
   try {
     const run = await webRunSettings(ctx);
     if (typeof run === 'string') return didNotRun(NAME, run);
-    return await withCheckCopy(input, 'web', 'web-soak', (exportWith) =>
-      withCheckInstance(ctx, input.game, 'web', async (instance, external) =>
-        withWebPage(ctx, run, await exportWith(launchValuesOf(instance, external, 'web')), async (page) => {
+    return await withWebCopy(input, (own) =>
+      withCheckInstance(ctx, input.game, 'web', async (instance, _external, values) =>
+        withWebPage(ctx, run, await own.workspaces.webExport(), values, async (page) => {
           const evidence = evidenceOf(input, 'soak-test');
           const { results } = await webScenario(input, instance, page, scenario, run.bootLimitMs, evidence);
           const smoke = ranToEnd(NAME, buildCheckOf(NAME, input.env, results));

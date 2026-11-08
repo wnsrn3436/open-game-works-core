@@ -1,5 +1,6 @@
 // A fake headless Chromium: a Chrome DevTools Protocol endpoint (DevToolsActivePort in --user-data-dir).
-// Page.navigate fetches the page (the fake web export holds the launch values JSON) and starts the fake client.
+// Page.navigate fetches the page and the launch value file that its query parameter ogw_launch_values names on the
+// same origin (without that parameter, the page itself holds the launch values JSON) and starts the fake client.
 // FAKE_DIR/chromium.jsonl gets the calls. FAKE_CHROMIUM_CONSOLE (JSON list) is sent as console calls;
 // FAKE_CHROMIUM_CRASH crashes the page after the navigation; FAKE_CHROMIUM_EXIT ends the browser at once;
 // FAKE_CHROMIUM_THROTTLE_ERROR refuses the CPU throttle; FAKE_CHROMIUM_NAV_ERROR fails the navigation. about:blank opens without a
@@ -40,10 +41,14 @@ async function navigate(socket: WebSocket, url: string, reply: (result: unknown)
     return;
   }
   const response = await fetch(url);
-  const text = await response.text();
+  const page = await response.text();
   const folder = await fetch(new URL('/', url));
   const post = await fetch(url, { method: 'POST' });
-  log({ page: url, status: response.status, type: response.headers.get('content-type'), root: folder.status, post: post.status });
+  const valuesPath = new URL(url).searchParams.get('ogw_launch_values');
+  const valuesResponse = valuesPath === null ? null : await fetch(new URL(valuesPath, url));
+  const text = valuesResponse === null ? page : await valuesResponse.text();
+  const launchValues = valuesResponse === null ? null : { path: valuesPath, status: valuesResponse.status, type: valuesResponse.headers.get('content-type') };
+  log({ page: url, status: response.status, type: response.headers.get('content-type'), root: folder.status, post: post.status, launchValues });
   writeFileSync(join(dir, 'page-launch-values.json'), text);
   // the client of this page reads a file of its own: pages of other browsers open at the same time write theirs
   const values = join(dir, `page-launch-values-${String(process.pid)}.json`);

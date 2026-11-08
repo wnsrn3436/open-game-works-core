@@ -19,7 +19,6 @@ import {
   didNotRun,
   ranToEnd,
   evidenceOf,
-  launchValuesOf,
   NO_GATE,
   waitClientBoot,
   withCheckCopy,
@@ -125,13 +124,13 @@ export async function devicePerformance(input: ClientCheckInput, gate: MeasureGa
   try {
     const realtime = (await gameModules(ctx, input.game)).client.includes('RealtimeCore');
     return await withCheckCopy(input, 'android', 'android', (exportWith) =>
-      withCheckInstance(ctx, input.game, 'android', async (instance, external) => {
+      withCheckInstance(ctx, input.game, 'android', async (instance, external, values) => {
         const udp = realtime ? await udpReachesHost(ctx, device.serial) : true;
         // UDP that does not reach and a device that cannot be asked are both `unknown`, each with its reason
         if (udp === null) return didNotRun(NAME, `the UDP check from test device ${device.serial} could not run`);
         if (!udp) return unknown(`UDP from test device ${device.serial} does not reach this host`);
         const d: DeviceRun = { input, serial: device.serial, appId, scenario, instance, external };
-        const apk = await exportWith(launchValuesOf(instance, external, 'android'));
+        const apk = await exportWith(values);
         await atGate(gate);
         return onDevice(d, apk);
       }));
