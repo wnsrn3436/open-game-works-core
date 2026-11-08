@@ -166,9 +166,13 @@ storage and client delivery
 
 - Balances are saved in the UserState kind `ItemBalanceUserState` (list kind). The fields are `int64 id` (item ID value), `int64 amount`, `int64 recovery_started_at`, `int64 ends_at`, `string big_amount`. `amount` and `big_amount` are a big encoding pair of the contract. `recovery_started_at` of an item that is not a recovery item is 0. `ends_at` of an item that is not a timed item is 0, and `amount` of a timed item is 0. A group item has no row. For an item that is neither a recovery item nor a timed item, a row whose balance became 0 is deleted. The row of a recovery item is not deleted
 - Balance changes go to the client in the UserState delta that `storage` makes. An out-of-request change goes as a pending delta
-- history row: `seq` (integer that grows by 1 per row per user. Assigned in recording order starting from the largest value among that user's history rows + 1, or from 1 when there are no rows), `time` (request time), `user_id`, `item_id`, `delta` (applied signed integer), `balance_after`, `overflow` (amount that did not fit because of `max_amount`), `shortfall`, `source`, `ref`, `once_key`, `request_id` (`null` for an out-of-request change), `ends_at_after` (`ends_at` after the change for a timed item. 0 for any other item). When the absolute value of `delta`, `balance_after`, `overflow` or `shortfall` is more than 2^53−1, that column is 0 and the contract's big integer is written to the `string?` column `big_delta`, `big_balance_after`, `big_overflow` or `big_shortfall`. Otherwise that `big_` column is `null`
+- history row: `seq` (integer that grows by 1 per row per user, taken from the history counter in recording order. A `seq` is given to one row of that user only, and is not given again after that row expired or was deleted), `time` (request time), `user_id`, `item_id`, `delta` (applied signed integer), `balance_after`, `overflow` (amount that did not fit because of `max_amount`), `shortfall`, `source`, `ref`, `once_key`, `request_id` (`null` for an out-of-request change), `ends_at_after` (`ends_at` after the change for a timed item. 0 for any other item). When the absolute value of `delta`, `balance_after`, `overflow` or `shortfall` is more than 2^53−1, that column is 0 and the contract's big integer is written to the `string?` column `big_delta`, `big_balance_after`, `big_overflow` or `big_shortfall`. Otherwise that `big_` column is `null`
 - A row of a `Convert` replacement grant has source `Overflow`, `ref` the decimal string of the overflowed item's ID value, `request_id` and `time` equal to those of the overflowed item's row, and `once_key` an empty string
-- The history table is registered with `storage.register_table` with scope `user`, key `(user_id, seq)`, an expiry column, snapshot flag `false` and index `(user_id, time)`. `list_history` reads by time range on this index. The `once_key` table is registered with scope `user`, an expiry column and snapshot flag `true`, so that it goes into the user snapshot clone with the balances. Rows older than `item-ledger.historyRetentionMs` are deleted by the expiry cleanup of `storage`
+- The history table is registered with `storage.register_table` with scope `user`, key `(user_id, seq)`, an expiry column, snapshot flag `false` and index `(user_id, time)`. `list_history` reads by time range on this index. The expiry column of a history row is `server-time.clock_now` at the write + `item-ledger.historyRetentionMs`
+- The history is append-only: a history row is written once, with an insert that does not insert when a row with that key exists, and is never updated. When that insert does not insert, the operation throws and its transaction rolls back, so a request is `INTERNAL`. Only the expiry cleanup of `storage` and `storage.delete_user` delete history rows
+- history counter: the table `item_ledger_history_seq`, registered with `storage.register_table` with scope `user`, columns `user_id`(`int64`), `last_seq`(`int64`), key `user_id`, no expiry column and snapshot flag `false`. `storage.delete_user` deletes it with the history. Before an operation writes its history rows, one upsert statement adds the number of those rows to `last_seq` and returns the value after the write, and the rows get the `seq` values up to that value in recording order. When the user has no counter row, the value before the add is the largest `seq` among that user's history rows, rows whose expiry column has passed and that the expiry cleanup has not deleted included, or 0 when there is none, so a new row never meets the key of a row that the cleanup has not deleted yet
+- The `once_key` table is registered with scope `user`, an expiry column and snapshot flag `true`, so that it goes into the user snapshot clone with the balances. The expiry column of a `once_key` row is `server-time.clock_now` at the write + `item-ledger.onceKeyRetentionMs`
+- Rows past their expiry column are deleted by the expiry cleanup of `storage`
 
 ## hook
 
@@ -200,6 +204,7 @@ none
 | source `Recovery` or `Overflow` passed by a core module | none. Throws, and the request is `INTERNAL` | `INTERNAL` | `error` log |
 | `once_key` passed by content code that starts with a core `once_key` prefix | none. Throws, and the request is `INTERNAL` | `INTERNAL` | `error` log |
 | call of `add_items`, `subtract_items`, `exchange_items`, `revoke_items` or `set_balance` inside `validate_item_change` or `after_item_change` | none. The operation that called the hook ends with `INTERNAL` | `INTERNAL` | `error` log |
+| a history row with the key of a row to write already exists | none. Throws and the transaction rolls back, and a request is `INTERNAL` | `INTERNAL` | `error` log |
 
 - When a core module's request fails through these operations, it responds with `ITEM_NOT_ENOUGH` for `NOT_ENOUGH`, `ITEM_LIMIT_EXCEEDED` for `LIMIT_EXCEEDED`, the hook's `GameError` for `REJECTED`, and `INTERNAL` for the rest
 
@@ -209,7 +214,8 @@ Added `CoreError`: `ITEM_NOT_ENOUGH`, `ITEM_LIMIT_EXCEEDED`
 
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
-| `item-ledger.historyRetentionMs` | integer | core | content | duration for which history and `once_key` are kept |
+| `item-ledger.historyRetentionMs` | integer | core | content | duration for which a history row is kept. Refund handling and customer support read the history of this duration back with `list_history` |
+| `item-ledger.onceKeyRetentionMs` | integer | core | content | duration for which a `once_key` is kept. A `once_key` applied again within it is `ALREADY_APPLIED` |
 | `item-ledger.bigMaxDigits` | integer | core | content | upper bound of `max_digits` of `item_big`. 16 or more |
 
 ## data
@@ -356,7 +362,10 @@ core cheat request field
 - When a balance becomes 0, its `ItemBalanceUserState` row is deleted
 - A direct write of `ItemBalanceUserState` from a content handler is rejected
 - When `max_amount` is out of range, the server does not start
-- History past the retention duration is deleted
+- A history row past `item-ledger.historyRetentionMs` and a `once_key` past `item-ledger.onceKeyRetentionMs` are deleted by the expiry cleanup, and each is kept until then also when the other duration is shorter
+- When every history row of a user has passed `item-ledger.historyRetentionMs` and the expiry cleanup has not run, the next change of that user writes rows whose `seq` continues after the largest `seq`, and the expired rows keep their values. After the expiry cleanup has deleted every history row of a user, the next row's `seq` is one more than the largest `seq` that user had
+- For a user with history rows and no history counter row, the next change writes rows whose `seq` continues after the largest `seq` of those rows, the expired ones included
+- When a row with the key of the next history row already exists, `add_items` throws, the request is `INTERNAL`, and the balance, the existing row, the history counter and the `once_key` table stay the same
 - `list_history` returns the rows in the time range in ascending order of `seq`. Even when rows with the same `time` are cut off at the max row count, the next call with the last row's `seq` as the cursor returns the remaining rows, each exactly once, with none missed
 - In STG and PROD, a change with source `Cheat` ends with `INTERNAL`
 - A recovery item does not grow at the time just before a `recovery_interval` boundary and grows by `recovery_amount` at the boundary time. When several intervals pass, it grows that many times and stops at `recovery_cap`

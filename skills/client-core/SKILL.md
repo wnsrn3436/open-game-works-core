@@ -23,7 +23,7 @@ The common rules follow [`core`](../core/SKILL.md).
 | `SoundCore` | [sound-core](modules/sound-core.md) | bus, BGM, sound effect, haptic pattern |
 | `NetworkCore` | [network-core](modules/network-core.md) | server request, retry, failure handling, UserState delta delivery |
 | `UserStateCore` | [user-state-core](modules/user-state-core.md) | UserState cache, delta apply, change hooks and events, the same calculations as the server (recovery item, group item, timed item, big item, counts and progress with reset, reset counter, attendance, live event round, offer) |
-| `AuthCore` | [auth-core](modules/auth-core.md) | guest login, dev login, social login, token storage and refresh, consent to terms screen flow, web account deletion code |
+| `AuthCore` | [auth-core](modules/auth-core.md) | guest login, dev login, social login, token storage and refresh, logout of the other devices, consent to terms screen flow, web account deletion code |
 | `PushCore` | [push-core](modules/push-core.md) | push permission, device token registration, local push |
 | `PaymentCore` | [payment-core](modules/payment-core.md) | store purchase flow, receipt delivery, recovery of incomplete purchases, product ownership, pass and daily reward |
 | `AdCore` | [ad-core](modules/ad-core.md) | ads display, reward flow, interstitial pacing |

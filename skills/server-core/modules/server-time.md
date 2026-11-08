@@ -34,7 +34,7 @@ none
 | `get_next_reset` | `ResetCycle?` element, time | first reset time after that time. 0 when `null` | none | content handler, hook, core module |
 | `get_period_number` | `ResetCycle` element, time | number of the reset period that contains that time | none | content handler, hook, core module |
 | `get_window_start` | window length ms, time | window start of the fixed window that contains that time | Throws when the length is less than 1 | core module |
-| `schedule_job` | job name, period ms, job function | none | A registration error is a server start failure. A call after the server has started throws | `routing`, `admin-api`, `notice`, `remote-config`, `game-update`, `push`, `ranking`, `migration`, `matchmaker`, `p2p-signaling`, `auth`, `user-snapshot-clone`, `logging`. Called at server start |
+| `schedule_job` | job name, period ms, job function | none | A registration error is a server start failure. A call after the server has started throws | `routing`, `admin-api`, `notice`, `remote-config`, `game-update`, `push`, `ranking`, `migration`, `matchmaker`, `p2p-signaling`, `auth`, `iap`, `user-snapshot-clone`, `logging`. Called at server start |
 | `sleep` | ms | async operation. none | none | core module |
 | `network_time_limit` | ms | `AbortSignal` that aborts when ms has passed in real elapsed time since the call | Throws when ms is less than 1 | core module |
 

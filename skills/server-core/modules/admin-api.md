@@ -58,7 +58,7 @@ Admin operations that other modules export and `routing` passes with `register_a
 
 | module | admin operation | role |
 |---|---|---|
-| `auth` | `withdraw_user` | `ops` |
+| `auth` | `withdraw_user`, `revoke_login_tokens` | `ops` |
 | `auth` | `find_user_by_social_account` | `read` |
 | `auth` | `find_user_by_public_code` | `read` |
 | `logging` | `list_client_errors`, `list_client_events`, `list_server_events` | `read` |

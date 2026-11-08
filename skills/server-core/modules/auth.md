@@ -14,7 +14,7 @@
 
 ## purpose
 
-Makes accounts and handles login. Owns guest login, social login token verification, issuing and verifying login tokens and access tokens, the terms agreement record, the record of age confirmation, privacy choices (ad personalization, analytics, tracking permission) and ad push consent, account link, withdrawal, web account deletion received outside the app, guest cleanup, and the query with which an operator finds a user by social account.
+Makes accounts and handles login. Owns guest login, social login token verification, issuing and verifying login tokens and access tokens, login token expiry, logout of the other devices, revocation of login tokens by an operator, the terms agreement record, the record of age confirmation, privacy choices (ad personalization, analytics, tracking permission) and ad push consent, account link, withdrawal, web account deletion received outside the app, guest cleanup, and the query with which an operator finds a user by social account.
 
 ## dependency
 
@@ -36,6 +36,7 @@ core `rpc`. auth exports the handlers and `routing` collects them.
 | `AutoLogin` (core rpc, `sensitive`). changes: `ConsentUserState` | login token(`Authorization`), list of agreed terms versions | `AuthResult` | `UNAUTHORIZED`, `CONSENT_REQUIRED`, `INVALID_REQUEST`, `BANNED`, `AGE_BELOW_MINIMUM` | `routing`. Sent by client `AuthCore` |
 | `RefreshToken` (core rpc). changes: none | login token(`Authorization`), request signature | access token, access token expiry time | `UNAUTHORIZED`, `SESSION_REPLACED` | `routing`. Sent by client `AuthCore` |
 | `Logout` (core rpc, `retry`). changes: none | none | none | none | `routing`. Sent by client `AuthCore` |
+| `LogoutOtherDevices` (core rpc, `retry`). changes: none | none | none | none | `routing`. Sent by client `AuthCore` |
 | `LinkAccount` (core rpc, `retry`, `sensitive`). changes: none | provider, credential | list of linked providers | `INVALID_REQUEST`, `ALREADY_LINKED`, `SOCIAL_LOGIN_INVALID`, `EXTERNAL_SERVICE_FAILED` | `routing`. Sent by client `AuthCore` |
 | `Withdraw` (core rpc, `retry`). changes: `all` | none | none | `INTERNAL` | `routing`. Sent by client `AuthCore` |
 | `IssueDeletionCode` (core rpc, `retry`). changes: none | none | deletion code, expiry time, web account deletion page address | none | `routing`. Sent by client `AuthCore` |
@@ -115,6 +116,7 @@ admin operation. Collection and handling follow `admin-api`.
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
 | `withdraw_user` | `user_id` | empty object | `not_found`, `internal` | operator |
+| `revoke_login_tokens` | `user_id` | empty object | `not_found`, `conflict` | operator |
 | `find_user_by_social_account` | `provider`, `provider_account_id` | `user_id`, `linked_at` | `bad_request`, `not_found` | operator |
 | `find_user_by_public_code` | `public_code` | `user_id`, `withdrawn_at` | `bad_request`, `not_found` | operator |
 
@@ -148,33 +150,40 @@ admin operation. Collection and handling follow `admin-api`.
 
 ### AutoLogin
 
-- Finds the login token row by the hash of the login token. When there is no row, `UNAUTHORIZED`
+- Finds the login token row by the hash of the login token. When there is no row or the login token is expired (login token expiry), `UNAUTHORIZED`
 - When the list of agreed terms versions is not empty, checks it as in `Login` step 1. When it is empty, checks with the saved agreement records, and when an item has no record of agreeing to the current version, `CONSENT_REQUIRED`
 - The rest is the same as steps 4 to 7 of `Login`. Step 6 first reads the login token row again by the hash of the login token in the same transaction, and ends with `UNAUTHORIZED` when there is no row. When there is, does login token rotation and issues the next token of the requested token
 
 ### token
 
-- login token: a base64url string of 32 byte secure random. The server saves only its SHA-256 hash. It is the token that the login of one device keeps using, and it has no expiry time. Login tokens of several devices of one user are valid together
+- login token: a base64url string of 32 byte secure random. The server saves only its SHA-256 hash. It is the token that the login of one device keeps using. Login tokens of several devices of one user are valid together
 - login token row: `token_hash`, the hash of the previous token `previous_hash` (null when none), `session_id` of the issued session, `created_at`, the last used time `last_used_at`. `Login`, `DevLogin` issue a row whose `previous_hash` is null, and `AutoLogin` issues the next token row whose `previous_hash` is the hash of the requested token. `created_at` and `last_used_at` of an issued row are the request time
 - login token rotation: `AutoLogin`, `RefreshToken` change `last_used_at` of the row R of the requested token to the request time, and delete the row that `previous_hash` of R points to. `AutoLogin` then deletes the row whose `previous_hash` is the hash of R, changes `session_id` of R to the new session ID, and issues the next token. So a device that lost the response of `AutoLogin` can `AutoLogin` again with the requested token, and a device that could not save the next token can `RefreshToken` with the requested token. When the next token is used for the first time, the requested token becomes invalid
-- Only login token rotation, `Logout`, `Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age and guest cleanup delete login token rows. A ban does not delete login tokens. `Login`, `AutoLogin` of a ban target user are `BANNED`, and when the ban ends, the user does `AutoLogin` with the same login token
+- login token expiry: when core settings `auth.loginTokenIdleTtlMs` is not null and the user of a login token row has an `auth_social_link` row, that login token is expired when `last_used_at` of the row + `auth.loginTokenIdleTtlMs` ≤ `server-time.user_now`(that user ID). Login token rotation writes `last_used_at`, so each `AutoLogin` and `RefreshToken` renews that lifetime. `AutoLogin` and `RefreshToken` judge it on the row they first read with `storage.read_db`, and the `auth_social_link` row is read with `storage.read_db` too. The login token of a user without an `auth_social_link` row does not expire: it is the only credential of that guest account, and an inactive guest account ends by guest cleanup
+- Only login token rotation, `Logout`, `LogoutOtherDevices`, `revoke_login_tokens`, `Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age and guest cleanup delete login token rows. The row of an expired login token stays until one of them deletes it. A ban does not delete login tokens: during the ban `routing` blocks every request of that user other than `IssueDeletionCode`, the ban login uses the login token so that a user under a ban that does not end can still get a deletion code, and a guest account keeps its only credential through a ban that ends. `Login`, `AutoLogin` of a ban target user are `BANNED`, and when the ban ends, the user does `AutoLogin` with the same login token
 - access token: JWS compact, `alg` `EdDSA`(Ed25519)
   - The header is fixed to `{"alg":"EdDSA","typ":"ogw-access-v1"}`
   - The payload is JSON with only `uid`(user ID decimal string), `sid`(session ID), `exp`(expiry time, Unix ms integer). Keys are in byte order and there is no whitespace
   - The expiry time is the issue time (request time) + `auth.accessTokenTtlMs`
   - The signing key is the secret that game settings `environments.<ENV>.secrets.accessTokenKey` names. The value is the standard base64 of a 32 byte Ed25519 private key seed
 - `verify_access_token` rejects before decoding when the length exceeds `auth.maxTokenBytes`. A header mismatch, a signature mismatch, a duplicate key, an unknown key, a value of a wrong type, keys not in byte order and a payload with whitespace are `UNAUTHORIZED`. Expiry is `TOKEN_EXPIRED`. Expiry is judged by whether `server-time.user_now`(the user ID of the payload) is at least `exp`
-- `RefreshToken`: when `session.check_current`, `session.verify_signature`(signature name `core/RefreshToken`) pass with `user_id`, `session_id` of the login token row, reads the login token row again by the hash of the login token in one `storage.run_request_transaction`, and ends with `UNAUTHORIZED` when there is no row. When there is, does login token rotation in the same transaction and gives a new access token with the same session ID. The session signing key does not change. The response delta is taken with `storage.take_response_delta` inside that transaction. An unknown login token and a signature failure are `UNAUTHORIZED`
+- `RefreshToken`: finds the login token row by the hash of the login token, and ends with `UNAUTHORIZED` when there is no row or the login token is expired. When `session.check_current`, `session.verify_signature`(signature name `core/RefreshToken`) pass with `user_id`, `session_id` of the login token row, reads the login token row again by the hash of the login token in one `storage.run_request_transaction`, and ends with `UNAUTHORIZED` when there is no row. When there is, does login token rotation in the same transaction and gives a new access token with the same session ID. The session signing key does not change. The response delta is taken with `storage.take_response_delta` inside that transaction. An unknown login token, an expired login token and a signature failure are `UNAUTHORIZED`
 - The client does not interpret tokens
 
-### LinkAccount, Logout, Withdraw
+### LinkAccount, Logout, LogoutOtherDevices, Withdraw
 
 - `LinkAccount`: when the provider is not a social provider or game settings have no adapter for that provider, `prepare_link_account` returns `INVALID_REQUEST` without calling an adapter. Otherwise `prepare_link_account` verifies the credential with the social adapter outside a transaction and gets the provider account ID, and the handler links with that value. When that social account is on another user or this user already has the same provider, `ALREADY_LINKED`
 - `Logout`: closes the current session with `session.end_session`, and deletes the login token rows whose `session_id` is the current session and the rows that `previous_hash` of those rows points to
+- `LogoutOtherDevices`: in the request transaction, deletes every login token row of that user whose `session_id` is not the current session ID. The current session and the login token rows of the current session stay, so the device that sent it stays logged in, also on a guest account. After that, `AutoLogin` and `RefreshToken` with the login token of another device of that user are `UNAUTHORIZED`. A device whose login token was taken by someone else uses it to end every other login of that account
 - `Withdraw`: in one user transaction, calls `remove_user` of the modules among `ranking`, `push`, `iap`, `chat`, `friend`, `guild`, `block-report` that are in the server module list, in this order, then calls `logging.request_analytics_deletion`, then calls `storage.delete_user`. When `chat`, `friend`, `guild`, `block-report.remove_user` is `FAILED`, does not call the later operations and ends with `FAILED`, and all changes of that request are rolled back. All rows of user-scope tables are deleted and the withdrawal time stays in the `user` row. After that, access token requests of that user are `UNAUTHORIZED` because there is no session. As an exception, for `Withdraw` sent again with the same access token and request ID, `routing` answers with the withdrawn response of `idempotency`
 - `chat`, `friend` and `guild` `remove_user` can also give `CHANGED`. Every rule of this spec for a `remove_user` that is `FAILED` also holds for `CHANGED`, except the result and the log of `Withdraw` and of `ConfirmAge` under the minimum age, which the `CHANGED` row of `## error` sets
 - `user_target` of `withdraw_user` is `user_id`. In the out-of-request change of the target user that `admin-api` opened, calls the same operations as `Withdraw` in the same order. When `remove_user` is `FAILED`, does not call the later operations and the handler function returns `internal`. Used for withdrawal requests received outside the app
 - Withdrawing agreement to the required terms is `Withdraw`
+
+### login token revocation
+
+- `revoke_login_tokens`: `user_target` is `user_id`. In the out-of-request change of the target user that `admin-api` opened, `conflict` when that user has no `auth_social_link` row: the login token is the only credential of a guest account, so revoking it would leave an account that nobody can log in to, and `withdraw_user` is the operation that ends such an account. Otherwise deletes every login token row of that user and closes the session with `session.end_session`. After that, access token requests, `AutoLogin` and `RefreshToken` of that user are `UNAUTHORIZED`, and the user gets a new login token only by `Login` with a linked social account
+- Used when an operator ends every login of a user whose login token was taken by someone else
 
 ### terms
 
@@ -337,6 +346,7 @@ none
 | social adapter time limit exceeded, communication failure | `EXTERNAL_SERVICE_FAILED` | `EXTERNAL_SERVICE_FAILED` | `error` log |
 | rejection, failure, time limit exceeded of `revoke` after `Withdraw`, `withdraw_user`, web account deletion, `ConfirmAge` under the minimum age | none. The result stays as it is | none | `error` log |
 | unknown login token | `UNAUTHORIZED` | `UNAUTHORIZED` | `security` log. The raw token is not kept |
+| expired login token in `AutoLogin`, `RefreshToken` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
 | `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin`, or the ban login transaction, is `WITHDRAWN` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
 | the game transaction of `storage.create_user`, `run_request_transaction` or `run_user_transaction` of `Login`, `AutoLogin`, `RefreshToken`, `DevLogin`, or the ban login transaction, is `FAILED` | `INTERNAL`. A user that an earlier game transaction of the same request made stays | `INTERNAL` | `error` log |
 | no login token row when it is read again inside the transaction of `AutoLogin`, `RefreshToken` | `UNAUTHORIZED` | `UNAUTHORIZED` | none |
@@ -347,7 +357,8 @@ none
 | social account already linked, duplicate of the same provider | `ALREADY_LINKED` | `ALREADY_LINKED` | none |
 | login of a ban target user | `BANNED` | `BANNED` | none |
 | an item other than `TERMS`, `PRIVACY` or two of the same item in the list of agreed terms versions of `Login`, `AutoLogin`, `Login` and `LinkAccount` with a provider value that is not a provider or with a social provider without an adapter, `LinkAccount` of `GUEST`, `GUEST` `Login` with a credential, input violation of `ConfirmAge`, `UpdateConsent`, `UpdatePushConsent` | `INVALID_REQUEST` | `INVALID_REQUEST` | none |
-| `withdraw_user` of a nonexistent or withdrawn user | 404 `not_found` | none | `audit` |
+| `withdraw_user`, `revoke_login_tokens` of a nonexistent or withdrawn user | 404 `not_found` | none | `audit` |
+| `revoke_login_tokens` of a user without an `auth_social_link` row | 409 `conflict`. Changes nothing | none | `audit` |
 | `chat`, `friend`, `guild`, `block-report.remove_user` is `FAILED` in `Withdraw` or `ConfirmAge` under the minimum age | `FAILED` of the request transaction. Rolls back | `INTERNAL` | `error` log by `routing` (step 13) |
 | `chat`, `friend`, `guild.remove_user` is `CHANGED` in `Withdraw` or `ConfirmAge` under the minimum age | `INTERNAL`. Rolls back | `INTERNAL` | `error` log |
 | `chat`, `friend`, `guild`, `block-report.remove_user` is `FAILED` in `withdraw_user` | 500 `internal`. Rolls back | none | error rules of `admin-api` |
@@ -371,6 +382,7 @@ Added `CoreError`: `UNAUTHORIZED`, `TOKEN_EXPIRED`, `CONSENT_REQUIRED`, `SOCIAL_
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
 | `auth.accessTokenTtlMs` | integer | core | content | validity duration of an access token |
+| `auth.loginTokenIdleTtlMs` | integer? | core | content | duration after `last_used_at` of a login token row of a user with an `auth_social_link` row after which that login token is expired. 1 or more. null means login tokens do not expire |
 | `auth.maxTokenBytes` | integer | core | content | max bytes of a token accepted before decoding |
 | `auth.maxCredentialBytes` | integer | core | content | max bytes of the credential of `Login`, `LinkAccount` |
 | `environments.<ENV>.secrets.accessTokenKey` | string | game | none | name of the secret of the access token signing key |
@@ -454,7 +466,10 @@ core cheat response field
 - After the next token received by `AutoLogin` is used for `RefreshToken` or `AutoLogin`, `AutoLogin` with the token that was requested is `UNAUTHORIZED`. Before the next token is used, `AutoLogin` with the token that was requested succeeds, and the earlier next token that was not used becomes `UNAUTHORIZED`
 - After `AutoLogin` and before the next token is used, `RefreshToken` with the token that was requested gives a new access token of the session ID that that `AutoLogin` opened, and after that `RefreshToken` and `AutoLogin` with the next token succeed
 - When the same user does `Login` on two devices, both login tokens are valid, access token requests and `RefreshToken` of the earlier device are `SESSION_REPLACED`, and `AutoLogin` of the earlier device succeeds and closes the session of the later device
-- However far the time is moved with `advance_time`, `AutoLogin` with the login token succeeds
+- For a user without an `auth_social_link` row, however far the time is moved with `advance_time`, `AutoLogin` with the login token succeeds. The same holds for every user when `auth.loginTokenIdleTtlMs` is null
+- For a user with an `auth_social_link` row, `AutoLogin` and `RefreshToken` with a login token are `UNAUTHORIZED` once the time reaches `last_used_at` of its row + `auth.loginTokenIdleTtlMs`, leave no `security` log and no new login token row, and succeed 1ms before it. A `RefreshToken` at time t renews it: `AutoLogin` with the same login token succeeds at t + `auth.loginTokenIdleTtlMs` − 1. After the expiry, `Login` with that social account gives the same user ID and a login token that `AutoLogin` accepts
+- When the same user has the login tokens of devices A, B and C and B sends `LogoutOtherDevices`, `AutoLogin` and `RefreshToken` with the login tokens of A and C are `UNAUTHORIZED`, and requests with the access token of B, `RefreshToken` and `AutoLogin` with the login token of B succeed. When B sends it after an `AutoLogin` and before the next token is used, both the requested token and the next token of B stay valid. On a guest account, the login token of B stays valid
+- `revoke_login_tokens` of a user with an `auth_social_link` row leaves that user no login token row and no session: the next access token request, `AutoLogin` and `RefreshToken` are `UNAUTHORIZED`, and `Login` with that social account gives the same user ID. For a user without an `auth_social_link` row it is 409 `conflict`, and the login token rows and the session stay unchanged
 - `created_at` and `last_used_at` of the login token rows that `Login`, `DevLogin`, `AutoLogin` issued are the request time
 - During a ban, `AutoLogin` is `BANNED` and the login token row stays, and after the ban ends, `AutoLogin` with the same token succeeds
 - After `Logout`, that login token and access token are rejected

@@ -14,7 +14,7 @@
 
 ## purpose
 
-Handles the screen flow of terms agreement, age confirmation, privacy choices, ad push consent and the tracking permission request, and handles guest login, social login, auto login, login token storage, the install marker, account recovery, access token refresh, account link, the persistent storage request and link prompt for web guests, account switch, logout, withdrawal, and getting the deletion code for web account deletion. It passes consent results to `LogCore`, reports them through `get_consent` and `ConsentChangedEvent`, and passes the session that login opened to `NetworkCore`.
+Handles the screen flow of terms agreement, age confirmation, privacy choices, ad push consent and the tracking permission request, and handles guest login, social login, auto login, login token storage, the install marker, account recovery, access token refresh, account link, the persistent storage request and link prompt for web guests, account switch, logout, logout of the other devices, withdrawal, and getting the deletion code for web account deletion. It passes consent results to `LogCore`, reports them through `get_consent` and `ConsentChangedEvent`, and passes the session that login opened to `NetworkCore`.
 
 ## dependency
 
@@ -50,6 +50,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
 | `link_account` | social `LoginProvider` | async operation. `LinkStatus` | `Failed` | content code |
 | `switch_account` | social `LoginProvider` | async operation. `LoginResult` | `LoginResult` with `Failed` | content code |
 | `logout` | none | async operation. none | none | content code |
+| `logout_other_devices` | none | async operation. success flag | `false` | content code |
 | `withdraw` | none | async operation. success flag | `false` | content code |
 | `issue_deletion_code` | none | async operation. `DeletionCodeResult` | `DeletionCodeResult` whose success flag is `false` | `BootstrapCore`(login failure popup), content code |
 
@@ -202,9 +203,11 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
 - `link_account`: after the sign-in of the social adapter, sends `LinkAccount` with `NetworkCore.send`. `ALREADY_LINKED` is `AlreadyLinked`; a cancelled sign-in is `Cancelled`. On success, it replaces the linked provider list with `linked_providers` of the response and writes the storage item again. A failure of this write only leaves an error log
 - `switch_account`: sends `Login` with the social provider. When `Login` succeeds, it does 1 of the login success order and, regardless of the result of 1, publishes `SessionEndedEvent(Switch)` and `RestartRequestedEvent`. This is because the UserState delta of the response already belongs to another account. When 1 succeeds, it returns `Success` with the user ID of the response after publishing the two events. When 1 fails, it returns `Failed`, and the storage item stays that of the previous account, so auto login after restart goes to the previous account. A sign-in failure or cancel and a `Login` failure or rejection keep the current session and storage item
 - `logout`: sends `Logout` with `send` and, regardless of the result, deletes the storage item, the pending token and the memory session. Then it publishes `SessionEndedEvent(Logout)`, `RestartRequestedEvent`
+- `logout_other_devices`: without a session, `false` without a request. Sends `LogoutOtherDevices` with `send`, and returns `true` on success. The session, the pending token and the storage item stay as they are, since server `auth` keeps the login token of this device
+- A login token that server `auth` expired or revoked (`LogoutOtherDevices` of another device, an operator revocation) gets `UNAUTHORIZED`, and the rules of this spec for `UNAUTHORIZED` handle it: auto login is `Rejected` and opens the account recovery popup, and the button of the recovery provider logs in to the same account. Server `auth` does not expire or revoke the login token of an account without a linked provider, so a guest account does not reach that popup by expiry or revocation
 - `withdraw`: sends `Withdraw` with `send`. On success, it deletes the same things as logout, deletes the `LocalDataCore` `device` keys `AuthCore.terms_version`, `AuthCore.privacy_terms_version` with `remove_value`, and then publishes `SessionEndedEvent(Withdraw)`, `RestartRequestedEvent`. On failure, it deletes nothing
 - `issue_deletion_code`: when there is a session, it sends `IssueDeletionCode` with `NetworkCore.send`. When there is no session and there is a ban session, it sends it with `NetworkCore.send_auth`, with `AuthSendOptions` whose `authorization` is the access token of the ban session, `sign` is `true`, and `signing_key` is the session signing key of the ban session. When there is neither, it fails without a request. On success, it returns `code`, `expires_at`, `url` of the response. The user enters the public code (`get_public_code`, the public code of `LoginResult`) and `code` on the server `auth` web account deletion page at that `url`
-- The failure callbacks of `link_account`, `logout`, `withdraw`, `issue_deletion_code` return `true`. The caller displays the failure
+- The failure callbacks of `link_account`, `logout`, `logout_other_devices`, `withdraw`, `issue_deletion_code` return `true`. The caller displays the failure
 - Passing `GUEST` to `link_account` or `switch_account` gives `Failed` without a request
 - `is_provider_supported`: `GUEST` is always `true`. A social provider is `true` when the social adapter of that provider was received by the rules of the social adapter table
 
@@ -282,7 +285,7 @@ none
 | `RefreshToken` failure of a refresh | `RequestFailure` of that `RefreshToken` | `NetworkCore` leaves it |
 | `get_user_id` called without a session | `0` | error |
 | `get_public_code` called without a session and without a ban session | empty string | error |
-| `prepare_consent`, `open_privacy_choices`, `get_consent`, `update_push_consent`, `report_ad_consent` without a session. `issue_deletion_code` without a session and without a ban session | failure value | error |
+| `prepare_consent`, `open_privacy_choices`, `get_consent`, `update_push_consent`, `report_ad_consent`, `logout_other_devices` without a session. `issue_deletion_code` without a session and without a ban session | failure value | error |
 | age popup, privacy popup or push consent popup cannot be opened, `ConfirmAge`, `UpdateConsent`, `UpdatePushConsent` failure | failure value | error. `NetworkCore` leaves request failures |
 | `update_push_consent` when `pushConsent.adPush` is `false`, `CONSENT_CHOICE_UNSPECIFIED` value | `false`. no request | error |
 | install marker check failure, age block marker read failure other than `NotFound` | `boot_login` is `Failed` | error. Logs only the result of `LocalDataCore` |
@@ -377,6 +380,7 @@ format argument
 - When a refresh gets `MAINTENANCE`, `get_access_token` fails with a `ServerError` `RequestFailure` of that error code, and the session and storage item are unchanged
 - `logout` deletes the storage item regardless of the request result and publishes `RestartRequestedEvent` once. A `withdraw` success and a `switch_account` whose `Login` succeeded also publish `RestartRequestedEvent` once. A `withdraw` failure, and a cancel or `Login` failure of `switch_account`, do not change the user ID and storage item, and there is no `RestartRequestedEvent`
 - `ALREADY_LINKED` of `link_account` is `AlreadyLinked`, and the linked provider list is unchanged
+- `logout_other_devices` sends `LogoutOtherDevices` once and returns `true` on success, and the session, the pending token and the storage item are unchanged. Without a session it is `false` without a request and leaves an error log, and when the request fails it is `false`
 - After a `withdraw` success, `AuthCore.terms_version` and `AuthCore.privacy_terms_version` are absent, and after restart `prepare_terms` opens the terms popup. A `withdraw` failure and `logout` do not change the two values
 - `login` with the same fake account name of the fake adapter, then `release`, `init` and `login` again gives the same user ID. `login` while there is a session is `Failed` without a request, and the user ID and storage item are unchanged
 - Without `set_fake_social_account`, the fake adapter credentials of two runs with different app storage roots differ, and in one run the credential is the same after `release`, `init`

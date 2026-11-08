@@ -38,7 +38,7 @@ server/core/
 |---|---|---|
 | `routing` | [routing](modules/routing.md) | request processing order, handler registration, rate limit, body limit, CORS |
 | `validation` | [validation](modules/validation.md) | running the contract's field validators, check helpers that handlers use, text normalization and banned word check, integer calculation helpers, judgement of `requirement` conditions |
-| `auth` | [auth](modules/auth.md) | guest login, dev login, social login token verification, login token and access token, consent to terms, age check, personal information choices, ad push consent record, withdrawal, web account deletion, guest cleanup, finding a user by social account |
+| `auth` | [auth](modules/auth.md) | guest login, dev login, social login token verification, login token and access token, login token expiry and revocation, consent to terms, age check, personal information choices, ad push consent record, withdrawal, web account deletion, guest cleanup, finding a user by social account |
 | `session` | [session](modules/session.md) | game session, session signing key, request signature check |
 | `storage` | [storage](modules/storage.md) | per-request transaction, per-user serialization, saving UserState, server state and game state, reading public kinds, user change, pending delta, DB adapter |
 | `idempotency` | [idempotency](modules/idempotency.md) | returning again the response saved by request ID |
@@ -50,10 +50,10 @@ server/core/
 | `migration` | [migration](modules/migration.md) | saved state schema migration and its testing |
 | `matchmaker` | [matchmaker](modules/matchmaker.md) | matching, room and party, match creation, applying match results, DEV lockstep match |
 | `p2p-signaling` | [p2p-signaling](modules/p2p-signaling.md) | signaling for P2P connections |
-| `item-ledger` | [item-ledger](modules/item-ledger.md) | add and subtract transactions of items (currency and goods), recovery of recovery items, group item, timed item, big item, handling amounts over `max_amount`, history |
+| `item-ledger` | [item-ledger](modules/item-ledger.md) | add and subtract transactions of items (currency and goods), recovery of recovery items, group item, timed item, big item, handling amounts over `max_amount`, append-only history |
 | `mailbox` | [mailbox](modules/mailbox.md) | user mailbox, claiming attached items, granting by mail the items that could not be granted at once |
 | `shop` | [shop](modules/shop.md) | purchase of products defined in data, sale condition, purchase limit, purchase count reset |
-| `iap` | [iap](modules/iap.md) | store receipt verification, grant, duplicate grant prevention, recovery of incomplete purchases, refund, subscription state and entitlement, sale condition, pass and daily reward, monthly spend limit, test transactions |
+| `iap` | [iap](modules/iap.md) | store receipt verification, grant, duplicate grant prevention, recovery of incomplete purchases, refund, lookup of refunds that notifications missed, subscription state and entitlement, sale condition, pass and daily reward, monthly spend limit, test transactions |
 | `offer` | [offer](modules/offer.md) | limited-time offers that a trigger turns on per user |
 | `ads-reward` | [ads-reward](modules/ads-reward.md) | ads reward verification and grant |
 | `live-event` | [live-event](modules/live-event.md) | schedule, participation, settlement and active window of live events |
