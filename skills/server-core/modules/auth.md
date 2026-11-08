@@ -383,7 +383,7 @@ Added `CoreError`: `UNAUTHORIZED`, `TOKEN_EXPIRED`, `CONSENT_REQUIRED`, `SOCIAL_
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
 | `auth.accessTokenTtlMs` | integer | core | content | validity duration of an access token |
-| `auth.loginTokenIdleTtlMs` | integer | core | content | duration after `last_used_at` of a login token row of a user with an `auth_social_link` row after which that login token is expired |
+| `auth.loginTokenIdleTtlMs` | integer | core | content | duration after `last_used_at` of a login token row of a user with an `auth_social_link` row after which that login token is expired. 1 or more |
 | `auth.maxTokenBytes` | integer | core | content | max bytes of a token accepted before decoding |
 | `auth.maxCredentialBytes` | integer | core | content | max bytes of the credential of `Login`, `LinkAccount` |
 | `environments.<ENV>.secrets.accessTokenKey` | string | game | none | name of the secret of the access token signing key |
