@@ -11,7 +11,7 @@ Read when the core agent makes or fixes the contract tool. The rules the contrac
 | client DEV | `client/dev/generated/contract/` | messages and enums of the DEV type set, encode and decode, per `rpc` the constants of the request name and options (`silent`, `retry`, `sensitive`), proto3 JSON encode and decode of UserState kinds |
 | server DEV | `server/dev/generated/contract/` | messages and enums of the DEV type set, encode and decode, the `rpc` list, a handler type per `rpc` of `service Cheat` of `cheat.proto`, a field validator per `rpc`, proto3 JSON conversion of the request message per `rpc` |
 
-- The encode of the server generated code writes an unpaired surrogate in a `string` field as U+FFFD and always outputs valid UTF-8. Decode does not treat invalid UTF-8 bytes as a decode failure; the `utf8` rule of the validator rejects them
+- The encode of the server generated code writes an unpaired surrogate in a `string` field as U+FFFD and always outputs valid UTF-8. Decode does not treat invalid UTF-8 bytes or U+0000 in a `string` field as a decode failure and does not change them; the `utf8` and `nul` rules of the validator reject them
 
 - type set: a reachable type is a message or enum reached by following field types
   - base set: the messages and enums of the base proto that are not among the request messages and response messages of `service CoreCheat` and the types reachable from them, and the types reachable from those

@@ -72,8 +72,9 @@ Runs, before the handler, the field validators that the contract tool generated 
 - What a validator always checks outside the declared options
   - The value of an enum field is a value defined in that enum. When it is a defined value, `_UNSPECIFIED` also passes
   - A `string` field is valid UTF-8
+  - A `string` field, also an element of a `repeated string` field, holds no U+0000. Protobuf allows it, but neither DB stores it in a `string` column (`### DB adapter` of `storage`), so it is rejected at the contract boundary instead of failing a later statement with `INTERNAL`
   - An ID value of 0 for a `table` option fails
-- It stops at the first failure and returns that field path and rule. The rule name is the option name (for a `_key` option, the name without `_key`), or `enum` or `utf8`
+- It stops at the first failure and returns that field path and rule. The rule name is the option name (for a `_key` option, the name without `_key`), or `enum`, `utf8` or `nul`
 - A field with an unknown field number is not checked
 - The targets of `validate_request` are all request messages of game `rpc` and the request messages of the core `rpc` for which the contract tool made a validator. The targets of `validate_message` are `MatchResult`, `MatchInputLog`, `PlaySessionResult`, `PlaySessionStartOptions`, `PlaySessionContinueOptions` of the game contract, and it throws for any other message name
 - The request messages of game cheats and of the core cheats for which the contract tool made a validator are checked by the same rules by a validator that the contract tool made as DEV generated code. In the processing order of `cheat`, the DEV code of `routing` calls that validator
@@ -168,6 +169,7 @@ used table: `requirement`
 - A `table` option rejects a nonexistent ID value and 0
 - A `unique` option rejects duplicate elements
 - An undefined enum value and invalid UTF-8 are rejected
+- A `string` field that holds U+0000 fails with rule `nul`, also in a message inside a message and in an element of a `repeated string` field, and the request is `INVALID_REQUEST` without calling the handler
 - The fields of a message inside a message are also checked
 - `validate_message` checks the declarations of `MatchResult` and `MatchInputLog` by the same rules as a request message, and throws for another message name
 - A request whose validator failed does not call the handler and does not change saved state

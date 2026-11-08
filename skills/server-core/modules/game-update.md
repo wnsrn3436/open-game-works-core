@@ -14,7 +14,7 @@
 
 ## purpose
 
-Keeps one signed deploy list per environment and serves the data, translation and bundle files the client receives without an app update. When there is a CDN adapter, uploads the files to the CDN and has the client receive them from the CDN.
+Keeps one signed deploy list per environment and serves the data, translation and bundle files the client receives without an app update. When there is a CDN adapter, uploads the files to the CDN and has the client receive them from the CDN. Judges whether an app version is below `min_version` of the deploy list.
 
 ## dependency
 
@@ -31,6 +31,7 @@ Keeps one signed deploy list per environment and serves the data, translation an
 | `GET /update/deploy_list.json.sig` (route) | none | signature JSON of the current deploy list | HTTP 404 | `routing`. client `GameUpdateCore` sends it |
 | `GET /update/files/<sha256>` (route) | none | file bytes | HTTP 404 | `routing`. client `GameUpdateCore` sends it |
 | `is_data_update_ready` | app version | `true` or `false` | `false` | `routing`, `matchmaker` |
+| `is_below_min_version` | app version, platform | `true` or `false` | `false` | `routing`, `matchmaker` |
 
 admin operation. Collection and handling follow `admin-api`.
 
@@ -112,6 +113,11 @@ Checks in the order below. On a failure, the current deploy list stays as it is.
   - The `patches` of the current deploy list has an entry for that app version
   - The `data_version` of that entry equals `client_data_version` or `compat_client_data_version` that the server read at start
   - `server-time.clock_now` is at least `published_at` of the current deploy list + `game-update.deployListMaxAgeMs` + `game-update.cacheRefreshMs`
+
+### minimum app version
+
+- `is_below_min_version` is `true` only when the current deploy list that the server instance caches has an entry of that platform in `app`, the app version is one that `validation.parse_version` reads, and `validation.compare_versions` puts it below `min_version` of that entry. Otherwise, and when there is no current deploy list, it is `false`
+- So the server refuses an app below `min_version` with `APP_UPDATE_REQUIRED` (step 7 of `routing`), the same judgement as the app version check of client `GameUpdateCore`, which opens the forced update popup for both. A raised `min_version` reaches every server instance within `game-update.cacheRefreshMs` after the publish
 
 ### CDN adapter
 
@@ -212,3 +218,4 @@ none
 - When `publish_deploy_list` and `prune_update_files` are sent concurrently and the publish succeeds, all files that deploy list points to remain and `GET /update/files/<sha256>` gives those bytes. When the prune got its turn first and deleted a referenced file, the publish is `conflict` and the current deploy list stays as it is
 - `is_data_update_ready` is `false` before the publish and at `published_at` + `game-update.deployListMaxAgeMs` + `game-update.cacheRefreshMs` − 1, and `true` from one millisecond after that time on. When there is no patch entry for that app version, or its `data_version` differs from both the server's `client_data_version` and `compat_client_data_version`, it is `false`
 - When the environment is DEV, STG or PROD and the public key of the signing key is not in `updatePublicKeys`, the server does not start. LOCAL is not checked
+- With a current deploy list whose `app` has `android` `min_version` `1.2.0`, `is_below_min_version` is `true` for (`1.1.9`, `android`) and `false` for (`1.2.0`, `android`), (`1.10.0`, `android`), (`1.1.9`, `ios`) and an app version that `validation.parse_version` does not read. Without a current deploy list, it is `false`. After another server instance publishes a deploy list with a higher `min_version`, it is `true` for an app version below it within `game-update.cacheRefreshMs`

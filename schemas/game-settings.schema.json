@@ -1069,6 +1069,69 @@
             }
           }
         },
+        "backup": {
+          "description": "The backup storage and the values of the DB backup rule of `## deploy` of the `build` skill. An S3-compatible bucket that a human prepares outside the deploy host and the DB host. Needed for PROD, and for DEV and STG while a PROD tag exists; `ogw build start` checks it",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "endpoint",
+            "bucket",
+            "prefix",
+            "accessKeyId"
+          ],
+          "properties": {
+            "endpoint": {
+              "description": "S3 API endpoint of the backup storage. The scheme is `https`",
+              "type": "string",
+              "pattern": "^https://[^/]+$"
+            },
+            "region": {
+              "description": "S3 region of the backup storage",
+              "type": "string",
+              "minLength": 1,
+              "default": "auto"
+            },
+            "bucket": {
+              "description": "Bucket name",
+              "type": "string",
+              "minLength": 1
+            },
+            "prefix": {
+              "description": "Key prefix of this environment in the bucket. No other environment uses it",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+            },
+            "accessKeyId": {
+              "description": "Access key ID that can read, write, list and delete under `prefix`. Its secret access key is the value of `secrets.backup`",
+              "type": "string",
+              "minLength": 1
+            },
+            "walSwitchMs": {
+              "description": "`archive_timeout` of PostgreSQL in ms: the longest time a committed change waits before its WAL segment is pushed to the backup storage",
+              "type": "integer",
+              "minimum": 1000,
+              "default": 60000
+            },
+            "baseBackupIntervalMs": {
+              "description": "Interval between two base backups",
+              "type": "integer",
+              "minimum": 3600000,
+              "default": 86400000
+            },
+            "retentionMs": {
+              "description": "The DB can be recovered to any time within this duration before now",
+              "type": "integer",
+              "minimum": 86400000,
+              "default": 1209600000
+            },
+            "restoreTestIntervalMs": {
+              "description": "Longest time since the start of the last passed restore test of PROD (`ogw backup test`) after which `ogw build start` of PROD stops",
+              "type": "integer",
+              "minimum": 86400000,
+              "default": 2592000000
+            }
+          }
+        },
         "deploy": {
           "description": "The host to which ogw deploy connects by SSH to start the server and PostgreSQL with Docker Compose. Required for DEV and STG, and not written for PROD",
           "type": "object",
@@ -1099,8 +1162,8 @@
             "port": {
               "type": "integer",
               "minimum": 1024,
-              "maximum": 65535,
-              "description": "The port of host `127.0.0.1` on which the port of the server container is opened"
+              "maximum": 65534,
+              "description": "The port of host `127.0.0.1` on which the port of the server container is opened. The ops port of the server container is opened on this port + 1"
             },
             "hostKey": {
               "type": "string",
@@ -1186,6 +1249,10 @@
             "dbPassword": {
               "$ref": "#/$defs/secretName",
               "description": "Required when `deploy` is present. The password of user `postgres` in the compose PostgreSQL of the `deploy` host. In that case `db` is the connection string that connects with this password and user `postgres` to database `postgres` on host `db`, port 5432"
+            },
+            "backup": {
+              "$ref": "#/$defs/secretName",
+              "description": "Required when `backup` is present. Secret access key of `backup.accessKeyId`"
             }
           }
         },
@@ -1563,6 +1630,22 @@
                 "required": [
                   "analytics",
                   "analyticsServiceAccount"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "backup"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secrets": {
+                "required": [
+                  "backup"
                 ]
               }
             }

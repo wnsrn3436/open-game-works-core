@@ -14,7 +14,7 @@
 
 ## purpose
 
-This module writes server logs, and saves the error logs and analytics events that clients send and the analytics events that server code emits. It sends analytics events to the analytics adapter, and requests from the analytics adapter the deletion of the analytics data of a user who withdrew.
+This module writes server logs, and saves the error logs and analytics events that clients send and the analytics events that server code emits. It sends analytics events to the analytics adapter, and requests from the analytics adapter the deletion of the analytics data of a user who withdrew. It keeps the metrics and judges the alert signals of a server instance.
 
 ## dependency
 
@@ -41,6 +41,7 @@ This module writes server logs, and saves the error logs and analytics events th
 | `list_client_errors` | `user_id`(optional), `from_at`, `to_at`, `after_time_at`(optional), `after_user_id`(optional), `after_seq`(optional), `limit` | `entries` | `bad_request` | operator |
 | `list_client_events` | `user_id`(optional), `name`(optional), `from_at`, `to_at`, `after_time_at`(optional), `after_user_id`(optional), `after_seq`(optional), `limit` | `entries` | `bad_request` | operator |
 | `list_server_events` | `user_id`(optional), `name`(optional), `from_at`, `to_at`, `after_time_at`(optional), `after_user_id`(optional), `after_seq`(optional), `limit` | `entries` | `bad_request` | operator |
+| `read_metrics` | none | the metric families of `### metrics`, each with its name, type and samples (sample name, label object, value) | none | `routing` |
 
 - log entry: the fields are `kind`, `level`, `message`, `user_id`, `request_id`, `request`, `fields` (object that holds the fields added per `kind` and the fields set by the spec of the module that writes the log). A missing value is `null`, and `write` adds `time`. An entry of `kind` `request` also holds `min_level` (the minimum level of `take_request_log_annotation`), `request_body` (request body bytes. `null` when absent) and `sensitive` (whether the `rpc` has option `(ogw.sensitive)`), and `write` sets that line's level by the `### server log` rules and its `request_body` by the `## DEV` rules
 - `with_audit_actor` calls the function, and while the function runs, for each `kind` `audit` entry that `write` receives whose `fields` has no key `actor`, writes that operator name as `actor`
@@ -178,6 +179,37 @@ core analytics event. Its name starts with `core_`, and only core modules emit i
 - On success, it deletes the row in one `storage.run_game_transaction`. On failure, it increments `attempts` by 1 the same way and writes a `warn` log. When the incremented `attempts` reaches `logging.analyticsDeletionMaxAttempts`, it deletes the row and leaves an `error` log with the `user_id`
 - Two server instances may send the same row at the same time. `delete_user_data` has the same result when called several times for the same user
 
+### metrics
+
+A server instance keeps the metric families below from its server start. `routing` sums them over the server instances of the server process and serves them on the ops port (`### ops path` of `routing`).
+
+| metric | type | label | value |
+|---|---|---|---|
+| `ogw_requests_total` | counter | `request`, `error_code` | number of `request` log lines that `write` wrote. `request` is the `request` field of the line, or the empty string when it is null, and `error_code` is the decimal `error_code` of the line |
+| `ogw_request_duration_seconds` | histogram | `request` | `duration_ms` ÷ 1000 of the same lines. The upper bounds of the buckets are each value of `logging.metricsDurationBucketsMs` ÷ 1000, and `+Inf` |
+| `ogw_log_lines_total` | counter | `kind`, `level` | number of server log lines written, per `kind` and level, summary lines of job `logging_security_flush` included |
+| `ogw_db_sync_calls_total` | counter | none | `sync_calls` of `storage.read_db_metrics` |
+| `ogw_db_sync_wait_seconds_total` | counter | none | `sync_wait_ms` of `storage.read_db_metrics` ÷ 1000 |
+| `ogw_db_failures_total` | counter | `kind`: `lock`, `connection` | `lock_failures` and `connection_failures` of `storage.read_db_metrics` |
+| `ogw_db_wal_archive_failing` | gauge | none | 1 when `wal_archive_failing` of `storage.read_db_metrics` is `true`, otherwise 0 |
+| `ogw_alert_firing` | gauge | `alert` | one sample per alert signal of `### alert signal`: 1 when it fires, otherwise 0 |
+
+- The samples of a histogram are, per label set, `<name>_bucket` with label `le` (the upper bound written in decimal; the count of values at or below it), `<name>_sum` and `<name>_count`. Counters and gauges have one sample per label set, named as the family
+- `read_metrics` calls `storage.read_db_metrics` once and judges the alert signals at the `server-time.clock_now` of that call. A label set that has no line yet has no sample, except the samples of `ogw_alert_firing`, which are always there
+- Label values are only the values that the table writes: a request name or admin operation name, an error code, a `kind`, a level, a DB failure kind, an alert signal name. A label holds no user ID, IP, token, secret or request content
+- TypeScript form of the output of `read_metrics`: an array of `{name: string, type: 'counter' | 'gauge' | 'histogram', samples: {name: string, labels: Record<string, string>, value: number}[]}`
+
+### alert signal
+
+An alert signal is a condition of one server instance that the monitoring prepared for `## deploy` of the `build` skill alerts on through `ogw_alert_firing`. It is judged over the alert window: the log lines that `write` wrote at a `server-time.clock_now` later than the judgement time − `logging.alertWindowMs`.
+
+| alert | fires when |
+|---|---|
+| `error_ratio` | the alert window has n ≥ `logging.alertMinRequests` `request` lines, and e × 1000 ≥ n × `logging.alertErrorRatioPermille`, where e is the number of them whose `error_code` is the value of `INTERNAL` |
+| `slow_requests` | the alert window has n ≥ `logging.alertMinRequests` `request` lines, and s × 1000 ≥ n × `logging.alertSlowRatioPermille`, where s is the number of them whose `duration_ms` is more than `logging.alertSlowRequestMs` |
+| `error_logs` | the alert window has at least `logging.alertErrorLogCount` lines of level `error` whose `kind` is not `request` |
+| `wal_archive` | `wal_archive_failing` of `storage.read_db_metrics` is `true` at the judgement |
+
 ### real adapter
 
 | adapter key | real adapter |
@@ -249,6 +281,13 @@ Added `CoreError`: none
 | `environments.<ENV>.secrets.analyticsServiceAccount` | string | game | none | name of the secret that holds the private key (PEM) of the `environments.<ENV>.analyticsGa4.serviceAccountEmail` service account |
 | `routing.externalMaxResponseBytes` | integer | core | content | max bytes of an external service response body. When more, the call fails |
 | `consent.privacyChoices` | boolean | game | none | whether to ask for the ad personalization and analytics choices |
+| `logging.metricsDurationBucketsMs` | array<integer> | core | content | upper bounds in ms of the buckets of `ogw_request_duration_seconds`. At least one value, each 1 or more, in ascending order. The core settings schema checks it |
+| `logging.alertWindowMs` | integer | core | human | length of the alert window of the alert signals. 1 or more |
+| `logging.alertMinRequests` | integer | core | human | fewest `request` lines in the alert window for which `error_ratio` and `slow_requests` fire. 1 or more |
+| `logging.alertErrorRatioPermille` | integer | core | human | share of `INTERNAL` `request` lines from which `error_ratio` fires. permille. 1 or more and 1000 or less |
+| `logging.alertSlowRequestMs` | integer | core | human | `duration_ms` above which a request counts as slow for `slow_requests` |
+| `logging.alertSlowRatioPermille` | integer | core | human | share of slow `request` lines from which `slow_requests` fires. permille. 1 or more and 1000 or less |
+| `logging.alertErrorLogCount` | integer | core | human | number of `error` lines other than `request` lines in the alert window from which `error_logs` fires |
 
 ## data
 
@@ -291,3 +330,8 @@ none
 - After the `Withdraw` commit, the job `logging_analytics_deletion` calls `delete_user_data` of the fake analytics adapter with that user ID and deletes the row. When `delete_user_data` fails, it is called again in the next run, and after `logging.analyticsDeletionMaxAttempts` failures the row is deleted and an `error` log is left. `Withdraw` in an environment without an analytics adapter and a rolled-back transaction leave no row
 - The `actor` of an `audit` line written without `actor` in `fields` inside the function of `with_audit_actor` is that operator name, and for a line written outside the function it is `system`. A line whose `fields` has `actor` `null` keeps `actor` `null` inside and outside the function
 - The `ip` of a `security` line written without `ip` inside the function of `with_request_ip` is the truncated IP of that client IP, and for a line written outside the function it is null. The same holds for a line written after an async operation that the function awaited
+- After 3 successful `core/Resync` requests and 1 `core/Resync` request that ended with `INTERNAL`, `read_metrics` has `ogw_requests_total` 3 for `error_code` 0 and 1 for the value of `INTERNAL` with `request` `core/Resync`, `ogw_request_duration_seconds_count` 4 for `request` `core/Resync`, cumulative `_bucket` samples with one `le` per value of `logging.metricsDurationBucketsMs` and `+Inf`, and `ogw_log_lines_total` that counts those `request` lines per level. No label value holds a user ID or an IP
+- `ogw_db_sync_calls_total`, `ogw_db_sync_wait_seconds_total` and `ogw_db_failures_total` equal the values of `storage.read_db_metrics` of the same call, and `ogw_db_wal_archive_failing` is 0 on SQLite
+- With `logging.alertMinRequests` 4 and `logging.alertErrorRatioPermille` 250, `error_ratio` of `ogw_alert_firing` is 0 after 3 successful requests, 1 after one more request that ended with `INTERNAL`, and 0 again after the test clock moved by `logging.alertWindowMs`
+- With `logging.alertMinRequests` 2 and `logging.alertSlowRatioPermille` 500, `slow_requests` fires when one of two requests in the alert window has `duration_ms` more than `logging.alertSlowRequestMs`, and not when both are at most that value
+- `error_logs` fires when the alert window has `logging.alertErrorLogCount` `error` lines of `kind` `error`, and not when it has that number − 1 of them and any number of `request` lines of level `error`. Every alert signal has a sample of `ogw_alert_firing` before any request

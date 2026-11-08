@@ -553,6 +553,10 @@
         "ffmpeg": {
           "$ref": "#/$defs/tool",
           "description": "The ffmpeg static build that the sound post-processing of `ogw resource finalize`, `ogw resource placeholder`, `ogw frames`, the app icon conversion of `build` and the post-processing of the sprite-gen method use. When the `-encoders` output of the fetched program has no `libvorbis`, `ogw generation install` treats it as not fetched"
+        },
+        "walg": {
+          "$ref": "#/$defs/tool",
+          "description": "The WAL-G release binaries for `linux-x64` and `linux-arm64` of the DB backup rule of `## deploy` of the `build` skill: `ogw deploy` mounts the one of `serverImage.platform` into the PostgreSQL and backup containers of DEV and STG, and `ogw backup test` runs the one of this host's Docker in its throwaway PostgreSQL container. The release supports the PostgreSQL major of `postgresql`"
         }
       }
     }
