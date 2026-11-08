@@ -81,7 +81,7 @@ none. It does not call `LogCore` either.
 - Each purpose gets its own random instance. Several purposes do not share one random instance
 - Code that creates a random instance leaves the purpose name and the random seed in a `debug` log of `LogCore`
 - Random whose result becomes saved state as it is (rewards, draws) is drawn by the server. The client does not draw it
-- The random seed of a purpose that needs reproduction is made with `make_purpose_seed` from the match random seed or a random seed that DEV code received as the base. For a purpose that needs no reproduction, the base is the device time of `TimeCore`
+- The random seed of a purpose that needs reproduction is made with `make_purpose_seed` from the match random seed or a random seed that DEV code received as the base. The random seed of a purpose that needs no reproduction is `TimeCore.make_random_seed`(purpose name), so that the random base of a dev run (`TimeCore.set_random_base`) fixes it too
 - The random and `make_purpose_seed` of server core `storage` are the same algorithm as these. The same random seed and the same operation order give the same result on every engine and on the server. For `range_int` this holds when min and max are inside int32: outside it `range_int` returns the failure value, and `storage.random_int` draws unless max − min is 2^32 or more, which throws. A purpose name for which server core recreates the same sequence is defined by that server core spec. e.g. `match_simulation` in `matchmaker`
 
 ### PCG32 algorithm

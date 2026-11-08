@@ -14,7 +14,7 @@ The common rules follow [`core`](../core/SKILL.md).
 | `UtilCore` | [util-core](modules/util-core.md) | string, math, collection, big integer, random(PCG32), general-purpose state machine. No state |
 | `LogCore` | [log-core](modules/log-core.md) | diagnostic log, sending error logs and analytics events to the server |
 | `EventCore` | [event-core](modules/event-core.md) | publishing of and subscription to core events and content events |
-| `TimeCore` | [time-core](modules/time-core.md) | server time estimation, game day and reset period boundaries, game time, pause, entering and returning from background, DEV step mode |
+| `TimeCore` | [time-core](modules/time-core.md) | server time estimation, game day and reset period boundaries, game time, pause, entering and returning from background, random seed of a purpose without reproduction, DEV step mode, DEV random base, DEV frame step |
 | `LocalDataCore` | [local-data-core](modules/local-data-core.md) | save on the device |
 | `ResourceCore` | [resource-core](modules/resource-core.md) | loading resources by resource key, scope of loaded resources, bundle |
 | `PoolCore` | [pool-core](modules/pool-core.md) | object pool |

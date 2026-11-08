@@ -14,7 +14,7 @@
 
 ## purpose
 
-Estimates server time, judges reach, game day and reset period boundaries, and handles the time scale and pause of game time and the app entering and returning from background. DEV code has a step mode that advances game time only by a set amount.
+Estimates server time, judges reach, game day and reset period boundaries, handles the time scale and pause of game time and the app entering and returning from background, and gives the random seeds of the purposes that need no reproduction. DEV code has a step mode that advances game time only by a set amount, a random base that fixes those random seeds, and a frame step that follows an engine that runs at a fixed frame rate.
 
 ## dependency
 
@@ -49,6 +49,7 @@ Estimates server time, judges reach, game day and reset period boundaries, and h
 | `is_paused` | none | whether paused | `false` | all code |
 | `get_resume_count` | none | number of background returns after `init` | 0 | all code |
 | `get_last_background_ms` | none | last background elapsed time. 0 when there has been no return | 0 | all code |
+| `make_random_seed` | purpose name | random seed (int64) of that purpose | 0 | all code |
 
 ## behavior
 
@@ -96,7 +97,7 @@ Estimates server time, judges reach, game day and reset period boundaries, and h
 
 - game time is the accumulated elapsed ms with time scale and pause applied, and real elapsed time is the accumulated elapsed ms without them. Both are 0 at `init`
 - A frame is a process frame. TimeCore increases game time and real elapsed time once per process frame, before the other process callbacks of that frame. So process callbacks read this frame's `get_game_frame_ms` and `get_real_frame_ms`, and code that runs before that frame's process callbacks (input handling, physics step, frame start signal) reads the values of the previous frame. How it runs before the other process callbacks is in the engine-specific implementation rules
-- real frame increase = current monotonic time − the monotonic time of the later of the increase in the previous frame and the last background return. The first frame is measured from the monotonic time at `init`
+- real frame increase = current monotonic time − the monotonic time of the later of the increase in the previous frame and the last background return. The first frame is measured from the monotonic time at `init`. A frame step of `## DEV` replaces this rule
 - time scale is an integer in permille. The default is 1000. Per frame, game time increase = `UtilCore.floor_div`(real frame increase × time scale + carry-over, 1000), and the remainder carries over to the next frame
 - During pause, game time does not increase. Time scale and pause follow the last set value
 - Time scale and pause do not change server time, device time, monotonic time or real elapsed time
@@ -111,6 +112,12 @@ Estimates server time, judges reach, game day and reset period boundaries, and h
 - background elapsed time = the larger of the monotonic time difference and the device time difference between entering and returning
 - On entering, it calls `LogCore.notify_app_state(background)` and then publishes `AppBackgroundEnteredEvent`
 - On returning, it increases the resume count by 1. After the first sync, it adds (background elapsed time − the monotonic time difference between entering and returning) to the base server time. Then it calls `LogCore.notify_app_state(foreground)` and publishes `AppForegroundReturnedEvent`. After the first sync, `NetworkCore` syncs server time again on this event
+
+### random seed
+
+- `make_random_seed`(purpose name) gives the random seed of a purpose that needs no reproduction (`### random` of `UtilCore`): `UtilCore.make_purpose_seed`(purpose name, r + k), with r + k added in 64-bit two's complement (modulo 2^64). r is the random base set with `set_random_base` (`## DEV`) when there is one, and otherwise the device time at the call. k is the number of earlier `make_random_seed` calls with the same purpose name since `init`
+- So with a random base, the k-th random seed of each purpose is the same on every run, whatever the times of the calls and the order of the calls of other purposes
+- A purpose name that is not snake_case (`UtilCore.is_snake_case`) gives the failure value and is not counted
 
 ## hook
 
@@ -133,6 +140,7 @@ none
 | sync with received monotonic time < sent monotonic time, or with `server_time_at` ≤ 0 | ignored. Server time stays as it is | `error` |
 | game settings `dailyResetOffsetMs` is −1 day or less, or 1 day or more | the calculation uses 0 for o | one `error` in `init` |
 | time scale 0 or less | ignored | `error` |
+| `make_random_seed` with a purpose name that is not snake_case | 0 | `error` |
 
 ## settings
 
@@ -157,8 +165,16 @@ none
 | `is_step_mode` | none | whether step mode | `false` | `QACore`, `RealtimeCore` |
 | `add_step_budget` | ms | none | none | `QACore`, `RealtimeCore` |
 | `get_step_budget` | none | remaining step budget (ms) | `0` | `QACore`, `RealtimeCore` |
+| `set_random_base` | random base (int64) | none | none | `BootstrapCore`, core test |
+| `set_test_frame_step` | fps (integer 1 or more) | none | none | core test |
+| `get_frame_step_fps` | none | fps of the frame step. 0 without a frame step | `0` | `QACore` |
 
 - A test clock is an object that gives monotonic time and device time. `set_test_clock` is called only before `init`. `release` deletes it
+- `set_random_base` sets the random base of `### random seed`, so that the dev runs given the same random base make the same random seeds. It is called only before `init`. `release` deletes the random base
+- frame step: a DEV mode in which every engine frame is one fixed step of time. TimeCore is at a frame step of fps f when the engine runs at a fixed f frames per second whatever the time a frame takes, which `init` reads from the engine (the engine-specific implementation rules say how; e.g. the movie maker of the engine), or when `set_test_frame_step`(f) was called before `init`
+- At a frame step of fps f, the real frame increase of the n-th engine frame after `init` (n from 1) is ⌊n × 1000 ÷ f⌋ − ⌊(n − 1) × 1000 ÷ f⌋ ms, in place of the monotonic time difference of `### game time`. So n frames add ⌊n × 1000 ÷ f⌋ ms to real elapsed time, game time grows from that increase with time scale, pause and step mode as from any real frame increase, and each frame of a movie the engine records is one step of the game after the frame before it, whatever the speed of the host
+- Monotonic time, device time and server time do not follow the frame step. While a test clock is in use, the frame step does not apply
+- `get_frame_step_fps` is f at a frame step and 0 otherwise. `release` ends the frame step and deletes the value of `set_test_frame_step`. `set_test_frame_step` with fps less than 1 leaves an `error` log and the call is ignored
 - `set_test_clock_read_step`: while TimeCore reads the test clock, each time it reads monotonic time, it moves the test clock's monotonic time by ms after the read. With 0, it does not move it. `release` sets it to 0
 - While a test clock is in use, engine frames do not change game time and real elapsed time. The frame increase of an engine frame is the sum of the increases of the test frames handled after the previous engine frame
 - `step_test_frame` is called after moving the test clock. Without background progress, it runs one frame whose real frame increase is the progress ms, and the day check of that frame. With background progress, it handles background entering and returning in order, sets the background elapsed time to the progress ms, and sets the monotonic time difference between entering and returning to 0 when the device sleeps and to the progress ms otherwise. When the progress ms is negative, it leaves an `error` log and does nothing
@@ -167,7 +183,7 @@ none
 - `set_step_mode` turns step mode on or off and sets the budget to 0. When it is turned off, game time returns to the normal rules
 - `add_step_budget` adds ms to the budget. When not in step mode or when ms is less than 1, it leaves an `error` log and the call is ignored
 - Step mode and the budget do not change server time, device time, monotonic time or real elapsed time. `release` turns step mode off
-- STG and PROD builds have no step mode
+- STG and PROD builds have no step mode, no random base and no frame step
 
 ## test
 
@@ -193,3 +209,8 @@ none
 - When not in step mode, `add_step_budget` gives an `error` log and is ignored. After `set_step_mode`(false), game time increases every frame again
 - After `set_step_mode`(true), engine features stop as during pause and `is_paused` is `false`. After `add_step_budget`(100), engine features run again, and they stop again after the frame in which the budget becomes 0. With `set_paused`(true), they stay stopped even when budget remains. After `set_step_mode`(false), engine features follow the pause set with `set_paused`
 - In step mode, while `set_paused`(true) is in effect, advancing frames after `add_step_budget`(100) leaves game time as it is and `get_step_budget` is 100. After `set_paused`(false), seven 16 ms frames increase game time by 100 and the budget is 0
+- After `set_random_base`(42) before `init`, two calls of `make_random_seed`(`a`) give `UtilCore.make_purpose_seed`(`a`, 42) and then `UtilCore.make_purpose_seed`(`a`, 43), and a call of `make_random_seed`(`b`) between them gives `UtilCore.make_purpose_seed`(`b`, 42), whatever the device time of the test clock at the calls. After `release`, `set_random_base`(42) and another `init`, the first `make_random_seed`(`a`) gives `UtilCore.make_purpose_seed`(`a`, 42) again. With random base 9223372036854775807, the second `make_random_seed`(`a`) gives `UtilCore.make_purpose_seed`(`a`, −9223372036854775808)
+- Without a random base, with device time T of the test clock, two calls of `make_random_seed`(`a`) at that device time give `UtilCore.make_purpose_seed`(`a`, T) and `UtilCore.make_purpose_seed`(`a`, T + 1). A call of `make_random_seed`(`Abc`) is not counted: the next `make_random_seed`(`a`) gives `UtilCore.make_purpose_seed`(`a`, T + 2) at that device time
+- Without a test clock, after `set_test_frame_step`(60) before `init`, at time scale 1000, the first three engine frames have real frame increases 16, 17, 17 and the same game frame increases, and 60 engine frames increase real elapsed time and game time by 1000, also when a process callback waits 50 ms in one of them. `get_frame_step_fps` is 60, and `get_monotonic_time` grows with the device monotonic clock and not with the frame step
+- At a frame step of 60 in step mode with budget 0, engine frames leave game time as it is, and after `add_step_budget`(50) three engine frames increase game time by 50 and the budget is 0
+- Without a frame step, `get_frame_step_fps` is 0. After `release` and another `init` without `set_test_frame_step`, `get_frame_step_fps` is 0 and the real frame increase is the monotonic time difference again

@@ -14,7 +14,7 @@
 
 ## purpose
 
-Provides the test helper that server regression tests, server core tests and the content's populate use. The test helper starts isolated test servers, sends requests as real HTTP requests, and sets the time, the random seed and the fake adapters.
+Provides the test helper that server regression tests, server core tests and the content's populate use. The test helper starts isolated test servers, sends requests as real HTTP requests, sets the time, the random seed and the fake adapters, and records what server regression tests sent and received. It also starts the LOCAL server of an instance whose random is fixed by a random base.
 
 ## dependency
 
@@ -88,6 +88,7 @@ none
 | `send` | test session, request name of a game `rpc` or core `rpc`, request message, request ID (optional), timestamp (optional), random seed (optional), header overrides (optional), raw body (optional) | async operation. `ResponseEnvelope` and the decoded response message | none | test, the content's populate |
 | `send_cheat` | test session, request name of the cheat, cheat request message | async operation. `ResponseEnvelope` and the decoded response message | none | test, the content's populate |
 | `connect_server` | server URL, server build data folder, dev access value | async operation. remote test server | throws when it cannot connect | runner |
+| `start_local_server` | server start arguments (list of strings), random base (int64) | async operation. none. The server instance runs until the process gets `SIGTERM` or `SIGINT`, and then stops | a server start failure, and arguments whose `--env` is not `LOCAL`, throw `StartFailure` | runner |
 | `send_raw` | test server, HTTP method, path, header, body | async operation. HTTP status, header, body | none | test |
 | `read_user_state` | test server, user ID | async operation. all committed UserState of that user | none | test |
 | `read_server_state` | test server, user ID | async operation. all committed server state of that user | none | test |
@@ -202,7 +203,9 @@ none
 - The test clock is a `ClockAdapter` of `server-time`. When `set_time` and `advance_time` end, it calls every listener registered with `subscribe`, so one test clock is shared by several server instances of a test server and its peers
 - The clock of a `LOCAL` test server is the test clock. When `start_test_server` gets no start time, it is `testing.defaultStartAt`
 - `set_time` and `advance_time` change the test clock of that test server. The clock of the next requests and out-of-request changes changes, and the scheduler of `server-time` starts due jobs at once and ends each `sleep` that reached that time. They do not wait for the jobs to end. The clock of another test server that is not a peer of that test server does not change
-- The test clock and the random seed setting are not available outside test servers. A server instance that the server process entry point started does not receive the test clock or the random seed setting
+- Outside test servers, the test clock is not available, and the only random seed setting is the check seed provider. A server instance that the server process entry point started receives neither, and one that `start_local_server` started receives the check seed provider of its random base and no test clock
+- check seed provider: the random seed setting that gives the transaction of the k-th request (k from 0) of one request name of one user since the server instance started the random seed `storage.make_purpose_seed`(request name, random base + k), with random base + k added in 64-bit two's complement (modulo 2^64). It reads the user ID and the request name of each transaction from `storage.set_seed_provider`. So on every run with the same random base in which a user sends the same requests of a request name, each of them draws the same ctx random, whatever the requests of other users and of other request names in between
+- `start_local_server` makes and starts a server instance with `routing.create_server` the same way as the server process entry point with the same server start arguments (`## server start` of [`server-core`](../SKILL.md)): the same server module list, server build data, core settings, game settings values, content registration functions and inclusion of DEV code. Before `start()`, it sets the check seed provider of the random base with `storage.set_seed_provider`. It accepts only `--env` `LOCAL`, and the server code it starts includes DEV code
 
 ### other
 
@@ -218,7 +221,7 @@ none
 
 ### remote
 
-- `connect_server` returns a remote test server that sends to a LOCAL server instance with DEV code included, which the server process entry point started at that URL. It does not start or stop the server process
+- `connect_server` returns a remote test server that sends to a LOCAL server instance with DEV code included, which the server process entry point or `start_local_server` started at that URL. It does not start or stop the server process
 - A remote test server accepts only `login`, `send` and `send_cheat`. Other operations, and a timestamp, random seed, header overrides or raw body given to `send`, throw
 - `login` sends `auth.DevLogin`. `login` and `send_cheat` put the dev access value that `connect_server` received in header `X-Ogw-Dev-Access`
 - `X-Ogw-Data-Version` is the `client_data_version` of the received server build data folder
@@ -240,10 +243,17 @@ The harness tool runs server core tests and server regression tests with vitest.
   | `OGW_CORE_FIXTURES` | absolute path of the core fixture folder (`open-game-works-core-impl/fixtures/`) | server core test |
   | `OGW_POSTGRESQL` | connection string of the PostgreSQL in which test servers create new databases. It is a PostgreSQL that the harness tool starts and discards per run | a run that provides PostgreSQL |
   | `OGW_DEFAULT_DB` | DB kind of `start_test_server` without a given DB kind. `sqlite` or `postgresql` | every run |
+  | `OGW_TEST_RECORD` | absolute path of the test record file of the run, which the harness tool makes empty before the run | server regression test |
+
+- test record: when `OGW_TEST_RECORD` is given, the test helper appends to that file one JSON object line per event below, each line with one append, so that the test workers of a run that write together do not mix lines
+  - `{"kind": "admin_operation", "operation": "<name>"}`: per content admin operation that the content registration function `register` registered with `routing.register_admin_operation`, at each start of a test server (`start_test_server`, `restart_test_server`, `start_peer_server`)
+  - `{"kind": "admin", "operation": "<name>", "status": <HTTP status>}`: per `send_admin`
+  - `{"kind": "game_error", "request": "<request name>", "error": "<GameError>"}`: per `send` and `send_cheat` whose response is an error response whose `code` is a `GameError` value other than 0. `<GameError>` is the member name of `GameContract.GameError` of that value, or its decimal string when it has none
 
 - Server core tests run once per module with `OGW_DEFAULT_DB` `sqlite` and once with `postgresql`, and both runs get `OGW_POSTGRESQL`. Server regression tests get `OGW_DEFAULT_DB` `postgresql` and `OGW_POSTGRESQL` when `ogw check` has `--db postgresql`, and otherwise only `OGW_DEFAULT_DB` `sqlite`
 - result: per run, the harness tool makes from the vitest result one JSON in the same format as the result file of [`unit-test-core`](../../client-core/modules/unit-test-core.md). `kind` is `core` or `regression`, `engine` is `server`, `warn_counts` is an empty object. The `name` of a test is the test file path relative to the checkout root, followed by `::` and the describe names and test name joined with ` > `. The `skipped` and `todo` of vitest are `skip`. Each test file that vitest reports with status `failed` but that has no `fail` test (e.g. a file that could not be loaded, a file that threw in `beforeAll` or `afterAll`) is a run failure per file, and zero tests is run failure `no tests`
 - judgement: a run passes when every test is `pass` or `skip`, there is no run failure, and there is at least one test. When vitest ends with a nonzero exit code and there is no `fail` test and no other run failure, that exit code counts as a run failure. In server regression tests, `skip` is also a failure
+- coverage: after a server regression test run of all test files (not a run of one test file, e.g. `ogw check --regression <test file>`), the harness tool reads its test record, and each of the following is a run failure: a content admin operation of an `admin_operation` line that no `admin` line names (`admin operation <name> is sent by no test`), and a pair of a request name and a `GameError` of `(ogw.errors)` of a `service Game` `rpc` or of `(ogw.core_errors)` of a core `rpc` (`GameContract.RPCS`, `GameContract.CORE_ERRORS`) that no `game_error` line holds (`<request name> <GameError> is received by no test`). These are the tests that `## regression test` and `## admin operation` of [`server-content`](../../server-content/SKILL.md) ask for. A line that is not a JSON object of one of the three kinds is the run failure `test record line <n> is malformed`
 
 ## test
 
@@ -276,6 +286,9 @@ The harness tool runs server core tests and server regression tests with vitest.
 - Jobs of a `LOCAL` test server do not run even when real time passes
 - A nested transaction of the same user on a test server is rejected
 - A server instance that the server process entry point started does not receive the test clock or the random seed setting
+- Two server instances that `start_local_server` started with random base 7, each with a new DB, give the `seed` `storage.make_purpose_seed`(`RunCoreTest`, 7) to the first `RunCoreTest` of a user and `storage.make_purpose_seed`(`RunCoreTest`, 8) to the second in the `request` log, also when, on one of the two only, another user and another request name send requests between them. With random base 8, the first `RunCoreTest` of a user gets `storage.make_purpose_seed`(`RunCoreTest`, 8)
+- A `node` process that calls `start_local_server` with the server start arguments of a LOCAL server answers `GET /update/deploy_list.json` and ends after `SIGTERM`. With `--env DEV`, `start_local_server` throws `StartFailure` and listens on no port
+- With `OGW_TEST_RECORD` given, a `send` of `RunCoreTest` whose handler returns `GAME_ERROR_CORE_TEST` appends one line `{"kind": "game_error", "request": "RunCoreTest", "error": "GAME_ERROR_CORE_TEST"}`, a `send` that succeeds and a `send` answered with a `CoreError` append none, a `send_admin` appends one `admin` line with its operation and HTTP status, and a test server whose `register` registers a content admin operation appends one `admin_operation` line of it at `start_test_server` and one more at `restart_test_server`. Lines that two test files running together append are each whole. Without `OGW_TEST_RECORD`, the test helper writes no test record
 - A subscription snapshot set with the fake controller is used in handling the next `VerifyPurchase` and `send_fake_subscription_notify` through `call_dev`
 - `call_dev` throws for an operation outside the list
 - When `set_balance` through `call_dev` with a user ID returns an output, `read_user_state` reads the committed balance. When it returns a failure value (`UNKNOWN_ITEM`), `call_dev` returns that value and the saved state of that user is unchanged. `call_dev` with the user ID of a withdrawn user throws

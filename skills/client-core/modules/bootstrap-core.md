@@ -202,7 +202,7 @@ format argument
 | `shutdown` | none | none | none | test, `UnitTestCore` |
 | `is_update_reboot` | none | whether the boot of the current `boot_stage` is an update reboot | `false` | test |
 
-- launch value: a value that the runner passes when it starts the client of a dev run. How it is passed is in the engine-specific implementation rules
+- launch value: a value that the runner passes when it starts the client of a dev run. How it is passed is in the engine-specific implementation rules. In the browser runtime the launch values are passed with the page when it is opened, not with the export, so one export runs as many dev runs as pages opened with different launch values. A launch value that the runner did not pass takes the value that the export holds, when it holds one (engine-specific implementation rules)
 
   | launch value | meaning |
   |---|---|
@@ -213,8 +213,10 @@ format argument
   | `OGW_DEV_ACCOUNT` | dev account name that the dev login of the boot uses |
   | `OGW_DEV_ACCESS` | value that the runner gave the instance server as key `devAccess` of server start argument `--secret-file` |
   | `OGW_PLATFORM` | platform that the dev run emulates. One of the `platform` values of `BuildInfo`. When it is an empty string, it emulates none |
+  | `OGW_RANDOM_BASE` | random base of `TimeCore` (`TimeCore.set_random_base`), as a decimal integer. When it is an empty string, there is none |
 
-- build info of a dev run: `app_id`, `app_version`, `game_update_url` are empty strings, `update_trust_keys` and `ad_units` are empty lists, `environment` is `LOCAL`, `platform` is `OGW_PLATFORM` when it is not an empty string and otherwise the platform of the running OS, `server_url` is the server URL of the kept `BootTestReplacements` when there is one and otherwise `OGW_SERVER_URL`, `instance_id` is `OGW_INSTANCE_ID` and `OGW_DEV_ACCOUNT` joined with `.` when neither is an empty string and otherwise `OGW_INSTANCE_ID`, and `adapters` is `fake` for each adapter key present in at least one of DEV, STG, PROD of game settings. It is fatal when `server_url` is empty, `OGW_PLATFORM` is neither an empty string nor a `platform` value of `BuildInfo`, `OGW_INSTANCE_ID` has a character outside `[a-z0-9_-]`, or `OGW_DEV_ACCOUNT` has a character outside `[a-z0-9_]`
+- build info of a dev run: `app_id`, `app_version`, `game_update_url` are empty strings, `update_trust_keys` and `ad_units` are empty lists, `environment` is `LOCAL`, `platform` is `OGW_PLATFORM` when it is not an empty string and otherwise the platform of the running OS, `server_url` is the server URL of the kept `BootTestReplacements` when there is one and otherwise `OGW_SERVER_URL`, `instance_id` is `OGW_INSTANCE_ID` and `OGW_DEV_ACCOUNT` joined with `.` when neither is an empty string and otherwise `OGW_INSTANCE_ID`, and `adapters` is `fake` for each adapter key present in at least one of DEV, STG, PROD of game settings. It is fatal when `server_url` is empty, `OGW_PLATFORM` is neither an empty string nor a `platform` value of `BuildInfo`, `OGW_INSTANCE_ID` has a character outside `[a-z0-9_-]`, `OGW_DEV_ACCOUNT` has a character outside `[a-z0-9_]`, or `OGW_RANDOM_BASE` is neither an empty string nor an integer of the syntax `-?[0-9]{1,19}` inside int64
+- passing the random base: in a dev run whose `OGW_RANDOM_BASE` is not an empty string, `InitModules` 2 of every boot (restart and update reboot included) calls `TimeCore.set_random_base`(that value), before module `init`
 - DEV registration list call: after `build_derived_containers` of `ContentInit`, it calls the DEV registration list of `QACore` in order. In a boot where `QACore` is not `init`ed (e.g. a test boot that did not put `QACore` in the module list), it does not call it
 - dev login: when `OGW_DEV_ACCOUNT` is not an empty string, step 2 of `Login` waits for `AuthCore.dev_login`(that name) instead of `AuthCore.boot_login`. Result handling is the same as for `boot_login`
 - `BootTestReplacements`: the set of test replacements that a test passes to `start_boot`. The fields are test clock, `NetworkTransport`, log listener, realtime transport, server URL, update downloads and resource key list, and each field can be none. Update downloads are the three lists that `ApplyUpdate` uses instead of the downloaded data, translation and bundles of `GameUpdateCore`. `BootstrapCore` keeps the received value until `shutdown`
@@ -231,7 +233,7 @@ format argument
   4. Remove the fatal screen
   5. Clear the update set, the read build info and the kept `BootTestReplacements`, and set `boot_stage` to `None`
 - `shutdown` does not do `AppQuitEvent`, `LogCore.notify_app_state(quit)`, `LocalDataCore.flush` or the process termination request. The boot from before `shutdown` does not go to the next stage even when an operation it was waiting for ends. A `start_boot` call after `shutdown` is the same as the first call
-- STG and PROD builds have no `get_launch_value`, `shutdown`, launch value reading, fake adapter, adding `QACore`, passing DEV token storage, DEV registration list call, `BootTestReplacements`, network simulation transport, lockstep transport, touch emulation or passing dev access
+- STG and PROD builds have no `get_launch_value`, `shutdown`, launch value reading, fake adapter, adding `QACore`, passing DEV token storage, passing the random base, DEV registration list call, `BootTestReplacements`, network simulation transport, lockstep transport, touch emulation or passing dev access
 
 ## test
 
@@ -280,5 +282,7 @@ format argument
 - In a dev run outside a browser, when `OGW_PLATFORM` is `web` and `OGW_DEV_ACCOUNT` is an empty string, `platform` of `get_build_info` is `web`, `boot_login` is `Success` through new account login and login token save, and `boot_stage` becomes `Done`
 - When `PushCore` is in the module list, a build whose build info `platform` is `android` or `ios` passes the notification adapter of that platform with `set_notification_adapter`, a dev run passes the fake notification adapter, and a build of any other platform passes none
 - In a dev run, the value of launch value `OGW_DEV_ACCESS` is passed to `NetworkCore.set_dev_access`, so `X-Ogw-Dev-Access` of a cheat command request of `QACore` is that value
+- In a dev run with `OGW_RANDOM_BASE` `42`, `InitModules` 2 calls `TimeCore.set_random_base`(42) before `TimeCore` `init`, in the first boot and in the boot after a restart, so the first `TimeCore.make_random_seed`(`a`) of each boot is `UtilCore.make_purpose_seed`(`a`, 42). With `OGW_RANDOM_BASE` an empty string, `set_random_base` is not called. `OGW_RANDOM_BASE` `1.5`, `+1` and `9223372036854775808` are fatal
+- In the browser runtime, a DEV export opened by a page that passes the launch value `OGW_INSTANCE_ID` `i1` (engine-specific implementation rules) has `instance_id` `i1` in `get_build_info`, and a launch value that the page does not pass and the export holds takes the value of the export
 - STG and PROD builds have no `get_launch_value`, fake adapter or DEV registration list call
 - In the environments that include DEV code, `start_boot` called without `BootTestReplacements` with a module list without `QACore` does `init` of `QACore` as the last of the module list. `start_boot` given `BootTestReplacements` does not `init` `QACore`
