@@ -177,7 +177,7 @@ season reward
 
 withdrawal
 
-- `remove_user` deletes that user's score rows and retry rows on every board and in every season inside ctx's user transaction. `admin-api` opens that user's out-of-request change with `storage.run_user_transaction` and calls it. A deleted user is not in query results or among season reward targets
+- `remove_user` deletes that user's score rows and retry rows on every board and in every season inside ctx's user transaction. `admin-api` opens that user's out-of-request change with `storage.run_user_transaction` and calls it. A deleted user is not in query results or among season reward targets. As an exception, a `GetRankingTop` result that another server instance cached before the removal (`ranking.topCacheMs`; each request worker of a server process is a server instance with its own cache) may hold that user until `ranking.topCacheMs` after it was cached; the server instance that ran `remove_user` clears its own cache after the commit
 
 ## hook
 
@@ -303,7 +303,7 @@ format argument
 - The `args` of the reward mail are integer `MailArg`s `rank` and `season`
 - When the `ranking_season_reward` hook is registered, the reward is sent with its result
 - When hook `ranking_season_reward` returns a list longer than `mailbox.maxAttachments`, one mail goes per chunk, only the first mail carries the hook's `extra_id`, and from the second chunk the `once_key` is `ranking:<board ID value>:<season>:<k>`. Running the job again does not add mail
-- After `remove_user`, that user is not in query results or season rewards, and that user has no retry rows
+- After `remove_user`, that user is not in query results of the server instance that ran it or season rewards, and that user has no retry rows. A `GetRankingTop` that another server instance cached before the removal no longer holds that user after `ranking.topCacheMs` from when it was cached
 - An out-of-range score and an out-of-range `Sum` total are `OUT_OF_RANGE`, and the score stays the same
 - A season past the retention duration is deleted, and a `previous` query returns an empty list
 - A `ranking_reward` row whose `reward` has more elements than `mailbox.maxAttachments` fails server start and is not a data check finding
