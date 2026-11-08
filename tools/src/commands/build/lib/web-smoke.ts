@@ -26,7 +26,7 @@ import {
   serveFolder,
   waitClientBoot,
   withCheckInstance,
-  withWebCopy,
+  withWebExport,
   type ClientCheckInput,
   type MeasureGate,
 } from './client-check.ts';
@@ -55,7 +55,7 @@ function both(where: string, message: string, unknown: boolean, evidence: (strin
 }
 
 /**
- * `### web smoke` 4 on an open page: waits for `boot_stage` `Done`, runs the scenario and judges no blocker and full flow;
+ * `### web smoke` 3 on an open page: waits for `boot_stage` `Done`, runs the scenario and judges no blocker and full flow;
  * the browser console and the server log go into `evidence`.
  */
 export async function webScenario(
@@ -83,7 +83,7 @@ export async function webScenario(
   return { results: judge(outcome, scenario.steps.length, await logs()), loadingMs: boot.at - page.openedAt };
 }
 
-/** The harness settings of `### web smoke` 3 and 4, or the reason the browser cannot run. */
+/** The harness settings of `### web smoke` 2 and 3, or the reason the browser cannot run. */
 export interface WebRun {
   chromium: string;
   rate: number;
@@ -102,18 +102,18 @@ export async function webRunSettings(ctx: Context): Promise<WebRun | string> {
 export const WEB_CHECK_SWITCHES: readonly string[] = ['--enable-precise-memory-info'];
 
 /**
- * `### web smoke` 3 and 5 around `use`: serves the folder of the web check export `file`, and on the same port `values`
- * (the launch values of the check instance of the page) as a launch value file under a path with a new random part,
- * opens its `index.html` with the CPU throttle and `ogw_launch_values` naming that file, then closes the page and the
- * server. The launch value file holds secret values (`OGW_DEV_ACCESS`), so it is written into a new secret folder,
- * deleted with it.
+ * `### web smoke` 2 and 4 around `use`: serves the folder of the web check export `file`, and on the same port `values`
+ * (the launch values of the check instance of the page) as a launch value file (`application/json`) under a path with
+ * a new random part, opens its `index.html` with the CPU throttle and `ogw_launch_values` naming that file, then closes
+ * the page and the server. The launch value file holds secret values (`OGW_DEV_ACCESS`), so it is written into a new
+ * secret folder, deleted with it.
  */
 export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, values: LaunchValues, use: (page: HeadlessPage) => Promise<T>): Promise<T> {
   const folder = await newSecretFolder('ogw-page-launch-values-', ctx.env);
   try {
     const query = await writePageLaunchValues(folder, '/', values);
     const path = new URLSearchParams(query).get('ogw_launch_values') ?? '';
-    const host = await serveFolder(dirname(file), { [path]: join(folder, basename(path)) });
+    const host = await serveFolder(dirname(file), { [path]: { file: join(folder, basename(path)), contentType: 'application/json' } });
     try {
       const page = await openHeadless(ctx, run.chromium, `${host.url}/index.html?${query}`, run.rate, WEB_CHECK_SWITCHES);
       try {
@@ -132,8 +132,8 @@ export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, va
 
 /**
  * Check `web smoke` (`build` `## build-time check`, ogw.md `### web smoke`). Null when the build has no web platform. Its
- * check instance and the web check export (made here when no web check made it yet) come first; the page opens when
- * `gate` lets it measure.
+ * check instance and the web check export (made here when no web check made it yet) start together; the page opens
+ * when both are ready and `gate` lets it measure.
  */
 export async function webSmoke(input: ClientCheckInput, gate: MeasureGate = NO_GATE): Promise<WebSmokeResult | null> {
   if (!input.platforms.includes('web')) return null;
@@ -143,7 +143,7 @@ export async function webSmoke(input: ClientCheckInput, gate: MeasureGate = NO_G
   try {
     const run = await webRunSettings(ctx);
     if (typeof run === 'string') return { check: didNotRun(NAME, run), loadingMs: null };
-    return await withWebCopy(input, (own) =>
+    return await withWebExport(input, (own) =>
       withCheckInstance(ctx, input.game, 'web', async (instance, _external, values) => {
         const file = await own.workspaces.webExport();
         await atGate(gate);

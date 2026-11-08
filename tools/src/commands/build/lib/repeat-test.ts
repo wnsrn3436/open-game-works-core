@@ -104,9 +104,9 @@ async function readStats(ctx: Context, id: string): Promise<RunStats | null> {
 }
 
 /**
- * Run `n` (ogw.md `### repeat test` 1): its own check instance with random base `n`, and a page of the web check export
- * with the launch values of that instance. The copy of the web check export comes before the instance starts, and a run
- * that would only read a failed export starts none. The logs of a run that passed are not kept.
+ * Run `n` (ogw.md `### repeat test` 1): its own check instance with random base `n`, and `### web smoke` 2 to 4 on the
+ * web check export with the launch values of that instance. The copy of the web check export comes before the instance
+ * starts, and a run that would only read a failed export starts none. The logs of a run that passed are not kept.
  */
 async function oneRun(input: ClientCheckInput & { workspaces: CheckWorkspaces }, scenario: Scenario, run: WebRun, n: number): Promise<RunOutcome> {
   const { ctx, workspaces } = input;

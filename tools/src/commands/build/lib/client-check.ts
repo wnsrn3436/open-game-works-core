@@ -372,13 +372,14 @@ export async function withCheckCopy<T>(input: ClientCheckInput, platform: CheckP
 }
 
 /**
- * Runs `use` with the check workspaces of `input` once the copy of their web check export is made (ogw.md
- * `### client checks`): the copy comes before `use` starts a check instance, and `use` takes the web check export from
- * `webExport`.
+ * `### web smoke` 1 around `use`: runs `use` with the check workspaces of `input` once the copy of their web check
+ * export is made (ogw.md `### client checks`: the copy comes before the check instance starts), with the export
+ * started, when it is not made yet, beside the check instance that `use` starts; `use` takes it from `webExport`.
  */
-export async function withWebCopy<T>(input: ClientCheckInput, use: (input: ClientCheckInput & { workspaces: CheckWorkspaces }) => Promise<T>): Promise<T> {
+export async function withWebExport<T>(input: ClientCheckInput, use: (input: ClientCheckInput & { workspaces: CheckWorkspaces }) => Promise<T>): Promise<T> {
   return withWorkspacesOf(input, async (own) => {
     await own.workspaces.webCopy();
+    own.workspaces.startWebExport();
     return use(own);
   });
 }
@@ -419,22 +420,28 @@ export async function waitClientBoot(
   }
 }
 
+/** A file served at a URL path of its own, with its content type. */
+export interface ServedFile {
+  file: string;
+  contentType: string;
+}
+
 /**
- * Serves a folder over HTTP on a free port of `127.0.0.1`, and on the same port each file of `files` at its URL path
- * (a key such as `/name.json`).
+ * Serves a folder over HTTP on a free port of `127.0.0.1`, its files with the content types of the web artifact
+ * deployment (`contentTypeOf`), and on the same port each file of `files` at its URL path (a key such as `/name.json`).
  */
-export async function serveFolder(dir: string, files: Readonly<Record<string, string>> = {}): Promise<{ url: string; close: () => Promise<void> }> {
+export async function serveFolder(dir: string, files: Readonly<Record<string, ServedFile>> = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
     const path = decodeURIComponent((req.url ?? '/').split('?')[0] ?? '/');
     const extra = Object.hasOwn(files, path) ? files[path] : undefined;
-    const file = extra ?? normalize(join(dir, path === '/' ? 'index.html' : path));
+    const file = extra?.file ?? normalize(join(dir, path === '/' ? 'index.html' : path));
     if (req.method !== 'GET' || (extra === undefined && (!isInside(dir, file) || relative(dir, file) === ''))) {
       res.writeHead(404).end();
       return;
     }
     readFile(file).then(
       (content) => {
-        res.writeHead(200, { 'content-type': contentTypeOf(file) }).end(content);
+        res.writeHead(200, { 'content-type': extra?.contentType ?? contentTypeOf(file) }).end(content);
       },
       (error: unknown) => {
         // no such file (or a folder): 404; a file that cannot be read is a server error the page sees

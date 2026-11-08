@@ -186,7 +186,7 @@ describe('build check helpers', () => {
     write(s.ws.root, 'site/g.wasm', 'wasm');
     write(s.ws.root, 'secret.txt', 'no');
     write(s.ws.root, 'values/v.json', '{"OGW_PLATFORM":"web"}');
-    const host = await serveFolder(join(s.ws.root, 'site'), { '/ogw-launch-values-1.json': join(s.ws.root, 'values', 'v.json') });
+    const host = await serveFolder(join(s.ws.root, 'site'), { '/ogw-launch-values-1.json': { file: join(s.ws.root, 'values', 'v.json'), contentType: 'application/json' } });
     const get = (path: string, method = 'GET') =>
       new Promise<{ status: number; type: string | undefined; body: string }>((resolve, reject) => {
         const req = request(`${host.url}${path}`, { method }, (res) => {
@@ -207,8 +207,8 @@ describe('build check helpers', () => {
     expect((await get('/%2e%2e/secret.txt')).status).toBe(404);
     expect((await get('/none.js')).status).toBe(404);
     expect((await get('/index.html', 'POST')).status).toBe(404);
-    // a file given by its URL path is served on the same port, and nothing else of its folder
-    expect(await get('/ogw-launch-values-1.json?x=1')).toEqual({ status: 200, type: 'application/octet-stream', body: '{"OGW_PLATFORM":"web"}' });
+    // a file given by its URL path is served on the same port with its content type, and nothing else of its folder
+    expect(await get('/ogw-launch-values-1.json?x=1')).toEqual({ status: 200, type: 'application/json', body: '{"OGW_PLATFORM":"web"}' });
     expect((await get('/ogw-launch-values-1.json', 'POST')).status).toBe(404);
     expect((await get('/v.json')).status).toBe(404);
     // a folder is no file; a file that cannot be read is a server error with its reason, not a missing file
@@ -294,7 +294,7 @@ describe('web smoke', () => {
     });
     const opened = chromiumCalls(s).find((c) => c.page !== undefined) as { page: string; launchValues: { path: string; status: number } };
     expect(opened.page).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+\/index\.html\?ogw_launch_values=%2Fogw-launch-values-[^&/]+\.json$/);
-    expect(opened.launchValues).toMatchObject({ path: expect.stringMatching(/^\/ogw-launch-values-[^/]+\.json$/) as string, status: 200 });
+    expect(opened.launchValues).toMatchObject({ path: expect.stringMatching(/^\/ogw-launch-values-[^/]+\.json$/) as string, status: 200, type: 'application/json' });
     // the export holds no launch values: generated/launch_values.json is neither written nor taken out of exclude_filter
     expect(existsSync(join(s.bin.bin, 'export-launch-values-index.html'))).toBe(false);
     // the browser reads the current JavaScript heap

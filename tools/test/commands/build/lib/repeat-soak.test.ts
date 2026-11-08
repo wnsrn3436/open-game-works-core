@@ -442,6 +442,51 @@ describe('repeat test', () => {
   });
 });
 
+describe('web smoke', () => {
+  it('starts its check instance and the web check export together, and opens the page when both are ready', async () => {
+    const s = await setup();
+    s.config({ clients: { main: { results: { 'f.bot_next_input': TAP } } }, telemetry: { goal_intervals: [{}] } });
+    const real = await vi.importActual<typeof import('../../../../src/commands/build/lib/godot.ts')>('../../../../src/commands/build/lib/godot.ts');
+    const instanceStart = vi.mocked(startInstance).getMockImplementation() as typeof startInstance;
+    const request = vi.mocked(automationRequest).getMockImplementation() as typeof automationRequest;
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    /** The order of the events of one web smoke whose instance start and export last the given ms. */
+    const run = async (instanceMs: number, exportMs: number): Promise<string[]> => {
+      const events: string[] = [];
+      vi.mocked(startInstance).mockImplementation(async (...args) => {
+        events.push('instance start');
+        await delay(instanceMs);
+        const info = await instanceStart(...args);
+        events.push('instance ready');
+        return info;
+      });
+      vi.mocked(godotCheckExport).mockImplementation(async (...args) => {
+        events.push('export start');
+        await delay(exportMs);
+        const file = await real.godotCheckExport(...args);
+        events.push('export end');
+        return file;
+      });
+      // the first request to the client is the boot wait after the page opened
+      vi.mocked(automationRequest).mockImplementation(async (...args) => {
+        if (!events.includes('first request')) events.push('first request');
+        return request(...args);
+      });
+      expect((await webSmoke(s.input))?.check.result).toBe('pass');
+      return events;
+    };
+    // a slow instance start: the export starts before the instance is ready
+    const slowInstance = await run(400, 0);
+    expect(slowInstance.indexOf('export start')).toBeGreaterThanOrEqual(0);
+    expect(slowInstance.indexOf('export start')).toBeLessThan(slowInstance.indexOf('instance ready'));
+    // a slow export: the instance is ready before the export ends
+    const slowExport = await run(0, 400);
+    expect(slowExport.indexOf('instance ready')).toBeLessThan(slowExport.indexOf('export end'));
+    // the page opens when both are ready
+    for (const events of [slowInstance, slowExport]) expect(events.indexOf('first request')).toBeGreaterThan(Math.max(events.indexOf('instance ready'), events.indexOf('export end')));
+  });
+});
+
 function frame(patch: Partial<NonNullable<FpsTick>> = {}): NonNullable<FpsTick> {
   return { scene: 'arena', settled: true, loadKey: 'k', fps: 60, boundFps: 59, intervalsMs: FRAMES_OK, budgetMs: 1000 / 60, ...patch };
 }
