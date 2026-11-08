@@ -29,7 +29,7 @@ import type { PlatformBuild, PlatformBuildInput } from './platform.ts';
 import { iosIdentity, iosOptions, localizeTracking, trackingRequested, trackingSource, trackingTexts, xml } from './godot-ios.ts';
 import { prepareSigning, signMacosApp, signWindows, windowsSigner, type Signing } from './godot-signing.ts';
 import { isZip, zipEntries } from './zip.ts';
-import { installServiceWorker, WEB_EXPORT_OPTIONS } from '../../../lib/godot-web.ts';
+import { installServiceWorker, webExportOptions } from '../../../lib/godot-web.ts';
 
 export const PRESET_PLATFORM: Record<string, string> = {
   android: 'Android', ios: 'iOS', macos: 'macOS', windows: 'Windows Desktop', linux: 'Linux', web: 'Web',
@@ -208,7 +208,7 @@ async function platformOptions(p: PresetContext, platform: string): Promise<Reco
     case 'ios':
       return iosPreset(p);
     case 'web':
-      return { ...WEB_EXPORT_OPTIONS };
+      return webExportOptions(p.env);
     default:
       throw new OgwError(`unknown platform ${platform}`);
   }

@@ -20,7 +20,7 @@ import { gutPackage, installPackage, isCorePlugin, pluginsFor } from './engine-p
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
 import { renderCoreProjectGodot } from '../../generate/lib/godot-project.ts';
 import { pageInput } from './page-input.ts';
-import { installServiceWorker, launchValueFileError, WEB_EXPORT_OPTIONS, writePageLaunchValues } from '../../../lib/godot-web.ts';
+import { installServiceWorker, launchValueFileError, webExportOptions, writePageLaunchValues } from '../../../lib/godot-web.ts';
 
 /** Counts and failures of one module test. */
 export interface ModuleOutcome {
@@ -394,7 +394,7 @@ script_export_mode=0
 
 [preset.0.options]
 
-${Object.entries(WEB_EXPORT_OPTIONS).map(([key, value]) => `${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`).join('\n')}
+${Object.entries(webExportOptions('DEV')).map(([key, value]) => `${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`).join('\n')}
 `;
 
 /** The main scene of the browser run's export copy, and its script: it starts the GUT command line runner. */

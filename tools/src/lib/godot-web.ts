@@ -15,6 +15,17 @@ export const WEB_EXPORT_OPTIONS: Readonly<Record<string, boolean | string>> = {
   'html/custom_html_shell': 'res://core/web/ogw-shell.html',
 };
 
+/**
+ * `html/head_include` of a DEV Web export: the marker by which client core's web shell reads the launch value file of the
+ * page (`ogw_launch_values`, `client-core` Godot `## module`). STG and PROD exports do not have it.
+ */
+export const WEB_DEV_HEAD_INCLUDE = '<script>window.ogwDevExport = true;</script>';
+
+/** The Web preset options of an export of environment `env` (`#### platform` of ogw.md `## godot build`). */
+export function webExportOptions(env: 'DEV' | 'STG' | 'PROD'): Record<string, boolean | string> {
+  return env === 'DEV' ? { ...WEB_EXPORT_OPTIONS, 'html/head_include': WEB_DEV_HEAD_INCLUDE } : { ...WEB_EXPORT_OPTIONS };
+}
+
 /** Client core's service worker in a Godot project (`res://core/web/service-worker.js`). */
 export const WEB_SERVICE_WORKER = join('core', 'web', 'service-worker.js');
 

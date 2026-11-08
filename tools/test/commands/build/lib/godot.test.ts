@@ -869,7 +869,13 @@ esac`,
     expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).toContain('variant/thread_support=true');
     expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).toContain('progressive_web_app/ensure_cross_origin_isolation_headers=true');
     expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).toContain('html/custom_html_shell="res://core/web/ogw-shell.html"');
+    // the DEV marker by which the web shell reads the launch value file of the page
+    expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).toContain('html/head_include="<script>window.ogwDevExport = true;</script>"');
     expect(readFileSync(join(bin.bin, 'a.gd'), 'utf8')).toBe('\tLogCore.log_debug("x")\n');
+    // STG: the shell of the export reads no launch value file of the page
+    expect((await godotBuild(ctx, { ...base, env: 'STG', outDir: join(ws.root, 'out-stg') }, 'web')).artifact.path).toBe('../../out-stg/web');
+    expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).not.toContain('html/head_include');
+    expect(readFileSync(join(bin.bin, 'preset.cfg'), 'utf8')).toContain('html/custom_html_shell="res://core/web/ogw-shell.html"');
   });
 });
 

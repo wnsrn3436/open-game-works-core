@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { filledServiceWorker, launchValueFileError, writePageLaunchValues } from '../../src/lib/godot-web.ts';
+import { filledServiceWorker, launchValueFileError, webExportOptions, writePageLaunchValues } from '../../src/lib/godot-web.ts';
 
 describe('filledServiceWorker', () => {
   const template = [
@@ -37,6 +37,16 @@ describe('filledServiceWorker', () => {
   it('fails when the exported worker gives one placeholder two values', () => {
     const twice = `${template}\nconst AGAIN = '___GODOT_VERSION___!';`;
     expect(() => filledServiceWorker(twice, `${exported}\nconst AGAIN = 'other!';`)).toThrow('gives ___GODOT_VERSION___ two values');
+  });
+});
+
+describe('webExportOptions', () => {
+  it('gives only a DEV export the head include marker by which the web shell reads the launch value file of the page', () => {
+    expect(webExportOptions('DEV')['html/head_include']).toBe('<script>window.ogwDevExport = true;</script>');
+    for (const env of ['STG', 'PROD'] as const) {
+      expect(webExportOptions(env)).not.toHaveProperty('html/head_include');
+      expect(webExportOptions(env)['html/custom_html_shell']).toBe('res://core/web/ogw-shell.html');
+    }
   });
 });
 

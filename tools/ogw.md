@@ -1040,7 +1040,7 @@ How the harness tool builds with the Godot engine. The signing key table and wha
 | macos | `macOS` | `universal` | `<game>.zip` |
 | windows | `Windows Desktop` | `x86_64` | `<game>.exe`, `<game>.pck` and all files the export wrote in the same folder (GDExtension libraries and the libraries they use) |
 | linux | `Linux` | `x86_64` | `<game>.x86_64`, `<game>.pck` and all files the export wrote in the same folder (GDExtension libraries and the libraries they use) |
-| web | `Web` | none | `index.html` and all files produced with it (including `index.service.worker.js`, `index.manifest.json`, `index.offline.html` and icon `.png`). `variant/thread_support=true`, `progressive_web_app/enabled=true`, `progressive_web_app/ensure_cross_origin_isolation_headers=true`, `html/custom_html_shell` is `res://core/web/ogw-shell.html`, and after the export `index.service.worker.js` is replaced with `core/web/service-worker.js` |
+| web | `Web` | none | `index.html` and all files produced with it (including `index.service.worker.js`, `index.manifest.json`, `index.offline.html` and icon `.png`). `variant/thread_support=true`, `progressive_web_app/enabled=true`, `progressive_web_app/ensure_cross_origin_isolation_headers=true`, `html/custom_html_shell` is `res://core/web/ogw-shell.html`, a DEV export (the DEV build, the DEV check exports, the browser run of `ogw core test`) also has `html/head_include` `<script>window.ogwDevExport = true;</script>` (`## module` of [Godot](../skills/client-core/engines/godot.md)) and an STG or PROD export has none, and after the export `index.service.worker.js` is replaced with `core/web/service-worker.js` |
 
 - `<game>` is the game folder name
 
