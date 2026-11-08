@@ -1,0 +1,12 @@
+{
+  "target": "generation measure",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/generation/measure.ts:186",
+      "problem": "The install folder is now per install key (`## generation install`: a checkout with other pins never touches the install of another checkout). But the `generation-measure` result file is one file per method name, `ogw-env/generation-measure.json` in `ogw-temp/` under the git common dir (tools/src/lib/secret-files.ts:65, `privateTempDir` -> `harnessGitFolder`). Every worktree of the harness shares it, and an item does not record the pins or install key it measured. So a measurement taken in a worktree with other pins of a method replaces the item that another checkout's `ogw env propose` turns into `measured:<method>`. It is also the kept `flux2-klein` result that `rig-2d` of that checkout reads at measure.ts:47 (`done[IMAGE_METHOD]` from `kept`). Solving it needs `## generation measure` or `## temp folder` of tools/ogw.md to say which install a result item is of",
+      "foundBy": "generation measure round 1"
+    }
+  ]
+}
