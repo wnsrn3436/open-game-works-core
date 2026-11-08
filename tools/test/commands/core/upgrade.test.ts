@@ -155,8 +155,8 @@ describe('ogw core upgrade', () => {
       'core upgrade: 1.0.0 -> 1.2.0', '', 'client/generated/contract/core_contract.gd', 'client/generated/contract/core_contract.gd.uid', 'generated.txt', 'settings.json',
     ]);
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([' M records/request.md', '?? lead.md', '?? notes.txt']);
-    // a game with no static check failure prints none
-    expect(staticCheckDetail).toHaveBeenCalledTimes(1);
+    // no static check runs after the commit: the next `ogw check` finds what the hook would refuse
+    expect(staticCheckDetail).not.toHaveBeenCalled();
     expect(run.stderr).not.toMatch(/^(settings\.json|client\/)/m);
     expect(readdirSync(ws.coreReleases)).toContain('1.2.0');
     expect(installEngines).toHaveBeenCalledTimes(1);
@@ -357,7 +357,7 @@ describe('ogw core upgrade', () => {
     expect(readFileSync(join(dir, 'client/generated/contract/core_contract.gd'), 'utf8')).toBe('old proto');
   });
 
-  it('commits content that the pre-commit hook refuses, with the meta files of a new core script, and prints the failures the hook would refuse it for', async () => {
+  it('commits content that the pre-commit hook refuses, with the meta files of a new core script, and runs no static check after the commit', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
     const dir = makeGame(ws, 'g', {
@@ -379,19 +379,6 @@ describe('ogw core upgrade', () => {
       const applied = await generateWrites(c, game);
       return { ...applied, written: [...applied.written, 'client/core/new_core/new_core.gd'] };
     });
-    let checked = '';
-    vi.mocked(staticCheckDetail).mockImplementationOnce((_c, game) => {
-      checked = sh(game.root, 'git', ['log', '-1', '--format=%s']).trim();
-      return Promise.resolve(staticResult([
-        { where: 'settings.json:1', message: 'game settings owner: ogw game check: uiCheckScreens.0.pixelRatio: missing' },
-        { where: 'settings.json:2', message: 'a failure at `coreVersion`, which the commit changes' },
-        { where: 'settings.json:4', message: 'option entry: no `BootstrapCore.request_restart` call in client content code' },
-        { where: 'client/core/new_core:1', message: 'an absence failure in a folder of the commit', absent: true },
-        { where: 'client/core/new_core:1', message: 'a failure at a folder of the commit' },
-        { where: 'client/features:1', message: 'option entry: no `AuthCore.open_terms_document` call in client content code', absent: true },
-        { where: 'client/features/play/play.gd:1', message: 'a failure at a file the commit does not change' },
-      ]));
-    });
     const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
     expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
     expect(sh(dir, 'git', ['show', '--name-only', '--format=%s', 'HEAD']).trim().split('\n')).toEqual([
@@ -405,15 +392,10 @@ describe('ogw core upgrade', () => {
       'settings.json',
     ]);
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['A  client/features/lead/lead.gd', 'A  client/features/lead/lead.gd.uid']);
-    // the static check of the hook ran on the upgraded checkout, and what the hook would refuse the commit for is printed:
-    // not the option entry at `supportedLanguages` (line 4), a value the commit does not change
-    expect(checked).toBe('core upgrade: 1.0.0 -> 1.1.0');
     expect(readFileSync(join(dir, 'settings.json'), 'utf8').split('\n').slice(1, 4)).toEqual(['  "coreVersion": "1.1.0",', '  "engine": "godot",', '  "supportedLanguages": [']);
-    expect(run.stderr.split('\n').filter((line) => /^(settings\.json|client\/)/.test(line))).toEqual([
-      'settings.json:1: game settings owner: ogw game check: uiCheckScreens.0.pixelRatio: missing',
-      'settings.json:2: a failure at `coreVersion`, which the commit changes',
-      'client/core/new_core:1: an absence failure in a folder of the commit',
-    ]);
+    // neither the hook nor a static check of its own ran: the next `ogw check` finds what the hook refuses
+    expect(staticCheckDetail).not.toHaveBeenCalled();
+    expect(run.stderr).not.toMatch(/^(settings\.json|client\/)/m);
   });
 
   it('commits a file that ogw generate removed with the meta file that the sync removes for it', async () => {
@@ -441,19 +423,6 @@ describe('ogw core upgrade', () => {
       'A\tgenerated.txt',
       'M\tsettings.json',
     ]);
-    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
-  });
-
-  it('stays committed and prints the reason when the static check of the upgraded checkout cannot run', async () => {
-    const ws = makeWorkspace();
-    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
-    const dir = makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0', engine: 'godot' } });
-    vi.mocked(staticCheckDetail).mockRejectedValueOnce(new Error('godot 4.5.1.stable is not installed'));
-    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
-    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
-    expect(run.stderr).toContain('static check after the commit could not run: godot 4.5.1.stable is not installed\n');
-    expect(sh(dir, 'git', ['log', '-1', '--format=%s']).trim()).toBe('core upgrade: 1.0.0 -> 1.1.0');
-    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.1.0', engine: 'godot' });
     expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 

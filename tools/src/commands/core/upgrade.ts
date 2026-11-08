@@ -14,7 +14,7 @@ import { lastProdTagName } from '../build/lib/names.ts';
 import { callContractTool, contractPrevious, runContract, type ContractRun } from '../contract/api.ts';
 import { GENERATED_FOLDERS } from '../check/static/generated-diff.ts';
 import { runData } from '../data/api.ts';
-import { commitWithoutHook, printHookFailures } from '../game/lib/commit-without-hook.ts';
+import { commitWithoutHook } from '../game/lib/commit-without-hook.ts';
 import { generateCheckout } from '../generate/api.ts';
 import { CORE_UPGRADE_KEY } from '../loop/lib/api.ts';
 import { fetchCoreRelease, gameCoreVersion, publishedRelease, releasedProposals, remoteReleaseVersions } from './api.ts';
@@ -237,7 +237,6 @@ export const upgradeCommand: CommandDef = {
         open.data[CORE_UPGRADE_KEY] = record;
       });
     }
-    if (commit !== null) await span('hook failures', () => printHookFailures(ctx, game, commit));
     const lines = [`coreVersion: ${from} -> ${approved}`];
     if (choice.skipped.length > 0) lines.push(`skipped: ${choice.skipped.join(', ')}`);
     return { text: lines.join('\n'), data: { from, version: approved, skipped: choice.skipped, commit } };

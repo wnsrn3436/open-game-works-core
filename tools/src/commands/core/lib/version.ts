@@ -32,10 +32,6 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export function majorOf(version: string): number {
-  return versionParts(version)[0];
-}
-
 export function releaseTag(version: string): string {
   return `v${version}`;
 }

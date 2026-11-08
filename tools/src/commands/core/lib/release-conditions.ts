@@ -28,7 +28,7 @@ import { benchmarkDataViolations } from './benchmark-data.ts';
 import { baseProtoBreaks } from './base-proto-compat.ts';
 import { implementedTools } from './tools.ts';
 import { engineAssetRules } from './undefined.ts';
-import { compareVersions, majorOf, releaseTag } from './version.ts';
+import { compareVersions, releaseTag, versionParts } from './version.ts';
 
 /**
  * Targets that have an implementation and the modules each must pass for a release: `server` when
@@ -219,12 +219,23 @@ export async function pluginBuildViolations(implDir: string): Promise<string[]> 
   return violations;
 }
 
+/**
+ * Whether `version` may break compatibility with the release `lower` (ogw.md `## core release`): its major is higher, or,
+ * while its major is 0, its minor is higher (`core` command.md `## version and release`).
+ */
+function raisedForBreak(version: string, lower: string): boolean {
+  const [major, minor] = versionParts(version);
+  const [lowerMajor, lowerMinor] = versionParts(lower);
+  return major > lowerMajor || (major === 0 && minor > lowerMinor);
+}
+
 export async function baseProtoViolations(ctx: Context, implDir: string, version: string, released: readonly string[]): Promise<string[]> {
   const lower = lowerRelease(version, released);
   if (lower === undefined) return [];
   const breaks = await baseProtoBreaks(ctx, implDir, lower);
-  if (breaks.length === 0 || majorOf(version) > majorOf(lower)) return [];
-  return [`base proto breaks backward compatibility with ${lower} but the major version is not higher:\n  ${breaks.join('\n  ')}`];
+  if (breaks.length === 0 || raisedForBreak(version, lower)) return [];
+  const part = versionParts(version)[0] === 0 ? 'the minor version is not higher (major 0)' : 'the major version is not higher';
+  return [`base proto breaks backward compatibility with ${lower} but ${part}:\n  ${breaks.join('\n  ')}`];
 }
 
 /** Every release condition `ogw core release` checks (ogw.md `## core release`). */

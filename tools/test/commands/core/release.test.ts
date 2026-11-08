@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCodeCheck } from '../../../src/commands/code/api.ts';
 import { readCoreSpecDir } from '../../../src/commands/core/lib/impl.ts';
-import { constraintViolations, coreSpecViolations, coreTestCommand, implementedConstraints, requiredTargets, testRecordViolations } from '../../../src/commands/core/lib/release-conditions.ts';
+import { baseProtoViolations, constraintViolations, coreSpecViolations, coreTestCommand, implementedConstraints, requiredTargets, testRecordViolations } from '../../../src/commands/core/lib/release-conditions.ts';
 import type { Context } from '../../../src/lib/command.ts';
 import { addTestRecord, mergedResults } from '../../../src/commands/core/lib/test-records.ts';
 import { SCREEN_LOCKED } from '../../../src/lib/outcome.ts';
@@ -607,6 +607,22 @@ describe('ogw core release', () => {
 });
 
 describe('release condition parts', () => {
+  it('takes a base proto break with a higher major, or, while the major is 0, a higher minor', async () => {
+    vi.mocked(baseProtoBreaks).mockResolvedValue(['CoreError.X removed']);
+    const violations = (lower: string, version: string): Promise<string[]> => baseProtoViolations({} as Context, '/impl', version, [lower]);
+    expect(await violations('0.9.0', '0.10.0')).toEqual([]);
+    expect(await violations('0.9.0', '0.9.1')).toEqual(['base proto breaks backward compatibility with 0.9.0 but the minor version is not higher (major 0):\n  CoreError.X removed']);
+    expect(await violations('0.10.0', '1.0.0')).toEqual([]);
+    expect(await violations('1.2.0', '1.3.0')).toEqual(['base proto breaks backward compatibility with 1.2.0 but the major version is not higher:\n  CoreError.X removed']);
+    expect(await violations('1.2.0', '2.0.0')).toEqual([]);
+    // the highest lower release is the one compared with
+    expect(await baseProtoViolations({} as Context, '/impl', '0.10.0', ['0.8.0', '0.10.0', '0.9.0', '0.11.0'])).toEqual([]);
+    expect(vi.mocked(baseProtoBreaks).mock.calls.at(-1)?.[2]).toBe('0.9.0');
+    // no break: any higher version
+    vi.mocked(baseProtoBreaks).mockResolvedValue([]);
+    expect(await violations('1.2.0', '1.2.1')).toEqual([]);
+  });
+
   it('reads a core-spec file that is not JSON as differing from ogw core spec, and fails on one that cannot be read', async () => {
     const impl = mkdtempSync(join(tmpdir(), 'ogw-core-spec-'));
     writeFiles(impl, { 'core-spec/A.json': 'not json' });

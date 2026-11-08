@@ -10,7 +10,6 @@ import { overlay } from '../../../../src/commands/core/lib/merge.ts';
 import {
   compareVersions,
   isVersion,
-  majorOf,
   releaseTag,
   requireVersion,
   sortVersions,
@@ -41,7 +40,6 @@ describe('version', () => {
     expect(compareVersions('2.0.0', '2.0.0')).toBe(0);
     expect(compareVersions('2.0.0', '1.99.99')).toBeGreaterThan(0);
     expect(sortVersions(['1.10.0', '1.2.0', '1.2.0', '0.9.9'])).toEqual(['0.9.9', '1.2.0', '1.10.0']);
-    expect(majorOf('4.1.2')).toBe(4);
     expect(releaseTag('1.2.3')).toBe('v1.2.3');
     expect(versionParts('7.8.9')).toEqual([7, 8, 9]);
   });
