@@ -18,6 +18,12 @@ export function needsTelemetry(condition: Condition): boolean {
   return condition.path.startsWith('telemetry.');
 }
 
+/** True when some leaf of the condition reads `telemetry.marks` or a path under it. */
+export function readsMarks(condition: Condition): boolean {
+  if ('all' in condition) return condition.all.some(readsMarks);
+  return condition.path === 'telemetry.marks' || condition.path.startsWith('telemetry.marks.');
+}
+
 const MISSING = Symbol('missing');
 
 function lookup(root: unknown, names: readonly string[]): unknown {

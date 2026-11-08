@@ -122,6 +122,28 @@ describe('botPlaytest', () => {
     expect(fullFlow.failures).toEqual(noBlocker.failures);
   });
 
+  it('an auto step in which the bot retried fails full flow, leaves no blocker unknown and keeps the telemetry of the step', async () => {
+    const auto = [{ kind: 'auto', command: 'f.bot_next_input', until: goal, timeoutMs: 1000 }];
+    const dir = root({ steps: auto, goal });
+    const start = { started_at: 1, marks: [], goal_intervals: [] };
+    const end = { started_at: 1, marks: [{ at: 2, kind: 'Fail' }, { at: 3, kind: 'Restart' }], goal_intervals: [{}] };
+    let taps = 0;
+    vi.mocked(automationRequest).mockImplementation(fakeAutomation((command) => {
+      if (command === 'f.bot_next_input') return ok({ command: 'tap', args: [] });
+      if (command === 'tap') taps++;
+      if (command === 'get_telemetry') return ok(taps === 0 ? start : end);
+      if (command === 'extract_logs') return ok([{ path: 'log/log_1.txt', content: 'line\n' }]);
+      return ok(doneState());
+    }));
+    const [noBlocker, fullFlow] = await botPlaytest(ctx, 'g', await readScenario(dir), { evidence: { root: dir, dir: 'ev', relative: true }, slots: new Slots(1), pollMs: 1 });
+    const message = 'auto: 1 retries before until (a Fail mark, then a Restart mark with no Goal mark between): the bot failed before until, so the step does not reach its until the same way in every run';
+    const evidence = ['ev/bot-playtest/client.log', 'ev/bot-playtest/server.log', 'ev/bot-playtest/step-1-telemetry.json'];
+    expect(fullFlow).toEqual({ name: 'full flow', platform: null, result: 'fail', failures: [{ where: 'step 1', message, evidence }], warnings: [] });
+    expect(noBlocker.result).toBe('unknown');
+    expect(noBlocker.failures).toEqual([{ where: 'step 1', message: `blockers of step 1 and after were not checked: ${message}`, evidence }]);
+    expect(JSON.parse(readFileSync(join(dir, 'ev/bot-playtest/step-1-telemetry.json'), 'utf8'))).toEqual({ start, end });
+  });
+
   it('fails both when the scenario is missing or has another form', async () => {
     for (const [scenario, message] of [
       [undefined, 'client/dev/bot/scenario.json does not exist'],

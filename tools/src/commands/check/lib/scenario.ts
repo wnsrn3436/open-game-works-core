@@ -5,7 +5,7 @@ import type { Context } from '../../../lib/command.ts';
 import { whenNotFound } from '../../../lib/fsx.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { automationRequest, restartClient, type AutomationResponse, type ClientRef } from '../../instance/automation.ts';
-import { evaluate, jsonEqual, needsTelemetry, type Condition } from './condition.ts';
+import { evaluate, jsonEqual, needsTelemetry, readsMarks, type Condition } from './condition.ts';
 import { instanceProcesses, instanceServerLog } from './instance-probe.ts';
 import { ClientLogUnreadable, clientErrorLines, clientLogFiles, serverErrorLines } from './logs.ts';
 import { isRecord, pointerText, scenarioProblems } from './scenario-form.ts';
@@ -68,6 +68,17 @@ export interface ScenarioOptions {
    * checked with the process blocker; null when there is none.
    */
   blocker?: () => Promise<string | null>;
+  /**
+   * True when a retry does not fail an `auto` step (ogw.md `## video`, `## instance measure`: a play video and a host
+   * measure, not a check of the scenario).
+   */
+  allowRetry?: boolean;
+}
+
+/** The `get_telemetry` results at the start and at the end of an `auto` step. */
+export interface StepTelemetry {
+  start: unknown;
+  end: unknown;
 }
 
 /** Where (step number) and what stopped the scenario. */
@@ -84,6 +95,8 @@ export interface ScenarioStop {
    * the blockers of that step and after.
    */
   failedStep?: boolean;
+  /** The telemetry of an `auto` step that failed on a retry, which the bot playtest keeps as evidence. */
+  telemetry?: StepTelemetry;
 }
 
 export interface ScenarioOutcome {
@@ -126,6 +139,44 @@ async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise
   } finally {
     controller.abort();
   }
+}
+
+function marksOf(telemetry: unknown): unknown[] {
+  return isRecord(telemetry) && Array.isArray(telemetry.marks) ? telemetry.marks : [];
+}
+
+/**
+ * The marks that the `get_telemetry` result `end` holds after those of the earlier result `start`: all of them when
+ * `started_at` differs (the client restarted between the two reads, so the telemetry started again from empty); else
+ * those after the longest run of the last marks of `start` that `end` starts with, since a full `marks` drops its
+ * oldest records first (qa-core `### telemetry`).
+ */
+export function marksDuring(start: unknown, end: unknown): unknown[] {
+  const after = marksOf(end);
+  const startedAt = (telemetry: unknown): unknown => (isRecord(telemetry) ? telemetry.started_at : undefined);
+  if (!jsonEqual(startedAt(start), startedAt(end))) return after;
+  const before = marksOf(start);
+  for (let dropped = 0; dropped < before.length; dropped++) {
+    const kept = before.length - dropped;
+    if (kept <= after.length && before.slice(dropped).every((mark, i) => jsonEqual(mark, after[i]))) return after.slice(kept);
+  }
+  return after;
+}
+
+/** The retries among marks in order (`client-content` `## bot playtest`): a `Fail` mark, then a `Restart` mark with no `Goal` mark between them. */
+export function retries(marks: readonly unknown[]): number {
+  let failed = false;
+  let count = 0;
+  for (const mark of marks) {
+    const kind = isRecord(mark) ? mark.kind : undefined;
+    if (kind === 'Fail') failed = true;
+    else if (kind === 'Goal') failed = false;
+    else if (kind === 'Restart' && failed) {
+      count++;
+      failed = false;
+    }
+  }
+  return count;
 }
 
 /** A blocker read from a `QAState` object, or null. */
@@ -224,8 +275,8 @@ class ScenarioRun {
     this.inputGapMs = inputGapMs;
   }
 
-  private fail(message: string, blocker = true, failedStep = false): never {
-    throw new Stop({ step: this.step, message, blocker, ...(failedStep ? { failedStep } : {}) });
+  private fail(message: string, blocker = true, failedStep = false, telemetry?: StepTelemetry): never {
+    throw new Stop({ step: this.step, message, blocker, ...(failedStep ? { failedStep } : {}), ...(telemetry ? { telemetry } : {}) });
   }
 
   private async request(command: string, args: string[]): Promise<AutomationResponse> {
@@ -286,6 +337,9 @@ class ScenarioRun {
   private async auto(step: Step): Promise<void> {
     const until = step.until as Condition;
     const telemetry = needsTelemetry(until);
+    // a step whose until reads telemetry.marks reads the marks it is to reach; any other step must not retry
+    const watched = this.options.allowRetry !== true && !readsMarks(until);
+    const start = watched ? (await this.request('get_telemetry', [])).result : null;
     for (;;) {
       // the gap goes before the bot picks: the input it picks goes in at once, on the state it was picked from
       await sleepUntil(this.lastInputAt + this.inputGapMs);
@@ -297,8 +351,19 @@ class ScenarioRun {
         await this.request(result.command, result.args);
         this.lastInputAt = Date.now();
       }
-      if (evaluate(until, await this.read(telemetry))) return;
+      const read = await this.read(telemetry);
+      if (!evaluate(until, read)) continue;
+      if (watched) this.notRetried({ start, end: telemetry ? read.telemetry : (await this.request('get_telemetry', [])).result });
+      return;
     }
+  }
+
+  /** Fails the step as a failed step when the bot retried between the two telemetry reads of the step. */
+  private notRetried(telemetry: StepTelemetry): void {
+    const count = retries(marksDuring(telemetry.start, telemetry.end));
+    if (count === 0) return;
+    const message = `auto: ${String(count)} retries before until (a Fail mark, then a Restart mark with no Goal mark between): the bot failed before until, so the step does not reach its until the same way in every run`;
+    this.fail(message, false, true, telemetry);
   }
 
   private async save(): Promise<void> {

@@ -7,7 +7,7 @@ import { checkResult, failure, writeEvidence, type Evidence } from './evidence.t
 import { instanceServerLog } from './instance-probe.ts';
 import { withInstance, type Slots } from './instances.ts';
 import { ClientLogUnreadable, clientLog } from './logs.ts';
-import { parseScenario, runScenario, type Scenario, type ScenarioOutcome } from './scenario.ts';
+import { parseScenario, runScenario, type Scenario, type ScenarioOutcome, type ScenarioStop } from './scenario.ts';
 
 /** Polling interval of instance state while a bot playtest scenario runs (`ogw check`, the shared-telemetry bot runs of `ogw loop evaluate`). */
 export const BOT_PLAYTEST_POLL_MS = 200;
@@ -64,6 +64,15 @@ async function keepLogs(ctx: Context, id: string, evidence: Evidence, prefix: st
 }
 
 /**
+ * Keeps the telemetry of an `auto` step that failed on a retry (ogw.md `## check`) as `<prefix>step-<n>-telemetry.json`;
+ * null for any other stop.
+ */
+export async function keepStepTelemetry(evidence: Evidence, prefix: string, stop: ScenarioStop | null): Promise<string | null> {
+  if (stop?.telemetry === undefined) return null;
+  return writeEvidence(evidence, `${prefix}step-${String(stop.step)}-telemetry.json`, `${JSON.stringify(stop.telemetry, null, 2)}\n`);
+}
+
+/**
  * no blocker and full flow from a scenario outcome (`client-content` `## bot playtest`). A stop that is not a blocker
  * is a reason the bot playtest could not run on: both are `unknown`.
  */
@@ -99,7 +108,7 @@ export async function botPlaytest(ctx: Context, game: string, scenario: Scenario
     return await withInstance(ctx, options.slots, { game, client: 'headless', db: options.db }, async (instance) => {
       const outcome = await runScenario(ctx, instance.id, scenario, { pollMs: options.pollMs });
       const logs = await keepLogs(ctx, instance.id, options.evidence, 'bot-playtest');
-      return judge(outcome, scenario.steps.length, logs);
+      return judge(outcome, scenario.steps.length, [...logs, await keepStepTelemetry(options.evidence, 'bot-playtest/', outcome.stop)]);
     }, options.evidence);
   } catch (error) {
     return bothUnknown(SCENARIO_WHERE, `bot playtest did not run: ${(error as Error).message}`);

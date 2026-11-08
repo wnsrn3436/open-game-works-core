@@ -39,10 +39,16 @@ afterEach(async () => {
 });
 
 describe('ogw video', () => {
-  it('records the client main, runs only the first auto step, stops the instance and writes a retimed mp4', async () => {
+  it('records the client main, runs only the first auto step, also when the bot retried in it, stops the instance and writes a retimed mp4', async () => {
     runner = setupRunner({ files: { 'client/dev/bot/scenario.json': SCENARIO }, settings: { baseResolution: [1280, 720] } });
     runner.config({
-      clients: { default: { commands: ['f.bot_next_input'], sequences: { 'f.bot_next_input': [{ ok: true, result: { command: 'tap_anchor', args: ['card'] } }, { ok: true, result: null }] } } },
+      clients: {
+        default: {
+          commands: ['f.bot_next_input'],
+          sequences: { 'f.bot_next_input': [{ ok: true, result: { command: 'tap_anchor', args: ['card'] } }, { ok: true, result: null }] },
+          inputMarks: { tap_anchor: [{ at: 1, kind: 'Fail' }, { at: 2, kind: 'Restart' }] },
+        },
+      },
       telemetry: { started_at: 0, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: [{}], scene_loads: [], dropped: 0 },
     });
     videoTiming.tailMs = 10;

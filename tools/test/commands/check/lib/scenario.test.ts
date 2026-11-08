@@ -3,9 +3,11 @@ import { automationRequest } from '../../../../src/commands/instance/automation.
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
 import {
   LogCursor,
+  marksDuring,
   parseScenario,
   processBlocker,
   autoInputGapMs,
+  retries,
   runScenario,
   stateBlocker,
   type Scenario,
@@ -464,6 +466,114 @@ describe('runScenario', () => {
     expect((await runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 })).stop?.message).toBe('m3.bot_next_input returned no input command: 5');
     serve((command, args, c) => (command === 'm3.bot_next_input' ? ok({ args: [] }) : client()(command, args, c)));
     expect((await runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 })).stop?.blocker).toBe(false);
+  });
+
+  const mark = (kind: string, at: number) => ({ at, play_at: at, kind });
+  const RETRY = 'auto: 1 retries before until (a Fail mark, then a Restart mark with no Goal mark between): the bot failed before until, so the step does not reach its until the same way in every run';
+
+  /**
+   * A client whose bot taps until `moves` reaches the number of `ends`; the telemetry is `start` until the first tap
+   * and `ends[n - 1]` after tap n. `get_telemetry` calls go into `reads`.
+   */
+  function marking(start: unknown, ends: unknown[], reads: number[] = []): Handler {
+    let moves = 0;
+    return (command, args, c) => {
+      if (command === 'f.bot_next_input') return ok({ command: 'tap', args: [] });
+      if (command === 'tap') moves++;
+      if (command === 'get_state') return ok(doneState({ moves }));
+      if (command === 'get_telemetry') {
+        reads.push(moves);
+        return ok(moves === 0 ? start : ends[moves - 1]);
+      }
+      return client()(command, args, c);
+    };
+  }
+
+  const movesUntil = (n: number) => ({ path: 'state.moves', op: 'gte' as const, value: n });
+
+  it('auto step fails as a failed step when the bot retried before until, before the blocker check of the step, and keeps its telemetry', async () => {
+    const start = { started_at: 5, marks: [mark('Response', 6)] };
+    const end = { started_at: 5, marks: [mark('Response', 6), mark('Fail', 10), mark('Restart', 11)] };
+    serve(marking(start, [{ started_at: 5, marks: end.marks.slice(0, 2) }, end]));
+    // an error line the blocker check of the step would find: the failed step stops the scenario before it
+    vi.mocked(instanceServerLog).mockResolvedValue('{"level":"error","message":"boom"}\n');
+    vi.mocked(instanceProcesses).mockClear();
+    const outcome = await runScenario(ctx, 'i1', scenario([step('f.bot_next_input', { kind: 'auto', until: movesUntil(2) }), step('key')]), { pollMs: 1 });
+    expect(outcome).toEqual({ stop: { step: 1, message: RETRY, blocker: false, failedStep: true, telemetry: { start, end } }, goal: false });
+    expect(calls).not.toContain('key');
+    expect(instanceProcesses).not.toHaveBeenCalled();
+  });
+
+  it('auto step does not fail on a retry when its until reads telemetry.marks, or with allowRetry', async () => {
+    const start = { started_at: 5, marks: [] };
+    const end = { started_at: 5, marks: [mark('Fail', 10), mark('Restart', 11)] };
+    const reads: number[] = [];
+    serve(marking(start, [end], reads));
+    const marks = { all: [movesUntil(1), { path: 'telemetry.marks', op: 'count_gte' as const, value: 0 }] };
+    expect((await runScenario(ctx, 'i1', scenario([step('f.bot_next_input', { kind: 'auto', until: marks })]), { pollMs: 1 })).stop).toBeNull();
+    // the reads of the until only (and of the goal): no read at the start of the step
+    expect(reads).toEqual([1, 1]);
+    reads.length = 0;
+    serve(marking(start, [end], reads));
+    expect((await runScenario(ctx, 'i1', scenario([step('f.bot_next_input', { kind: 'auto', until: movesUntil(1) })]), { pollMs: 1, allowRetry: true })).stop).toBeNull();
+    expect(reads).toEqual([1]);
+  });
+
+  it('auto step counts every mark of the telemetry after a restart in the step changed started_at', async () => {
+    const before = { started_at: 5, marks: [mark('Fail', 6), mark('Restart', 7)] };
+    const auto = step('f.bot_next_input', { kind: 'auto', until: movesUntil(1) });
+    // the same marks under the same started_at were there before the step: no retry in it
+    serve(marking(before, [before]));
+    expect((await runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 })).stop).toBeNull();
+    const restarted = { started_at: 9, marks: [mark('Fail', 10), mark('Restart', 11)] };
+    serve(marking(before, [restarted]));
+    expect((await runScenario(ctx, 'i1', scenario([auto]), { pollMs: 1 })).stop).toEqual({ step: 1, message: RETRY, blocker: false, failedStep: true, telemetry: { start: before, end: restarted } });
+  });
+
+  it('auto step passes without a retry: no Fail mark, a Fail mark the Goal mark follows, and a Restart after that Goal', async () => {
+    const start = { started_at: 5, marks: [] };
+    for (const marks of [
+      [mark('Response', 10), mark('Goal', 11)],
+      [mark('Fail', 10), mark('Goal', 11)],
+      [mark('Fail', 10), mark('Goal', 11), mark('Restart', 12)],
+    ]) {
+      serve(marking(start, [{ started_at: 5, marks }]));
+      expect((await runScenario(ctx, 'i1', scenario([step('f.bot_next_input', { kind: 'auto', until: movesUntil(1) })]), { pollMs: 1 })).stop).toBeNull();
+    }
+  });
+
+  it('auto step reads the telemetry of a telemetry until for its end, without one more read', async () => {
+    const reads: number[] = [];
+    const end = { started_at: 5, marks: [mark('Fail', 10), mark('Restart', 11)], goal_intervals: [{}] };
+    serve(marking({ started_at: 5, marks: [], goal_intervals: [] }, [end], reads));
+    const outcome = await runScenario(ctx, 'i1', scenario([step('f.bot_next_input', { kind: 'auto', until: goal })]), { pollMs: 1 });
+    expect(outcome.stop?.message).toBe(RETRY);
+    expect(reads).toEqual([0, 1]);
+  });
+
+  it('marksDuring: the marks after those of the start, also when the oldest were dropped', () => {
+    const [a, b, c, d, e] = [mark('Response', 1), mark('Fail', 2), mark('Restart', 3), mark('Response', 4), mark('Fail', 5)];
+    expect(marksDuring({ started_at: 1, marks: [a, b] }, { started_at: 1, marks: [a, b, c, d] })).toEqual([c, d]);
+    // a full marks list dropped a and b: the marks of the step are those after the kept c
+    expect(marksDuring({ started_at: 1, marks: [a, b, c] }, { started_at: 1, marks: [c, d, e] })).toEqual([d, e]);
+    // every mark of the start was dropped
+    expect(marksDuring({ started_at: 1, marks: [a, b] }, { started_at: 1, marks: [d, e] })).toEqual([d, e]);
+    // a Fail mark of an earlier step and a Restart mark of this one: no retry in this step
+    expect(retries(marksDuring({ started_at: 1, marks: [a, b] }, { started_at: 1, marks: [b, c] }))).toBe(0);
+    expect(retries(marksDuring({ started_at: 1, marks: [b] }, { started_at: 1, marks: [b, c] }))).toBe(0);
+    expect(marksDuring({ started_at: 1, marks: [a] }, { started_at: 2, marks: [a, b] })).toEqual([a, b]);
+    // no marks list reads as none
+    expect(marksDuring({ started_at: 1 }, { started_at: 1, marks: [a] })).toEqual([a]);
+    expect(marksDuring(null, null)).toEqual([]);
+  });
+
+  it('retries: a Fail mark, then a Restart mark with no Goal mark between', () => {
+    const kinds = (...k: string[]) => k.map((kind, i) => mark(kind, i));
+    expect(retries(kinds('Fail', 'Restart', 'Fail', 'Fail', 'Restart'))).toBe(2);
+    expect(retries(kinds('Fail', 'Goal', 'Restart'))).toBe(0);
+    expect(retries(kinds('Restart', 'Fail'))).toBe(0);
+    expect(retries(kinds('Fail', 'Response', 'Reward', 'Restart'))).toBe(1);
+    expect(retries([null, 'Fail', { kind: 'Fail' }, { kind: 'Restart' }])).toBe(1);
   });
 
   function restarting(content: () => unknown, failures: number): Handler {
