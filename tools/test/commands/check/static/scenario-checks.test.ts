@@ -227,7 +227,15 @@ describe('shared formula', () => {
 
 const UI_VOLUME = ['SoundCore.get_volume(SoundCore.SoundBus.UI)', 'SoundCore.set_volume(SoundCore.SoundBus.UI, 1.0)'];
 const BASE_MODULES = ['AuthCore', 'BootstrapCore', 'InputCore', 'LocalizationCore', 'NativeUiCore', 'ResolutionCore', 'SoundCore', 'UICore'];
-const inputEvent = (cls: string): string => `Object(${cls},"resource_local_to_scene":false,"device":-1,"script":null)`;
+/**
+ * One event of an action: a class name, or `InputEventJoypadMotion@<axis>` for a motion event of that `JoyAxis` value,
+ * whose `resource_name` value `"axis"` is a value, not the `axis` property.
+ */
+const inputEvent = (cls: string): string => {
+  const [name = '', axis] = cls.split('@');
+  const motion = axis === undefined ? '' : `"resource_name":"axis","axis":${axis},"axis_value":-1.0,`;
+  return `Object(${name},"resource_local_to_scene":false,"device":-1,${motion}"script":null)`;
+};
 /** A `project.godot` whose `[input]` holds each action with one event per class. */
 const project = (actions: Record<string, string[]>): string => {
   const body = Object.entries(actions).map(([name, classes]) => `${name}={\n"deadzone": 0.5,\n"events": [${classes.map(inputEvent).join('\n, ')}\n]\n}`);
@@ -301,6 +309,10 @@ describe('option entry', () => {
     ]));
   });
 
+  const STICK_AXES = [
+    'InputCore.is_pad_axis_inverted', 'InputCore.set_pad_axis_inverted', 'InputCore.list_pad_axis_sensitivities', 'InputCore.get_pad_axis_sensitivity',
+    'InputCore.set_pad_axis_sensitivity', 'InputCore.reset_pad_axes',
+  ];
   const LANGUAGE_CALLS = ['LocalizationCore.list_languages(languages)', 'LocalizationCore.get_language', 'LocalizationCore.select_language(1)', 'BootstrapCore.request_restart'];
   const SCREEN_MODE_CALLS = ['ResolutionCore.is_screen_mode_supported', 'ResolutionCore.get_screen_mode', 'ResolutionCore.set_screen_mode(ResolutionCore.ScreenMode.FULLSCREEN)'];
   const PLAY = [
@@ -324,7 +336,7 @@ describe('option entry', () => {
       null,
       2,
     );
-    const projectText = project({ ...CORE_INPUT, aim: ['InputEventJoypadMotion'], jump: ['InputEventKey', 'InputEventJoypadButton'] });
+    const projectText = project({ ...CORE_INPUT, aim: ['InputEventJoypadMotion@2'], jump: ['InputEventKey', 'InputEventJoypadButton'] });
     const files = { 'settings.json': settingsText, 'client/project.godot': projectText, 'client/features/play/play_scene.gd': PLAY };
     const s = (key: string): string => `settings.json:${String(lineOf(settingsText, `  "${key}"`))}`;
     const p = (row: number): string => `client/features/play/play_scene.gd:${String(row)}`;
@@ -347,6 +359,7 @@ describe('option entry', () => {
       ...missing(`settings.json:${String(lineOf(settingsText, '    "AccessibilityCore.textScales"'))}`, calls(['AccessibilityCore.list_text_scales', 'AccessibilityCore.set_text_scale'])),
       ...missing(godot('jump'), calls(['InputCore.get_keys', 'InputCore.wait_key', 'InputCore.set_keys', 'InputCore.cancel_wait_key', 'InputCore.reset_keys'])),
       ...missing(godot('aim'), calls(['InputCore.get_pad_buttons', 'InputCore.wait_pad_button', 'InputCore.set_pad_buttons', 'InputCore.reset_pad_buttons'])),
+      ...missing(godot('aim'), calls(STICK_AXES)),
     ]));
     const options = [
       ...ALL_CALLS, ...LANGUAGE_CALLS, ...SCREEN_MODE_CALLS,
@@ -355,7 +368,7 @@ describe('option entry', () => {
       'AccessibilityCore.set_reduce_shake(true)', 'AccessibilityCore.set_reduce_flash(true)', 'AccessibilityCore.reset_settings',
       'AccessibilityCore.list_text_scales(scales)', 'AccessibilityCore.set_text_scale(1250)', 'InputCore.get_keys(&"jump", keys)', 'InputCore.wait_key',
       'InputCore.set_keys(&"jump", keys)', 'InputCore.cancel_wait_key', 'InputCore.reset_keys', 'InputCore.get_pad_buttons(&"jump", keys)',
-      'InputCore.wait_pad_button', 'InputCore.set_pad_buttons(&"jump", keys)', 'InputCore.reset_pad_buttons',
+      'InputCore.wait_pad_button', 'InputCore.set_pad_buttons(&"jump", keys)', 'InputCore.reset_pad_buttons', ...STICK_AXES,
     ];
     expect(await optionEntry.run(memContext({ ...files, 'client/features/options/options_panel.gd': code(options) }))).toEqual([]);
   });
@@ -387,6 +400,31 @@ describe('option entry', () => {
     expect(await optionEntry.run(memContext({ 'settings.json': settingsText, 'client/features/options/options_panel.gd': all }))).toEqual([]);
     // calls in DEV code and regression tests do not count
     expect(absentLines(await optionEntry.run(memContext({ 'settings.json': settingsText, 'client/features/options/options_panel.gd': options([]), 'client/dev/x.gd': all, 'client/tests/x.gd': all })))).toHaveLength(4);
+  });
+
+  it('requires the stick axes entry for a Gameplay content action with a stick axis direction while gamepadSupported is true', async () => {
+    modules.value = { client: BASE_MODULES, server: [] };
+    const pad = ['InputCore.get_pad_buttons', 'InputCore.wait_pad_button', 'InputCore.set_pad_buttons', 'InputCore.cancel_wait_key', 'InputCore.reset_pad_buttons'];
+    const panel = (calls: string[]): string => code([...ALL_CALLS, ...pad, ...calls]);
+    const run = async (actions: Record<string, string[]>, settings: object, calls: string[] = []): Promise<string[]> =>
+      absentLines(await optionEntry.run(memContext({ 'settings.json': JSON.stringify(settings), 'client/project.godot': project({ ...CORE_INPUT, ...actions }), 'client/features/options/options_panel.gd': panel(calls) })));
+    const missing = (action: string, actions: Record<string, string[]>): string[] =>
+      sorted(STICK_AXES.map((c) => `client/project.godot:${String(lineOf(project({ ...CORE_INPUT, ...actions }), `${action}=`))} | option entry: no \`${c}\` call in client content code`));
+    const supported = { gamepadSupported: true };
+    // a Ui action (menu_*), a Cutscene action (cutscene_*), a trigger axis (4, 5) and a gamepad button need no stick axes
+    const others = { menu_down: ['InputEventJoypadMotion@3'], cutscene_next: ['InputEventJoypadMotion@1'], zoom: ['InputEventJoypadMotion@4'], brake: ['InputEventJoypadMotion@5'], fire: ['InputEventJoypadButton'] };
+    expect(await run(others, supported)).toEqual([]);
+    // each stick axis (JoyAxis 0 to 3) of a Gameplay action: at the first such action, after the actions that need none
+    for (const axis of ['0', '1', '2', '3']) {
+      const actions = { ...others, look: ['InputEventKey', `InputEventJoypadMotion@${axis}`], steer: ['InputEventJoypadMotion@0'] };
+      expect(await run(actions, supported)).toEqual(missing('look', actions));
+    }
+    // an InputEventJoypadMotion without an axis has the default axis of the engine, 0 (left_x)
+    expect(await run({ look: ['InputEventJoypadMotion'] }, supported)).toEqual(missing('look', { look: ['InputEventJoypadMotion'] }));
+    // without gamepad support, the gamepad input check fails instead
+    expect(await run({ look: ['InputEventJoypadMotion@3'] }, {})).toEqual([]);
+    expect(await run({ look: ['InputEventJoypadMotion@3'] }, { gamepadSupported: false })).toEqual([]);
+    expect(await run({ look: ['InputEventJoypadMotion@3'] }, supported, ['InputCore.is_pad_axis_inverted(&"right_y")', 'InputCore.set_pad_axis_inverted(&"right_y", true)', 'InputCore.list_pad_axis_sensitivities(buffer)', 'InputCore.get_pad_axis_sensitivity(&"right_y")', 'InputCore.set_pad_axis_sensitivity(&"right_y", 2000)', 'InputCore.reset_pad_axes'])).toEqual([]);
   });
 
   it('points at the line of the settings value by its path, not at another line that holds its name', async () => {

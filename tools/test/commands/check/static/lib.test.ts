@@ -147,6 +147,28 @@ describe('text scenes', () => {
     expect(child.props.get('weird')?.value).toEqual({ t: 'raw', text: '@@@' });
     expect(scene.nodes[2]?.props.get('typed')?.value).toEqual({ t: 'call', name: 'Array[StringName]', args: [{ t: 'arr', items: [{ t: 'sname', v: 'a' }] }] });
     expect(extIdOf({ t: 'call', name: 'SubResource', args: [] })).toBeNull();
+    // the args of Object(<class>, "<property>":<value>, ...) are the class, then each property name and its value
+    const input = parseTextScene('client/project.godot', '[input]\n\naim={\n"events": [Object(InputEventJoypadMotion,"device":-1,"axis": 3,"axis_value":-1.0,"script":null)\n]\n}\n');
+    expect(input.sections[0]?.props.get('aim')?.value).toEqual({
+      t: 'dict',
+      entries: [{
+        key: { t: 'str', v: 'events' },
+        value: {
+          t: 'arr',
+          items: [{
+            t: 'call',
+            name: 'Object',
+            args: [
+              { t: 'raw', text: 'InputEventJoypadMotion' },
+              { t: 'str', v: 'device' }, { t: 'num', v: -1, text: '-1' },
+              { t: 'str', v: 'axis' }, { t: 'num', v: 3, text: '3' },
+              { t: 'str', v: 'axis_value' }, { t: 'num', v: -1, text: '-1.0' },
+              { t: 'str', v: 'script' }, { t: 'null' },
+            ],
+          }],
+        },
+      }],
+    });
     expect(strOf(undefined)).toBeNull();
     expect(strOf({ t: 'num', v: 1, text: '1' })).toBeNull();
   });

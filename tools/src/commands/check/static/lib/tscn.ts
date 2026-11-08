@@ -6,6 +6,7 @@ export type Variant =
   | { t: 'num'; v: number; text: string }
   | { t: 'bool'; v: boolean }
   | { t: 'null' }
+  /** The args of `Object(<class>, "<property>":<value>, ...)` are the class, then each property name followed by its value. */
   | { t: 'call'; name: string; args: Variant[] }
   | { t: 'arr'; items: Variant[] }
   | { t: 'dict'; entries: { key: Variant; value: Variant }[] }
@@ -149,6 +150,12 @@ class ValueReader {
       const before = this.pos;
       items.push(this.value());
       this.ws(false);
+      // `Object(<class>, "<property>":<value>, ...)`: the property name, then its value
+      if (this.src[this.pos] === ':') {
+        this.pos++;
+        items.push(this.value());
+        this.ws(false);
+      }
       if (this.src[this.pos] === ',') this.pos++;
       if (this.pos === before) this.pos++;
     }

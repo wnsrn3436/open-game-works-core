@@ -31,6 +31,14 @@ const LANGUAGE = ['LocalizationCore.list_languages', 'LocalizationCore.get_langu
 const SCREEN_MODE = ['ResolutionCore.is_screen_mode_supported', 'ResolutionCore.get_screen_mode', 'ResolutionCore.set_screen_mode'];
 const KEY_BINDINGS = ['InputCore.get_keys', 'InputCore.wait_key', 'InputCore.set_keys', 'InputCore.cancel_wait_key', 'InputCore.reset_keys'];
 const PAD_BINDINGS = ['InputCore.get_pad_buttons', 'InputCore.wait_pad_button', 'InputCore.set_pad_buttons', 'InputCore.cancel_wait_key', 'InputCore.reset_pad_buttons'];
+const STICK_AXES = [
+  'InputCore.is_pad_axis_inverted',
+  'InputCore.set_pad_axis_inverted',
+  'InputCore.list_pad_axis_sensitivities',
+  'InputCore.get_pad_axis_sensitivity',
+  'InputCore.set_pad_axis_sensitivity',
+  'InputCore.reset_pad_axes',
+];
 const TEXT_SCALE = ['AccessibilityCore.list_text_scales', 'AccessibilityCore.get_settings', 'AccessibilityCore.set_text_scale'];
 const SCREEN_MODE_PLATFORMS = ['windows', 'macos', 'linux'];
 const KEYBOARD_PLATFORMS = ['windows', 'macos', 'linux', 'web'];
@@ -72,6 +80,12 @@ interface CodeScan {
   played: Map<string, string>;
   /** Calls whose bus argument is not a `SoundBus` element. */
   badBus: Finding[];
+}
+
+/** The binding context of an action by its name (`InputCore` `### action`). */
+function bindingContext(action: string): 'Ui' | 'Cutscene' | 'Gameplay' {
+  if (action === 'back' || action.startsWith('menu_')) return 'Ui';
+  return action.startsWith('cutscene_') ? 'Cutscene' : 'Gameplay';
 }
 
 function needKey(need: Need): string {
@@ -153,8 +167,8 @@ async function requirements(sc: StaticContext, scan: CodeScan): Promise<Requirem
 }
 
 /**
- * The entries of the standard options: language, screen mode, volume, haptics, accessibility, bindings, and the
- * `AccessibilityCore` part of `reset`. The `SoundCore` part of `reset` is an entry every game has.
+ * The entries of the standard options: language, screen mode, volume, haptics, accessibility, bindings, stick axes,
+ * and the `AccessibilityCore` part of `reset`. The `SoundCore` part of `reset` is an entry every game has.
  */
 async function standardRequirements(sc: StaticContext, scan: CodeScan, settings: Record<string, unknown>, value: (path: string) => string): Promise<Requirement[]> {
   const req: Requirement[] = [];
@@ -172,11 +186,21 @@ async function standardRequirements(sc: StaticContext, scan: CodeScan, settings:
     const scales = (await sc.coreSettings())['AccessibilityCore.textScales'];
     if (Array.isArray(scales) && scales.length >= 2) req.push({ needs: chains(TEXT_SCALE), where: value('core.AccessibilityCore.textScales') });
   }
+  req.push(...(await inputRequirements(sc, settings, platforms)));
+  return req;
+}
+
+/** The entries of the input map: key bindings, pad bindings and stick axes, at the first action that makes each required. */
+async function inputRequirements(sc: StaticContext, settings: Record<string, unknown>, platforms: readonly unknown[]): Promise<Requirement[]> {
+  const req: Requirement[] = [];
   const actions = (await inputMapActions(sc)).filter((a) => !CORE_ACTIONS.includes(a.name));
   const keyAction = actions.find((a) => a.keys);
   if (keyAction && KEYBOARD_PLATFORMS.some((p) => platforms.includes(p))) req.push({ needs: chains(KEY_BINDINGS), where: at(PROJECT_FILE, keyAction.line) });
+  if (settings.gamepadSupported !== true) return req;
   const padAction = actions.find((a) => a.pad);
-  if (padAction && settings.gamepadSupported === true) req.push({ needs: chains(PAD_BINDINGS), where: at(PROJECT_FILE, padAction.line) });
+  if (padAction) req.push({ needs: chains(PAD_BINDINGS), where: at(PROJECT_FILE, padAction.line) });
+  const stickAction = actions.find((a) => a.stickAxis && bindingContext(a.name) === 'Gameplay');
+  if (stickAction) req.push({ needs: chains(STICK_AXES), where: at(PROJECT_FILE, stickAction.line) });
   return req;
 }
 
