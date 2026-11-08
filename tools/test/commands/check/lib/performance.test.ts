@@ -1,13 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { freemem, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
 import { leaseHoldersEnd, listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
-import { HostLoadSampler, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
+import { HostLoadSampler, hostMemoryPercent, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { hostRefreshHz } from '../../../../src/lib/display.ts';
 import { OgwError } from '../../../../src/lib/errors.ts';
@@ -354,9 +354,29 @@ describe('HostLoadSampler', () => {
     const times = probe.cpuTimes();
     expect(times.total).toBeGreaterThan(0);
     expect(times.idle).toBeLessThanOrEqual(times.total);
-    expect(probe.memoryPercent()).toBeGreaterThan(0);
-    expect(probe.memoryPercent()).toBeLessThanOrEqual(100);
+    const memory = await probe.memoryPercent();
+    expect(memory).toBeGreaterThan(0);
+    expect(memory).toBeLessThanOrEqual(100);
     expect(await probe.instances()).toBe(2);
+  });
+
+  it.runIf(process.platform === 'darwin')('reads the memory use of macOS as 100 minus kern.memorystatus_level, not as the share of the free pages', async () => {
+    const level = Number(spawnSync('sysctl', ['-n', 'kern.memorystatus_level'], { encoding: 'utf8' }).stdout.trim());
+    const freePages = (1 - freemem() / totalmem()) * 100;
+    const memory = await hostProbe(ctx).memoryPercent();
+    // the level moves a little between the two readings
+    expect(Math.abs(memory - (100 - level))).toBeLessThanOrEqual(3);
+    // the check needs a host whose reclaimable memory makes the two differ, as on this one (free pages 2 GiB of 24, level 60)
+    if (freePages - (100 - level) > 10) expect(memory).toBeLessThan(freePages - 5);
+  });
+
+  it.runIf(process.platform === 'darwin')('reads the share of the free pages when kern.memorystatus_level cannot be read', async () => {
+    const freePages = (1 - freemem() / totalmem()) * 100;
+    expect(await hostMemoryPercent(ctx.env, () => Promise.resolve('62\n'))).toBe(38);
+    for (const text of [null, 'x', '101', '-1']) {
+      const memory = await hostMemoryPercent(ctx.env, () => Promise.resolve(text));
+      expect(Math.abs(memory - freePages)).toBeLessThanOrEqual(5);
+    }
   });
 });
 

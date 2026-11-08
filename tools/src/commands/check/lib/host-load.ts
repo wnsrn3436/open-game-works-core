@@ -31,8 +31,8 @@ export interface HostProbe {
   processes(): Promise<ProcessCpu[] | null>;
   /** The supervisor pid of instance `id`; null when its record has none. */
   supervisorPid(id: string): Promise<number | null>;
-  /** Memory use of the host in %. */
-  memoryPercent(): number;
+  /** Memory use of the host in %: the memory that is not available (`hostMemoryPercent`). */
+  memoryPercent(): number | Promise<number>;
   /** Instances the runner has started and not stopped. */
   instances(): Promise<number>;
 }
@@ -134,6 +134,31 @@ async function hostProcesses(): Promise<ProcessCpu[] | null> {
   return null;
 }
 
+/** The memory use of `os.freemem` (%): on Linux free counts the available memory (`MemAvailable`), on macOS only the free pages. */
+function freePagesPercent(): number {
+  return (1 - freemem() / totalmem()) * 100;
+}
+
+/**
+ * The memory use of the host (%), as the share of its memory that is not available (ogw.md `### host load`). On macOS
+ * that is 100 minus `kern.memorystatus_level`, the free share of the system that counts the memory it takes back at once
+ * (file cache, inactive and purgeable pages), which `os.freemem` leaves out; a failed reading gives the share of the free
+ * pages, which is higher, so a busy host is never read as a quiet one. Elsewhere it is `os.freemem` (`MemAvailable` on Linux).
+ */
+export async function hostMemoryPercent(env: NodeJS.ProcessEnv, read: (env: NodeJS.ProcessEnv) => Promise<string | null> = memorystatusLevel): Promise<number> {
+  if (process.platform !== 'darwin') return freePagesPercent();
+  const text = await read(env);
+  const level = text === null ? Number.NaN : Number(text.trim());
+  if (!Number.isInteger(level) || level < 0 || level > 100) return freePagesPercent();
+  return 100 - level;
+}
+
+/** `kern.memorystatus_level` of macOS, or null when it cannot be read (`failedReading`). */
+async function memorystatusLevel(env: NodeJS.ProcessEnv): Promise<string | null> {
+  const result = await run('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_level'], { timeoutMs: 5_000, env }).catch(failedReading);
+  return result === null || result.code !== 0 ? null : result.stdout;
+}
+
 export function hostProbe(ctx: Context): HostProbe {
   return {
     cpuTimes() {
@@ -148,7 +173,7 @@ export function hostProbe(ctx: Context): HostProbe {
     },
     processes: hostProcesses,
     supervisorPid: async (id) => (await readRecord(id, ctx.env)).supervisorPid ?? null,
-    memoryPercent: () => (1 - freemem() / totalmem()) * 100,
+    memoryPercent: () => hostMemoryPercent(ctx.env),
     instances: async () => (await listInstances(ctx)).length,
   };
 }
@@ -273,7 +298,7 @@ export class HostLoadSampler {
 
   private async sample(): Promise<void> {
     await this.readCpu();
-    this.memoryMax = Math.max(this.memoryMax, this.probe.memoryPercent());
+    this.memoryMax = Math.max(this.memoryMax, await this.probe.memoryPercent());
     const instances = await this.probe.instances();
     this.instancesMax = Math.max(this.instancesMax, instances);
   }
