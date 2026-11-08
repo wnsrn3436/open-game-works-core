@@ -159,6 +159,23 @@ async function hostHashes(ssh: SshSession, secretsDir: string, names: string[]):
  * Writes the secret files whose content on the host differs (`build` `## deploy` secret file rule) and sets the
  * mode of every one. Values go through stdin, never on a command line. Returns whether a file was written.
  */
+/**
+ * `<dir>/recreate-pending`: written before a secret file or the WAL-G binary is written, deleted once a
+ * `docker compose up --force-recreate` succeeded, so that a deploy that stopped in between leaves the recreate to the next.
+ */
+const recreatePendingPath = (t: DeployTarget): string => shellQuote(`${t.host.dir}/recreate-pending`);
+
+async function markRecreatePending(t: DeployTarget, ssh: SshSession): Promise<void> {
+  await ssh.execOk(`mkdir -p ${shellQuote(t.host.dir)} && : > ${recreatePendingPath(t)}`);
+}
+
+async function recreatePending(t: DeployTarget, ssh: SshSession): Promise<boolean> {
+  const result = await ssh.exec(`test -f ${recreatePendingPath(t)}`);
+  if (result.code === 0) return true;
+  if (result.code === 1) return false;
+  throw new OgwError(`ssh: test -f ${t.host.dir}/recreate-pending failed (${String(result.code)}): ${(result.stderr || result.stdout).trim()}`);
+}
+
 async function writeSecretFiles(ctx: Context, t: DeployTarget, ssh: SshSession): Promise<boolean> {
   const files = secretFiles(ctx, t);
   const dir = `${t.host.dir}/secrets`;
@@ -169,6 +186,7 @@ async function writeSecretFiles(ctx: Context, t: DeployTarget, ssh: SshSession):
   if (t.hasProdTag && db !== undefined && hashes.has(db.name) && changed.includes(db)) {
     throw new OgwError(`the host's ${db.name} differs from the secret store; with a PROD tag the PostgreSQL password in the DB volume does not change`);
   }
+  if (changed.length > 0) await markRecreatePending(t, ssh);
   for (const file of changed) {
     const target = shellQuote(`${dir}/${file.name}`);
     const temp = shellQuote(`${dir}/.${file.name}.tmp`);
@@ -207,6 +225,7 @@ async function putWalg(t: DeployTarget, ssh: SshSession, program: string): Promi
   const target = `${t.host.dir}/bin/wal-g`;
   const onHost = await ssh.execOk(`if [ -f ${shellQuote(target)} ]; then sha256sum -- ${shellQuote(target)}; fi`);
   if (onHost.trim().split(/\s/)[0] === createHash('sha256').update(bytes).digest('hex')) return false;
+  await markRecreatePending(t, ssh);
   const temp = shellQuote(`${t.host.dir}/bin/.wal-g.tmp`);
   await ssh.execOk(`umask 022 && mkdir -p ${shellQuote(`${t.host.dir}/bin`)} && cat > ${temp} && chmod 755 ${temp} && mv -f ${temp} ${shellQuote(target)}`, { input: bytes });
   return true;
@@ -294,8 +313,11 @@ async function startServer(ctx: Context, t: DeployTarget, ssh: SshSession): Prom
   await writeCompose(ctx, t, ssh);
   const dir = shellQuote(t.host.dir);
   await ssh.execOk(`cd ${dir} && docker compose pull`);
-  // a container reads its secret files and its WAL-G binary when it starts: new files need new containers
-  await ssh.execOk(`cd ${dir} && docker compose up --detach${written || walg ? ' --force-recreate' : ''}`);
+  // a container reads its secret files and its WAL-G binary when it starts: new files need new containers, also those
+  // that an earlier deploy wrote before it stopped
+  const recreate = written || walg || (await recreatePending(t, ssh));
+  await ssh.execOk(`cd ${dir} && docker compose up --detach${recreate ? ' --force-recreate' : ''}`);
+  if (recreate) await ssh.execOk(`rm -f ${recreatePendingPath(t)}`);
   await waitServer(t);
   if (backup !== null) await checkArchiving(t, ssh, backup.walSwitchMs);
 }

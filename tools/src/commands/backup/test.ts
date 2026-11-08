@@ -92,7 +92,13 @@ async function walgForDocker(ctx: Context): Promise<string> {
   if (name === null || !downloads.some((d) => d.platform === name)) {
     throw new Verdict('unknown', `harness settings tools.walg has no download for the platform ${platform} of this host's Docker`);
   }
-  return walgProgram(ctx, platform);
+  try {
+    return await walgProgram(ctx, platform);
+  } catch (error) {
+    // the binary could not be fetched or differs from its pin: the test could not run
+    if (error instanceof OgwError) throw new Verdict('unknown', error.message);
+    throw error;
+  }
 }
 
 /** `AWS_SECRET_ACCESS_KEY` of a WAL-G command from the secret file, as in the containers of `ogw deploy`. */

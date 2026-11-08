@@ -29,6 +29,7 @@ for a in "$@"; do
 done
 for last; do :; done
 case "$last" in
+  *"recreate-pending'") case "$last" in test*) [ -f "$FAKE_DIR/recreate-pending" ] && exit 0; exit 1;; rm*) rm -f "$FAKE_DIR/recreate-pending";; *) : > "$FAKE_DIR/recreate-pending";; esac; exit 0;;
   *"/bin/.wal-g.tmp"*) cat > "$FAKE_DIR/wal-g"; exit 0;;
   *"bin/wal-g'; fi"*) [ -n "$FAKE_WALG_HASH" ] && echo "$FAKE_WALG_HASH  /srv/game/bin/wal-g"; exit 0;;
   *txid_current*) echo 7; exit 0;;
@@ -233,6 +234,29 @@ describe('deploy', () => {
     expect(unread.stderr).toContain('failed step: 3. docker compose up\nssh: cd \'/srv/game/secrets\'');
     expect(unread.stderr).toContain('Permission denied');
     expect(readdirSync(fake).filter((f) => f.startsWith('secret-'))).toEqual([]);
+  });
+
+  it('writes recreate-pending before a changed secret file, so the deploy after a failed up recreates the containers', async () => {
+    const hash = (name: string): string => createHash('sha256').update(`${SECRETS[`ogw/g/DEV/${name}`] as string}\n`).digest('hex');
+    const names = ['adminOgw', 'atk', 'backupKey', 'cdn', 'db', 'dbPassword', 'devAccess', 'usk'];
+    const same = names.map((name) => `${hash(name)}  ${name}`).join('\n');
+    const oneChanged = names.map((name) => `${name === 'atk' ? '0'.repeat(64) : hash(name)}  ${name}`).join('\n');
+    const ws = makeWorkspace(WALG_SETTINGS);
+    const { fake, env } = setup(ws);
+    adminScript({});
+    const failed = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: oneChanged, FAKE_UP_FAIL: '1' } });
+    expect(failed.stderr).toContain('failed step: 3. docker compose up\n');
+    expect(existsSync(join(fake, 'recreate-pending'))).toBe(true);
+    let lines = readFileSync(join(fake, 'calls.log'), 'utf8').trim().split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at(": > '/srv/game/recreate-pending'")).toBeGreaterThan(-1);
+    expect(at(": > '/srv/game/recreate-pending'")).toBeLessThan(at("cat > '/srv/game/secrets/.atk.tmp'"));
+    rmSync(join(fake, 'calls.log'));
+    expect(await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: same } })).toMatchObject({ code: 0, stderr: '' });
+    lines = readFileSync(join(fake, 'calls.log'), 'utf8').trim().split('\n');
+    expect(at('docker compose up --detach --force-recreate')).toBeGreaterThan(-1);
+    expect(at(": > '/srv/game/recreate-pending'")).toBe(-1);
+    expect(existsSync(join(fake, 'recreate-pending'))).toBe(false);
   });
 
   it('stops at step 3 naming every secret missing from the secret store, before it writes any', async () => {
@@ -577,6 +601,42 @@ describe('deploy DB backup rule', () => {
     log = readFileSync(join(fake, 'calls.log'), 'utf8');
     expect(readFileSync(join(fake, 'wal-g'), 'utf8')).toBe('WALG-BINARY');
     expect(log).toContain("cd '/srv/game' && docker compose up --detach --force-recreate\n");
+  });
+
+  it('leaves recreate-pending when a deploy that wrote files fails before its up succeeds, and the next deploy recreates the containers', async () => {
+    const ws = makeWorkspace(WALG_SETTINGS);
+    const { fake, env } = prodTagged(ws);
+    const hashes = Object.entries(SECRETS)
+      .filter(([key]) => !key.endsWith('/deploySsh'))
+      .map(([key, value]) => `${createHash('sha256').update(`${value}\n`).digest('hex')}  ${key.split('/').at(-1) as string}`)
+      .join('\n');
+    const pending = join(fake, 'recreate-pending');
+    // the binary differs: the marker is written before it, and up fails
+    const failed = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: hashes, FAKE_UP_FAIL: '1' } });
+    expect(failed.stderr).toContain('failed step: 3. docker compose up\n');
+    expect(existsSync(pending)).toBe(true);
+    let lines = readFileSync(join(fake, 'calls.log'), 'utf8').trim().split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at("mkdir -p '/srv/game' && : > '/srv/game/recreate-pending'")).toBeGreaterThan(-1);
+    expect(at("mkdir -p '/srv/game' && : > '/srv/game/recreate-pending'")).toBeLessThan(at('/bin/.wal-g.tmp'));
+    expect(at('docker compose up --detach --force-recreate')).toBeGreaterThan(-1);
+    expect(at("rm -f '/srv/game/recreate-pending'")).toBe(-1);
+
+    // nothing differs any more, but the marker carries the recreate; a successful up removes it
+    rmSync(join(fake, 'calls.log'));
+    const next = await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: hashes, FAKE_WALG_HASH: WALG_SHA256 } });
+    expect(next).toMatchObject({ code: 0, stderr: '' });
+    lines = readFileSync(join(fake, 'calls.log'), 'utf8').trim().split('\n');
+    expect(at(': > ')).toBe(-1);
+    expect(at("test -f '/srv/game/recreate-pending'")).toBeLessThan(at('docker compose up --detach --force-recreate'));
+    expect(at('docker compose up --detach --force-recreate')).toBeLessThan(at("rm -f '/srv/game/recreate-pending'"));
+    expect(existsSync(pending)).toBe(false);
+
+    rmSync(join(fake, 'calls.log'));
+    expect((await ogw(ws, ['deploy', 'g', 'DEV', '0.2.0'], { env: { ...env, FAKE_HASHES: hashes, FAKE_WALG_HASH: WALG_SHA256 } })).code).toBe(0);
+    const log = readFileSync(join(fake, 'calls.log'), 'utf8');
+    expect(log).toContain("cd '/srv/game' && docker compose up --detach\n");
+    expect(log).not.toContain('rm -f');
   });
 
   it('fails step 3 unless the switched WAL segment, or a later one, is archived within walSwitchMs', async () => {

@@ -542,6 +542,31 @@ describe('build start PROD', () => {
     expect(secret.stderr).toBe('secret backup of PROD is not in the secret store\n');
   });
 
+  it('starts a DEV and an STG build with a PROD tag and their backup values, with no PROD restore test', async () => {
+    const settings = await import('./helpers.ts').then((h) => h.gameSettings());
+    const environments = settings.environments as Record<string, Record<string, unknown>>;
+    for (const name of ['DEV', 'STG'] as const) {
+      const env = environments[name] as Record<string, unknown>;
+      env.backup = { endpoint: 'https://s3.example.com', bucket: 'backups', prefix: `g/${name.toLowerCase()}`, accessKeyId: 'AKID' };
+      env.secrets = { ...(env.secrets as Record<string, string>), backup: 'backupKey' };
+    }
+    const ws = makeWorkspace(WALG);
+    const env = prepare(ws);
+    addSecrets(ws, { 'ogw/g/DEV/backupKey': 's', 'ogw/g/STG/backupKey': 's' });
+    const dir = setupGame(ws, 'g', { environments });
+    git(dir, 'tag', 'prod-0.1.0');
+    const dev = await ogw(ws, ['build', 'start', 'g', 'DEV'], { env });
+    expect(dev).toMatchObject({ code: 0, stderr: '' });
+    git(dir, 'checkout', '--quiet', 'main');
+    const { changeRuns } = await import('../../../src/lib/runstate.ts');
+    await changeRuns(await import('./helpers.ts').then((h) => h.gameRepo(ws)), (runs) => {
+      for (const r of runs) r.closedAt = 1;
+    });
+    const stg = await ogw(ws, ['build', 'start', 'g', 'STG'], { env });
+    expect(stg).toMatchObject({ code: 0, stderr: '' });
+    expect(existsSync(join(dir, 'builds', 'prod-backup-test.json'))).toBe(false);
+  });
+
   it('needs, once a PROD tag exists, a passed PROD restore test that started within restoreTestIntervalMs', async () => {
     const ws = makeWorkspace(WALG);
     const env = prepare(ws);

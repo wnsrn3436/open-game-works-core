@@ -18,6 +18,7 @@ const DOCKER = `case "$1" in
   cp) if [ "$2" = - ]; then n=$(ls "$FAKE_DIR" | grep -c '^cp-'); cat > "$FAKE_DIR/cp-$n.tar"; else cp "$2" "$FAKE_DIR/wal-g"; fi;;
   exec)
     for last; do :; done
+    if [ -n "$FAKE_EXEC_DOCKER_FAIL" ]; then case "$last" in *"$FAKE_EXEC_DOCKER_FAIL"*) echo "Error response from daemon: No such container: ctr1" >&2; exit 125;; esac; fi
     case "$last" in
       *backup-list*) cat "$FAKE_DIR/list.json"; exit "\${FAKE_LIST_CODE-0}";;
       *wal-show*) cat "$FAKE_DIR/show.json";;
@@ -25,8 +26,9 @@ const DOCKER = `case "$1" in
       *recovery.signal*) exit "\${FAKE_START_CODE-0}";;
       *pg_is_in_recovery*) n=$(cat "$FAKE_DIR/polls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE_DIR/polls"
         [ -n "$FAKE_STOPPED" ] && { echo "psql: error: connection to server failed" >&2; exit 2; }
+        [ "$n" -lt "\${FAKE_PSQL_FAILS-0}" ] && { echo "psql: error: the database system is starting up" >&2; exit 2; }
         if [ "$n" -lt "\${FAKE_RECOVERY_POLLS-1}" ]; then echo t; else echo f; fi;;
-      *status*) exit 3;;
+      *status*) exit "\${FAKE_STATUS_CODE-3}";;
       *tail*) echo "FATAL:  could not locate required checkpoint record";;
       *ROW_COUNT*) [ -n "$FAKE_QUERY_ERROR" ] && { echo 'ERROR:  relation "storage_schema" does not exist' >&2; exit 1; }; echo "\${FAKE_ROWS-1}";;
     esac;;
@@ -169,6 +171,49 @@ describe('ogw backup test', () => {
     const slow = await run({ FAKE_RECOVERY_POLLS: '1000000' });
     expect(slow.result).toMatchObject({ result: 'unknown', reason: 'recovery did not end within 2000 ms' });
     expect(slow.log.trim().split('\n').at(-1)).toBe('docker rm --force --volumes ctr1');
+  });
+
+  it('waits while psql fails and PostgreSQL still runs: passes when recovery ends, unknown at the time limit', async () => {
+    const ws = makeWorkspace(WALG);
+    const s = setup(ws);
+    // psql fails twice while pg_ctl status says PostgreSQL runs, then recovery has ended
+    const waited = await backupTest(ws, s, { FAKE_PSQL_FAILS: '2', FAKE_RECOVERY_POLLS: '2', FAKE_STATUS_CODE: '0' });
+    expect(waited).toMatchObject({ code: 0, result: { result: 'pass', reason: null } });
+    const lines = waited.log.trim().split('\n');
+    expect(lines.filter((l) => l.endsWith("psql -X -At -c 'SELECT pg_is_in_recovery()'"))).toHaveLength(3);
+    expect(lines.filter((l) => l.endsWith('pg_ctl -D "$PGDATA" status'))).toHaveLength(2);
+
+    const ws2 = makeWorkspace(WALG);
+    const never = await backupTest(ws2, setup(ws2), { FAKE_PSQL_FAILS: '1000000', FAKE_STATUS_CODE: '0' });
+    expect(never).toMatchObject({ code: 1, result: { result: 'unknown', reason: 'recovery did not end within 2000 ms' } });
+    expect(never.file).toEqual(never.result);
+  });
+
+  it('is unknown when docker exec itself fails in the start of PostgreSQL, the wait or the query', async () => {
+    for (const step of ['recovery.signal', 'pg_is_in_recovery', 'ROW_COUNT']) {
+      const ws = makeWorkspace(WALG);
+      const { code, result, file, log } = await backupTest(ws, setup(ws), { FAKE_EXEC_DOCKER_FAIL: step });
+      expect(code).toBe(1);
+      expect(result).toMatchObject({ result: 'unknown', reason: 'docker exec failed: Error response from daemon: No such container: ctr1', base_backup: 'base_new' });
+      expect(file).toEqual(result);
+      expect(log.trim().split('\n').at(-1)).toBe('docker rm --force --volumes ctr1');
+    }
+  });
+
+  it('is unknown when the tools.walg binary cannot be fetched or differs from its pin', async () => {
+    for (const [route, reason] of [
+      [{}, `harness settings tools.walg linux-x64: download failed (404): ${WALG_URL}`],
+      [{ [WALG_URL]: 'OTHER-BYTES' }, 'harness settings tools.walg linux-x64: SHA-256 differs from the pin'],
+    ] as const) {
+      setNet(fakeNet(route));
+      const ws = makeWorkspace(WALG);
+      const s = setup(ws);
+      const { code, result, file, log } = await backupTest(ws, s);
+      expect(code).toBe(1);
+      expect(result).toMatchObject({ result: 'unknown', reason, base_backup: null });
+      expect(file).toEqual(result);
+      expect(log).not.toContain('docker create');
+    }
   });
 
   it('is unknown without backup, its secret or tools.walg, with another PostgreSQL major, or without a download for the platform of Docker', async () => {
