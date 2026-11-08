@@ -1,0 +1,18 @@
+{
+  "target": "generation methods",
+  "nextId": 3,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/generation/run.ts:37",
+      "problem": "In the range, the stage of `ogw generation run` (`stageFor`) changed to read the pinned run settings through `runHarnessSettings`. No test runs `generation run` with an open loop run whose pin holds a `measured` that differs from harness settings (tools/test/commands/generation/measure.test.ts:146 and the other `generation run` cases open no run), so a regression to `ctx.settings()` would not fail. This is the `generation run` command, not this target",
+      "foundBy": "generation methods round 1"
+    },
+    {
+      "id": "D2",
+      "location": "tools/src/commands/generation/api.ts:36",
+      "problem": "`blockingMethods` (used by `ogw loop dispatch`) reads the pinned run settings. No test opens a loop run whose pin holds a `measured` or `imageMethod` that differs from harness settings and then checks which methods hold a request back. This is the `loop dispatch` command, not this target",
+      "foundBy": "generation methods round 1"
+    }
+  ]
+}
