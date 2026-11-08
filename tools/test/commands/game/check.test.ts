@@ -389,7 +389,7 @@ describe('ogw game check --defaults', () => {
     expect(run.code).toBe(0);
     const lines = run.stdout.trim().split('\n');
     expect(lines[0]).toBe('## values to know');
-    expect(lines[1]).toBe('core.item-ledger.historyRetentionMs = 90 d (core settings): duration for which history and `once_key` are kept');
+    expect(lines[1]).toBe('core.item-ledger.historyRetentionMs = 90 d (core settings): duration for which a history row is kept. Refund handling and customer support read the history of this duration back with `list_history`');
     expect(lines).toContain('pushConsent.nightStartMinute = 21:00 (schema default): The minute of the device-local day at which the night window starts. e.g. 1320 is 22:00');
     expect(lines).toContain('uiQuality.settleLimitMs = 3 s (schema default): ' + 'The longest real time UI quality check reads `get_state` after the command that opens a screen, waiting for `ui_flow` `false` and `finite_tweens` 0 so that the opening presentation has ended. A core whose `get_state` has neither field is waited for this whole time');
     expect(lines.some((l) => l.startsWith('consent.ageBandBoundaries = [13,14,16,18,19] (schema default): '))).toBe(true);
