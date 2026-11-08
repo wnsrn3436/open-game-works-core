@@ -236,7 +236,7 @@ The TypeScript that the contract tool and the data tool make. One namespace is o
 
 ## server start
 
-The server process entry point is `server/core/start.ts`. It is started with `node core/start.ts <server start arguments>` with `server/` as cwd. The entry point calls the `routing` operation `run_server_process` with the server start arguments below. That runs the server process of `### server process` of [routing](modules/routing.md): a front on the main thread and worker threads that each make one server instance with `create_server` and run `start` on it, so that a synchronous DB call stops only its own thread. `create_server` also makes the test server of `testing`, with the same arguments except `--ops-port`, and a test server is one server instance without a front.
+The server process entry point is `server/core/start.ts`. It is started with `node core/start.ts <server start arguments>` with `server/` as cwd. The entry point calls the `routing` operation `run_server_process` with the server start arguments below. That runs the server process of `### server process` of [routing](modules/routing.md): a front on the main thread and worker threads that each make one server instance with `create_server` and run `start` on it, so that a synchronous DB call stops only its own thread. When `run_server_process` returns a server start failure reason, the entry point ends the process with exit code 1. `create_server` also makes the test server of `testing`, with the same arguments except `--ops-port`, and a test server is one server instance without a front.
 
 | argument | value | rule |
 |---|---|---|

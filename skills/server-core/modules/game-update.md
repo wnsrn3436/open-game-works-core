@@ -117,7 +117,7 @@ Checks in the order below. On a failure, the current deploy list stays as it is.
 ### minimum app version
 
 - `is_below_min_version` is `true` only when the current deploy list that the server instance caches has an entry of that platform in `app`, the app version is one that `validation.parse_version` reads, and `validation.compare_versions` puts it below `min_version` of that entry. Otherwise, and when there is no current deploy list, it is `false`
-- So the server refuses an app below `min_version` with `APP_UPDATE_REQUIRED` (step 7 of `routing`), the same judgement as the app version check of client `GameUpdateCore`, which opens the forced update popup for both. A raised `min_version` reaches every server instance within `game-update.cacheRefreshMs` after the publish
+- So the server refuses an app below `min_version` with `APP_UPDATE_REQUIRED` (step 7 of `routing`, and `HELLO` of `matchmaker` with its `platform` field), the same judgement as the app version check of client `GameUpdateCore`, which opens the forced update popup for both. A raised `min_version` reaches every server instance within `game-update.cacheRefreshMs` after the publish
 
 ### CDN adapter
 
