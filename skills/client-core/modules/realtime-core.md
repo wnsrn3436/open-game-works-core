@@ -78,7 +78,7 @@ The transport handles the matchmaker connection and the connections between part
 | `connect_peer` | participant index | none |
 | `send_packet` | participant index, `RealtimeChannel`, packet | success flag |
 | `close_peer` | participant index | none |
-| `close` | none | none |
+| `close` | forfeit flag | none |
 | `disconnect` | none | none |
 | `poll` | none | none |
 | `open_room` | match mode ID value when creating, room code when joining, access token, lockstep flag | none |
@@ -107,6 +107,7 @@ The transport handles the matchmaker connection and the connections between part
 - RealtimeCore calls `poll` once per frame and handles the received notifications in the order received. It also calls it during `TimeCore` pause. When `MatchState` becomes `None` inside `poll`, the remaining notifications are discarded while it stays `None`, except room updated, room kicked and matchmaker lost, which are handled as `### room` says. The transport reads the frames of a `poll` before these notifications, so the `close` of that change has already left a match found of the same `poll`. A member whose room returned to `Matching` in that `poll` still takes that match found, has nothing to connect, and fails at the connect time limit. When `leave_room` is called inside `poll`, the remaining room updated, room failed and room kicked of that `poll` are discarded, because they belong to the room that was left. When it leaves `MatchState` at `None`, all the remaining notifications of that `poll` are discarded. A match in `Connecting` or `Playing` goes on after `leave_room`, so its other notifications stay handled
 - RealtimeCore passes `false` as the lockstep flag of `start_matching` and `open_room`. The lockstep transport changes that value
 - `lockstep_time` of the P2P transport is always none
+- forfeit flag of `close`: `true` only for the `close` of match end with `MatchEndReason` `Left` or `BackgroundTimeout`, and `false` for every other `close`. It tells the server that this client leaves a match it is playing before its end. A transport that wraps another transport passes it on unchanged
 
 ### P2P transport
 
@@ -116,7 +117,7 @@ Uses the `MatchmakerFrame` of server `matchmaker` and `p2p-signaling`. Receives 
 - `start_matching`: connects when there is no matchmaker connection, then sends `MATCH_REQUEST`(`mode_id`, `lockstep`). `cancel_matching`: `MATCH_CANCEL`. `MATCH_FOUND` is match found, `MATCH_FAILED` is match failed (`reason`, `error_code`)
 - `open_room`: connects when there is no matchmaker connection, then sends `ROOM_CREATE`(`mode_id`, `lockstep`) when creating and `ROOM_JOIN`(`room_code`, `lockstep`) when joining. `kick_room_member`: `ROOM_KICK`(`user_id`). `start_room`: `ROOM_START`. `leave_room`: sends `ROOM_LEAVE` and closes the matchmaker connection when not in a match. `ROOM_STATE` is room updated, `ROOM_FAILED` is room failed (`error_code`. `Open` when `request` is `ROOM_CREATE` or `ROOM_JOIN`, `Kick` when `ROOM_KICK`, `Start` when `ROOM_START`, `Match` when `MATCH_REQUEST`), `ROOM_KICKED` is room kicked. After room kicked, closes the matchmaker connection when not in a match
 - `rejoin`: on a new connection, `MATCH_REJOIN`(`match_id`) after `HELLO`. `ok` of `MATCH_REJOINED` is the success flag of rejoined, and `left_indices` is the list of indexes of participants who left. When rejoined of in-match rejoin succeeds in the match the transport held before that rejoin, for each participant that is not in the list of indexes of participants who left, was not closed with `close_peer` and has a P2P connection being made, the side that sends the offer drops that connection without peer lost and starts a new connection with the next connection attempt number. The side that receives the offer keeps waiting for an offer
-- `close`: sends `MATCH_LEAVE` for that match and closes all P2P connections. When not in a room, also closes the matchmaker connection
+- `close`: sends `MATCH_LEAVE`(`match_id`, `forfeit` = the forfeit flag) for that match and closes all P2P connections. When not in a room, also closes the matchmaker connection. Every other `MATCH_LEAVE` that the P2P transport sends by itself has `forfeit` `false`
 - `disconnect`: closes all P2P connections and the matchmaker connection without sending `MATCH_LEAVE`. So a restarted app can `rejoin` with the saved `MatchInfo`
 - A P2P connection is a WebRTC data channel. Each participant pair has one connection with two channels: `Reliable` is ordered and reliable, `Unreliable` is unordered with 0 retransmits
 - The ICE servers are `stun_urls` and `relays` (TURN) of `transport` of `MATCH_FOUND` or `MATCH_REJOINED`. Without relay-only, WebRTC ICE chooses between direct connection and relay
@@ -234,7 +235,7 @@ On receiving matchmaker lost, the module does the following with its error code 
 | `Playing` | match end(`Left`) |
 
 - `end_match` runs match end (`Ended`) in `Playing`, and only leaves a warn log in other states
-- match end: sends a leave notice to `Connected` participants (reason is `Ended` when `Ended`, otherwise `Left`) → `close` → `None` → `MatchEndedEvent`
+- match end: sends a leave notice to `Connected` participants (reason is `Ended` when `Ended`, otherwise `Left`) → `close`(forfeit flag `true` unless `Ended`) → `None` → `MatchEndedEvent`
 
 ### time and background
 
@@ -244,7 +245,8 @@ On receiving matchmaker lost, the module does the following with its error code 
 
 ### match result and log
 
-- Server `matchmaker` judges the match result that changes UserState from the participants' reports. RealtimeCore sends no server request. Content code reports with `matchmaker.ReportMatchResult`. The match ID is the value in `MatchInfo` or `MatchEndedEvent`
+- Server `matchmaker` judges the match result that changes UserState from the participants' reports and the leaves it observed. RealtimeCore sends no server request. Content code reports with `matchmaker.ReportMatchResult`. The match ID is the value in `MatchInfo` or `MatchEndedEvent`
+- `leave` in `Playing` and the match end of `BackgroundTimeout` are a forfeit: `matchmaker` judges a participant that left that way without a saved report as having lost when another participant reported (`FORFEIT`). `end_match` is not a forfeit, and neither is a lost connection or `release`: when the other participants' reports alone remain, the match is void (`MISMATCH`)
 - No log of any level holds the access token, NAT traversal information, signaling contents or participants' network addresses
 
 ### lifecycle
@@ -418,7 +420,7 @@ Every test other than the P2P transport tests passes the fake realtime transport
 - `on_realtime_message` registered as an object's function is not called after that object is destroyed and behaves as when there is no hook, and registration by another object then succeeds. A second registration while an owner exists gives an error log and `false`
 - peer lost in `Playing` gives `PeerDisconnectedEvent` once and `connect_peer`. peer connected at `RealtimeCore.reconnectTimeoutMs` − 1 gives `PeerReconnectedEvent` and `Connected`; when the reconnect time limit passes without notification, `PeerLeftEvent`(`Timeout`) and `Left`
 - Each leave notice (`Left`, `Ended`) gives `PeerLeftEvent` with the same reason once, and after that peer lost and peer connected of that participant give no `connect_peer`, event or participant state change. The state is `Playing` even when all other participants leave
-- `leave` and `end_match` in `Playing` give leave notice bytes, `close`, `None`, `MatchEndedEvent` in that order, with reason `Left` and `Ended` respectively. When the event is received, `match_state` is `None`
+- `leave` and `end_match` in `Playing` give leave notice bytes, `close`, `None`, `MatchEndedEvent` in that order, with reason `Left` and `Ended` respectively. When the event is received, `match_state` is `None`. The forfeit flag of that `close` is `true` for `leave` and `false` for `end_match`, `true` for the match end of `BackgroundTimeout`, and `false` for the `close` of `leave` in `Matching` and `Connecting`, of a `join_match` failure and of a discarded match found
 - Background elapsed time `RealtimeCore.backgroundTimeoutMs` − 1 does not change the state; at the limit value itself, `Playing` ends with `BackgroundTimeout` and `Matching`, `Connecting` are `Failed`. A host in the `Matching` of a room calls transport `cancel_matching` before `close` there, and a participant that is not a host in a room does not
 - A host in `None` that receives match found logs a warn, calls transport `close` once and stays in `None`, and in the P2P transport that sends `MATCH_LEAVE` of that match and keeps the matchmaker connection of the room
 - In the P2P transport, an offer `PEER_SIGNAL` whose SDP the connection refuses raises peer lost of that index once
@@ -437,7 +439,7 @@ Every test other than the P2P transport tests passes the fake realtime transport
 - P2P transport: even when the server sends `CLOSE` and closes right away with WebSocket close code 4000, matchmaker lost has the code of that `CLOSE`
 - P2P transport: with a fake WebSocket server, `HELLO` is the first frame, its `data_version` is the data version of `DataCore` and `client_version` is the app version of build info; `MATCH_FOUND` becomes match found, `MATCH_FAILED` becomes match failed, `MATCH_REJOINED` becomes rejoined with its `ok` and `left_indices`, `CLOSE` becomes matchmaker lost with its `code`, and a disconnection without `CLOSE` and without WebSocket close code 4000 becomes matchmaker lost with code 0. Of the two participants, only the one with the smaller index sends an offer `PEER_SIGNAL`
 - `release` in `Playing` calls transport `disconnect`, does not call `close` and publishes no event, and after `init` again the state is `None`
-- P2P transport: with a fake WebSocket server, `disconnect` in `Playing` closes the WebSocket connection and P2P connections without sending `MATCH_LEAVE`. `close` closes them after sending `MATCH_LEAVE`
+- P2P transport: with a fake WebSocket server, `disconnect` in `Playing` closes the WebSocket connection and P2P connections without sending `MATCH_LEAVE`. `close` closes them after sending `MATCH_LEAVE` whose `forfeit` is the forfeit flag of that `close`. The `MATCH_LEAVE` of a second `MATCH_FOUND` and of a relay-only `MATCH_FOUND` with empty `relays` has `forfeit` `false`
 - The logs of the whole match contain no access token or NAT traversal information string
 - On becoming `Connecting`, `MatchInfo` is saved to the `user` file; it is deleted after match end, `leave` and a `join_match` failure, and remains after `release`
 - After `release` and `init` again, `rejoin_match` called with `saved_match_id` calls transport `rejoin` once, is `Success`, `Playing` after rejoined success and all peer connected, and `match_info` equals the saved `MatchInfo`

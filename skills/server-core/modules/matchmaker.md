@@ -14,7 +14,7 @@
 
 ## purpose
 
-Receives the matching connections of a realtime game, creates matches by grouping waiting users and parties or from the members of a room, and judges the match results that participants report and applies them to each participant's saved state. A room is a group of users gathered by a code, and a group of users who entered the queue together through a room is a party.
+Receives the matching connections of a realtime game, creates matches by grouping waiting users and parties or from the members of a room, judges each match from the results that participants report and the leaves that the server observed, and applies the judgement to each participant's saved state. Counts per user the disagreeing reports and the leaves of judged matches and shows operators the users who repeat them. A room is a group of users gathered by a code, and a group of users who entered the queue together through a room is a party.
 
 ## dependency
 
@@ -36,7 +36,7 @@ Receives the matching connections of a realtime game, creates matches by groupin
 | `GET /realtime` (route, WebSocket) | `MatchmakerFrame` | `MatchmakerFrame` | `CLOSE` frame and connection close | `routing`. The P2P transport of client `RealtimeCore` connects |
 | `ReportMatchResult` (core rpc, `retry`). changes: `content` | `match_id`, `result`, `input_log` | `MatchJudgeStatus` | `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_REPORTED`, `INVALID_REQUEST` | `routing`. Client content code sends it |
 
-- `MatchJudgeStatus`(base proto enum): `PENDING`, `CONFIRMED`, `MISMATCH`
+- `MatchJudgeStatus`(base proto enum): `PENDING`, `CONFIRMED`, `MISMATCH`, `FORFEIT`. `### result decision` sets their meaning
 - `result` is the bytes of the `MatchResult` message that the game defines in `service.proto`. `input_log` is filled only when `result_rule` is `ServerReplay`. It is the bytes of the `MatchInputLog` message that the game defines in `service.proto`
 - `MatchResult` is a module message, and a game that uses this module must define it. `MatchInputLog` is a module message, and a game that has a match mode whose `result_rule` is `ServerReplay` defines it
 
@@ -54,6 +54,17 @@ core `rpc` response field
 |---|---|---|
 | `ReportMatchResultResponse` | `status` | `MatchJudgeStatus` |
 
+admin operation. Collection and handling follow `admin-api`.
+
+| operation | input | output | failure value | caller |
+|---|---|---|---|---|
+| `list_match_flags` | `kind`, `after_user_id`(optional), `limit` | `flags`: list of flags. Ascending order of `user_id` | `bad_request` | operator |
+| `get_match` | `match_id` | `match`: the match record | `not_found` | operator |
+
+- field types: `kind` is `enum{Disagree, Forfeit, Missing}`, `after_user_id` is `int64`, `match_id` is `string`
+- flag (output of `list_match_flags`): `user_id`, `count`(the flag count of `### integrity`), `match_ids`(the `match_id` of each counted integrity event, in ascending order of `at`, ties in ascending order of `match_id`). `list_match_flags` returns the users flagged for `kind` whose user ID is greater than `after_user_id` when it is given, at most `limit`. The next query gives the `user_id` of the last flag of the previous query
+- match record (output of `get_match`): `match_id`, `mode_id`, `status`, `source`, `created_at`, `start_at`, `deadline_at`, `decided_at`(0 while `PENDING`), `data_version`, `client_version`, `replayed_input_log`, `participants`(index order. Each item is `user_id`, `team`, `party`, `rating`, `reported_at`, `result`, `input_log`, `left_at`, `ended_at`, `disconnected_at`, `integrity`(the `MatchIntegrityKind` element name of the integrity event of that participant in this match, or `null`)). The fields are those of the match record row and of the hook input of the same names. A match whose record the expiry cleanup of `storage` deleted is `not_found`
+
 ### MatchmakerFrame
 
 A base proto message. One frame is one unfragmented WebSocket binary message. On receiving a fragmented message, the connection is closed. Only `kind` and the fields of that kind are filled.
@@ -68,7 +79,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 | `MATCH_FAILED` | server → client | `reason`: `MatchFailReason`, `error_code`: when `REJECTED`, the hook's `GameError`, `FEATURE_DISABLED`, `APP_UPDATE_REQUIRED`, `DATA_UPDATE_REQUIRED`, or 0 when the transaction of `prepare_match_request` is `WITHDRAWN` or `FAILED` or the hook throws or returns a wrong value |
 | `MATCH_FOUND` | server → client | `match_id`, `mode_id`, `players`(`MatchPlayer` list), `my_index`, `seed`(`int64`), `start_at`, `transport`, `lockstep` |
 | `PEER_SIGNAL` | both | `index`, `payload`(bytes) |
-| `MATCH_LEAVE` | client → server | `match_id` |
+| `MATCH_LEAVE` | client → server | `match_id`, `forfeit`: `true` when the client leaves a match it is playing before its end. `p2p-signaling` turns it into a participant change |
 | `MATCH_REJOIN` | client → server | `match_id` |
 | `MATCH_REJOINED` | server → client | `match_id`, `ok`, `my_index`, `players`, `transport`, `left_indices`: list of the indexes of participants who left. `p2p-signaling` sets its meaning |
 | `PEER_LEFT` | server → client | `index` |
@@ -82,7 +93,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 | `ROOM_FAILED` | server → client | `error_code`: `CoreError` or the hook's `GameError`, `request`: `kind` of the client frame that failed (`ROOM_CREATE`, `ROOM_JOIN`, `ROOM_KICK`, `ROOM_START`, `MATCH_REQUEST`) |
 | `ROOM_KICKED` | server → client | none |
 
-- `MatchmakerFrame` fields (the list order is the field number): `MatchmakerFrameKind kind`, `string access_token`, `string data_version`, `string client_version`, `int64 server_time_at`, `int32 code`, `int32 mode_id`, `bool lockstep`, `MatchFailReason reason`, `int32 error_code`, `string match_id`, `repeated MatchPlayer players`, `int32 my_index`, `int64 seed`, `int64 start_at`, `Transport transport`, `int32 index`, `bytes payload`, `bool ok`, `string room_code`, `int64 user_id`, `repeated int64 room_members`, `RoomStatus room_status`, `MatchmakerFrameKind request`, `repeated int32 left_indices`. New fields are added at the end of the list
+- `MatchmakerFrame` fields (the list order is the field number): `MatchmakerFrameKind kind`, `string access_token`, `string data_version`, `string client_version`, `int64 server_time_at`, `int32 code`, `int32 mode_id`, `bool lockstep`, `MatchFailReason reason`, `int32 error_code`, `string match_id`, `repeated MatchPlayer players`, `int32 my_index`, `int64 seed`, `int64 start_at`, `Transport transport`, `int32 index`, `bytes payload`, `bool ok`, `string room_code`, `int64 user_id`, `repeated int64 room_members`, `RoomStatus room_status`, `MatchmakerFrameKind request`, `repeated int32 left_indices`, `bool forfeit`. New fields are added at the end of the list
 - The elements of `MatchmakerFrameKind`(base proto enum) are the kinds of the frame table in table order
 - `MatchPlayer`(base proto message): `int64 user_id`, `int32 index`, `int32 team`, `int32 party`
 - `MatchFailReason`(base proto enum): `TIMEOUT`, `INVALID_MODE`, `REJECTED`, `CREATE_FAILED`
@@ -103,7 +114,7 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 - Authentication is once per connection. While the connection is open, the connection is kept even when the access token expires
 - When a new connection of the same user is authenticated, sends `CLOSE`(`SESSION_REPLACED`) to the previous connection, closes it and handles that connection close before sending `HELLO_ACK` to the new connection. A connection close is handled once per connection, so the later WebSocket close of the previous connection changes nothing
 - After authentication, `PEER_SIGNAL`, `MATCH_LEAVE`, `MATCH_REJOIN` are passed to `p2p-signaling.handle_frame`, and the handling of such a frame or of a connection close ends when `handle_frame` or `connection_closed` returns, without waiting for the game transaction of the participant change it returned. When a connection closes, removes that user from the queue, handles it the same as `ROOM_LEAVE` when the user is in a room, and then calls `p2p-signaling.connection_closed`
-- For each participant change that `handle_frame`, `connection_closed`, `open_match_session` returned, one game transaction locks the match record row of that `match_id` with `storage.lock_game_row` and, when `status` is `PENDING`, writes `left_at`(`LEFT`) or `disconnected_at`(`DISCONNECTED`) of that index as `clock_now`, and for `REJOINED` writes `disconnected_at` as 0. The participant changes of one match are written one at a time in the order they were returned: the game transaction of a change starts after the game transaction of the previous change of that match ends
+- For each participant change that `handle_frame`, `connection_closed`, `open_match_session` returned, one game transaction locks the match record row of that `match_id` with `storage.lock_game_row` and, when `status` is `PENDING`, writes `left_at`(`LEFT`), `ended_at`(`ENDED`) or `disconnected_at`(`DISCONNECTED`) of that index as `clock_now`, and for `REJOINED` writes `disconnected_at` as 0. After writing `left_at`, the same game transaction makes the result decision of that record (`### result decision`), and when it decides, the apply of every participant is done as an out-of-request change and starts after the commit with `storage.after_commit`. The participant changes of one match are written one at a time in the order they were returned: the game transaction of a change starts after the game transaction of the previous change of that match ends
 - After authentication, a frame that cannot be parsed, a text frame, a frame of a server → client kind, and a second `HELLO` are dropped
 - The frames of one connection are handled one at a time in the order they arrive. The handling of a frame starts after the handling of the previous frame of that connection ends, including the transactions and the match creation it waits for. A frame whose connection closed before its handling starts is dropped, also when it arrived before the close
 - Before handling `MATCH_REQUEST`, `ROOM_CREATE`, `ROOM_JOIN`, `ROOM_START` after authentication, sends `CLOSE`(`MAINTENANCE`) when `admin-api.is_maintenance` is `true`, or `CLOSE`(`BANNED`) when `admin-api.is_banned` of the sending user is `true`, and closes the connection. That frame is not handled, and the closed connection is handled the same as a connection close
@@ -170,27 +181,46 @@ A base proto message. One frame is one unfragmented WebSocket binary message. On
 1. `INVALID_REQUEST` when `match_id` is not in UUID v4 format
 2. In the reporter's request transaction, locks and reads the match record row with `storage.lock_game_row`. `MATCH_NOT_FOUND` when it does not exist
 3. `MATCH_NOT_PARTICIPANT` when the reporter is not in `user_ids`
-4. When `status` is `CONFIRMED` or `MISMATCH`, changes nothing and returns that status
-5. When `status` is `PENDING` and `deadline_at` ≤ `clock_now`, does not save the report, makes the judgement `MISMATCH` and returns `MISMATCH`. The apply of every participant is done as an out-of-request change and starts after the commit with `storage.after_commit`
-6. `MATCH_ALREADY_REPORTED` when the reporter's report already exists
-7. Saves the report in the record and makes the judgement. When the judgement is decided, does the reporter's apply in this transaction and starts the apply of the other participants after the commit with `storage.after_commit`
+4. When `status` is not `PENDING`, changes nothing and returns that status
+5. When `status` is `PENDING` and `deadline_at` ≤ `clock_now`, does not save the report, makes the final decision of `### result decision` with the saved reports and returns its status. The apply of every participant is done as an out-of-request change and starts after the commit with `storage.after_commit`
+6. When `left_at` of the reporter is not 0, does not save the report and returns `PENDING`. A participant that left before reporting is a forfeiter, and no report of it is judged
+7. `MATCH_ALREADY_REPORTED` when the reporter's report already exists
+8. Saves the report in the record and makes the result decision. When the judgement is decided, does the reporter's apply in this transaction and starts the apply of the other participants after the commit with `storage.after_commit`
 
 ### result decision
 
-Let n be the participant count. The same result means the same `result` bytes.
+Let n be the participant count. The same result means the same `result` bytes, and the same `input_log` the same `input_log` bytes. The compared value of a report is its `result` when `result_rule` is `Consensus` or `Majority`, and its `input_log` when it is `ServerReplay`.
 
-| `result_rule` | `CONFIRMED` | `MISMATCH` |
-|---|---|---|
-| `Consensus` | All n participants reported and every `result` is the same. That result | Two different `result` values were reported |
-| `Majority` | The report count c of the same `result` satisfies 2c > n. That result | With m = the largest count of the same `result` + the count not reported yet, 2m ≤ n |
-| `ServerReplay` | Every participant whose `left_at` and `disconnected_at` are both 0 in `participants` reported, an `input_log` to replay exists, and hook `replay_match` returned a result with that `input_log`. That result | n is 2 and two different `input_log` values were reported. Or every participant whose `left_at` and `disconnected_at` are both 0 reported, but there is no `input_log` to replay or `replay_match` returned `reject` |
+- forfeiter: a participant whose `left_at` is not 0 and who has no saved report. `left_at` is written only by the participant change `LEFT` of that participant's own connection (`MATCH_LEAVE` with `forfeit` `true`, or that connection bound to a new match), so no other participant can make a participant a forfeiter. A closed connection (`DISCONNECTED`) does not make a forfeiter, because the server cannot tell who caused it, and neither does `MATCH_LEAVE` with `forfeit` `false` (`ENDED`), the leave of a client after the match ended or before it started
+- complete: every participant has a saved report or is a forfeiter. Step 6 of `### ReportMatchResult` saves no report of a participant whose `left_at` is not 0, so a complete record gets no further report
+- The result decision is made on a `PENDING` record after each saved report, after each written `left_at`, and at `deadline_at`. A record that is complete, and a record at `deadline_at`, get the final decision. Before that, the record is decided only when the `CONFIRMED` condition of its `result_rule` holds, or when the result or `input_log` that would become `CONFIRMED` is invalid (`MISMATCH`); otherwise it stays `PENDING`
 
-- `input_log` to replay: when n is 2, that `input_log` when every reported `input_log` is the same. When n is 3 or more, with r the report count of the participants whose `left_at` is 0, the `input_log` whose report count c of the same `input_log` satisfies 2c > r. When there is no such `input_log`, there is no `input_log` to replay. When n is 3 or more, it waits for the reports of the remaining participants even when different `input_log` values were reported. This keeps one participant from voiding the match with a changed `input_log`
-- When the result that would become `CONFIRMED` cannot be decoded as `MatchResult` or does not pass `validation.validate_message`, the judgement is `MISMATCH`. `ServerReplay` calls `replay_match` only when `data_version` of the match record equals `client_data_version` that the server read at start and the `input_log` to replay decodes as `MatchInputLog` and passes `validate_message`; otherwise `MISMATCH`
-- The `CONFIRMED` condition of `ServerReplay` is checked with the `participants` at that time in the transaction that saved the report. It does not wait for the reports of participants who left or whose matchmaker connection closed, and judges at the last report among the remaining participants. The reported `input_log` holds the tick at which a departed participant left the match
-- Only on the server instance that received `--matchmaker`, job `matchmaker_sweep`(period `matchmaker.sweepIntervalMs`), which the matchmaker sets with `server-time.schedule_job` at server start, changes `PENDING` records with `deadline_at` ≤ `clock_now` to `MISMATCH`. In this case the apply of every participant is done as an out-of-request change. Other server instances do not set this job
-- When the judgement result is `CONFIRMED`, it is applied with hook `apply_match_result`, and when it is `MISMATCH`, with hook `apply_match_mismatch`
-- In `Consensus` and `Majority`, a match with 2 participants becomes `MISMATCH` when the two reports differ or one report is missing, because there is no authority to decide which report is right. The apply hook decides the penalty of a participant who left and the handling of the remaining participants with `participants` of the match record
+| `result_rule` | `CONFIRMED` |
+|---|---|
+| `Consensus` | All n participants reported and every `result` is the same. That result |
+| `Majority` | The report count c of the same `result` satisfies 2c > n. That result |
+| `ServerReplay` | An `input_log` to replay exists and hook `replay_match` returned a result with that `input_log`. That result |
+
+- `input_log` to replay: the `input_log` whose report count c of the same `input_log` is 2 or more and satisfies 2c > k, where k is the number of participants that are not forfeiters. In the final decision, 2c > r is used in place of 2c > k, where r is the number of saved reports. When there is no such `input_log`, there is no `input_log` to replay. So one report never decides a match: with 2 participants both report the same `input_log`, and with 3 or more the decision waits for further reports while different `input_log` values were reported, which keeps one participant from voiding the match with a changed `input_log`
+- final decision: `CONFIRMED` when the condition of the table holds. Otherwise `FORFEIT` when there is a forfeiter and a participant that is not a forfeiter reported. Otherwise `MISMATCH`
+- `FORFEIT`: every forfeiter lost the match against the participants that are not forfeiters. No reported `result` or `input_log` is taken as the result, and `replay_match` is not called for it
+- `MISMATCH`: the match is void. No reported `result` or `input_log` is taken as the result, and `rating.apply_match_outcome` does not change the rating of that match. The reports stay in the match record for review (`### integrity`)
+- With 2 participants: the same two reports are `CONFIRMED`; a participant that sent `MATCH_LEAVE` with `forfeit` `true` without reporting while the other reported is `FORFEIT`; two different reports, a missing report of a participant whose connection closed or who sent `MATCH_LEAVE` with `forfeit` `false`, and no report at all are `MISMATCH`
+- When the result that would become `CONFIRMED` cannot be decoded as `MatchResult` or does not pass `validation.validate_message`, the judgement is `MISMATCH`. `ServerReplay` calls `replay_match` only when `data_version` of the match record equals `client_data_version` that the server read at start and the `input_log` to replay decodes as `MatchInputLog` and passes `validate_message`; otherwise `MISMATCH`. A `reject` of `replay_match` is `MISMATCH`
+- When `replay_match` throws or its output format is wrong in the game transaction of a participant change or of job `matchmaker_sweep`, the judgement is `MISMATCH` and an `error` log is left. Inside `ReportMatchResult` it follows `### apply`
+- Only on the server instance that received `--matchmaker`, job `matchmaker_sweep`(period `matchmaker.sweepIntervalMs`), which the matchmaker sets with `server-time.schedule_job` at server start, makes the final decision of each `PENDING` record with `deadline_at` ≤ `clock_now` in one game transaction that locks the match record row with `storage.lock_game_row`. In this case the apply of every participant is done as an out-of-request change. Other server instances do not set this job
+- When the judgement result is `CONFIRMED`, it is applied with hook `apply_match_result`, when it is `FORFEIT`, with hook `apply_match_forfeit`, and when it is `MISMATCH`, with hook `apply_match_mismatch`
+
+### integrity
+
+- integrity event: a row that the transaction making the judgement writes for a participant of that match, when at least one participant that is not a forfeiter reported. A match without such a report is treated as a match not played and gets no integrity event. `MatchIntegrityKind`: `Disagree`, `Forfeit`, `Missing`. Each participant gets at most one
+  - `Disagree`: a participant that reported, when the judgement is `CONFIRMED` and its compared value differs from the confirmed one (`replayed_input_log` for `ServerReplay`, the confirmed result otherwise), or when the judgement is `FORFEIT` or `MISMATCH` and the saved reports hold two or more different compared values. The server cannot tell which of two different reports is false, so each reporter gets it
+  - `Forfeit`: a forfeiter
+  - `Missing`: a participant that is not a forfeiter and has no saved report
+- Integrity events are kept in `matchmaker_integrity`(scope `game`, column `user_id`, `match_id`, `kind`(`MatchIntegrityKind` element name), `at`(`decided_at` of that match), `expires_at`(`at` + `matchmaker.flagWindowMs`), key `(user_id, match_id)`, expiry column `expires_at`, personal data user column `user_id`, index `(kind, at)`)
+- flag count: the number of integrity events of one user and one kind whose `at` > `clock_now` − `matchmaker.flagWindowMs`. A user is flagged for a kind while its flag count of that kind is the flag count key of that kind or more: `matchmaker.flagDisagreeCount` for `Disagree`, `matchmaker.flagForfeitCount` for `Forfeit`, `matchmaker.flagMissingCount` for `Missing`
+- When the flag count of a participant for the kind of its new integrity event, counted in the judging transaction after that write, equals the flag count key of that kind, that transaction leaves a `security` log with `reason` `match_integrity_flag`, `user_id`, `kind` and `count`. `list_match_flags` reads the flags, and this log is the notice that a flag was raised
+- A flag does not change matching or the judgement. An operator reads the reports of the flagged matches with `get_match` and decides a sanction (e.g. `admin-api.ban_user`)
 
 ### apply
 
@@ -203,8 +233,8 @@ Let n be the participant count. The same result means the same `result` bytes.
   - An error log is left only when the result of the failed apply differs from the previous `last_failure`(including the first failure) and when giving up
 - Job `matchmaker_sweep` retries each index that is not marked and whose `next_attempt_at` ≤ `clock_now`. Retries continue after a server restart
 - The reporter's apply calls the hook inside `storage.run_savepoint` in the request transaction that made the judgement. When the hook returns `GameError`, only that savepoint is rolled back, that index is marked and an error log is left. The report and the judgement are committed and the request succeeds with the judgement status
-- When an apply hook or `replay_match` throws or its output format is wrong, inside `ReportMatchResult` the request is `INTERNAL` and the report is not saved, and in the apply of a participant who is not the reporter, the apply is `FAILED`
-- The match record is kept in `matchmaker_match`(key `match_id`, indexes `(status, deadline_at)`, `(next_apply_at)`) and `matchmaker_participant` with one row per participant index (key `(match_id, idx)`). `next_apply_at` is the earliest `next_attempt_at` among the indexes not marked after the judgement, and null when there is none. The two tables are registered with `storage.register_table` with scope `game` and expiry column `expires_at`. `expires_at` is set to that time + `matchmaker.recordRetentionMs` in the transaction where every index is marked, and left empty before that. A report after the expiry cleanup of `storage` deleted the record is `MATCH_NOT_FOUND`
+- When an apply hook or `replay_match` throws or its output format is wrong, inside `ReportMatchResult` the request is `INTERNAL` and the report is not saved, and in the apply of a participant who is not the reporter, the apply is `FAILED`. `### result decision` sets the case of `replay_match` in a participant change and in job `matchmaker_sweep`
+- The match record is kept in `matchmaker_match`(key `match_id`, indexes `(status, deadline_at)`, `(next_apply_at)`) and `matchmaker_participant` with one row per participant index (key `(match_id, idx)`). `next_apply_at` is the earliest `next_attempt_at` among the indexes not marked after the judgement, and null when there is none. The two tables are registered with `storage.register_table` with scope `game` and expiry column `expires_at`. `expires_at` is set to that time + `matchmaker.recordRetentionMs` in the transaction where every index is marked, and left empty before that. For a match whose judgement wrote an integrity event, the larger of `matchmaker.recordRetentionMs` and `matchmaker.flagWindowMs` is used, so its reports stay while its integrity events count. A report after the expiry cleanup of `storage` deleted the record is `MATCH_NOT_FOUND`
 - The matchmaker does not change saved state with the match result. Only the apply hooks change saved state
 
 ### security
@@ -217,6 +247,12 @@ Let n be the participant count. The same result means the same `result` bytes.
 - The IP of a connection is the client IP of the rate limit rules of `routing`
 - Values that a peer sends are not trusted. Results that change saved state go only through the judgement of this spec
 
+### collected data
+
+| data type | description | source | purposes | linked | tracking | shared | optional | platforms | condition |
+|---|---|---|---|---|---|---|---|---|---|
+| `gameplay_content` | match reports, the leave and disconnect times the server observed, and the integrity events of disagreeing reports and leaves | `module` | `app_functionality`, `fraud_prevention` | `true` | `false` | `false` | `true` | `all` | `none` |
+
 ## hook
 
 | hook | when | input | output | default |
@@ -224,18 +260,21 @@ Let n be the participant count. The same result means the same `result` bytes.
 | `prepare_match_request` | step 3 of the `MATCH_REQUEST` processing order and member rating resolution of a room. Inside `run_rollback_transaction` | ctx, `mode_id`, member user ID list | rating(`bigint`) or `GameError` | rating 0 |
 | `validate_party` | in member rating resolution, after `prepare_match_request` of every member succeeds | `mode_id`, member list (`{user_id, rating}` in room joining order), `request`(the `kind` of the host frame that started member rating resolution. `ROOM_START` or `MATCH_REQUEST`) | `pass` or `GameError` | `pass` |
 | `apply_match_result` | apply of a participant whose judgement is `CONFIRMED` | ctx, match record, index of that participant, result bytes | `pass` or `GameError` | changes nothing |
+| `apply_match_forfeit` | apply of a participant whose judgement is `FORFEIT` | ctx, match record, index of that participant | `pass` or `GameError` | changes nothing |
 | `apply_match_mismatch` | apply of a participant whose judgement is `MISMATCH` | ctx, match record, index of that participant | `pass` or `GameError` | changes nothing |
 | `replay_match` | when the `input_log` to replay is decided in the `ServerReplay` judgement | match record, `input_log` bytes to replay, random made from `seed`, server build data container and accessor at judgement time, its data version | result bytes or `reject` | `reject` |
 
 - Member user ID list of `prepare_match_request`: for `MATCH_REQUEST` outside a room, the one user of ctx; for member rating resolution, all members of the room in joining order. The user of ctx is also in the list
 - `validate_party` does not read or write the DB. The ratings of the member list are the ratings that member rating resolution read
-- match record input: `match_id`, `mode_id`, `user_ids`, `ratings`, `teams`, `parties`, `participants`, `seed`, `start_at`, `data_version`, `client_version`, `source`, `replayed_input_log`
+- match record input: `match_id`, `mode_id`, `status`, `user_ids`, `ratings`, `teams`, `parties`, `participants`, `seed`, `start_at`, `data_version`, `client_version`, `source`, `replayed_input_log`
+- `status` of match record input: the `MatchJudgeStatus` of the judgement. `CONFIRMED`, `FORFEIT` or `MISMATCH` in the apply hooks, and `PENDING` in `replay_match`
 - `replayed_input_log` of match record input: the `input_log` that the `ServerReplay` judgement passed to `replay_match`. Empty bytes when none was passed
 - `source` of match record input is `MatchSource`(`Queue`, `Room`)
-- `participants` of match record input: a list in index order. Each item is `reported_at`(the `clock_now` when the report was saved. 0 when none), `result`(reported `result` bytes. Empty bytes when none), `input_log`(reported `input_log` bytes. Empty bytes when none), `left_at`(the `clock_now` when the `LEFT` of that index was written. 0 when none), `disconnected_at`(the `clock_now` when the last `DISCONNECTED` of that index was written. 0 when rejoined with `MATCH_REJOIN`)
+- `participants` of match record input: a list in index order. Each item is `reported_at`(the `clock_now` when the report was saved. 0 when none), `result`(reported `result` bytes. Empty bytes when none), `input_log`(reported `input_log` bytes. Empty bytes when none), `left_at`(the `clock_now` when the `LEFT` of that index was written. 0 when none), `ended_at`(the `clock_now` when the `ENDED` of that index was written. 0 when none), `disconnected_at`(the `clock_now` when the last `DISCONNECTED` of that index was written. 0 when rejoined with `MATCH_REJOIN`)
 - `replay_match` does not read or write the DB. The random is `storage.create_random`(`make_purpose_seed`(`match_simulation`, match `seed`)), the same random as the tick simulation of `client-content`. When a `match_mode` row whose `result_rule` is `ServerReplay` exists but there is no `replay_match`, the server does not start
 - `replay_match` checks the participant index, input order and range of `input_log` and calculates the result with game data and `seed`. It does not use the reported `result`
-- `apply_match_result` and `apply_match_mismatch` are called inside `storage.with_hook_change_source`(ctx, `Match`, `match_id`). The change source of item changes inside it is source `Match`, `ref` `match_id`
+- `apply_match_forfeit` receives no result bytes: a `FORFEIT` match has no confirmed result. The forfeiters of `### result decision` lost, and each other participant won against them
+- `apply_match_result`, `apply_match_forfeit` and `apply_match_mismatch` are called inside `storage.with_hook_change_source`(ctx, `Match`, `match_id`). The change source of item changes inside it is source `Match`, `ref` `match_id`
 
 ## event
 
@@ -254,6 +293,10 @@ none
 | `GameError` of the reporter's apply hook | marks that index. The request succeeds with the judgement status | none | `error` |
 | match that does not exist, not a participant, duplicate report | `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_REPORTED` | `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_REPORTED` | none |
 | apply failure | gives up after retries | none | `error`. First failure, change of failure kind, give-up |
+| `ReportMatchResult` of a participant whose `left_at` is not 0 | the report is not saved. The response status is `PENDING` | none | none |
+| throw or wrong output of `replay_match` in the game transaction of a participant change or of job `matchmaker_sweep` | the judgement is `MISMATCH` | none | `error` |
+| body rules violation in `list_match_flags` | `bad_request` | none | error rules of `admin-api` |
+| `get_match` of a `match_id` without a match record | `not_found` | none | `audit` |
 | missing `replay_match`, room code settings violation | server start failure | none | `error` |
 
 Added `CoreError`: `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_REPORTED`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `ROOM_BUSY`, `ROOM_NOT_HOST`, `ROOM_NOT_ENOUGH_PLAYERS`, `ROOM_PARTY_TOO_LARGE`, `ROOM_VERSION_MISMATCH`
@@ -284,6 +327,10 @@ Added `CoreError`: `MATCH_NOT_FOUND`, `MATCH_NOT_PARTICIPANT`, `MATCH_ALREADY_RE
 | `matchmaker.roomCodeLength` | integer | core | content | length of a room code |
 | `matchmaker.roomCodeMaxPicks` | integer | core | content | how many times one room code is picked before no room is created. 1 or more |
 | `matchmaker.lockstepMaxDurationMs` | integer | core | human | duration used instead of `max_duration` in a DEV lockstep match |
+| `matchmaker.flagWindowMs` | integer | core | content | duration an integrity event counts toward the flag count and is kept. 1 or more |
+| `matchmaker.flagDisagreeCount` | integer | core | content | flag count of `Disagree` integrity events that flags a user |
+| `matchmaker.flagForfeitCount` | integer | core | content | flag count of `Forfeit` integrity events that flags a user |
+| `matchmaker.flagMissingCount` | integer | core | content | flag count of `Missing` integrity events that flags a user |
 | `admin-api.switchCacheMs` | integer | core | content | interval for rereading the maintenance and kill switch cache. 1 or more |
 
 - The server does not start when one of the following holds
@@ -357,16 +404,24 @@ reserved ID, reserved string, reserved sound: none
 - A user whose connection closes while waiting or who sent `MATCH_CANCEL` does not enter a match
 - A `MATCH_CANCEL`, a second `MATCH_REQUEST` and a `ROOM_CREATE` sent while `prepare_match_request` of a `MATCH_REQUEST` waits are handled after that `MATCH_REQUEST` ends: after `MATCH_CANCEL` the user is not in the queue, after the second `MATCH_REQUEST` the user has one queue entry, and `ROOM_CREATE` is `ROOM_FAILED`(`ROOM_BUSY`, `ROOM_CREATE`). When the connection closes during that wait, the user does not enter the queue
 - When a new connection of the same user authenticates while `prepare_match_request` of a `MATCH_REQUEST` of the previous connection waits, a second `MATCH_REQUEST` that the previous connection sent during that wait is dropped, and in another run a `ROOM_CREATE` sent the same way is dropped: after that wait ends, that user is in no queue and no room, and a `MATCH_REQUEST` of the new connection makes the only queue entry of that user, whose match sends `MATCH_FOUND` to the new connection
-- When two different results come in `Consensus`, the judgement is `MISMATCH` and `apply_match_mismatch` is called once for each participant
+- When two different results come in a 2-participant `Consensus` match, the judgement is `MISMATCH` and `apply_match_mismatch` is called once for each participant
 - With 3 participants in `Majority`, two same results are `CONFIRMED`, and the participant who did not report also gets the apply as a pending delta
 - In a 2-participant `ServerReplay` match, different `input_log` values are `MISMATCH`, and the same ones are `CONFIRMED` with the result of `replay_match`
 - In a 3-participant `ServerReplay` match, when the `input_log` values of the first two reports differ, the match is `PENDING` before the third report. When the third report equals one of the two, `replay_match` is called once with that `input_log` and the match is `CONFIRMED`, `participants` of the match record that the apply hook received has the three `input_log` values, and `replayed_input_log` is that `input_log`. When the three `input_log` values all differ, `MISMATCH`, and `replayed_input_log` is empty bytes
 - In `ServerReplay`, when every `input_log` is the same and `replay_match` returns `reject`, `MISMATCH`
-- In a 3-participant `ServerReplay` match, when only index 0 reports after index 2 did `MATCH_LEAVE`, the match is `PENDING`, and when index 1 reports the same `input_log`, that report makes it `CONFIRMED` with the result of `replay_match`, and index 2 also gets `apply_match_result`. In a 2-participant `ServerReplay` match, when the other participant reports after the matchmaker connection of one participant closed, that report makes it `CONFIRMED`. In a 2-participant match, when the participant who left reported a different `input_log`, `MISMATCH`. In a 3-participant match, the report of the participant who left is not counted when deciding the `input_log` to replay
+- In a 3-participant `ServerReplay` match, when only index 0 reports after index 2 did `MATCH_LEAVE` with `forfeit` `true`, the match is `PENDING`, and when index 1 reports the same `input_log`, that report makes it `CONFIRMED` with the result of `replay_match`, index 2 also gets `apply_match_result`, and index 2 gets a `Forfeit` integrity event. In a 2-participant match, when the participant that reported a different `input_log` then sends `MATCH_LEAVE` with `forfeit` `true`, the match is `MISMATCH`
+- In a 2-participant `ServerReplay` match, a report saved while the matchmaker connection of the other participant is closed leaves the match `PENDING`. When that participant rejoins and reports the same `input_log`, the match is `CONFIRMED`. When it does not report, job `matchmaker_sweep` makes the match `MISMATCH` at `deadline_at` without calling `replay_match`, the participant without a report gets a `Missing` integrity event, and the reporter gets none
+- For each `result_rule`, in a 2-participant match where index 1 sends `MATCH_LEAVE` with `forfeit` `true` without reporting and index 0 reports, the judgement is `FORFEIT`, made by `ReportMatchResult` when the report comes after the `LEFT` and by the game transaction of the `LEFT` when the report comes first. `apply_match_forfeit` is called once for each participant with `status` `FORFEIT` in the match record input, `replay_match` is not called, and index 1 gets a `Forfeit` integrity event
+- `ReportMatchResult` of a participant after its `MATCH_LEAVE` with `forfeit` `true` does not save the report and returns `PENDING`. A participant that reported before its `MATCH_LEAVE` with `forfeit` `true` is not a forfeiter, and its report is judged
+- `MATCH_LEAVE` with `forfeit` `false` writes `ended_at` and leaves `left_at` 0. A report of that participant sent after it is saved and judged. When that participant never reports and the other participant reports, the match is `MISMATCH` at `deadline_at`, and that participant gets a `Missing` integrity event
+- A match in which one participant sent `MATCH_LEAVE` with `forfeit` `true` and no other participant reported is `MISMATCH` at `deadline_at`, and no integrity event is written
+- In a 3-participant `ServerReplay` match where the matchmaker connections of indexes 1 and 2 closed, the report of index 0 leaves the match `PENDING`, and job `matchmaker_sweep` makes it `MISMATCH` at `deadline_at`. When indexes 0 and 1 report the same `input_log` and the connection of index 2 closed, the second report makes the match `CONFIRMED` and index 2 gets a `Missing` integrity event. In a 4-participant `ServerReplay` match where indexes 0 and 1 report the same `input_log` and the connections of indexes 2 and 3 closed, the match is `PENDING` after the two reports, and job `matchmaker_sweep` makes it `CONFIRMED` with the result of `replay_match` at `deadline_at`
+- In a 3-participant `Consensus` match where index 2 sends `MATCH_LEAVE` with `forfeit` `true` and indexes 0 and 1 report different `result` values, the second of those reports makes the match `FORFEIT`, indexes 0 and 1 get `Disagree` integrity events and index 2 gets `Forfeit`. In a 3-participant `Majority` match where two participants report the same `result` and one a different `result`, only that one gets a `Disagree` integrity event
+- When `replay_match` throws in the final decision of job `matchmaker_sweep`, the match is `MISMATCH` and an `error` log is left
 - The match record has `data_version` and `client_version` of the participant connections. A `ServerReplay` match whose `data_version` differs from the server's `client_data_version` does not call `replay_match` and is `MISMATCH` even when all participants report the same `input_log`
 - A `Consensus` match where all participants reported the same `result` that violates the `(ogw.v)` declarations is `MISMATCH`, and `apply_match_result` is not called. A `ServerReplay` match with the same `input_log` that violates the declarations does not call `replay_match` and is `MISMATCH`
-- A match not judged by `deadline_at` becomes `MISMATCH`
-- `ReportMatchResult` of a `PENDING` match with `deadline_at` ≤ `clock_now` that job `matchmaker_sweep` has not judged yet does not save the report and returns `MISMATCH`, and `apply_match_mismatch` is called once for each participant. Job `matchmaker_sweep` that runs later does not judge that record again
+- A match without reports not judged by `deadline_at` becomes `MISMATCH`
+- `ReportMatchResult` of a `PENDING` match without saved reports with `deadline_at` ≤ `clock_now` that job `matchmaker_sweep` has not judged yet does not save the report and returns `MISMATCH`, and `apply_match_mismatch` is called once for each participant. Job `matchmaker_sweep` that runs later does not judge that record again
 - A match that does not exist, a user who is not a participant, and the second report of the same user each get their `CoreError`. A report after the judgement gets the judgement result without apply
 - When two participants report concurrently, the judgement and the apply happen once per participant
 - An apply `FAILED` is retried at the retry intervals, continues after a restart, and gives up after the maximum attempts. A participant who is a withdrawn user is not applied. After `FAILED`, the `applies` item of that index has `attempts` increased by 1, `next_attempt_at` equal to `clock_now` + g(`attempts`), and `last_failure` equal to `FAILED`. The error log is left at the first failure and at give-up, and not while `FAILED` continues
@@ -375,8 +430,12 @@ reserved ID, reserved string, reserved sound: none
 - A `match_mode` row violation, and a missing `replay_match` when a `ServerReplay` row exists, block server start
 - With settings where `matchmaker.roomCodeAlphabet` is empty or contains lowercase letters or duplicate characters, or where `matchmaker.roomCodeLength` is 0, the server does not start in each case
 - A `match_mode` row whose `allow_queue` and `allow_room` are both `false` blocks server start
-- In a 2-participant `Consensus` match, when one participant does `MATCH_LEAVE` and does not report, the match is `MISMATCH` after `deadline_at`, and in the `participants` that the two `apply_match_mismatch` calls received, the index that left has `left_at` not 0 and `reported_at` 0, and the remaining index has `reported_at` and `result`
-- When 2 participants report different `result` values, `MISMATCH`, and `participants` has the two `result` values
+- In a 2-participant `Consensus` match, when one participant does `MATCH_LEAVE` with `forfeit` `true` and does not report and the other reports, the match is `FORFEIT` before `deadline_at`, and in the `participants` that the two `apply_match_forfeit` calls received, the index that left has `left_at` not 0 and `reported_at` 0, and the remaining index has `reported_at` and `result`
+- When 2 participants report different `result` values, `MISMATCH`, `participants` has the two `result` values, and both participants get a `Disagree` integrity event
+- With `matchmaker.flagDisagreeCount` 2, after the second `Disagree` integrity event of a user within `matchmaker.flagWindowMs`, `list_match_flags`(`Disagree`) returns that user with `count` 2 and the two `match_id` values in order of `at`, and one `security` log with `reason` `match_integrity_flag` is left. A third event in the window leaves no second log. In another run with two events at t1 < t2, the user is not returned when the test clock is t1 + `matchmaker.flagWindowMs`. The same holds for `Forfeit` with `matchmaker.flagForfeitCount` and for `Missing` with `matchmaker.flagMissingCount`
+- `list_match_flags` with `limit` 1 returns the flagged user with the smallest user ID, and with that user ID as `after_user_id` the next flagged user. A `limit` outside the body rules of `admin-api` is `bad_request`
+- `get_match` of a `MISMATCH` match returns the `result` and `input_log` of both reports, the leave and disconnect times and the `integrity` of each participant. The record of a match with an integrity event is kept after every index is marked until the larger of `matchmaker.recordRetentionMs` and `matchmaker.flagWindowMs` passes, a record without one until `matchmaker.recordRetentionMs` passes, and `get_match` after the expiry cleanup is `not_found`
+- `admin-api.export_personal_data` of a user holds the integrity events of that user
 - `disconnected_at` of a participant whose matchmaker connection closed is not 0, and 0 after `MATCH_REJOIN`. A close after the judgement does not change the record
 - When the connection of a participant closes after matching collected its entry and before `open_match_session`, including a close by a new connection of that user, the other participants get `PEER_LEFT` of that index, `disconnected_at` of that index is written before `MATCH_FOUND`, a `PEER_SIGNAL` to that index is dropped, and the new connection gets no `MATCH_FOUND`
 - When the write of a `DISCONNECTED` waits for the match record row lock and the `REJOINED` of that index is returned during that wait, `disconnected_at` of that index is 0 after both writes

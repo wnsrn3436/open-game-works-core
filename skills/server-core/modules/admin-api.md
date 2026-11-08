@@ -82,6 +82,7 @@ Admin operations that other modules export and `routing` passes with `register_a
 | `iap` | `revoke_test_grant` | `economy` |
 | `block-report` | `list_reports` | `read` |
 | `block-report` | `resolve_report` | `ops` |
+| `matchmaker` | `list_match_flags`, `get_match` | `read` |
 | `guild` | `get_guild` | `read` |
 | `guild` | `rename_guild`, `set_guild_description`, `set_guild_member_role`, `kick_guild_member`, `disband_guild`, `import_guild` | `ops` |
 | `chat` | `list_chat_messages` | `read` |

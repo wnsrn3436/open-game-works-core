@@ -37,7 +37,7 @@ Gives connection information (STUN, relay) so that match participants make P2P c
 - `TransportRelay`(base proto message): `string url`, `string username`, `string credential`, `int64 expires_at`
 - `TransportKind`(base proto enum): `P2P`
 - `expires_at`(match session): `start_at` + `max_duration`
-- participant change: `match_id`, `index`, `kind`. `kind` is `LEFT` (left the session by `MATCH_LEAVE`, or left the previous session because the connection was bound to a new session), `DISCONNECTED` (left the session because the connection closed) or `REJOINED` (bound again by `MATCH_REJOIN`)
+- participant change: `match_id`, `index`, `kind`. `kind` is `LEFT` (left the session by `MATCH_LEAVE` with `forfeit` `true`, or left the previous session because the connection was bound to a new session), `ENDED` (left the session by `MATCH_LEAVE` with `forfeit` `false`), `DISCONNECTED` (left the session because the connection closed) or `REJOINED` (bound again by `MATCH_REJOIN`). `matchmaker` judges a participant with `LEFT` and without a report as a forfeiter, so `LEFT` comes only from that participant's own connection
 
 ### frame
 
@@ -53,12 +53,12 @@ Of the `MatchmakerFrame` of `matchmaker`, this module handles `PEER_SIGNAL`, `MA
   - `stun_urls` is `p2p-signaling.stunUrls`. In LOCAL it is an empty list
   - `relays` are the short-lived credentials that the `turn` adapter issues per match. `expires_at` is `start_at` + `max_duration`
   - When the adapter call takes more than `p2p-signaling.turnTimeoutMs` or fails, empties `relays` and leaves a `warn` log. Match creation continues
-- The transport touches the messages of `realtime.proto`, the matching of `matchmaker` and the match result judgement only through the five operations of this module (`prepare_transport`, `open_match_session`, `handle_frame`, `connection_closed`, `is_bound`). So replacing it with a module of another `TransportKind` does not change those three
+- The transport touches the messages of `realtime.proto`, the matching of `matchmaker` and the match result judgement only through the five operations of this module (`prepare_transport`, `open_match_session`, `handle_frame`, `connection_closed`, `is_bound`). The match result judgement reads only the reports of `ReportMatchResult` and the participant changes these operations return. So replacing it with a module of another `TransportKind` that returns the same participant changes does not change those three
 
 ### match session
 
 - A match session holds the signaling state of one match. Keeps `match_id`, `players`, the bound connection or none per index, the set of left indices, `Transport` and `expires_at` in the memory of the server instance. A restart clears it
-- left index: the index of a participant who left the session by `MATCH_LEAVE`, or whose connection was bound to a new session and so left the session. It stays a left index until the session is deleted
+- left index: the index of a participant who left the session by `MATCH_LEAVE` (either `forfeit` value), or whose connection was bound to a new session and so left the session. It stays a left index until the session is deleted
 - `open_match_session` binds each participant's connection to that participant's index
 - One connection is bound to only one match session. Binding a connection already bound to another session to a new session is handled the same as that user sending `MATCH_LEAVE` to the previous session: removes it from the previous session and sends `PEER_LEFT` to the other bound participants of the previous session. `open_match_session` returns a `LEFT` participant change of the previous session for each connection removed that way
 - Job `p2p_session_sweep` (interval `p2p-signaling.sweepIntervalMs`), which p2p-signaling sets with `server-time.schedule_job` at server start, deletes sessions without a bound connection and sessions with `expires_at` ≤ `clock_now`
@@ -76,7 +76,7 @@ When sending, replaces `index` with the sending participant's index. `payload` s
 
 ### leave and rejoin
 
-- `MATCH_LEAVE`: when the sending connection is bound to the session of that `match_id`, removes it and sends `PEER_LEFT` to the other bound participants. Otherwise drops the frame
+- `MATCH_LEAVE`: when the sending connection is bound to the session of that `match_id`, removes it, sends `PEER_LEFT` to the other bound participants and returns the participant change `LEFT` when `forfeit` is `true` and `ENDED` when it is `false`. Otherwise drops the frame
 - `connection_closed`: removes the connection from the session it is bound to. Sends `PEER_LEFT` to the other bound participants
 - `MATCH_REJOIN`: when all of the below hold, binds the sending connection to that user's index (another connection bound to that index is removed from the session without `PEER_LEFT`), sends `MATCH_REJOINED` (`match_id` is the `match_id` of the request, `ok` `true`, `my_index` is that user's index, `players` is the session's `players`, `transport` is the session's `Transport`, `left_indices` is the list of the session's left indices in ascending order) to the sending connection, and sends `PEER_REJOINED` to the other bound participants
   - a session of that `match_id` exists
@@ -153,4 +153,4 @@ none
 - When the `turn` adapter fails or takes more than `p2p-signaling.turnTimeoutMs`, `prepare_transport` returns a `Transport` with empty `relays` and leaves a `warn` log
 - When `environments.<ENV>.adapters.turn` is `null`, `prepare_transport` does not call the adapter, returns a `Transport` with empty `relays` and leaves no log
 - A session that all participants left and a session past its `expires_at` are deleted
-- `MATCH_LEAVE`, a connection close and a successful `MATCH_REJOIN` return a `LEFT`, `DISCONNECTED` and `REJOINED` participant change respectively, and a connection not bound to a session returns none
+- `MATCH_LEAVE` with `forfeit` `true`, `MATCH_LEAVE` with `forfeit` `false`, a connection close and a successful `MATCH_REJOIN` return a `LEFT`, `ENDED`, `DISCONNECTED` and `REJOINED` participant change respectively, and a connection not bound to a session returns none. After `MATCH_LEAVE` of either `forfeit` value, `MATCH_REJOIN` of that participant is `ok` `false` and its index is in `left_indices` of a later `MATCH_REJOINED` of another participant

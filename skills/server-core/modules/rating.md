@@ -14,7 +14,7 @@
 
 ## purpose
 
-Stores a user's rating per rating rule defined in data, updates it with an Elo calculation from judged match results, and decides the tier from the rating. When the season of a `ranking` board changes, does a soft reset and sends the tier reward of the past season by `mailbox`.
+Stores a user's rating per rating rule defined in data, updates it with an Elo calculation from judged match results and forfeits, leaves it unchanged for a void match, and decides the tier from the rating. When the season of a `ranking` board changes, does a soft reset and sends the tier reward of the past season by `mailbox`.
 
 ## dependency
 
@@ -31,13 +31,14 @@ Stores a user's rating per rating rule defined in data, updates it with an Elo c
 |---|---|---|---|---|
 | `RefreshRating` (core rpc, `silent`, `retry`). changes: `MailUserState`, `RatingUserState` | none | empty response | none | `routing`. Client content code sends it |
 | `get_rating` | ctx, rule ID value | `RatingView` | Throws when the rule ID value is not in `rating_rule` | content handler, hook, `matchmaker` |
-| `apply_match_outcome` | ctx, match record from `matchmaker`, participant index, match rank list (integers in participant index order) | `result` (`RatingResult.OK`), `change` (`RatingChange`) | failure element of `RatingResult` | content handler, hook |
+| `apply_match_outcome` | ctx, match record from `matchmaker`, participant index, match rank list (integers in participant index order. The empty list for a `FORFEIT` match) | `result` (`RatingResult.OK`), `change` (`RatingChange`) | failure element of `RatingResult` | content handler, hook |
 
 - rule ID value: an ID value of the `rating_rule` table
 - `RatingView`: `rating`, `tier_id` (tier ID value. 0 when there is no tier), `season`, `season_games`, `placement` (`true` when `season_games` < `placement_matches`)
 - `RatingChange`: `before`, `after` (the rating before and after applying), `tier_before`, `tier_after`
 - match rank: the participant's rank in the match. Smaller is ahead, and equal is a draw. e.g. for a 1v1 win and loss, the winning participant is 0 and the losing participant is 1
-- match record: the match record input that the `matchmaker` hooks `apply_match_result` and `apply_match_mismatch` received. `rating` reads its `mode_id`, `user_ids`, `ratings` and `teams`. The number of participants is the number of `user_ids`
+- match record: the match record input that the `matchmaker` hooks `apply_match_result`, `apply_match_forfeit` and `apply_match_mismatch` received. `rating` reads its `mode_id`, `status`, `user_ids`, `ratings`, `teams` and `participants`. The number of participants is the number of `user_ids`
+- forfeiter: a forfeiter of `### result decision` of [`matchmaker`](matchmaker.md), read from `participants`
 
 `RatingResult`
 
@@ -45,7 +46,8 @@ Stores a user's rating per rating rule defined in data, updates it with an Elo c
 |---|---|
 | `OK` | Applied |
 | `NO_RATING` | The `rating_rule` of the `match_mode` row that is the `mode_id` of the match record is `null` |
-| `INVALID_INPUT` | The participant index is outside the number of participants, or the ctx user is not the user of that index, or the number of match ranks differs from the number of participants, or there is a negative match rank |
+| `INVALID_INPUT` | The participant index is outside the number of participants, or the ctx user is not the user of that index, or `status` is `CONFIRMED` and the number of match ranks differs from the number of participants, or `status` is `FORFEIT` and the match rank list is not empty, or `status` is `PENDING`, or there is a negative match rank |
+| `VOID` | `status` of the match record is `MISMATCH`: the match is void, and the rating does not change |
 
 ## behavior
 
@@ -74,17 +76,18 @@ When a row is read and its `season` differs from the current season, it is read 
 
 ### match outcome
 
-`apply_match_outcome` processing order. On `INVALID_INPUT` or `NO_RATING`, changes nothing.
+`apply_match_outcome` processing order. On `INVALID_INPUT`, `NO_RATING` or `VOID`, changes nothing.
 
-1. `INVALID_INPUT` when the input meets an `INVALID_INPUT` condition. The rule is the `rating_rule` of the `match_mode` row of the match record's `mode_id`; when it is `null`, `NO_RATING`
+1. `INVALID_INPUT` when the input meets an `INVALID_INPUT` condition. The rule is the `rating_rule` of the `match_mode` row of the match record's `mode_id`; when it is `null`, `NO_RATING`. When `status` is `MISMATCH`, `VOID`
 2. Reads the ctx user's row with settle applied
-3. opponents: when `team_size` of `match_mode` is 0, all participants except that participant; otherwise, the participants whose team in the match record's `teams` differs from that participant's. Let m be the number of opponents. When m is 0, does not change the rating and skips 4 and 5
-4. For each opponent j, S is 1000 when that participant's match rank is less than j's, 500 when equal, and 0 when greater. E is 1000 ÷ (1 + 10^((R_j − R_i) ÷ `scale`)) calculated as a 64-bit float and rounded to the nearest integer. 0.5 rounds up. R is the value at that index of the match record's `ratings`. Floating-point calculation is used only for E
+3. opponents: when `team_size` of `match_mode` is 0, all participants except that participant; otherwise, the participants whose team in the match record's `teams` differs from that participant's. When `status` is `FORFEIT`, only the opponents whose outcome against that participant is known stay: for a forfeiter, its opponents that are not forfeiters, and for another participant, its opponents that are forfeiters. Let m be the number of opponents. When m is 0, does not change the rating and skips 4 and 5
+4. For each opponent j, S is, when `status` is `CONFIRMED`, 1000 when that participant's match rank is less than j's, 500 when equal, and 0 when greater, and when `status` is `FORFEIT`, 0 for a forfeiter and 1000 for another participant. E is 1000 ÷ (1 + 10^((R_j − R_i) ÷ `scale`)) calculated as a 64-bit float and rounded to the nearest integer. 0.5 rounds up. R is the value at that index of the match record's `ratings`. Floating-point calculation is used only for E
 5. K is `placement_k_factor` when `season_games` < `placement_matches`, and `k_factor` otherwise. Σ is the sum of S − E over the opponents. Δ = `validation.floor_div`(2 × K × Σ + 1000 × m, 2000 × m). The new rating is the current rating + Δ; when it is less than `min_rating`, it is `min_rating`
 6. Adds 1 each to `season_games` and `total_games`, sets `tier_id` to the tier of the new rating and writes the row
 
 - Δ is calculated from the match record's `ratings` (the ratings when the match was made), so it is the same regardless of the order in which the participants are applied. `matchmaker` guarantees that apply happens once per participant
-- Content code calls it inside `matchmaker.apply_match_result` and `apply_match_mismatch`. Content code decides the match rank from `MatchResult` and the match record's `participants`
+- Content code calls it inside `matchmaker.apply_match_result` and `matchmaker.apply_match_forfeit`. In `apply_match_result`, content code decides the match rank from `MatchResult` and the match record's `participants`. In `apply_match_forfeit` it passes the empty list, so the forfeit outcome comes from the server-observed forfeiters and not from a report
+- A rating changes only through the judgement of `matchmaker`: from reports that agree (`CONFIRMED`) or from forfeiters (`FORFEIT`). `VOID` keeps a match that the server could not decide from changing it
 
 ## hook
 
@@ -101,6 +104,7 @@ none
 | `get_rating` with a rule ID value not in `rating_rule` | throw | `INTERNAL` | `error` log by `routing` |
 | input error in `apply_match_outcome` | `INVALID_INPUT` | set by content | `error` log |
 | `apply_match_outcome` for a match mode whose `rating_rule` is `null` | `NO_RATING` | set by content | `error` log |
+| `apply_match_outcome` for a match record whose `status` is `MISMATCH` | `VOID` | set by content | none |
 | `INVALID_INPUT` from season reward `send_mail` | throw | `INTERNAL` | error rule of `mailbox` |
 | failure of `validation.apply_permille` in step 2 of season settle | throw | `INTERNAL` | `error` log by `routing` |
 | a `rating_tier` row whose `season_reward` has more elements than `mailbox.maxAttachments` | server start failure | none | `error` log |
@@ -186,6 +190,9 @@ reserved ID, reserved string, reserved sound: none
 - For a row whose `season_games` before settle is less than `reward_min_games`, `RefreshRating` writes settle and does not send the season reward mail. When it equals `reward_min_games`, it sends it. The next season's settle of a row made with `set_rating` without matches (`season_games` 0) does not send the reward
 - A rule whose `season_board` is `null` has no settle
 - `INVALID_INPUT` and `NO_RATING` do not change the row
+- `apply_match_outcome` with a match record whose `status` is `MISMATCH` returns `VOID` for every participant, does not change the row and leaves no log
+- In a 1v1 `FORFEIT` match of two participants with the same rating, `apply_match_outcome` with the empty match rank list gives the participant that is not a forfeiter Δ = `validation.floor_div`(2 × K × 500 + 1000, 2000) and the forfeiter Δ = `floor_div`(−2 × K × 500 + 1000, 2000). A non-empty match rank list in a `FORFEIT` match and an empty one in a `CONFIRMED` match are `INVALID_INPUT`
+- In a 3-participant `FORFEIT` match with `team_size` 0 and one forfeiter, m is 2 for the forfeiter and 1 for each other participant, whose only opponent is the forfeiter
 - A `rating_tier` row whose `season_reward` has more elements than `mailbox.maxAttachments` fails server start
 - A row that violates another rule of `rating_rule` or `rating_tier` is data check `out_of_range`, `duplicate` or `empty_required`
 - The change made by `apply_match_outcome` called inside `matchmaker.apply_match_result` goes as a pending delta to participants other than the reporter
