@@ -373,6 +373,7 @@ describe('the movie and test screen of the flash check', () => {
     expect((await readRecord(instance.id, runner.ws.env)).plan).toMatchObject({ movie: { file, resolution: [393, 852], fps: 30 }, testScreen });
     const args = runner.clientArgs('main');
     expect(args.slice(0, args.indexOf('--'))).toEqual(expect.arrayContaining(['--resolution', '393x852', '--write-movie', file, '--fixed-fps', '30']));
+    expect(JSON.parse(readFileSync(join(runner.logDir, 'main.values.json'), 'utf8'))).toMatchObject({ OGW_FRAME_STEP_FPS: '30' });
     await restartClient(ctx(), instance.id);
     const all: string[][] = [[]];
     for (const line of runner.requests('main').slice(from).map((r) => [r.command, ...r.args].join(' '))) {

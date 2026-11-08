@@ -56,6 +56,7 @@ describe('ogw video', () => {
     expect(readFileSync(path, 'utf8')).toBe('mp4');
     const main = JSON.parse(readFileSync(join(runner.logDir, 'main.args.json'), 'utf8')) as string[];
     expect(main).toEqual(expect.arrayContaining(['--write-movie', '--fixed-fps', '60', '--resolution', '1280x720']));
+    expect(JSON.parse(readFileSync(join(runner.logDir, 'main.values.json'), 'utf8'))).toMatchObject({ OGW_FRAME_STEP_FPS: '60' });
     const commands = readFileSync(join(runner.logDir, 'main.jsonl'), 'utf8').trim().split('\n').map((l) => (JSON.parse(l) as { command: string }).command);
     // the language, then the bot; not the setup or save steps of the scenario
     expect(commands).toContain('set_language');

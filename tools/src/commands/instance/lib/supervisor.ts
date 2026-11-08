@@ -18,6 +18,7 @@ import {
   clientLaunch,
   freePort,
   launchValueFileContent,
+  movieFps,
   newLocalSecrets,
   populateLaunch,
   serverLaunch,
@@ -462,9 +463,11 @@ export class Supervisor {
         OGW_DEV_ACCESS: secrets.devAccess,
         OGW_PLATFORM: this.record.platform,
       };
+      const movie = client.name === 'main' ? (this.plan.movie ?? null) : null;
+      if (movie !== null) values.OGW_FRAME_STEP_FPS = movieFps(movie);
       const valueFile = join(this.folder, `${client.name}.launch-values.json`);
       writeSecretFile(valueFile, launchValueFileContent(values));
-      this.spawn(client.name, clientLaunch(this.plan, this.record.root, client.headless, valueFile, client.name === 'main' ? (this.plan.movie ?? null) : null));
+      this.spawn(client.name, clientLaunch(this.plan, this.record.root, client.headless, valueFile, movie));
     }
     await Promise.all(clients.map(async (client) => {
       try {

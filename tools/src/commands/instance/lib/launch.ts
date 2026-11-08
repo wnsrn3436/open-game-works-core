@@ -164,6 +164,8 @@ export interface LaunchValues {
   OGW_DEV_ACCOUNT: string;
   OGW_DEV_ACCESS: string;
   OGW_PLATFORM: string;
+  /** The fps of the movie maker of a client that it records (`## runner` flash recording, `## video`): the frame step of TimeCore. */
+  OGW_FRAME_STEP_FPS?: string;
 }
 
 /** The launch value file of a client (client-core engines/godot): the launch values that are not empty. */
@@ -173,6 +175,11 @@ export function launchValueFileContent(values: LaunchValues): Record<string, str
 
 /** Frame rate of a movie maker recording: each frame advances the game by 1 / it seconds, however long it took to draw. */
 export const MOVIE_FPS = 60;
+
+/** The fps that the movie maker of `movie` records at; the client gets it both as `--fixed-fps` and as the launch value `OGW_FRAME_STEP_FPS`. */
+export function movieFps(movie: { fps?: number }): string {
+  return String(movie.fps ?? MOVIE_FPS);
+}
 
 /** Godot dev run of one client: `godot --path client` with the renderer and the launch value file; with `movie`, Godot's movie maker records it. */
 export function clientLaunch(
@@ -186,7 +193,7 @@ export function clientLaunch(
   const args = ['--path', join(root, 'client'), '--rendering-method', plan.renderingMethod];
   if (headless) args.push('--headless');
   if (movie !== null) {
-    const fps = String(movie.fps ?? MOVIE_FPS);
+    const fps = movieFps(movie);
     args.push('--resolution', `${String(movie.resolution[0])}x${String(movie.resolution[1])}`, '--write-movie', movie.file, '--fixed-fps', fps);
   }
   args.push('--', `--launch-values=${launchValueFile}`);
