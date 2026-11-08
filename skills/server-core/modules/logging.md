@@ -186,7 +186,7 @@ A server instance keeps the metric families below from its server start. `routin
 
 | metric | type | label | value |
 |---|---|---|---|
-| `ogw_requests_total` | counter | `request`, `error_code` | number of `request` log lines that `write` wrote. `request` is the `request` field of the line, or the empty string when it is null, and `error_code` is the decimal `error_code` of the line |
+| `ogw_requests_total` | counter | `request`, `error_code` | number of `request` log lines that `write` wrote. `request` is the `request` field of the line, `cheat` when that field starts with `cheat/` or `core/cheat/` (the cheat name comes from the URL that the client chose, so the label keeps a bounded number of values), or the empty string when it is null, and `error_code` is the decimal `error_code` of the line |
 | `ogw_request_duration_seconds` | histogram | `request` | `duration_ms` ÷ 1000 of the same lines. The upper bounds of the buckets are the distinct values of `logging.metricsDurationBucketsMs` in ascending order, each ÷ 1000, and `+Inf` |
 | `ogw_log_lines_total` | counter | `kind`, `level` | number of server log lines written, per `kind` and level, summary lines of job `logging_security_flush` included |
 | `ogw_db_sync_calls_total` | counter | none | `sync_calls` of `storage.read_db_metrics` |
@@ -197,7 +197,7 @@ A server instance keeps the metric families below from its server start. `routin
 
 - The samples of a histogram are, per label set, `<name>_bucket` with label `le` (the upper bound written in decimal; the count of values at or below it), `<name>_sum` and `<name>_count`. Counters and gauges have one sample per label set, named as the family
 - `read_metrics` calls `storage.read_db_metrics` once and judges the alert signals at the `server-time.clock_now` of that call. In `ogw_requests_total`, `ogw_request_duration_seconds` and `ogw_log_lines_total`, which count log lines, a label set that has no line yet has no sample. The other families have their samples in every output: `ogw_db_failures_total` one per `kind` `lock` and `connection`, and `ogw_alert_firing` one per alert signal
-- Label values are only the values that the table writes: a request name or admin operation name, an error code, a `kind`, a level, a DB failure kind, an alert signal name. A label holds no user ID, IP, token, secret or request content
+- Label values are only the values that the table writes: a request name or admin operation name, `cheat`, an error code, a `kind`, a level, a DB failure kind, an alert signal name. A label holds no user ID, IP, token, secret or request content
 - TypeScript form of the output of `read_metrics`: an array of `{name: string, type: 'counter' | 'gauge' | 'histogram', samples: {name: string, labels: Record<string, string>, value: number}[]}`
 
 ### alert signal
