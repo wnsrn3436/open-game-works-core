@@ -335,6 +335,12 @@ describe('ogw core test godot', () => {
     const jobs = (await listJobs(env)).length;
     const web = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--web', '--file', 'test_one.gd', '--background'], { env });
     expect(web).toEqual({ code: 1, stdout: '', stderr: '--file is for server and a native engine run, not godot --web: ogw core test godot UICore --file test_one.gd runs that file\n' });
+    // a value that is not one shell word as it is: the printed command gives the shell the same arguments
+    const value = `${ws.coreImpl}/My Work's $HOME;/test_one.gd`;
+    const spaced = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--web', '--file', value, '--background'], { env });
+    const printed = /not godot --web: (.*) runs that file\n$/.exec(spaced.stderr)?.[1] ?? '';
+    expect(printed).toBe(`ogw core test godot UICore --file '${ws.coreImpl}/My Work'\\''s $HOME;/test_one.gd'`);
+    expect(sh(ws.root, 'sh', ['-c', `printf '%s\\n' ${printed}`]).trimEnd().split('\n')).toEqual(['ogw', 'core', 'test', 'godot', 'UICore', '--file', value]);
     const missing = await ogw(ws, ['core', 'test', 'godot', 'UICore', '--file', 'test_two.gd', '--background'], { env });
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain('--file must be a .gd file in client/godot/core/ui_core/tests/ of UICore: test_two.gd');

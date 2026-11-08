@@ -1,11 +1,14 @@
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coreTryChecks } from '../../../src/commands/check/api.ts';
 import { snapshot, withStagedWorktree } from '../../../src/commands/check/static/generated-diff.ts';
 import { StaticContext } from '../../../src/commands/check/static/lib/context.ts';
+import { coreReleaseOfGame } from '../../../src/commands/core/api.ts';
 import { generateCheckout } from '../../../src/commands/generate/api.ts';
+import type { StepLine } from '../../../src/lib/spans.ts';
 import { ogw, makeGame, makeWorkspace, sh } from '../../helpers/workspace.ts';
+import { writeJob } from '../job/helpers.ts';
 
 vi.mock('../../../src/commands/generate/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/generate/api.ts')>()),
@@ -15,12 +18,17 @@ vi.mock('../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/commands/check/api.ts')>()),
   coreTryChecks: vi.fn(),
 }));
+vi.mock('../../../src/commands/core/api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/commands/core/api.ts')>()),
+  coreReleaseOfGame: vi.fn(),
+}));
 
 const pass = (name: string): { name: string; platform: null; result: 'pass'; failures: never[]; warnings: never[] } => ({ name, platform: null, result: 'pass', failures: [], warnings: [] });
 
 beforeEach(() => {
   vi.mocked(generateCheckout).mockReset().mockResolvedValue({ written: [], removed: [] });
   vi.mocked(coreTryChecks).mockReset();
+  vi.mocked(coreReleaseOfGame).mockReset().mockResolvedValue({ version: '1.0.0', dir: '/local-core', local: true });
 });
 
 describe('ogw core try', () => {
@@ -78,6 +86,30 @@ describe('ogw core try', () => {
     ]]);
     expect(readdirSync(join(ws.worktrees, 'g'))).toEqual([]);
     expect(sh(dir, 'git', ['status', '--porcelain']).trim()).toBe('');
+  });
+
+  it('names its steps apart from the steps of other commands, with the local core build a step of its own before the generation', async () => {
+    const ws = makeWorkspace();
+    makeGame(ws, 'g', { 'settings.json': { coreVersion: '1.0.0' } });
+    const jobs = join(ws.root, 'jobs');
+    mkdirSync(jobs);
+    writeJob(jobs, { id: 'tj1', command: 'core try', game: 'g' });
+    const built: boolean[] = [];
+    vi.mocked(coreReleaseOfGame).mockImplementation(async (ctx) => {
+      built.push((await ctx.settings()).useLocalCore);
+      return { version: '1.0.0', dir: '/local-core', local: true };
+    });
+    vi.mocked(coreTryChecks).mockResolvedValue({ checks: [pass('static check')], lines: ['static check: pass'] });
+    expect((await ogw(ws, ['core', 'try', 'g'], { env: { ...ws.env, OGW_JOBS_DIR: jobs, OGW_JOB_ID: 'tj1' } })).code).toBe(0);
+    expect(built).toEqual([true]);
+    const steps = readFileSync(join(jobs, 'tj1.spans.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as StepLine);
+    expect(steps.filter((line) => line.end !== null && line.parent === null).map((line) => line.name)).toEqual([
+      'core try worktree',
+      'local core build',
+      'core try generate',
+      'core try checks',
+      'core try remove worktree',
+    ]);
   });
 
   it('exits 0 when no check fails, and removes the worktree when a step throws', async () => {

@@ -179,7 +179,10 @@ export async function gameChecks(
   // `client/.godot/` (each instance start then fails on its own import); the regression test and the type check report
   // it and do not import again. The static check waits for it too, as the import may write files beside the scripts and
   // assets of `client/`, which the static check lists. An import that throws fails the check once the work started ends.
-  const importing = span('import', () => importClient(ctx, options.godot, game));
+  // Its step is named apart from the `import` of an instance start, which skips once `client/.godot/` exists, and in
+  // `ogw core try`, whose fresh worktree has no import yet, apart from that of the checkouts of `ogw check`: `outlier`
+  // of `ogw time` compares a step only with the earlier steps of its name (ogw.md `## time`).
+  const importing = span(set === 'core try' ? 'core try import' : 'check import', () => importClient(ctx, options.godot, game));
   const settled = importing.then(
     (importFailure): { imported: true } | { importFailure: string } => (importFailure === null ? { imported: true } : { importFailure }),
     (error: unknown) => ({ error }),

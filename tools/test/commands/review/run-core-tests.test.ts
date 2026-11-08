@@ -1,16 +1,20 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { jobsDir, listJobs } from '../../../src/lib/jobs.ts';
 import type * as Jobs from '../../../src/lib/jobs.ts';
+import type { StepLine } from '../../../src/lib/spans.ts';
 import { ogw, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
+import { writeJob } from '../job/helpers.ts';
 import { agents, coreSpec, finding, GOOD_FIX, implementServer, reviewFile, spec, toolsChange } from './helpers.ts';
 
 /**
  * The `ogw core test` jobs of `ogw review run`, faked in this process: after the fix (in the core main checkout)
  * `routing` passes and `mailbox` fails, or the next of `mainOutputs` is the output; before the fix (in another checkout)
  * `mailbox` fails when `failsBeforeFix`, or when that checkout has the file `brokenBy`. Each run records its argv, its
- * checkout, that checkout's HEAD and the number of rounds in the review state of `routing` when it started.
+ * checkout, that checkout's HEAD, the number of rounds in the review state of `routing` when it started and the step
+ * span it started in.
  */
 const fake = vi.hoisted(() => ({
   coreImpl: '',
@@ -22,12 +26,13 @@ const fake = vi.hoisted(() => ({
   errorAtRun: null as number | null,
   /** The outputs of the next core test runs in the core main checkout, in order; exit code 1 unless every module passes. */
   mainOutputs: [] as { modules: Record<string, string>; failures: Record<string, string[]>; unknown?: Record<string, string> }[],
-  runs: [] as { argv: string[]; cwd: string; head: string; rounds: number }[],
+  runs: [] as { argv: string[]; cwd: string; head: string; rounds: number; span: string | null }[],
   results: new Map<string, Jobs.WaitResult>(),
 }));
 
 vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
   const original = await importOriginal<typeof Jobs>();
+  const { spanContext } = await import('../../../src/lib/spans.ts');
   /** The number of rounds in the review state of `routing`. */
   const rounds = (): number => {
     const state = join(fake.coreImpl, '.git', 'ogw-review', 'routing', 'state.json');
@@ -57,7 +62,7 @@ vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
         fake.landsBeforeTest = null;
       }
       const head = execFileSync('git', ['-C', options.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-      fake.runs.push({ argv: options.argv, cwd: options.cwd, head, rounds: rounds() });
+      fake.runs.push({ argv: options.argv, cwd: options.cwd, head, rounds: rounds(), span: spanContext()?.span ?? null });
       const { stdout, exitCode } = output(options.cwd, fake.runs.length - 1);
       fake.results.set(id, { job: { id, status: 'done', exitCode } as Jobs.JobRecord, finished: true, stdout, stderr: '' });
       return Promise.resolve(id);
@@ -118,6 +123,26 @@ describe('ogw review run: core tests of the dependents after a fix', () => {
     expect(before?.head).toBe(beforeMerge(ws));
     expect(before?.cwd.startsWith(join(ws.worktrees, '_core', 'before-'))).toBe(true);
     expect(existsSync(before?.cwd as string)).toBe(false);
+  });
+
+  it('starts the jobs of a step in the step span that waits for them, through a fix round to the next round', async () => {
+    const ws = workspace(false);
+    fake.mainOutputs = [{ modules: { routing: 'pass', mailbox: 'pass' }, failures: {} }];
+    const jobs = await jobsDir(ws.env);
+    mkdirSync(jobs, { recursive: true });
+    writeJob(jobs, { id: 'rs1', command: 'review run', argv: ['review', 'run', 'core', 'routing'] });
+    const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: { ...agents(ws, FILES, GOOD_FIX).env, OGW_JOB_ID: 'rs1' } });
+    expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
+    const steps = readFileSync(join(jobs, 'rs1.spans.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as StepLine).filter((line) => line.end !== null);
+    const ids = (name: string): string[] => steps.filter((line) => line.name === name).sort((a, b) => a.start - b.start).map((line) => line.id);
+    const children = (await listJobs(ws.env)).filter((job) => job.parentJob === 'rs1').sort((a, b) => a.startedAt - b.startedAt);
+    const spansOf = (pick: (job: Jobs.JobRecord) => boolean): (string | null | undefined)[] => children.filter(pick).map((job) => job.parentSpan);
+    // each round's review agent and code check in its `review round`, the core agent in `fix`, the core tests in `fix core tests`
+    expect(ids('review round')).toHaveLength(2);
+    expect(spansOf((job) => job.command === 'agent' && job.meta.role === 'review')).toEqual(ids('review round'));
+    expect(spansOf((job) => job.command === 'code check')).toEqual(ids('review round'));
+    expect(spansOf((job) => job.command === 'agent' && job.meta.role === 'core')).toEqual(ids('fix'));
+    expect(fake.runs.map((r) => [r.argv, r.span])).toEqual([[AFTER, ids('fix core tests')[0]]]);
   });
 
   it('stops at test fail when the failing dependent passes at main before the fix merge', async () => {

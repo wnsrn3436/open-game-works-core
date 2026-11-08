@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // loop.ts first: loading the original api.ts loads loop.ts, which then would bind the original placeholderFailures
 import { gameChecks, type CheckSet } from '../../../../src/commands/check/lib/loop.ts';
@@ -13,6 +16,7 @@ import type { GameRepo } from '../../../../src/lib/game.ts';
 import type { GameSettings } from '../../../../src/lib/settings.ts';
 import { mergedCoreSettings } from '../../../../src/commands/generate/api.ts';
 import { importClient } from '../../../../src/commands/check/lib/engine.ts';
+import { inJob, type SpanLine, type StepLine } from '../../../../src/lib/spans.ts';
 
 vi.mock('../../../../src/commands/check/api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/api.ts')>()),
@@ -75,6 +79,17 @@ describe('gameChecks', () => {
     expect(placeholderFailures).not.toHaveBeenCalled();
     expect(rowSimulationCheck).not.toHaveBeenCalled();
     expect(vi.mocked(uiQualityCheck).mock.calls.map((c) => c[3].quality)).toEqual([UI_QUALITY, UI_QUALITY]);
+  });
+
+  it('names its import step apart from the import step of an instance start, and in core try apart from that of ogw check', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'ogw-spans-')), 'j.spans.jsonl');
+    await inJob('j', file, async () => {
+      await names('all');
+      await names('core try');
+    });
+    const steps = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as SpanLine);
+    const imports = steps.filter((line): line is StepLine => 'name' in line && line.end !== null && line.name.endsWith('import'));
+    expect(imports.map((line) => line.name)).toEqual(['check import', 'core try import']);
   });
 
   it('measures the performance of every platform profile under one hold of the performance lease of this host', async () => {

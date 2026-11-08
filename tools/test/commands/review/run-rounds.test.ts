@@ -2,8 +2,10 @@ import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from '
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { listJobs, readJob } from '../../../src/lib/jobs.ts';
+import { jobsDir, listJobs, readJob } from '../../../src/lib/jobs.ts';
+import type { StepLine } from '../../../src/lib/spans.ts';
 import { ogw, commitAll, makeWorkspace } from '../../helpers/workspace.ts';
+import { writeJob } from '../job/helpers.ts';
 import { agents, agentsByCall, changeDefinition, commitRange, coreSpec, finding, GOOD_FIX, implementServer, reviewFile, spec, toolsChange } from './helpers.ts';
 
 describe('ogw review run', () => {
@@ -189,9 +191,17 @@ describe('ogw review run', () => {
     await ogw(ws, ['review', 'wait', 'core', 'routing', '--timeout', '120000']);
     const fixInput = join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'round-1-fix.md');
     const job = (await ogw(ws, ['agent', 'core', '--module', 'routing', '--input', fixInput, '--background'], { env: slow.env })).stdout.trim();
-    expect(await ogw(ws, ['review', 'run', 'core', 'routing'], { env: slow.env })).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
+    // run in a job: the wait for the fix job it did not start is a step span of its own in `fix`
+    const jobs = await jobsDir(ws.env);
+    writeJob(jobs, { id: 'rr1', command: 'review run', argv: ['review', 'run', 'core', 'routing'] });
+    expect(await ogw(ws, ['review', 'run', 'core', 'routing'], { env: { ...slow.env, OGW_JOB_ID: 'rr1' } })).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
     expect(slow.calls().filter((call) => call.prompt.includes('round-1-fix.md'))).toHaveLength(1);
     expect(((await readJob(job, ws.env)).meta as { merged: boolean }).merged).toBe(true);
+    const steps = readFileSync(join(jobs, 'rr1.spans.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as StepLine).filter((line) => line.end !== null);
+    const fix = steps.find((line) => line.name === 'fix');
+    const waited = steps.find((line) => line.name === 'wait for jobs');
+    expect(fix).toBeDefined();
+    expect(waited?.parent).toBe(fix?.id);
 
     const merged = makeWorkspace();
     coreSpec(merged, { routing: spec('routing', 'server') });

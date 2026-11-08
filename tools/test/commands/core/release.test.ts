@@ -485,6 +485,62 @@ describe('ogw core release', () => {
     expect(sh(remote, 'git', ['rev-parse', 'v1.2.0^{commit}']).trim()).toBe(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim());
   });
 
+  it('sets main of the core release repository back only while it is the release commit: a commit pushed there meanwhile stays', async () => {
+    const { ws, env } = await setup();
+    const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    const hook = globalThis as { onCreateRelease?: () => Promise<void> };
+    let theirs = '';
+    // after the atomic push of the release commit and the tag, a push from elsewhere onto main
+    hook.onCreateRelease = () => {
+      hook.onCreateRelease = undefined;
+      theirs = commitOnRemoteMain(ws, 'meanwhile');
+      return Promise.resolve();
+    };
+    try {
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env: { ...env, FAKE_GH_FAIL: 'create' } });
+      expect(run.code).toBe(1);
+      const remote = 'https://github.com/wnsrn3436/open-game-works-core-impl.git';
+      expect(run.stderr).toContain(`could not delete the pushed tag v1.2.0 and set main back to ${before} in ${remote}: `);
+      expect(sh(remotePath(ws), 'git', ['rev-parse', 'main']).trim()).toBe(theirs);
+      // one atomic push: the tag stays with main
+      expect(sh(remotePath(ws), 'git', ['tag']).trim()).toBe('v1.2.0');
+      expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
+      expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
+    } finally {
+      hook.onCreateRelease = undefined;
+    }
+  });
+
+  it('does not set main of the core release repository back when the release made no commit', async () => {
+    const { ws, env } = await setup();
+    // no `ogw-` plugin: the release writes no engine.json and makes no commit
+    const engineJson = readJsonFile(join(ws.coreImpl, 'client/godot/engine.json')) as Record<string, unknown>;
+    writeFiles(ws.coreImpl, { 'client/godot/engine.json': { ...engineJson, plugins: [] } });
+    commitAll(ws.coreImpl, 'no plugin');
+    const before = await recordAllPass(ws.coreImpl);
+    const hook = globalThis as { onCreateRelease?: () => Promise<void> };
+    let theirs = '';
+    hook.onCreateRelease = () => {
+      hook.onCreateRelease = undefined;
+      expect(sh(remotePath(ws), 'git', ['rev-parse', 'main', 'v1.2.0^{commit}']).trim().split('\n')).toEqual([before, before]);
+      theirs = commitOnRemoteMain(ws, 'meanwhile');
+      return Promise.resolve();
+    };
+    try {
+      const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env: { ...env, FAKE_GH_FAIL: 'create' } });
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain('gh release create v1.2.0');
+      expect(run.stderr).not.toContain('could not');
+      // the tag is gone, and main keeps the commit pushed there meanwhile
+      expect(sh(remotePath(ws), 'git', ['tag'])).toBe('');
+      expect(sh(remotePath(ws), 'git', ['rev-parse', 'main']).trim()).toBe(theirs);
+      expect(sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim()).toBe(before);
+      expect(sh(ws.coreImpl, 'git', ['tag'])).toBe('v1.1.0\n');
+    } finally {
+      hook.onCreateRelease = undefined;
+    }
+  });
+
   it('keeps the tag and the commit when gh fails after it made the release', async () => {
     const { ws, env, gh } = await setup();
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();

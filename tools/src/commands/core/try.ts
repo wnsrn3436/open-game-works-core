@@ -6,6 +6,7 @@ import { LIMITS } from '../../lib/limits.ts';
 import { span } from '../../lib/spans.ts';
 import { coreTryChecks } from '../check/api.ts';
 import { dataDir } from '../env/lib/host.ts';
+import { coreReleaseOfGame } from './api.ts';
 import { generateCheckout } from '../generate/api.ts';
 
 /**
@@ -24,7 +25,11 @@ function localCoreContext(ctx: Context, cwd: string): Context {
   return { ...inner, settings: async () => ({ ...(await ctx.settings()), useLocalCore: true }) };
 }
 
-/** `ogw core try <game>` (`core` command.md `update core` 4). Changes nothing in the game repo. */
+/**
+ * `ogw core try <game>` (`core` command.md `update core` 4). Changes nothing in the game repo. Its steps have names
+ * that no step of another command has, and the local core is built in a step of its own before the generation that
+ * reads it: `outlier` of `ogw time` compares a step only with the earlier steps of its name (ogw.md `## time`).
+ */
 export const tryCommand: CommandDef = {
   name: ['core', 'try'],
   usage: 'ogw core try <game>',
@@ -40,21 +45,23 @@ export const tryCommand: CommandDef = {
     const evidenceRoot = join(await dataDir(ctx), 'core-try', game.name, id);
     await mkdir(evidenceRoot, { recursive: true });
     const main = (await git(game.mainRoot, ['rev-parse', 'main'], { env: ctx.env })).trim();
-    await span('worktree', () => worktreeAdd(game.mainRoot, worktree, main, undefined, { env: ctx.env }));
+    await span('core try worktree', () => worktreeAdd(game.mainRoot, worktree, main, undefined, { env: ctx.env }));
     try {
       const local = localCoreContext(ctx, worktree);
       const checkout = await local.game(game.name);
-      await span('generate', async () => {
+      // built once per process: the generation and the checks get this build
+      await span('local core build', () => coreReleaseOfGame(local, checkout));
+      await span('core try generate', async () => {
         await generateCheckout(local, checkout);
         // `generated diff` reads HEAD plus the staged changes: staged in the worktree's own index, they are the local-core output
         await git(worktree, ['add', '-A'], { env: ctx.env });
       });
-      const { checks, lines } = await span('checks', () => coreTryChecks(local, checkout, { root: evidenceRoot, dir: '.', relative: false }));
+      const { checks, lines } = await span('core try checks', () => coreTryChecks(local, checkout, { root: evidenceRoot, dir: '.', relative: false }));
       const failed = checks.some((c) => c.result === 'fail');
       const text = [`core try ${game.name} at main ${main.slice(0, 12)} with the local core`, ...lines, `evidence: ${evidenceRoot}`].join('\n');
       return { exitCode: failed ? 1 : 0, text, data: { game: game.name, commit: main, checks, evidence: evidenceRoot } };
     } finally {
-      await span('remove worktree', () => worktreeRemove(game.mainRoot, worktree, { env: ctx.env }));
+      await span('core try remove worktree', () => worktreeRemove(game.mainRoot, worktree, { env: ctx.env }));
     }
   },
 };

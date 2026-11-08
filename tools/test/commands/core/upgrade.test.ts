@@ -470,6 +470,48 @@ describe('ogw core upgrade', () => {
     expect(staticCheckDetail).not.toHaveBeenCalled();
   });
 
+  it('takes out of the index the meta files the sync staged for a source the lead staged, when the commit or the sync fails after staging them', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
+      'client/generated/contract/core_contract.gd': 'old proto',
+      'client/generated/contract/core_contract.gd.uid': 'uid',
+      'client/features/play/play.gd': 'class_name Play\n',
+      'client/features/play/play.gd.uid': 'uid://play',
+      'generated.txt': 'generated 1.0.0',
+    });
+    // the lead agent staged a script with its meta file, and a script whose meta file the sync stages
+    writeFiles(dir, {
+      'client/features/lead/lead.gd': 'class_name Lead\n',
+      'client/features/lead/lead.gd.uid': 'uid://lead',
+      'client/features/other/other.gd': 'class_name Other\n',
+    });
+    sh(dir, 'git', ['add', 'client/features/lead', 'client/features/other']);
+    const env = { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') };
+    const lead = ['A  client/features/lead/lead.gd', 'A  client/features/lead/lead.gd.uid', 'A  client/features/other/other.gd'];
+    // the commit fails after the sync staged other.gd.uid
+    sh(dir, 'git', ['config', 'commit.gpgsign', 'true']);
+    sh(dir, 'git', ['config', 'gpg.program', 'false']);
+    const signed = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env });
+    expect(signed.code).toBe(1);
+    expect(signed.stderr).toContain('gpg failed to sign the data');
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([...lead, '?? client/features/other/other.gd.uid']);
+    sh(dir, 'git', ['config', '--unset', 'commit.gpgsign']);
+    // the sync fails after it staged other.gd.uid: it cannot revert play.gd.uid, whose source has no staged change
+    writeFileSync(join(dir, 'client/features/play/play.gd.uid'), 'uid://edited');
+    chmodSync(join(dir, 'client/features/play'), 0o555);
+    try {
+      const reverted = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env });
+      expect(reverted.code).toBe(1);
+      expect(reverted.stderr).toContain('git --literal-pathspecs checkout HEAD');
+    } finally {
+      chmodSync(join(dir, 'client/features/play'), 0o755);
+    }
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([...lead, ' M client/features/play/play.gd.uid', '?? client/features/other/other.gd.uid']);
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0', engine: 'godot' });
+  });
+
   it('on a failure puts back only coreVersion, and keeps a game settings value written while the upgrade ran', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'b', {}) });

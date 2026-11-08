@@ -145,8 +145,13 @@ async function callFixAgent(drive: Drive, fixInput: string): Promise<string> {
  * report and is not merged. A job not merged is called again once from main HEAD. Returns a stop, or null.
  */
 async function mergedFix(drive: Drive, round: RoundState, fixInput: string): Promise<Stop | null> {
-  for (const job of (await fixJobs(drive.ctx, round, fixInput)).filter((j) => j.status === 'running')) {
-    await slot(drive, () => waitEnd(drive, job.id));
+  // running jobs of the fix input, which this job did not start (e.g. an earlier `ogw review run` job that was ended):
+  // the wait for them is a step of its own (ogw.md `## time`)
+  const running = (await fixJobs(drive.ctx, round, fixInput)).filter((j) => j.status === 'running');
+  if (running.length > 0) {
+    await span('wait for jobs', async () => {
+      for (const job of running) await slot(drive, () => waitEnd(drive, job.id));
+    });
   }
   const jobs = await fixJobs(drive.ctx, round, fixInput);
   if (jobs.some(isMergedFix)) return null;

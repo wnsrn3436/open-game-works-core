@@ -208,9 +208,14 @@ async function realOf(path: string): Promise<string> {
   return realpath(path).catch(whenNotFound(resolve(path)));
 }
 
-/** The command line of a `--file` run of `argv` (the arguments after `ogw core test`) without `--web`. */
+/** `arg` as one word of a POSIX shell: as it is when the shell takes each of its characters as it is, else single-quoted. */
+function shellWord(arg: string): string {
+  return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The command line of a `--file` run of `argv` (the arguments after `ogw core test`) without `--web`, each argument one shell word. */
 function withoutWeb(argv: readonly string[]): string {
-  return ['ogw', 'core', 'test', ...argv.filter((a) => a !== '--web')].join(' ');
+  return ['ogw', 'core', 'test', ...argv.filter((a) => a !== '--web')].map(shellWord).join(' ');
 }
 
 /**
