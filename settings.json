@@ -100,7 +100,7 @@
   },
   "coreReleaseRepository": "wnsrn3436/open-game-works-core-impl",
   "useLocalCore": false,
-  "minCoreVersion": null,
+  "minCoreVersion": "0.10.0",
   "resourceGeneration": [
     {
       "name": "flux2-klein",
