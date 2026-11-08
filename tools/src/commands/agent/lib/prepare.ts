@@ -11,7 +11,7 @@ import { newId } from '../../../lib/ids.ts';
 import { listJobs, startJob } from '../../../lib/jobs.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { isInside, withoutExtension } from '../../../lib/paths.ts';
-import { changeOpenRun, openRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
+import { changeOpenRun, requireOpenRun, type RunState } from '../../../lib/runstate.ts';
 import { ROLES, type AgentSettings, type HarnessSettings, type Role } from '../../../lib/settings.ts';
 import { hardeningRecordName, parseHardeningRecordName } from '../../build/lib/names.ts';
 import { moduleSpecs } from '../../review/lib/definitions.ts';
@@ -20,11 +20,10 @@ import { TOOLS } from '../../core/lib/tools.ts';
 import { coreSpecDependencies } from './order.ts';
 import { newAgentFolder } from './files.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
-import { AGENT_LOG_FOLDER, CLAUDE_SESSION_ROLES, GAME_ROLES, jobHarnessSettings, type AgentMeta } from './meta.ts';
+import { AGENT_LOG_FOLDER, FIX_ROUND_ROLES, GAME_ROLES, jobHarnessSettings, type AgentMeta } from './meta.ts';
 import { preparePlayInput } from './play-input.ts';
 import { agentCli, agentSettings, defaultConfigFolder, type AgentCli, type AgentSession } from './cli-command.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
-import { readMark } from '../../regress/lib/mark.ts';
 
 export interface AgentRequest {
   role: string;
@@ -49,25 +48,6 @@ export interface AgentRequest {
   runPlace?: CalibrationPlace;
   /** content: the k of a variant agent of `ogw loop variants`, which works in its own worktree. */
   variant?: number;
-  /** content, translation: outside a run, in a game with the regression mark (ogw.md `## agent`, `### seed-run`). */
-  seedRun?: SeedRun;
-  /** seed: the folder `ogw regress refresh` made for the agent, which holds its input (ogw.md `### seed agent`). */
-  seedPlace?: string;
-  /** seed: the session of the seed agent of the round before, which this round continues (ogw.md `### seed agent`). */
-  seedSession?: string;
-}
-
-/** The seed-run records `records/loops/<records>/` and the iteration of `ogw agent --seed-run <records>:<n>`. */
-export interface SeedRun {
-  records: string;
-  iteration: number;
-}
-
-/** `<records>:<n>` of `--seed-run`: a run-name-like folder name and an iteration of 1 or more. */
-export function parseSeedRun(value: string): SeedRun {
-  const match = /^([A-Za-z0-9][A-Za-z0-9._-]*):([1-9][0-9]*)$/.exec(value);
-  if (match === null) throw new OgwError(`--seed-run takes <records>:<iteration>, e.g. regress-1:1: ${value}`);
-  return { records: match[1] as string, iteration: Number(match[2]) };
 }
 
 /**
@@ -87,7 +67,6 @@ function checkRequest(request: AgentRequest): Role {
   if (!gameRole && request.game !== undefined) throw new OgwError(`--game is not given to role ${role}`);
   if (role !== 'core' && (request.modules ?? []).length > 0) throw new OgwError('--module is given only to role core');
   checkPlaces(role, request);
-  checkSeedPlace(role, request);
   return role;
 }
 
@@ -96,14 +75,6 @@ function checkPlaces(role: Role, request: AgentRequest): void {
   if (request.calibration !== undefined && role !== 'judge') throw new OgwError('a calibration place is given only to role judge');
   if (request.runPlace !== undefined && (role !== 'judge' || request.calibration !== undefined)) throw new OgwError('a run place is given only to role judge, without a calibration place');
   if (request.variant !== undefined && (role !== 'content' || !Number.isInteger(request.variant) || request.variant < 1)) throw new OgwError('a variant is a positive integer given only to role content');
-  if (request.seedRun !== undefined && ((role !== 'content' && role !== 'translation') || request.variant !== undefined)) throw new OgwError('--seed-run is given only to role content or translation, without a variant');
-}
-
-/** The seed agent starts only with its folder, which `ogw regress refresh` makes (ogw.md `## agent`). */
-function checkSeedPlace(role: Role, request: AgentRequest): void {
-  if (role === 'seed' && request.seedPlace === undefined) throw new OgwError('the seed agent starts only in ogw regress refresh, which makes its folder');
-  if (role !== 'seed' && request.seedPlace !== undefined) throw new OgwError('a seed folder is given only to role seed');
-  if (role !== 'seed' && request.seedSession !== undefined) throw new OgwError('a seed session is given only to role seed');
 }
 
 /**
@@ -147,7 +118,6 @@ function baseMeta(role: Role, input: string, taskInput: string, request: AgentRe
     retryNumber: request.retryNumber ?? 0,
     agent: request.agent ?? null,
     variant: request.variant ?? null,
-    seedRun: request.seedRun ?? null,
   };
 }
 
@@ -163,9 +133,9 @@ async function launchJob(ctx: Context, meta: AgentMeta, id?: string): Promise<st
   // the record holds the run log from its start: a job without one is no agent to `agentContext` and the index of running agents
   meta.runLog = await runLogPath(jobId, ctx.env);
   const settings = await jobHarnessSettings(ctx, meta);
-  // a fix round, and a round of a seed agent, continues the session of the job (ogw.md `## agent`): a new Claude Code
-  // session starts with its id; a new Codex session gets its id from the first run
-  if (meta.session === undefined && CLAUDE_SESSION_ROLES.includes(meta.role) && agentCli(meta.agent ?? agentSettings(settings, meta.role)) === 'claude-code') {
+  // a fix round continues the session of the job (ogw.md `## agent`): a new Claude Code session starts with its id; a
+  // new Codex session gets its id from the first run
+  if (meta.session === undefined && FIX_ROUND_ROLES.includes(meta.role) && agentCli(meta.agent ?? agentSettings(settings, meta.role)) === 'claude-code') {
     meta.session = { id: randomUUID(), resume: false };
   }
   return startJob({
@@ -371,36 +341,8 @@ async function contentSession(ctx: Context, game: GameRepo, run: RunState, meta:
   return cli === 'claude-code' ? { id: randomUUID(), resume: false } : null;
 }
 
-/**
- * A content agent or translation sub-agent of a seed-run (ogw.md `## agent`): outside a run, in a game with the
- * regression mark, with the seed-run records in place of the run folder and a new session.
- */
-async function startSeedRunAgent(ctx: Context, game: GameRepo, role: Role, meta: AgentMeta, seedRun: SeedRun): Promise<string> {
-  if ((await readMark(game.commonDir)) === null) throw new OgwError(`--seed-run starts only in a regression state or fix repo of ogw regress, not in ${game.name}`);
-  const open = await openRun(game);
-  if (open !== null) throw new OgwError(`game ${game.name} has an open run ${open.name}; --seed-run starts outside a run`);
-  meta.run = seedRun.records;
-  meta.iteration = seedRun.iteration;
-  const records = join('records', 'loops', seedRun.records);
-  if (role === 'content') {
-    meta.place = { kind: 'checkout', dir: game.root };
-    meta.folder = game.root;
-    meta.output = join(game.root, records, `content-${String(seedRun.iteration)}.md`);
-    const cli = agentCli(meta.agent ?? agentSettings(await jobHarnessSettings(ctx, meta), 'content'));
-    meta.session = cli === 'claude-code' ? { id: randomUUID(), resume: false } : null;
-    return launchJob(ctx, meta);
-  }
-  const { branch, baseCommit } = await branchOf(game);
-  meta.place = { kind: 'game-worktree', checkout: game.root, worktrees: (await ctx.workspace()).worktrees, branch, baseCommit };
-  const { language, rel } = await translationOutput(meta.taskInput, { name: seedRun.records });
-  meta.language = language;
-  meta.outputRel = rel;
-  return launchJob(ctx, meta);
-}
-
 async function startGameAgent(ctx: Context, role: Role, meta: AgentMeta, request: AgentRequest): Promise<string> {
   const game = await ctx.game(meta.game as string);
-  if (request.seedRun !== undefined) return startSeedRunAgent(ctx, game, role, meta, request.seedRun);
   // a judge of `ogw judge calibrate` has no run; every other game agent works in the open run
   if (request.calibration !== undefined) return startPlayJudge(ctx, game, 'judge', null, meta, { calibration: request.calibration });
   const run = await requireOpenRun(game);
@@ -470,26 +412,6 @@ async function startCoreOrReview(ctx: Context, role: Role, meta: AgentMeta, base
   return launchJob(ctx, meta);
 }
 
-/**
- * The seed agent (ogw.md `## agent`, `### seed agent`): in the folder `ogw regress refresh` made, which holds its input,
- * with the result file `result.md` there; outside any run. With Claude Code, a round continues the session `session` of
- * the round before when Claude Code keeps its file, and otherwise starts a new one; Codex keeps no session.
- */
-async function startSeedAgent(ctx: Context, meta: AgentMeta, folder: string, session: string | undefined): Promise<string> {
-  if (!isInside(folder, meta.input) || meta.input === folder) throw new OgwError(`the input of the seed agent is not in its folder ${folder}: ${meta.input}`);
-  meta.place = { kind: 'seed', dir: folder };
-  meta.folder = folder;
-  meta.output = join(folder, SEED_RESULT_FILE);
-  if (session !== undefined) {
-    const cli = agentCli(meta.agent ?? agentSettings(await jobHarnessSettings(ctx, meta), 'seed'));
-    if (cli === 'claude-code' && (await sessionKept(cli, ctx.env, session))) meta.session = { id: session, resume: true };
-  }
-  return launchJob(ctx, meta);
-}
-
-/** The result file of the seed agent in its folder. */
-export const SEED_RESULT_FILE = 'result.md';
-
 /** `ogw agent <role> ...`: checks the request, prepares the agent's folder and input, and starts its job. */
 export async function startAgent(ctx: Context, request: AgentRequest): Promise<string> {
   const role = checkRequest(request);
@@ -499,6 +421,5 @@ export async function startAgent(ctx: Context, request: AgentRequest): Promise<s
   const taskInput = request.taskInput === undefined ? input : resolve(ctx.cwd, request.taskInput);
   const meta = baseMeta(role, input, taskInput, request);
   if (request.baseCommit !== undefined && role !== 'review') throw new OgwError('a base commit is given only to role review');
-  if (role === 'seed') return startSeedAgent(ctx, meta, resolve(ctx.cwd, request.seedPlace as string), request.seedSession);
   return GAME_ROLES.includes(role) ? startGameAgent(ctx, role, meta, request) : startCoreOrReview(ctx, role, meta, request.baseCommit);
 }

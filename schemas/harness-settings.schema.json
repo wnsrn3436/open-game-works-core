@@ -22,7 +22,6 @@
     "loopStop",
     "loop",
     "calibration",
-    "regress",
     "reviewRounds",
     "codeCheck",
     "rigCheck",
@@ -54,8 +53,7 @@
         "server-hardening",
         "client-hardening",
         "core",
-        "review",
-        "seed"
+        "review"
       ],
       "properties": {
         "content": {
@@ -83,9 +81,6 @@
           "$ref": "#/$defs/agent"
         },
         "review": {
-          "$ref": "#/$defs/agent"
-        },
-        "seed": {
           "$ref": "#/$defs/agent"
         }
       }
@@ -170,7 +165,7 @@
       "minimum": 1
     },
     "performanceLeaseWaitTimeoutMs": {
-      "description": "The maximum duration that the performance measurement of ogw check waits for the performance lease. A measurement of a game with the regression mark waits this long only for the measurement of a game without it and for local-model generation, and at most the time limit of a job for the other measurements of such games and for the instances and heavy steps that hold the lease (`### performance lease` of [ogw](../tools/ogw.md)). When it passes, the performance result is unknown",
+      "description": "The maximum duration that the performance measurement of ogw check waits for the performance lease (`### performance lease` of [ogw](../tools/ogw.md)). When it passes, the performance result is unknown",
       "type": "integer",
       "minimum": 1
     },
@@ -188,8 +183,7 @@
         "coreImpl",
         "coreReleases",
         "games",
-        "worktrees",
-        "regress"
+        "worktrees"
       ],
       "properties": {
         "coreImpl": {
@@ -203,10 +197,6 @@
         },
         "worktrees": {
           "description": "The folder of the game repo and core worktrees that the harness tool creates. Kept outside games",
-          "type": "string"
-        },
-        "regress": {
-          "description": "The regress repo of the regression suite (`## regress` of `tools/ogw.md`). Kept outside games and worktrees, so that the sandbox of the agents that write game code blocks it",
           "type": "string"
         }
       }
@@ -431,52 +421,6 @@
         },
         "minDecisions": {
           "description": "The smallest total of a value of a rate that counts",
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "regress": {
-      "description": "Values of the regression suite. `## regress` of `tools/ogw.md` defines their meaning",
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "repeats",
-        "modelRepeats",
-        "parallel",
-        "permutations",
-        "level",
-        "seedRounds"
-      ],
-      "properties": {
-        "repeats": {
-          "description": "The seed-runs per seed and side of `ogw regress run` without `--repeats`",
-          "type": "integer",
-          "minimum": 1
-        },
-        "modelRepeats": {
-          "description": "The `--repeats` of a comparison whose sides differ only in agent models",
-          "type": "integer",
-          "minimum": 1
-        },
-        "parallel": {
-          "description": "The largest number of the side commands, fixer agents, merges, core upgrades and patch applications of one ogw regress command that run at once, and of the seed-runs of ogw regress run that run at once",
-          "type": "integer",
-          "minimum": 1
-        },
-        "permutations": {
-          "description": "The number of permutations of the permutation test of a comparison",
-          "type": "integer",
-          "minimum": 1
-        },
-        "level": {
-          "description": "The p below which a difference of a measure is `better` or `worse`",
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 1
-        },
-        "seedRounds": {
-          "description": "The most rounds of the seed agent of one seed in one `ogw regress refresh`, the first included: each round after the first starts when the admission of the rebase of the round before does not admit the seed (`### seed agent` of `## regress` of `tools/ogw.md`)",
           "type": "integer",
           "minimum": 1
         }

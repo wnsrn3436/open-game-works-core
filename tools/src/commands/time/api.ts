@@ -1,10 +1,9 @@
 // What other commands use of `ogw time` (ogw.md `## time`): the report of a job or run, and its lines.
-import type { Context } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import type { GameRepo } from '../../lib/game.ts';
 import type { RunState } from '../../lib/runstate.ts';
 import { loadHarnessSettings } from '../../lib/settings.ts';
-import { jobReport, noIteration, runStateReport } from './lib/report.ts';
+import { noIteration, runStateReport } from './lib/report.ts';
 import { timeSection } from './lib/render.ts';
 
 export { jobReport, runReport, type TimeReport } from './lib/report.ts';
@@ -21,12 +20,6 @@ async function orUnknown(make: () => Promise<string>): Promise<string> {
     if (!(error instanceof OgwError)) throw error;
     return `unknown: ${error.message}`;
   }
-}
-
-/** The `## time` section of a record that the command of a job writes: that of its job, `none` outside a job (ogw.md `## time`). */
-export async function jobTimeSection(ctx: Context): Promise<string> {
-  const job = ctx.jobId;
-  return job === null ? 'none: the command does not run as a job' : orUnknown(async () => timeSection(await jobReport(ctx, job)));
 }
 
 /**

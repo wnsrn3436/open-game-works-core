@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { jobTimeSection, runTimeSection } from '../../../src/commands/time/api.ts';
+import { jobReport, runTimeSection, timeSection } from '../../../src/commands/time/api.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import type { RunState } from '../../../src/lib/runstate.ts';
 import { makeGame } from '../../helpers/workspace.ts';
@@ -19,23 +19,18 @@ describe('the ## time section', () => {
     writeFileSync(
       join(ws.jobs, 'r1.spans.jsonl'),
       [
-        { id: 'a', name: 'state s1', parent: null, start: T, end: T + 60 * S },
-        { id: 'b', name: 'upgrade', parent: 'a', start: T, end: T + 50 * S },
-        { id: 'w', wait: 'regress pool', parent: 'b', start: T, end: T + 40 * S },
+        { id: 'a', name: 'bot playtest', parent: null, start: T, end: T + 60 * S },
+        { id: 'b', name: 'instance start', parent: 'a', start: T, end: T + 50 * S },
+        { id: 'w', wait: 'instance slots', parent: 'b', start: T, end: T + 40 * S },
         { id: 'c', name: 'record', parent: null, start: T + 60 * S, end: T + 100 * S },
       ].map((l) => JSON.stringify(l)).join('\n') + '\n',
     );
-    const ctx = createContext({ cwd: ws.root, env: { ...ws.env, OGW_JOB_ID: 'r1' }, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    expect(await jobTimeSection(ctx)).toBe([
+    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+    expect(timeSection(await jobReport(ctx, 'r1'))).toBe([
       '- wall time: 1m 40s',
-      '- critical path: state s1 (r1/a) 1m 00s 60.0%; record (r1/c) 40.0s 40.0%',
-      '- flag: wait: ogw check (r1) waited 40.0s on regress pool, 40.0% of its wall time 1m 40s (time.waitShare 0.25)',
+      '- critical path: bot playtest (r1/a) 1m 00s 60.0%; record (r1/c) 40.0s 40.0%',
+      '- flag: wait: ogw check (r1) waited 40.0s on instance slots, 40.0% of its wall time 1m 40s (time.waitShare 0.25)',
     ].join('\n'));
-    const outside = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    expect(await jobTimeSection(outside)).toBe('none: the command does not run as a job');
-    // a parent span the spans file does not hold: the report fails, and the section says why
-    writeFileSync(join(ws.jobs, 'r1.spans.jsonl'), `${JSON.stringify({ id: 'x', name: 'x', parent: 'gone', start: T, end: T + S })}\n`);
-    expect(await jobTimeSection(ctx)).toBe('unknown: job r1: span x is in span gone, which its spans file does not hold');
   });
 
   it('of a run iteration, with no flag', async () => {

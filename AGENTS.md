@@ -13,7 +13,7 @@ A harness for making server and client games of commercial quality, in which AI 
 - No approximate check is built for a property that a tool cannot judge exactly (e.g. which value a piece of wording states). That rule goes in the document read by the agent that does the work, and into the check targets of the judging agents (hardening agent, review agent)
 - The harness tool does the work that needs no judgement: reading and writing structured files (settings, record, JSON, CSV), counting, calculation, comparison, transcription, random, managing schedules and the number of concurrent runs, state transitions. Agents do only the work that needs judgement
 - Work items that do not wait for each other's results run together, at most the number that their setting allows at a time. A work item waits for another whose result it does not need only for a performance measurement, from before the first instance of the measurement starts until its last instance stops, or for a shared mutable resource (e.g. a checkout, a branch, the worktree list of a repo, the ID registry), through a lock at that resource
-- A change of the harness or of core makes nothing worse than before it: the evidence of the checks, the quality of the games, stability, and the wall time and cost of the loop, the build and the regression suite. A new check that takes time runs beside the work that does not wait for its result
+- A change of the harness or of core makes nothing worse than before it: the evidence of the checks, the quality of the games, stability, and the wall time and cost of the loop and the build. A new check that takes time runs beside the work that does not wait for its result
 - The harness tool records the time of each job, of its steps and of its waits, and reports the critical path and the flagged waits, idle times and outliers (`ogw time`). A flagged item is investigated from its spans before the harness is changed for it
 - The harness holds only what agents use in their work. This saves tokens and reduces what agents forget
 
@@ -69,9 +69,6 @@ A harness for making server and client games of commercial quality, in which AI 
 - external service: a service that we do not start and that an outside company operates. e.g. store payment, ads, push notification, social login, analytics, CDN
 - secret: every value whose exposure lets someone gain access. e.g. API key, certificate, signing key, DB password
 - adapter: the implementation that connects core to an external service, to an OS feature, or to the DB, files, secrets, outgoing HTTP or the system clock of the host. The interface of an external service has a fake adapter, a sandbox adapter and a real adapter, and the interface of an OS feature has a fake adapter and a real adapter
-- regression suite: the fixed set of seeded defects with which the harness tool compares a before side and an after side, each a harness commit with its agent settings: whether the automated checks catch each defect, and whether the content agent fixes it from its defect row. It does not judge fun
-- regression state: a copy of a game at one commit as a game repo whose history is one root commit, without `records/loops/`, into which the regression suite puts its defects
-- seed: one defect of the regression suite: the patch that puts it into a regression state, the automated check that is to catch it, the defect row its fixer gets, and its fixer (`content`, `translation`, or `none` for a seed that only the catch measures)
 
 ## repo
 
@@ -80,18 +77,14 @@ A harness for making server and client games of commercial quality, in which AI 
   open-game-works-core/            harness. This repo. Harness tool in tools/
   open-game-works-core-impl/       core source. GitHub releases are published from here
   open-game-works-core-releases/   cache of fetched core releases. One folder per version
-  open-game-works-regress/         regression suite: seeds, oracles, run results. Written only by the harness tool
   games/<game>/            game repo. One per game
-  games/ogw-regress-<name>/        regression state or fix repo of the regression suite, created by the harness tool
   worktrees/<game>/<id>/   worktree of a game repo, created and deleted by the harness tool
   worktrees/_core/<id>/    worktree of open-game-works-core-impl, created and deleted by the harness tool
-  worktrees/_harness/<id>/ worktree of this repo at the commit of a side of the regression suite, created and deleted by the harness tool
 ```
 
 - This repo holds no game code and no core code. The harness tool (TypeScript) is in `tools/`
 - `README.md`, `README.ko.md` and `.github/media/` of this repo, of `open-game-works-core-impl/` and of each game repo are introductions for humans and not harness files. Agents do not read them or edit them, and harness files do not refer to them
-- `open-game-works-core-impl/`, `open-game-works-core-releases/`, `games/`, `worktrees/` and `open-game-works-regress/` in documents mean the folders that harness settings `paths.coreImpl`, `paths.coreReleases`, `paths.games`, `paths.worktrees` and `paths.regress` point to. Tools read these paths only from harness settings and do not write them in code
-- `seeds/` of `open-game-works-regress/` and `regress/` of this repo (the first seeds, which `ogw regress init` copies) hold the seeds with their patches, oracles and fixes. Only the harness tool and the seed agent read them, so that no work is fitted to the seeds: the seed agent reads only the copy of its one seed and a copy of the base of its state that the harness tool gives it, and gets no harness file but its agent definition, in a sandbox that blocks this repo, `open-game-works-regress/`, `games/` and `worktrees/`; the sandbox of the agents that write game code blocks the whole of `open-game-works-regress/` and `regress/` and the admission checks of the harness tool, and no other agent reads them. The lead agent of `regress harness` reads only the reports in `records/` of `open-game-works-regress/`
+- `open-game-works-core-impl/`, `open-game-works-core-releases/`, `games/` and `worktrees/` in documents mean the folders that harness settings `paths.coreImpl`, `paths.coreReleases`, `paths.games` and `paths.worktrees` point to. Tools read these paths only from harness settings and do not write them in code
 - A game records only its core version. At dev run and build, the tool looks for that version in `open-game-works-core-releases/` and, when it is not there, fetches it from the GitHub release. Fetched files are checked by hash
 - The specs of this repo are of one core version: the core version of the harness, which is the highest `core-v<version>` tag that the harness HEAD contains (`ogw core release` puts the tag on the harness commit whose specs that core was made from). A command on a game fails when the core version of the game is higher than the core version of the harness or lower than harness settings `minCoreVersion`, and the commands that run the agents that write or harden game code (`ogw loop next`, `ogw build start`) fail unless it is the core version of the harness. The failure names the ways out: for a game on a lower core, raise the core of the game with `ogw core upgrade` or use the harness at the tag `core-v<core version of the game>`; for a game on a higher core, use the harness at that tag
 - When harness settings `useLocalCore` is `true`, the harness tool uses `open-game-works-core-impl/` instead of the release of the game's core version, and does not start loop iterations or builds. It is set to `true` only while developing core
@@ -230,7 +223,6 @@ The branches of a game repo are run as below.
 | `create game: <game> [<request>]` | Makes a game that finished `setup game` through the loop. `<request>` is a request added to the saved request |
 | `update game: <game> <request>` | Edits a made game through the loop. Includes the human's feedback and PROD problem fixes |
 | `update core: <proposal>` | Applies an accepted core proposal and releases it as a new version. `<proposal>` is a core proposal file or a human's request |
-| `regress harness: [<request>]` | Measures with the regression suite the change of the harness or of agent settings that the request names (by default the harness HEAD against the accepted harness) and reports. Includes setting up the regress repo and refreshing the regression states to the core version of the harness |
 | `build: <game> <DEV, STG, PROD> [<platform>...] [--version <version>] [--bundle-for <app version>]` | Hardens and builds. `--version` sets the version of a DEV or STG build, and in a PROD build picks the STG build of that version. `--bundle-for` makes the bundle patch to send to that app version |
 
 - The agent that receives a command is the lead agent of that command
@@ -248,7 +240,6 @@ The branches of a game repo are run as below.
 | client hardening agent | At build, hardens client content code based on the contract |
 | core agent | Makes and edits core |
 | review agent | Reviews the code of core, contract tool, data tool and harness tool against the defining documents and writes findings. Does not edit code |
-| seed agent | In `ogw regress refresh`, rebases a seed that a new base of its regression state made stale onto that base, planting the same defect |
 
 - The content agent does not make or edit core. What core does not have is written as content code. When core falls short, the content agent writes a core proposal in `records/` to propose it to the human
 
@@ -284,7 +275,7 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 - Outside the loop, no file, rule or behavior outside the scope of the command is made. When one is needed, the lead agent first asks the human, and a sub-agent writes it as a proposal in its result file
 - Content that can go in the harness is kept in the harness, not in memory
 - Agents do not open settings files or JSON schemas directly, and read and write them only through `ogw settings`
-- `ogw agent`, `ogw agent retry`, `ogw check`, `ogw simulate`, `ogw instance start`, `ogw instance measure`, `ogw loop evaluate`, `ogw loop variants`, `ogw loop sync`, `ogw build run`, `ogw deploy`, `ogw core test`, `ogw review run`, `ogw code check`, `ogw core fetch`, `ogw game reference`, `ogw core upgrade`, `ogw core try`, `ogw core release`, `ogw regress refresh`, `ogw regress seed`, `ogw regress expect`, `ogw regress run`, `ogw core pin-engine`, `ogw env install-engines`, `ogw generation install`, `ogw generation measure`, `ogw generation run`, `ogw video`, `ogw judge calibrate` run with `--background`. The tool starts the work and returns a job id at once. A job is one run of a command started with `--background`. A job of `ogw agent` or `ogw agent retry` is waited for with `ogw agent wait <id>`, and any other job with `ogw job wait <id>`. When a wait or `ogw review wait` ends with exit code 75, the job is still running, so the same command is called again. The shell call that calls a wait gets a time limit longer than harness settings `jobWaitTimeoutMs`, and when the agent CLI returns from the shell call while the wait still runs (Codex), the agent reads the output of the wait until it ends
+- `ogw agent`, `ogw agent retry`, `ogw check`, `ogw simulate`, `ogw instance start`, `ogw instance measure`, `ogw loop evaluate`, `ogw loop variants`, `ogw loop sync`, `ogw build run`, `ogw deploy`, `ogw core test`, `ogw review run`, `ogw code check`, `ogw core fetch`, `ogw game reference`, `ogw core upgrade`, `ogw core try`, `ogw core release`, `ogw core pin-engine`, `ogw env install-engines`, `ogw generation install`, `ogw generation measure`, `ogw generation run`, `ogw video`, `ogw judge calibrate` run with `--background`. The tool starts the work and returns a job id at once. A job is one run of a command started with `--background`. A job of `ogw agent` or `ogw agent retry` is waited for with `ogw agent wait <id>`, and any other job with `ogw job wait <id>`. When a wait or `ogw review wait` ends with exit code 75, the job is still running, so the same command is called again. The shell call that calls a wait gets a time limit longer than harness settings `jobWaitTimeoutMs`, and when the agent CLI returns from the shell call while the wait still runs (Codex), the agent reads the output of the wait until it ends
 - The harness is used from both Codex and Claude Code. `CLAUDE.md` imports this document (`@AGENTS.md`), and `.claude/skills` and `.agents/skills` are links to `skills/`
 
 ## harness writing rules
@@ -332,7 +323,6 @@ Settings are kept as JSON, and each settings file has a JSON schema.
 | `client-core` | core agent, review agent, content agent, resource sub-agent, client hardening agent | client core spec per module, engine-specific implementation rules |
 | `server-core` | core agent, review agent, content agent, server hardening agent, lead agent of `build` (only `server-image.md`) | server core spec per module, adapter, server start, server image |
 | `build` | lead agent of `build`, hardening agent, lead agent of `setup game`, core agent | hardening, build-time check, environment, build and signing per platform, store privacy disclosure, server image, web hosting, tag, bundle patch, backward compatibility check, DEV and STG deploy and PROD deploy order |
-| `harness-regress` | lead agent of `regress harness` | terms of the regression suite, regress repo setup, refresh to the core version of the harness, run, reading the report, accepting the after side |
 
 - Agent definitions per role are in `agents/<role>.md`. Sub-agents are started only with `ogw agent`. The lead agent calls them, or an `ogw` command that the lead agent ran calls them. No native agent definitions of the agent CLI (`.claude/agents`, `.codex/agents`) are kept
 - The judgement criteria for fun are in `agents/judge.md`

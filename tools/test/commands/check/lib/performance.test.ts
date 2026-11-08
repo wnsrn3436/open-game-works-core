@@ -5,13 +5,12 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
-import { leaseHoldersEnd, listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
+import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
 import { HostLoadSampler, hostMemoryPercent, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { hostRefreshHz } from '../../../../src/lib/display.ts';
 import { OgwError } from '../../../../src/lib/errors.ts';
-import { LIMITS } from '../../../../src/lib/limits.ts';
 import { readRecord, type InstanceRecord } from '../../../../src/commands/instance/lib/records.ts';
 import {
   fpsBound,
@@ -34,7 +33,7 @@ import {
 import { performanceLeaseBase, withGenerationLease } from '../../../../src/commands/generation/lib/lease.ts';
 import type { Context } from '../../../../src/lib/command.ts';
 import { hostBootId, pidNamespace } from '../../../../src/lib/proc.ts';
-import { withWriter, writerHoldsOrWaits, type RwLock } from '../../../../src/lib/rwlock.ts';
+import { withWriter, type RwLock } from '../../../../src/lib/rwlock.ts';
 import type { CheckResult } from '../../../../src/commands/check/api.ts';
 import type { Scenario } from '../../../../src/commands/check/lib/scenario.ts';
 import { doneState, fakeContext, notOk, ok } from '../helpers.ts';
@@ -43,7 +42,7 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
 }));
-vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn(), leaseHoldersEnd: vi.fn() }));
+vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
 vi.mock('../../../../src/lib/display.ts', () => ({ hostRefreshHz: vi.fn() }));
 vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
@@ -445,7 +444,6 @@ function options(root: string, extra: Partial<PerformanceOptions> = {}): Perform
     probe: fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 100 }], [33], [1]),
     sampleMs: 1000,
     lease: { base: join(root, 'lease'), waitMs: 60_000 },
-    regress: false,
     ...extra,
   };
 }
@@ -456,7 +454,6 @@ beforeEach(() => {
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
   vi.mocked(listInstances).mockResolvedValue([]);
-  vi.mocked(leaseHoldersEnd).mockReset().mockResolvedValue(true);
   vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
   vi.mocked(instanceServerLog).mockResolvedValue('');
 });
@@ -469,7 +466,7 @@ describe('performanceCheck', () => {
       { at: 2, scene_key: 'battle', duration_ms: 3001 },
     ]);
     const result = await performanceCheck(ctx, 'g', 'android', scenario, options(root));
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined, measured: true }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'p1');
     expect(calls[0]).toBe('set_quality_level High');
     const ev = ['ev/performance-android/samples.json'];
@@ -527,7 +524,7 @@ describe('performanceCheck', () => {
     const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { quality: false, db: 'postgresql' }));
     expect(result.result).toBe('pass');
     expect(calls).not.toContain('set_quality_level High');
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql', measured: true }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql' }, { beforeFailedStop: expect.any(Function) as unknown });
   });
 
   it('bounds the fps by the refresh rate of the host display', async () => {
@@ -916,53 +913,6 @@ describe('performanceChecks: the performance lease', () => {
     await gen.done;
   });
 
-  it('waits for the instances that hold the lease with the deadline of its wait, holding the writer lock, and is unknown when they do not stop by then', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    trackInstances([]);
-    const lease = await leaseOf(root, 300);
-    const seen: { deadline: number; holds: boolean }[] = [];
-    vi.mocked(leaseHoldersEnd).mockImplementation(async (_ctx, deadline) => {
-      // the measurement holds the writer lock while it waits: instances of regress games keep off meanwhile
-      seen.push({ deadline, holds: await writerHoldsOrWaits(lease) });
-      return false;
-    });
-    const before = Date.now();
-    expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }))).toEqual([busy('web', 'host busy: regress instance')]);
-    expect(startInstance).not.toHaveBeenCalled();
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.holds).toBe(true);
-    expect(seen[0]?.deadline).toBeGreaterThanOrEqual(before + 300);
-    expect(seen[0]?.deadline).toBeLessThanOrEqual(Date.now() + 300);
-    expect(await writerHoldsOrWaits(lease)).toBe(false);
-  });
-
-  it('waits, after the instances, for the heavy steps of regress checks that hold the lease, and is unknown when they do not end by then', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const lease = await leaseOf(root, 3000);
-    const other = spawn('sleep', ['30'], { stdio: 'ignore' });
-    try {
-      // a heavy step of another process holds the lease
-      const entry = join(`${lease.base}-steps`, 'step');
-      leave(entry, ownerOf(other.pid as number));
-      vi.mocked(leaseHoldersEnd).mockImplementation(() => Promise.resolve(order.push('instances ended') > 0));
-      const checks = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }));
-      await sleep(600);
-      expect(order).toEqual(['instances ended']);
-      rmSync(entry, { recursive: true });
-      expect((await checks).map((r) => r.result)).toEqual(['pass']);
-      expect(order).toEqual(['instances ended', 'start', 'stop']);
-      leave(entry, ownerOf(other.pid as number));
-      order.length = 0;
-      expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease: await leaseOf(root, 300) }))).toEqual([busy('web', 'host busy: regress check')]);
-      expect(order).toEqual(['instances ended']);
-    } finally {
-      other.kill('SIGKILL');
-    }
-  });
-
   it('is unknown without measuring when the measurement of another check holds the lease past the wait', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     trackInstances([]);
@@ -972,71 +922,6 @@ describe('performanceChecks: the performance lease', () => {
     expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }))).toEqual([busy('web', 'host busy: performance measurement')]);
     expect(startInstance).not.toHaveBeenCalled();
     await other;
-  });
-
-  it('of a game with the regression mark waits for the measurements of other such games past the wait of the lease, and measures after them', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    // each measurement holds the lease for longer than the wait of the lease, on an instance of a game of its own
-    trackInstances(order, 700);
-    vi.mocked(startInstance).mockImplementation(() => {
-      order.push('start');
-      fakeGame({ lobby: 60, battle: 60 }, []);
-      return Promise.resolve({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
-    });
-    const lease = await leaseOf(root, 300);
-    const first = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease, regress: true }));
-    await until(() => order.includes('start'));
-    const second = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease, regress: true }));
-    const third = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease, regress: true }));
-    const results = await Promise.all([first, second, third]);
-    expect(results.flat().map((r) => r.result)).toEqual(['pass', 'pass', 'pass']);
-    // one at a time
-    expect(order).toEqual(['start', 'stop', 'start', 'stop', 'start', 'stop']);
-    expect(await writerHoldsOrWaits(lease)).toBe(false);
-  });
-
-  it('of a game with the regression mark keeps the wait of the lease for the measurement of another game and for a generation', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    const lease = await leaseOf(root, 300);
-    const other = withWriter({ ...lease, waitMs: 60_000 }, () => sleep(1500));
-    await sleep(100);
-    expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease, regress: true }))).toEqual([busy('web', 'host busy: performance measurement')]);
-    await other;
-    const gen = generation(root, order);
-    await until(() => order.includes('generation'));
-    expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease, regress: true }))).toEqual([busy('web', 'host busy: local generation')]);
-    gen.end();
-    await gen.done;
-    expect(startInstance).not.toHaveBeenCalled();
-  });
-
-  it('of a game with the regression mark waits for the instances and heavy steps that hold the lease at most the time limit of a job', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const lease = await leaseOf(root, 300);
-    const deadlines: number[] = [];
-    vi.mocked(leaseHoldersEnd).mockImplementation((_ctx, deadline) => Promise.resolve(deadlines.push(deadline) > 0));
-    const other = spawn('sleep', ['30'], { stdio: 'ignore' });
-    try {
-      // a heavy step of another process holds the lease past the wait of the lease
-      const entry = join(`${lease.base}-steps`, 'step');
-      leave(entry, ownerOf(other.pid as number));
-      const before = Date.now();
-      const checks = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease, regress: true }));
-      await sleep(700);
-      expect(order).toEqual([]);
-      rmSync(entry, { recursive: true });
-      expect((await checks).map((r) => r.result)).toEqual(['pass']);
-      expect(order).toEqual(['start', 'stop']);
-      expect(deadlines[0]).toBeGreaterThanOrEqual(before + LIMITS.jobMs);
-    } finally {
-      other.kill('SIGKILL');
-    }
   });
 
   it('does not wait for holders left by a process that is gone, nor does a generation', async () => {

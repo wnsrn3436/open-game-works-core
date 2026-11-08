@@ -96,47 +96,11 @@ const processTag = randomBytes(3).toString('hex');
 
 /**
  * A span or wait id unique in a spans file: the pid of the writing process, a tag of its own, and a count. Many processes
- * write one spans file (the instance supervisors and the side commands of a job), and a long job outlives pids.
+ * write one spans file (the command process and the instance supervisors of a job), and a long job outlives pids.
  */
 function nextId(): string {
   lastId += 1;
   return `${process.pid.toString(36)}${processTag}.${lastId.toString(36)}`;
-}
-
-/**
- * The environment variables that give a process that a step span of a job started that step span (ogw.md `## time`):
- * the job in `OGW_PARENT_JOB` and the step span, absent for the job span, in `OGW_PARENT_SPAN`.
- */
-export const PARENT_JOB_ENV = 'OGW_PARENT_JOB';
-export const PARENT_SPAN_ENV = 'OGW_PARENT_SPAN';
-
-/** The job and step span (null: the job span) whose spans file a process writes in, given by its environment. */
-export interface SpanParent {
-  job: string;
-  span: string | null;
-}
-
-/**
- * `env` for a process whose steps and waits go in the step span or job that runs in this async context (a side command
- * of `ogw regress`); outside a job, `env` without them.
- */
-export function withSpanParent(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const rest = Object.fromEntries(Object.entries(env).filter(([name]) => name !== PARENT_JOB_ENV && name !== PARENT_SPAN_ENV));
-  const from = spanContext();
-  if (from === null) return rest;
-  return { ...rest, [PARENT_JOB_ENV]: from.job, ...(from.span === null ? {} : { [PARENT_SPAN_ENV]: from.span }) };
-}
-
-/**
- * The parent that `env` gives this process (`withSpanParent`), taken out of `env`, which it changes, so that the
- * processes this one starts do not write in that span; null when it gives none.
- */
-export function takeSpanParent(env: NodeJS.ProcessEnv): SpanParent | null {
-  const { OGW_PARENT_JOB: job, OGW_PARENT_SPAN: span } = env;
-  delete env.OGW_PARENT_JOB;
-  delete env.OGW_PARENT_SPAN;
-  if (job === undefined || job === '') return null;
-  return { job, span: span === undefined || span === '' ? null : span };
 }
 
 /** The name of the step span from the start of a job to the start of its command (ogw.md `## time`). */

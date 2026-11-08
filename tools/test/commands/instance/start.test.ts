@@ -1,11 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { leaseHoldersEnd, listInstances, startInstance } from '../../../src/commands/instance/api.ts';
-import { performanceLeaseBase } from '../../../src/commands/generation/lib/lease.ts';
-import { writeMark } from '../../../src/commands/regress/lib/mark.ts';
-import { withWriterWithin } from '../../../src/lib/rwlock.ts';
+import { listInstances, startInstance } from '../../../src/commands/instance/api.ts';
 import { instanceFolder, listRecords, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import type { OgwError } from '../../../src/lib/errors.ts';
@@ -299,48 +295,6 @@ describe('ogw instance start', () => {
     expect(waited.code).toBe(0);
     const data = JSON.parse(waited.stdout) as Record<string, unknown>;
     expect(Object.keys(data).sort()).toEqual(['address', 'commit', 'id', 'platform']);
-  });
-
-  it('in a game with the regression mark, holds the performance lease from its slot to its stop: it waits while a measurement holds or waits for the lease, and the measurement waits for it', async () => {
-    runner = setupRunner({ harness: { instanceWaitTimeoutMs: 1000 } });
-    const r = runner;
-    const ctx = ctxOf(r);
-    const plain = await startFor(r);
-    expect((await readRecord(plain, r.ws.env)).leaseHolder).toBeUndefined();
-    await ogw(r.ws, ['instance', 'stop', plain]);
-    await writeMark(join(r.root, '.git'), { kind: 'state', state: 'g' });
-    const a = await startFor(r);
-    expect((await readRecord(a, r.ws.env)).leaseHolder).toBe(true);
-    const lease = { base: await performanceLeaseBase(ctx), waitMs: 20_000 };
-    const order: string[] = [];
-    const measurement = withWriterWithin(
-      lease,
-      async () => {
-        order.push('measure');
-        // an instance that the measurement starts is no holder: it starts while the measurement holds the lease
-        const own = await startInstance(ctx, { game: 'g', measured: true });
-        expect((await readRecord(own.id, r.ws.env)).leaseHolder).toBeUndefined();
-        await ogw(r.ws, ['instance', 'stop', own.id]);
-        await sleep(300);
-        order.push('measured');
-      },
-      (deadline) => leaseHoldersEnd(ctx, deadline),
-    );
-    await sleep(300);
-    // the measurement waits for the running holder
-    expect(order).toEqual([]);
-    // a holder that comes while the measurement waits waits for it, longer than instanceWaitTimeoutMs, which that wait is not in
-    const b = ogw(r.ws, ['instance', 'start', 'g', '--json']).then((run) => {
-      order.push('b');
-      return run;
-    });
-    await sleep(1300);
-    expect(order).toEqual([]);
-    await ogw(r.ws, ['instance', 'stop', a]);
-    expect((await measurement).ran).toBe(true);
-    const started = await b;
-    expect(started.stderr).toBe('');
-    expect(order).toEqual(['measure', 'measured', 'b']);
   });
 
   it('fails when the data binary build fails, and stops the instance', async () => {

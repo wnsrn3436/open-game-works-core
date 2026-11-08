@@ -210,8 +210,7 @@ export async function agentCliChecks(ctx: Context, settings: HarnessSettings, cl
   const groups = new Map<string, { agent: AgentSettings; sandbox: boolean; roles: string[]; runAs: string }>();
   const add = (user: string, runAs: string, agent: AgentSettings): void => {
     const sandbox = SANDBOXED_ROLES.includes(runAs);
-    // the seed agent sandbox also blocks the harness repo: it is checked apart from that of play and judge
-    const key = JSON.stringify([agentCli(agent), agent.model, agent.effort, sandbox, runAs === 'seed']);
+    const key = JSON.stringify([agentCli(agent), agent.model, agent.effort, sandbox]);
     const group = groups.get(key) ?? { agent, sandbox, roles: [], runAs };
     group.roles.push(user);
     groups.set(key, group);

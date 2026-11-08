@@ -34,8 +34,6 @@ export interface TestWorkspace {
   worktrees: string;
   coreImpl: string;
   coreReleases: string;
-  /** The regress repo path of harness settings `paths.regress`; it does not exist until a test makes it. */
-  regress: string;
   env: NodeJS.ProcessEnv;
 }
 
@@ -170,7 +168,6 @@ export function makeWorkspace(settingsPatch: Record<string, unknown> = {}): Test
     worktrees: join(root, 'worktrees'),
     coreImpl: join(root, 'open-game-works-core-impl'),
     coreReleases: join(root, 'open-game-works-core-releases'),
-    regress: join(root, 'open-game-works-regress'),
     env: {
       ...process.env,
       ...gitEnv,

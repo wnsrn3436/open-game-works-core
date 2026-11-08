@@ -16,7 +16,6 @@ import { parseScenario, type Scenario } from '../check/lib/scenario.ts';
 import { runStandardStage } from '../generation/lib/standard.ts';
 import { startInstance, stopInstance, type InstanceInfo, type InstanceOptions } from './api.ts';
 import { gameTargetFps } from './lib/prepare.ts';
-import { readMark } from '../regress/lib/mark.ts';
 
 /** Interval of `get_state` polling while a scenario condition is not true yet. */
 export const measureTiming = { pollMs: 200 };
@@ -82,8 +81,7 @@ async function gameTargets(ctx: Context): Promise<Target[]> {
   const targets: Target[] = [];
   for (const name of (await readdir(games)).sort()) {
     const scenarioPath = join(games, name, 'client', 'dev', 'bot', 'scenario.json');
-    // a regression state or fix repo is a copy of a game (ogw.md `## regress`): measured once, as its source game
-    if (!exists(scenarioPath) || (await readMark(join(games, name, '.git'))) !== null) continue;
+    if (!exists(scenarioPath)) continue;
     const settings = await loadGameSettings(join(games, name));
     targets.push({
       name,

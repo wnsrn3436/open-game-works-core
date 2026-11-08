@@ -11,7 +11,7 @@ import {
 } from './command.ts';
 import { OgwError } from './errors.ts';
 import { jobPaths, readJobRaw, startJob, superviseJob, updateJob } from './jobs.ts';
-import { inJob, takeSpanParent, type SpanParent } from './spans.ts';
+import { inJob } from './spans.ts';
 
 export interface CliIo {
   cwd: string;
@@ -181,17 +181,15 @@ function reportError(io: CliIo, json: boolean, error: unknown): number {
 
 /** Runs one ogw invocation and returns its exit code. Commands never call process.exit. */
 export async function runCli(commands: readonly CommandDef[], argv: readonly string[], io: CliIo): Promise<number> {
-  // the step span that started this process, which the processes it starts do not get (ogw.md `## time`)
-  const parent = takeSpanParent(io.env);
   if (argv[0] === '__job-supervise' && argv[1]) {
     await superviseJob(argv[1], io.env);
     return 0;
   }
   // a command a play or judge agent's broker runs: stdin comes from the broker, asked for through fd 3
   if (argv[0] === BROKER_RUN) {
-    return runCommand(commands, argv.slice(1), { ...io, stdin: () => brokerStdin(io), stdinChunks: () => brokerStdinChunks(io), terminal: undefined }, parent);
+    return runCommand(commands, argv.slice(1), { ...io, stdin: () => brokerStdin(io), stdinChunks: () => brokerStdinChunks(io), terminal: undefined });
   }
-  return runCommand(commands, argv, io, parent);
+  return runCommand(commands, argv, io);
 }
 
 /** Whether a write to fd 3 failed because no file is open there (`EBADF`): no broker gave it. */
@@ -221,7 +219,7 @@ async function* brokerStdinChunks(io: CliIo): AsyncIterable<string> {
   else yield await io.stdin();
 }
 
-async function runCommand(commands: readonly CommandDef[], argv: readonly string[], io: CliIo, parent: SpanParent | null): Promise<number> {
+async function runCommand(commands: readonly CommandDef[], argv: readonly string[], io: CliIo): Promise<number> {
   const prepared = prepare(commands, argv, io);
   if (typeof prepared === 'number') return prepared;
   const { def, tokens, verbatim, json, background } = prepared;
@@ -240,14 +238,14 @@ async function runCommand(commands: readonly CommandDef[], argv: readonly string
     const args = parseArgs(def, tokens, verbatim);
     agent = await agentContext(io.env);
     if (background) {
-      print(io, json, await inJobOf(ctx, parent, () => startBackground(ctx, def, args, agent)));
+      print(io, json, await inJobOf(ctx, () => startBackground(ctx, def, args, agent)));
       return 0;
     }
     if (agent && !ctx.jobId) {
       const command = `ogw ${[...def.name, ...tokens, ...verbatim].join(' ')}`;
       logIndex = await appendRunLog(agent, { command, startedAt: Date.now(), exitCode: null, summary: null });
     }
-    const result = await inJobOf(ctx, parent, () => def.run(ctx, args));
+    const result = await inJobOf(ctx, () => def.run(ctx, args));
     const exitCode = result.exitCode ?? 0;
     print(io, json, result);
     await recordEnd(ctx, agent, logIndex, exitCode, result.summary ?? null);
@@ -264,13 +262,10 @@ async function runCommand(commands: readonly CommandDef[], argv: readonly string
 
 /**
  * Runs `fn` in the job of the process, when it runs in one: its steps and waits go to the spans file of the job, and the
- * jobs it starts are child jobs of it (ogw.md `## time`). A process of no job that a step span of a job started with
- * `parent` (a side command of `ogw regress`) goes on in that span, and leaves a line it cannot write to the command of
- * that job, which writes the same file.
+ * jobs it starts are child jobs of it (ogw.md `## time`).
  */
-async function inJobOf<T>(ctx: Context, parent: SpanParent | null, fn: () => Promise<T>): Promise<T> {
+async function inJobOf<T>(ctx: Context, fn: () => Promise<T>): Promise<T> {
   const job = ctx.jobId;
-  if (job === null && parent !== null) return inJob(parent.job, (await jobPaths(parent.job, ctx.env)).spans, fn, { parent: parent.span, writeFailure: 'leave' });
   if (job === null) return fn();
   const { spans } = await jobPaths(job, ctx.env);
   // the command process its supervisor started (not a process that it started in turn) has the start of the job

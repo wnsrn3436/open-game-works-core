@@ -19,8 +19,7 @@ export type Role =
   | 'server-hardening'
   | 'client-hardening'
   | 'core'
-  | 'review'
-  | 'seed';
+  | 'review';
 
 export const ROLES: readonly Role[] = [
   'content',
@@ -32,7 +31,6 @@ export const ROLES: readonly Role[] = [
   'client-hardening',
   'core',
   'review',
-  'seed',
 ];
 
 export interface AgentSettings {
@@ -151,10 +149,9 @@ export interface HarnessSettings {
   reviewRounds: number;
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };
-  regress: { repeats: number; modelRepeats: number; parallel: number; permutations: number; level: number; seedRounds: number };
   /** The criteria of the flags of `ogw time` (ogw.md `## time`). */
   time: { waitShare: number; idleShare: number; outlierRatio: number; history: number };
-  paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string; regress: string };
+  paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string };
   coreReleaseRepository: string;
   useLocalCore: boolean;
   minCoreVersion: string | null;
@@ -189,8 +186,6 @@ export interface Workspace {
   coreReleases: string;
   games: string;
   worktrees: string;
-  /** The regress repo of the regression suite (ogw.md `### regress repo`). */
-  regress: string;
 }
 
 export function harnessSettingsPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -406,7 +401,6 @@ export function workspaceFrom(settings: HarnessSettings, env: NodeJS.ProcessEnv 
     coreReleases: resolve(root, settings.paths.coreReleases),
     games: resolve(root, settings.paths.games),
     worktrees: resolve(root, settings.paths.worktrees),
-    regress: resolve(root, settings.paths.regress),
   };
 }
 

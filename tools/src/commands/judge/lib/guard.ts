@@ -4,7 +4,6 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { commitPaths, currentBranch, git, head, statusLines } from '../../../lib/git.ts';
 import { listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { openRun, withRunLock } from '../../../lib/runstate.ts';
-import { refuseMarked } from '../../regress/lib/mark.ts';
 
 /** The job command of `ogw judge calibrate --background`. */
 export const CALIBRATE_COMMAND = 'judge calibrate';
@@ -26,7 +25,6 @@ export async function refuseWhileCalibrating(ctx: Context, game: string): Promis
  * `ogw judge calibrate` job of the game, no change in the game repo checkout; then main checked out. Returns main HEAD.
  */
 export async function prepareMain(ctx: Context, game: GameRepo): Promise<string> {
-  await refuseMarked(game, 'ogw judge calibrate');
   const run = await openRun(game);
   if (run) throw new OgwError(`game ${game.name} has an open run: ${run.name}`, 1, { run: run.name });
   await refuseWhileCalibrating(ctx, game.name);

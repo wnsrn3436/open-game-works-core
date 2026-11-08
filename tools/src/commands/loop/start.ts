@@ -17,7 +17,6 @@ import { currentPinSettings, HARNESS_PINS_KEY, harnessHead, type HarnessPin } fr
 import { givenLimits, LIMIT_OPTIONS, RUN_LIMITS_KEY, type RunLimits } from './lib/run-limits.ts';
 import { gameSettingsAt } from '../build/lib/buildrun.ts';
 import { refuseWhileCalibrating } from '../judge/api.ts';
-import { refuseMarked } from '../regress/lib/mark.ts';
 
 const USAGE = 'ogw loop start <game> --command <create|update> [--limit <iterations>] [--until <unix ms>]';
 
@@ -105,7 +104,6 @@ export const loopStart: CommandDef = {
     // The open run is checked first: an interrupted iteration leaves changes in the checkout, and the lead agent needs the run name.
     const open = await openRun(game);
     if (open) throw new OgwError(`game ${game.name} has an open run: ${open.name}`, 1, { run: open.name });
-    await refuseMarked(game, 'ogw loop start');
     // the run starts from main: its core is the one the run works on
     await requireSupportedCore(ctx, game.name, String((await gameSettingsAt(game.root, 'main', ctx.env)).coreVersion));
     const changes = await statusLines(game.root, { env: ctx.env });

@@ -5,15 +5,11 @@ import type { GameRepo } from '../../lib/game.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { loadGameSettings, loadSchema, schemaPath, withDefaults, type GameSettings } from '../../lib/settings.ts';
 import { binaryBuild } from '../data/lib/binary-build.ts';
-import { withHeavyStep } from '../generation/lib/lease.ts';
 import { mergedChecks, placeholderFailures, type CheckResult } from './api.ts';
 import { BOT_PLAYTEST_POLL_MS, botPlaytest, readScenario } from './lib/bot-playtest.ts';
 import { gameEngine, importClient } from './lib/engine.ts';
 import { checkResult } from './lib/evidence.ts';
-import { gameChecks, loopCheck, runTimeLimitMs, slotsOf, startTimeLimitMs, type RegressPick } from './lib/loop.ts';
-import { fixedRows, rowProofs } from './lib/fix-proof.ts';
-import type { FixTestProof } from '../loop/lib/files.ts';
-import type { RunState } from '../../lib/runstate.ts';
+import { gameChecks, loopCheck, runTimeLimitMs, slotsOf, startTimeLimitMs } from './lib/loop.ts';
 import type { Evidence } from './lib/evidence.ts';
 import { regressionTargets, regressionTest } from './lib/regression.ts';
 import { staticCheck } from './static-api.ts';
@@ -45,12 +41,9 @@ async function gameSettings(ctx: Context, game: GameRepo): Promise<GameSettings>
   return withDefaults(await loadSchema(schemaPath('game-settings', ctx.env)), await loadGameSettings(game.root));
 }
 
-/**
- * `ogw check` runs the data tool binary build when it starts, as a heavy step (ogw.md `### performance lease`); it stops
- * when that fails.
- */
+/** `ogw check` runs the data tool binary build when it starts; it stops when that fails. */
 async function binaryData(ctx: Context, game: GameRepo): Promise<void> {
-  await withHeavyStep(ctx, game, () => binaryBuild(ctx, game, 'data tool binary build failed; run ogw data and commit, then check again'));
+  await binaryBuild(ctx, game, 'data tool binary build failed; run ogw data and commit, then check again');
 }
 
 /** The failures of one check that the text of `--loop` prints: the result file holds them all. */
@@ -152,46 +145,6 @@ export async function coreTryChecks(ctx: Context, game: GameRepo, evidence: Evid
   await binaryData(ctx, game);
   const checks = await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, 'core try');
   return { checks, lines: checks.flatMap((check) => checkText(check, 'core try')) };
-}
-
-/**
- * The checks of `ogw regress check` on a checkout (ogw.md `### side` of `## regress`): those of a completeness iteration
- * picked by `pick`, and with `proof` the fix test proof of iteration `proof.iteration` of the seed-run records
- * `records/loops/<proof.records>/` on `commit`, beside the checks in their spare slots as `ogw check --loop` runs it
- * (ogw.md `### fix test proof`): the performance measurements wait for it.
- */
-export async function regressChecks(
-  ctx: Context,
-  game: GameRepo,
-  evidence: Evidence,
-  pick: RegressPick,
-  proof: { records: string; iteration: number; commit: string } | null,
-): Promise<{ checks: CheckResult[]; fixTestProof: FixTestProof[] }> {
-  const settings = await gameSettings(ctx, game);
-  const godot = await gameEngine(ctx, game, settings);
-  await binaryData(ctx, game);
-  if (proof === null) return { checks: await gameChecks(ctx, game, settings, { godot, ...timing }, evidence, pick), fixTestProof: [] };
-  const slots = await slotsOf(ctx);
-  const options = { godot, runTimeLimitMs: await runTimeLimitMs(ctx, game), startTimeLimitMs: await startTimeLimitMs(ctx, game), slots };
-  const run = seedRunState(proof.records, proof.iteration);
-  // a content agent report that cannot be read fails the check here, before any check starts
-  const fixed = await fixedRows(game, run);
-  // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout. It does not
-  // throw (what it could not decide is `unknown` with the reason)
-  const proving = rowProofs(ctx, game, run, proof.commit, fixed, options);
-  const beside = {
-    name: 'fix test proof',
-    work: async (): Promise<void> => {
-      await proving;
-    },
-  };
-  const checks = await gameChecks(ctx, game, settings, { godot, ...timing, slots }, evidence, pick, [beside]).finally(() => Promise.allSettled([proving]));
-  return { checks, fixTestProof: await proving };
-}
-
-/** The run state a fix test proof reads of seed-run records: their name as the run name and the iteration. */
-function seedRunState(records: string, iteration: number): RunState {
-  return { name: records, kind: 'loop', command: null, env: null, version: null, platforms: [], bundleFor: null, branch: 'main', baseCommit: '', referenceCommit: null, startedAt: 0, closedAt: null, iteration, data: {} };
 }
 
 async function runCheck(ctx: Context, args: CommandArgs): Promise<CommandResult> {

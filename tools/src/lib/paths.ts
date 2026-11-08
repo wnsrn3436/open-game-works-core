@@ -11,13 +11,8 @@ export function harnessRoot(env: NodeJS.ProcessEnv = process.env): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 }
 
-/**
- * The workspace root is the parent folder of the harness repo, or `OGW_WORKSPACE_ROOT`: the side tool of the regression
- * suite runs from a harness worktree under `worktrees/_harness/` on the games of this workspace (ogw.md `### side`).
- */
+/** The workspace root is the parent folder of the harness repo. */
 export function workspaceRoot(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.OGW_WORKSPACE_ROOT;
-  if (override) return resolve(override);
   return dirname(harnessRoot(env));
 }
 

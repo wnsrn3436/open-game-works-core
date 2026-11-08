@@ -32,8 +32,7 @@ export async function resolveGame(ws: Workspace, name: string, cwd: string, env:
   const below = segmentsBelow(ws.worktrees, cwd);
   let root = mainRoot;
   let inWorktree = false;
-  // core and side worktrees (`_core`, `_harness`) are no game worktrees: a side tool runs its commands from its own
-  if (below && below.length >= 2 && below[0] !== '_core' && below[0] !== '_harness') {
+  if (below && below.length >= 2 && below[0] !== '_core') {
     if (below[0] !== name) {
       throw new OgwError(`running inside a worktree of game ${String(below[0])}, not ${name}`);
     }

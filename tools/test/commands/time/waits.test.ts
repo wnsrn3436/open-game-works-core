@@ -1,6 +1,6 @@
-// The waits and step spans of the shared helpers of the commands (ogw.md `## time`): the regress pool, its check gate and
-// its merges, the instance slots of a check, the measure gate of a build, and the step spans whose work goes on across
-// tasks (`openSpan`, `openWait`), and an `inJob` that goes on in the span of another process.
+// The waits and step spans of the shared helpers of the commands (ogw.md `## time`): the instance slots of a check, the
+// measure gate of a build, and the step spans whose work goes on across tasks (`openSpan`, `openWait`), and an `inJob`
+// that goes on in the span of another process.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,6 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { atGate, measureGate, MEASURE_GATE, NO_GATE } from '../../../src/commands/build/lib/client-check.ts';
 import { CHECK_SLOTS, Slots } from '../../../src/commands/check/lib/instances.ts';
-import { REGRESS_POOL, regressPool } from '../../../src/commands/regress/lib/pool.ts';
 import { inJob, openSpan, openWait, span, spanContext, type SpanLine } from '../../../src/lib/spans.ts';
 
 function file(): string {
@@ -26,33 +25,6 @@ function waits(path: string): [string, number][] {
 }
 
 describe('waits of the shared helpers of the commands', () => {
-  it('records a wait for a place of the regress pool, and none for work that finds one', async () => {
-    const path = file();
-    const pool = regressPool(1);
-    await inJob('p', path, async () => {
-      const first = pool.work(() => sleep(300));
-      await pool.work(() => Promise.resolve());
-      await first;
-    });
-    expect(waits(path).map(([on]) => on)).toEqual([REGRESS_POOL]);
-    expect(waits(path)[0]?.[1]).toBeGreaterThanOrEqual(250);
-  });
-
-  it('records a wait at the check gate for a check that does not start at once, and on the merges of one game', async () => {
-    const path = file();
-    const pool = regressPool(4, true);
-    await inJob('p', path, async () => {
-      const loud = pool.check(true, () => sleep(300));
-      await pool.check(false, () => Promise.resolve());
-      await loud;
-      const merging = pool.merge('g', () => sleep(300));
-      await pool.merge('g', () => Promise.resolve());
-      await pool.merge('h', () => Promise.resolve());
-      await merging;
-    });
-    expect(waits(path).map(([on]) => on)).toEqual(['regress check gate', 'regress merges g']);
-  });
-
   it('records a wait for a free instance slot of a check, and none for an acquire that takes one', async () => {
     const path = file();
     const slots = new Slots(1);

@@ -24,7 +24,6 @@ import { rowSimulationCheck } from './row-simulation.ts';
 import { makeTelemetryRuns } from './telemetry-runs.ts';
 import type { FixTestProof } from '../../loop/lib/files.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
-import { readMark } from '../../regress/lib/mark.ts';
 import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
 export { CHECK_ORDER };
@@ -111,16 +110,7 @@ export async function slotsOf(ctx: Context): Promise<Slots> {
  * Checks of `gameChecks`: every check of iteration step 2 (`all`), those of a fun iteration (`fun`), or those of
  * `ogw core try`. `no blocker` and `full flow` come from one bot playtest.
  */
-export type CheckSet = 'all' | 'fun' | 'core try' | RegressPick;
-
-/**
- * The checks of `ogw regress check` (ogw.md `### side` of `## regress`): those of a completeness iteration, only the
- * named ones when `only` is not null, and `performance` only with `performance`.
- */
-export interface RegressPick {
-  only: ReadonlySet<string> | null;
-  performance: boolean;
-}
+export type CheckSet = 'all' | 'fun' | 'core try';
 
 /** Checks `ogw core try` runs (`core` command.md `update core`). */
 const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality'];
@@ -144,39 +134,14 @@ export interface WorkBeside {
   work: (instance: InstanceCheckOptions) => Promise<void>;
 }
 
-/** Which checks of `gameChecks` a check set runs. */
-export interface Selection {
-  wants: (name: string) => boolean;
-  bot: boolean;
-  ui: boolean;
-  rows: boolean;
-  performance: boolean;
-  placeholder: boolean;
-}
-
-export function selectionOf(set: CheckSet): Selection {
-  const pick = typeof set === 'object' ? set : null;
-  const wants = (name: string): boolean => pick === null || pick.only === null || pick.only.has(name);
-  const all = set === 'all' || pick !== null;
-  const fun = set === 'fun';
-  return {
-    wants,
-    bot: wants('no blocker') || wants('full flow'),
-    ui: !fun && wants('UI quality'),
-    rows: all && wants('row simulation'),
-    performance: pick === null ? !fun : pick.performance && wants('performance'),
-    placeholder: all && wants('no placeholder'),
-  };
-}
-
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
  * the bot playtest (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry
- * runs and the fix test proof of `--loop`, the fix test proof of `ogw regress check`); the failure of each is logged under
- * its name. The work that does not read the checkout's `client/` (the server regression test and no placeholder) runs
- * beside its import. The performance measurements start once every other instance of the check has stopped and the work
- * of `alongside` has ended (ogw.md `## performance`).
+ * runs and the fix test proof of `--loop`); the failure of each is logged under its name. The work that does not read
+ * the checkout's `client/` (the server regression test and no placeholder) runs beside its import. The performance
+ * measurements start once every other instance of the check has stopped and the work of `alongside` has ended (ogw.md
+ * `## performance`).
  */
 export async function gameChecks(
   ctx: Context,
@@ -187,14 +152,13 @@ export async function gameChecks(
   set: CheckSet,
   alongside: readonly WorkBeside[] = [],
 ): Promise<CheckResult[]> {
-  const [slots, modules, scenario, merged, leaseBase, harness, mark] = await Promise.all([
+  const [slots, modules, scenario, merged, leaseBase, harness] = await Promise.all([
     options.slots ?? slotsOf(ctx),
     gameModules(ctx, game),
     readScenario(game.root),
     mergedCoreSettings(ctx, game),
     performanceLeaseBase(ctx),
     ctx.settings(),
-    readMark(game.commonDir),
   ]);
   const instance: InstanceCheckOptions = { evidence, slots, db: options.db, pollMs: options.pollMs };
   const profiles = platformProfiles(settings.buildPlatforms ?? []);
@@ -207,7 +171,6 @@ export async function gameChecks(
     probe,
     sampleMs: options.sampleMs,
     lease: { base: leaseBase, waitMs: harness.performanceLeaseWaitTimeoutMs },
-    regress: mark !== null,
   };
   const ui = { ...instance, ...uiSettings(settings), maxTextScale: maxTextScale(merged, modules.client), scenario };
   // One import before the instances start, with the engine packages put in first: an instance skips its import once
@@ -226,12 +189,13 @@ export async function gameChecks(
   const db = options.db ? { db: options.db } : {};
   const limits = { runTimeLimitMs: coreNumber(merged, 'UnitTestCore.runTimeLimitMs'), startTimeLimitMs: coreNumber(merged, 'UnitTestCore.startTimeLimitMs') };
   const client = { godot: options.godot, evidence, ...limits, importing, ...db };
-  const { wants, ...run } = selectionOf(set);
+  const all = set === 'all';
+  const fun = set === 'fun';
   // every instance of the check other than those of the performance measurements, in this order once the import ended
   const instances: Promise<CheckResult | CheckResult[] | null>[] = [
-    ...(run.bot ? [afterImport(() => span('bot playtest', () => botPlaytest(ctx, game.name, scenario, instance)))] : []),
-    ...(run.ui ? profiles.map((p) => afterImport(() => span(`UI quality ${p}`, () => uiQualityCheck(ctx, game.name, p, ui)))) : []),
-    ...(run.rows ? [afterImport(() => span('row simulation', () => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)))] : []),
+    afterImport(() => span('bot playtest', () => botPlaytest(ctx, game.name, scenario, instance))),
+    ...(fun ? [] : profiles.map((p) => afterImport(() => span(`UI quality ${p}`, () => uiQualityCheck(ctx, game.name, p, ui))))),
+    ...(all ? [afterImport(() => span('row simulation', () => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)))] : []),
   ];
   const besides = alongside.map((beside) =>
     afterImport(() => beside.work(instance)).catch((error: unknown) => {
@@ -239,19 +203,17 @@ export async function gameChecks(
     }),
   );
   const tasks: Promise<CheckResult | CheckResult[] | null>[] = [
-    ...(wants('regression test') ? [span('regression test', () => guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client)))] : []),
-    ...(wants('static check') ? [afterImport((imported) => span('static check', () => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported }))))] : []),
+    span('regression test', () => guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))),
+    afterImport((imported) => span('static check', () => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })))),
     ...instances,
-    ...(run.performance ? [Promise.allSettled([...instances, ...besides]).then(() => afterImport(() => span('performance', () => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))))] : []),
-    ...(run.placeholder ? [span('no placeholder', () => guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game))))] : []),
+    ...(fun ? [] : [Promise.allSettled([...instances, ...besides]).then(() => afterImport(() => span('performance', () => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))))]),
+    ...(all ? [span('no placeholder', () => guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game))))] : []),
   ];
   const [results] = await Promise.all([Promise.all(tasks), ...besides]);
   const done = await settled;
   if ('error' in done) throw done.error;
   const checks = results.flatMap((r) => (r === null ? [] : [r].flat())).sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
-  if (set === 'core try') return checks.filter((c) => CORE_TRY_CHECKS.includes(c.name));
-  // the bot playtest judges no blocker and full flow together: a pick of one keeps only that one
-  return checks.filter((c) => wants(c.name));
+  return set === 'core try' ? checks.filter((c) => CORE_TRY_CHECKS.includes(c.name)) : checks;
 }
 
 /** `ogw check <game> --loop`: the checks of iteration step 2 for the kind of the iteration, the result file, and `gate`. */

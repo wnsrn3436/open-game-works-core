@@ -2,7 +2,6 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CheckFailure, CheckResult } from '../../../src/commands/check/api.ts';
 import { StaticContext } from '../../../src/commands/check/static/lib/context.ts';
 import * as typeCheck from '../../../src/commands/check/static/type-check.ts';
 import { hostPlatform } from '../../../src/commands/core/lib/impl.ts';
@@ -124,23 +123,8 @@ function logLines(): string[] {
   return existsSync(godot.log) ? readFileSync(godot.log, 'utf8').trim().split('\n') : [];
 }
 
-const clientFailures = (check: CheckResult | undefined): CheckFailure[] => (check?.failures ?? []).filter((f) => f.where.startsWith('client/'));
-
 describe('the check of a checkout without client/addons/', () => {
-  it('ogw regress check puts the engine packages of this host into its worktree before the import, so the client regression test runs GUT', async () => {
-    const out = join(mkdtempSync(join(tmpdir(), 'ogw-regress-check-')), 'base.json');
-    const commit = sh(join(ws.games, 'g'), 'git', ['rev-parse', 'HEAD']).trim();
-    const run = await ogw(ws, ['regress', 'check', 'g', '--commit', commit, '--out', out, '--check', 'regression test']);
-    expect(run.stderr).toBe('');
-    const file = JSON.parse(readFileSync(out, 'utf8')) as { checks: CheckResult[] };
-    expect(file.checks.map((c) => c.name)).toEqual(['regression test']);
-    // the game has no server tests; the client regression test has no failure
-    expect(clientFailures(file.checks[0])).toEqual([]);
-    // the one import of the checks found GUT and the plugins of this host, not those of another platform
-    expect(logLines()).toEqual(['import gut,ogw-secure-storage,webrtc', 'gut found']);
-  });
-
-  it('ogw check --regression puts them in and writes nothing else of ogw generate', async () => {
+  it('ogw check --regression puts the engine packages of this host in before the import, so the client regression test runs GUT, and writes nothing else of ogw generate', async () => {
     const worktree = freshWorktree();
     const run = await ogw(ws, ['check', 'g', '--regression', 'client/tests'], { cwd: worktree });
     expect(run).toEqual({ code: 0, stdout: 'regression test: pass\n', stderr: '' });

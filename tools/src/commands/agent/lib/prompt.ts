@@ -7,8 +7,8 @@ import type { Role } from '../../../lib/settings.ts';
 /** `AGENTS.md` sections put before the agent definition, in this order. */
 export const AGENTS_SECTIONS = ['purpose', 'terms', 'repo', 'layer', 'environment', 'rules'] as const;
 
-/** Roles whose prompt has no `AGENTS.md` sections: play and judge, and the seed agent, which reads no harness file. */
-const NO_SECTIONS: readonly Role[] = ['play', 'judge', 'seed'];
+/** Roles whose prompt has no `AGENTS.md` sections. */
+const NO_SECTIONS: readonly Role[] = ['play', 'judge'];
 
 /** A section: its `## <name>` line and the lines of `section`, ending with a newline. */
 export function markdownSection(text: string, name: string): string | null {
@@ -47,7 +47,7 @@ export function paramsBlock(params: PromptParams): string {
   return `${lines.join('\n')}\n`;
 }
 
-/** The prompt of an agent of `role`: `AGENTS.md` sections (not for play, judge and seed), `agents/<role>.md`, and the values. */
+/** The prompt of an agent of `role`: `AGENTS.md` sections (not for play and judge), `agents/<role>.md`, and the values. */
 export async function buildPrompt(harness: string, role: Role, params: PromptParams): Promise<string> {
   const definition = absoluteLinks(await readText(join(harness, 'agents', `${role}.md`)), harness);
   const parts: string[] = [];

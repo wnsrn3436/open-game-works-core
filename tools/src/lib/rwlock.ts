@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { OgwError } from './errors.ts';
@@ -55,67 +55,26 @@ export async function withWriter<T>(lock: RwLock, fn: () => Promise<T>): Promise
   }
 }
 
-/**
- * What a writer that gave up waited for: the queue lock, which another writer of its queue held, the writer lock, which
- * another writer held, the end of the readers, or the end of the other holders (`withWriterWithin`).
- */
-export type WriterWait = 'queue' | 'writer' | 'readers' | 'others';
-
-/** How `withWriterWithin` waits besides `lock.waitMs`. */
-export interface WriterWithinOptions {
-  /**
-   * A lock folder that the writer takes before the writer lock and holds until it ends, waiting at most `waitMs` for it:
-   * the writers that share it wait for each other there, and `lock.waitMs` counts from when it holds it, for the writer
-   * lock that a writer of no queue or of another queue holds and for the readers.
-   */
-  queue?: { path: string; waitMs: number };
-  /** How long, from the start of the wait, it waits at most for the holders of `othersEnd`; `lock.waitMs` without it. */
-  othersWaitMs?: number;
-}
+/** What a writer that gave up waited for: the writer lock, which another writer held, or the end of the readers. */
+export type WriterWait = 'writer' | 'readers';
 
 /**
- * `withWriter` that waits at most `lock.waitMs` in all for the writer lock, then the end of the readers, then the end of
- * the holders that `othersEnd` waits for until the deadline it gets (holders that are no reader entry, which keep off
- * while a writer holds or waits: `writerHoldsOrWaits`), with the waits of `options` instead. It is a waiting writer from
- * its start, also while it waits for its queue. When one does not come by its deadline, it does not run `fn` and says
- * which it waited for.
+ * `withWriter` that waits at most `lock.waitMs` in all for the writer lock and then the end of the readers. It is a
+ * waiting writer from its start. When either does not come by then, it does not run `fn` and says which it waited for.
  */
-export async function withWriterWithin<T>(
-  lock: RwLock,
-  fn: () => Promise<T>,
-  othersEnd: (deadline: number) => Promise<boolean> = () => Promise.resolve(true),
-  options: WriterWithinOptions = {},
-): Promise<{ ran: true; value: T } | { ran: false; waited: WriterWait }> {
-  const start = Date.now();
-  const othersDeadline = start + (options.othersWaitMs ?? lock.waitMs);
+export async function withWriterWithin<T>(lock: RwLock, fn: () => Promise<T>): Promise<{ ran: true; value: T } | { ran: false; waited: WriterWait }> {
+  const deadline = Date.now() + lock.waitMs;
   const waiting = await addEntry(writersDir(lock));
-  const take = async (): Promise<{ ran: true; value: T } | { ran: false; waited: WriterWait }> => {
-    const deadline = (options.queue === undefined ? start : Date.now()) + lock.waitMs;
+  try {
     const taken = await withLockWithin(lock.base, async () => {
       await waiting();
       if (!(await taking(lock.base, () => liveEntriesEnd(readersDir(lock), deadline)))) return { ran: false as const, waited: 'readers' as const };
-      if (!(await taking(lock.base, () => othersEnd(options.othersWaitMs === undefined ? deadline : othersDeadline)))) return { ran: false as const, waited: 'others' as const };
       return { ran: true as const, value: await fn() };
     }, Math.max(0, deadline - Date.now()));
     return taken.ran ? taken.value : { ran: false, waited: 'writer' };
-  };
-  try {
-    if (options.queue === undefined) return await take();
-    const queued = await withLockWithin(options.queue.path, take, Math.max(0, start + options.queue.waitMs - Date.now()));
-    return queued.ran ? queued.value : { ran: false, waited: 'queue' };
   } finally {
     await waiting();
   }
-}
-
-/**
- * Whether a writer holds the writer lock or waits for it: a holder that is no reader entry starts only when this is
- * false, so that a waiting writer goes first. A holder checks it, and starts, under a lock that the writer's `othersEnd`
- * takes too, so that the writer sees each holder that started before it held the writer lock.
- */
-export async function writerHoldsOrWaits(lock: RwLock): Promise<boolean> {
-  if ((await liveEntries(writersDir(lock))) > 0) return true;
-  return (await stat(lock.base).catch(whenNotFound(null))) !== null && !(await isStale(lock.base));
 }
 
 /** Runs `fn` holding the writer lock without waiting for readers: writers wait, readers go on. */
@@ -198,7 +157,7 @@ export async function addReader(lock: RwLock): Promise<() => Promise<void>> {
 }
 
 /** Leaves an entry of this process in `dir`; returns the function that removes it. */
-export async function addEntry(dir: string): Promise<() => Promise<void>> {
+async function addEntry(dir: string): Promise<() => Promise<void>> {
   const entry = join(dir, `${String(process.pid)}-${randomBytes(6).toString('hex')}`);
   await mkdir(entry, { recursive: true });
   await writeFile(join(entry, 'pid'), ownerText());
@@ -206,7 +165,7 @@ export async function addEntry(dir: string): Promise<() => Promise<void>> {
 }
 
 /** The live entries of `dir`. An entry whose process is gone is left over from a crash: it is removed. */
-export async function liveEntries(dir: string): Promise<number> {
+async function liveEntries(dir: string): Promise<number> {
   let live = 0;
   for (const name of await readdir(dir).catch(whenNotFound([]))) {
     const entry = join(dir, name);

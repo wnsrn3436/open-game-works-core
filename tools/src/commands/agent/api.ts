@@ -11,11 +11,10 @@ import { retryAgent } from './lib/retry.ts';
 
 export { agentCliCommand, agentSettings, sandboxed } from './lib/cli-command.ts';
 export { agentMeta, readAgentJob, type AgentMeta } from './lib/meta.ts';
-export { SEED_RESULT_FILE } from './lib/prepare.ts';
 
 export interface AgentJobOptions {
   role: Role;
-  /** Required for every role except `core`, `review` and `seed`. */
+  /** Required for every role except `core` and `review`. */
   game?: string;
   input: string;
   modules?: string[];
@@ -27,10 +26,6 @@ export interface AgentJobOptions {
   runPlace?: CalibrationPlace;
   /** content: the k of a variant agent of `ogw loop variants`, which works in its own worktree. */
   variant?: number;
-  /** seed: the folder `ogw regress refresh` made for the agent, which holds its input. */
-  seedPlace?: string;
-  /** seed: the session of the seed agent of the round before, which this round continues. */
-  seedSession?: string;
 }
 
 /** Starts `ogw agent <role> ... --background` and returns the job id. */

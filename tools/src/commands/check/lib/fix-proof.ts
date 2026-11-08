@@ -14,7 +14,6 @@ import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { binaryBuild } from '../../data/lib/binary-build.ts';
 import { generateCheckout } from '../../generate/api.ts';
-import { withHeavyStep } from '../../generation/lib/lease.ts';
 import { proofExemption, type Defect, type DefectsFile, type ReportRow } from '../../loop/lib/defects.ts';
 import type { FixTestProof, ProofTest } from '../../loop/lib/files.ts';
 import { reportRows } from '../../loop/lib/record.ts';
@@ -167,10 +166,8 @@ async function runOnBase(ctx: Context, game: GameRepo, base: string, commit: str
     for (const c of changed.filter((d) => d.deleted)) await rm(join(worktree, c.path), { force: true });
     const checkout: GameRepo = { ...game, root: worktree, inWorktree: true };
     try {
-      await withHeavyStep(ctx, checkout, async () => {
-        await generateCheckout(ctx, checkout);
-        await binaryBuild(ctx, checkout, 'the generated files of the fix base could not be written');
-      });
+      await generateCheckout(ctx, checkout);
+      await binaryBuild(ctx, checkout, 'the generated files of the fix base could not be written');
     } catch (error) {
       return none((error as Error).message.split('\n')[0] as string);
     }

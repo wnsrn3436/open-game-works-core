@@ -46,11 +46,6 @@
       "cli": "claude-code",
       "model": "claude-opus-5-5",
       "effort": "high"
-    },
-    "seed": {
-      "cli": "claude-code",
-      "model": "claude-opus-5-5",
-      "effort": "high"
     }
   },
   "instanceWaitTimeoutMs": 1800000,
@@ -83,14 +78,6 @@
     "degradeNetworkDelayMs": 3000,
     "minDecisions": 15
   },
-  "regress": {
-    "repeats": 3,
-    "modelRepeats": 5,
-    "parallel": 6,
-    "permutations": 10000,
-    "level": 0.1,
-    "seedRounds": 3
-  },
   "reviewRounds": 4,
   "codeCheck": {
     "maxComplexity": 15
@@ -109,8 +96,7 @@
     "coreImpl": "open-game-works-core-impl",
     "coreReleases": "open-game-works-core-releases",
     "games": "games",
-    "worktrees": "worktrees.noindex",
-    "regress": "open-game-works-regress"
+    "worktrees": "worktrees.noindex"
   },
   "coreReleaseRepository": "wnsrn3436/open-game-works-core-impl",
   "useLocalCore": false,

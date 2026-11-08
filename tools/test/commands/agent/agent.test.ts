@@ -15,7 +15,7 @@ import { cliToRun, otherGameFolders } from '../../../src/commands/agent/lib/laun
 import { agentCliCommand, agentResumeCommand } from '../../../src/commands/agent/lib/cli-command.ts';
 import { jobHarnessSettings } from '../../../src/commands/agent/lib/meta.ts';
 import type { AgentSettings } from '../../../src/lib/settings.ts';
-import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, realHarness, sh, testSettings } from '../../helpers/workspace.ts';
+import { ogw, commitAll, gitEnv, makeGame, makeWorkspace, sh, testSettings } from '../../helpers/workspace.ts';
 import { fakeAgentCli, gameWithRun, noUsage, readRunLog, RESULT, runAgent, WRITE_OUTPUT } from './helpers.ts';
 
 const RUN_OGW = `execFileSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cliEntry())}, 'job', 'status', 'nojob'], { stdio: 'ignore' }) ;`;
@@ -441,11 +441,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('o
     const workspace = await ctx.workspace();
     const agent: AgentSettings = { cli: 'claude-code', model: 'm', effort: 'high' };
     const run = (role: string, game: string | null) => cliToRun(ctx, role, agent, workspace, null, null, null, game);
-    // a game alone runs without the sandbox unless the seeds of the regression suite are on this host: `regress/` of the
-    // harness repo this code runs from is one of them
-    const alone = await run('content', 'g');
-    if (existsSync(join(realHarness, 'regress'))) expect(readFileSync(join(alone.profileFolder as string, 'sandbox.sb'), 'utf8')).toContain(join(realHarness, 'regress'));
-    else expect(alone).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
+    expect(await run('content', 'g')).toMatchObject({ profileFolder: null, command: { cmd: 'claude' } });
     makeGame(ws, 'other', { 'settings.json': {} });
     for (const role of ['content', 'translation', 'server-hardening', 'client-hardening']) {
       const wrapped = await run(role, 'g');
@@ -488,52 +484,9 @@ describe('otherGameFolders', () => {
     const dirs = [join(ws.games, 'g'), join(ws.games, 'other'), join(ws.worktrees, 'g'), join(ws.worktrees, 'other'), join(ws.worktrees, '_core')];
     for (const dir of dirs) mkdirSync(dir, { recursive: true });
     writeFileSync(join(ws.games, '.DS_Store'), '');
-    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees, regress: join(ws.root, 'regress-repo') };
-    // the seeds of the harness repo this code runs from, when it has them
-    const seeds = existsSync(join(realHarness, 'regress')) ? [join(realHarness, 'regress')] : [];
-    const data = join(ws.root, '.ogw');
-    expect(await otherGameFolders(folders, 'g', data)).toEqual([join(ws.games, 'other'), join(ws.worktrees, 'other'), ...seeds]);
-    expect(await otherGameFolders({ ...folders, games: join(ws.root, 'none'), worktrees: join(ws.root, 'none') }, 'g', data)).toEqual(seeds);
-  });
-
-  it('keeps the side worktrees open and blocks the seeds: the regress repo and regress/ of the harness and of each side worktree', async () => {
-    const ws = makeWorkspace();
-    const regress = join(ws.root, 'regress-repo');
-    const side = join(ws.worktrees, '_harness', 's1');
-    for (const dir of [join(ws.games, 'g'), regress, join(ws.harness, 'regress'), join(side, 'regress'), join(ws.worktrees, '_harness', 's2')]) mkdirSync(dir, { recursive: true });
-    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees, regress };
-    const blocked = await otherGameFolders(folders, 'g', join(ws.root, '.ogw'));
-    expect(blocked).toContain(regress);
-    expect(blocked).toContain(join(ws.harness, 'regress'));
-    expect(blocked).toContain(join(side, 'regress'));
-    // the side worktrees hold the prompts the agent reads; only their seed folders are blocked
-    expect(blocked).not.toContain(join(ws.worktrees, '_harness'));
-    expect(blocked).not.toContain(join(ws.worktrees, '_harness', 's2', 'regress'));
-  });
-});
-
-describe('otherGameFolders: the admission folders', () => {
-  it('blocks the admission folders of the data folder, whose check files are named by seed, and keeps the catch folders of a run open', async () => {
-    const ws = makeWorkspace();
-    const data = join(ws.root, '.ogw');
-    const admit = join(data, 'regress', 'admit-1.0.0');
-    const caught = join(data, 'regress', '1700000000000');
-    mkdirSync(join(admit, 'S01'), { recursive: true });
-    writeFileSync(join(admit, 'S01', 'seeded-1.json'), '{}');
-    mkdirSync(join(caught, 'catch', 'after'), { recursive: true });
-    mkdirSync(join(ws.games, 'g'), { recursive: true });
-    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees, regress: join(ws.root, 'regress-repo') };
-    const blocked = await otherGameFolders(folders, 'g', data);
-    expect(blocked).toContain(admit);
-    expect(blocked).not.toContain(caught);
-    expect(blocked).not.toContain(join(data, 'regress'));
-    // the agents of one game get them in their sandbox
-    const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-    const workspace = await ctx.workspace();
-    for (const role of ['content', 'translation', 'server-hardening', 'client-hardening']) {
-      const cli = await cliToRun(ctx, role, { cli: 'claude-code', model: 'm', effort: 'high' }, workspace, null, null, null, 'g');
-      if (process.platform === 'darwin' || process.platform === 'linux') expect(readFileSync(join(cli.profileFolder as string, 'sandbox.sb'), 'utf8')).toContain(admit);
-    }
+    const folders = { harness: ws.harness, coreImpl: ws.coreImpl, coreReleases: ws.coreReleases, games: ws.games, worktrees: ws.worktrees };
+    expect(await otherGameFolders(folders, 'g')).toEqual([join(ws.games, 'other'), join(ws.worktrees, 'other')]);
+    expect(await otherGameFolders({ ...folders, games: join(ws.root, 'none'), worktrees: join(ws.root, 'none') }, 'g')).toEqual([]);
   });
 });
 

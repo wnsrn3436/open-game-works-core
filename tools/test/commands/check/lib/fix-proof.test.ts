@@ -6,10 +6,10 @@ import { fixTestProofs } from '../../../../src/commands/check/lib/fix-proof.ts';
 import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { clientGutRun } from '../../../../src/commands/check/lib/regression.ts';
 import { runServerTests } from '../../../../src/commands/core/lib/server-tests.ts';
+import { createContext, type Context } from '../../../../src/lib/command.ts';
 import type { RunState } from '../../../../src/lib/runstate.ts';
 import { afterReport, type Defect, type ReportRow } from '../../../../src/commands/loop/lib/defects.ts';
-import { commitAll, makeGame, makeWorkspace } from '../../../helpers/workspace.ts';
-import { ctxOf } from '../../regress/helpers.ts';
+import { commitAll, makeGame, makeWorkspace, type TestWorkspace } from '../../../helpers/workspace.ts';
 
 vi.mock('../../../../src/commands/check/lib/regression.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/commands/check/lib/regression.ts')>()),
@@ -24,6 +24,10 @@ vi.mock('../../../../src/commands/generate/api.ts', () => ({ generateCheckout: v
 vi.mock('../../../../src/commands/data/lib/binary-build.ts', () => ({ binaryBuild: vi.fn(() => Promise.resolve()) }));
 
 const R = 'records/loops/create-1';
+
+function ctxOf(ws: TestWorkspace): Context {
+  return createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
+}
 
 interface Span {
   what: string;

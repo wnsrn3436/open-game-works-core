@@ -43,7 +43,6 @@ export const COMMAND_FOLDERS: Readonly<Record<string, Loader>> = {
   docs: () => import('./docs/index.ts'),
   video: () => import('./video/index.ts'),
   judge: () => import('./judge/index.ts'),
-  regress: () => import('./regress/index.ts'),
   time: () => import('./time/index.ts'),
 };
 

@@ -144,8 +144,6 @@ export interface InstanceRecord {
   plan: InstancePlan | null;
   /** Launch values of the client the runner did not start (`InstancePlan.external`); absent otherwise. */
   external?: ExternalClient | null;
-  /** The instance holds the performance lease from its slot until its record goes (ogw.md `### performance lease`). */
-  leaseHolder?: boolean;
   /** The job and step span the start ran in, where the supervisor writes the spans of its boot (ogw.md `## time`); absent outside a job. */
   spans?: { job: string; span: string | null };
 }

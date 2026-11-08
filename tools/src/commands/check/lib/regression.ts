@@ -10,7 +10,6 @@ import type { CheckFailure, CheckResult } from '../api.ts';
 import { checkedScriptErrors, engineErrorLines, gutRun, type GutRunResult } from '../../core/lib/godot.ts';
 import { startPostgres } from '../../core/lib/postgres.ts';
 import { runServerTests, serverRunFailures, type ServerTestInputs, type ServerTestRun } from '../../core/lib/server-tests.ts';
-import { withHeavyStep } from '../../generation/lib/lease.ts';
 import { importClient } from './engine.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from './evidence.ts';
 
@@ -99,12 +98,9 @@ export function targetWhere(path: string): string {
   return `${path}:1`;
 }
 
-/**
- * A server test run of `target` in the checkout `game` (`testing` `### test run`), as a heavy step of the check (ogw.md
- * `### performance lease`).
- */
+/** A server test run of `target` in the checkout `game` (`testing` `### test run`). */
 export function serverTestRun(ctx: Context, game: GameRepo, target: string, inputs: ServerTestInputs, timeoutMs: number): Promise<ServerTestRun> {
-  return withHeavyStep(ctx, game, () => runServerTests({ checkout: game.root, target, kind: 'regression', inputs, env: ctx.env, timeoutMs }));
+  return runServerTests({ checkout: game.root, target, kind: 'regression', inputs, env: ctx.env, timeoutMs });
 }
 
 /** Server regression test (`testing` `### test run`) of the `*.test.ts` files of `path`; none is run failure `no tests`. */
@@ -186,13 +182,10 @@ export function clientTimeoutMs(options: Pick<ClientRunOptions, 'runTimeLimitMs'
   return (options.runTimeLimitMs ?? LIMITS.programMs) + LIMITS.shortMs;
 }
 
-/**
- * The GUT run of the client regression test of `path` in the checkout `game`, whose `client/` is imported, as a heavy step
- * of the check (ogw.md `### performance lease`).
- */
+/** The GUT run of the client regression test of `path` in the checkout `game`, whose `client/` is imported. */
 export async function clientGutRun(ctx: Context, game: GameRepo, path: string, options: Pick<ClientRunOptions, 'godot' | 'runTimeLimitMs' | 'startTimeLimitMs'>): Promise<GutRunResult> {
   const root = game.root;
-  return withHeavyStep(ctx, game, () => gutRun(ctx, {
+  return gutRun(ctx, {
     godot: options.godot,
     project: join(root, 'client'),
     cwd: root,
@@ -205,7 +198,7 @@ export async function clientGutRun(ctx: Context, game: GameRepo, path: string, o
     config: (runId, host) => ({ ogw_run_id: runId, ogw_test_host: host, ogw_shared_fixture_dir: join(root, 'data', 'fixtures') }),
     timeoutMs: clientTimeoutMs(options),
     startLimitMs: options.startTimeLimitMs ?? null,
-  }));
+  });
 }
 
 /**

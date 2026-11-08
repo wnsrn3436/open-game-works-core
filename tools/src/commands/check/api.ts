@@ -148,5 +148,4 @@ export async function placeholderFailures(ctx: Context, game: GameRepo): Promise
 export { rowSimulationFailures, simulateRows, type RowResult, type RowSimulation, type SimulateOptions, type Verdict } from './lib/row-simulation.ts';
 /** `UnitTestCore` test host, shareable with `ogw core test`. */
 export { startTestHost, type TestHost, type TestInput } from './lib/test-host.ts';
-export { coreTryChecks, regressChecks } from './check.ts';
-export type { RegressPick } from './lib/loop.ts';
+export { coreTryChecks } from './check.ts';

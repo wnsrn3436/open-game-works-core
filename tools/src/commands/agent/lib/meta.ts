@@ -25,12 +25,6 @@ export const GAME_ROLES: readonly Role[] = [
  */
 export const FIX_ROUND_ROLES: readonly Role[] = ['content', 'server-hardening', 'client-hardening', 'review'];
 
-/**
- * The roles whose job runs in a session of Claude Code (ogw.md `## agent`): the roles with fix rounds, and the seed
- * agent, whose rounds (`### seed agent` of `## regress`) continue the session of the round before.
- */
-export const CLAUDE_SESSION_ROLES: readonly Role[] = [...FIX_ROUND_ROLES, 'seed'];
-
 /** Roles that work in a new worktree of the game repo. */
 export const GAME_WORKTREE_ROLES: readonly Role[] = ['resource', 'translation', 'server-hardening', 'client-hardening'];
 
@@ -40,9 +34,7 @@ export type AgentPlace =
   | { kind: 'game-worktree'; checkout: string; worktrees: string; branch: string; baseCommit: string }
   | { kind: 'core-worktree'; coreImpl: string; worktrees: string; baseCommit: string }
   | { kind: 'tool-worktree'; harness: string; baseCommit: string }
-  | { kind: 'temp'; dir: string; checkout: string }
-  /** seed: the folder `ogw regress refresh` made, which holds the input and result file and which the refresh removes. */
-  | { kind: 'seed'; dir: string };
+  | { kind: 'temp'; dir: string; checkout: string };
 
 /** Review fields of a review agent job, read from the review input. */
 export interface ReviewOf {
@@ -107,8 +99,6 @@ export interface AgentMeta {
   agent?: AgentSettings | null;
   /** content: the k of a variant agent of `ogw loop variants` (ogw.md `## loop variants`); absent or null otherwise. */
   variant?: number | null;
-  /** content, translation: the seed-run of `--seed-run` (ogw.md `## agent`); absent or null otherwise. */
-  seedRun?: { records: string; iteration: number } | null;
   /** A role with fix rounds: the session of the job (ogw.md `## agent`), which a new Codex session gets from its first run. */
   session?: AgentSession | null;
   /** spec review: the lines of what `ogw agent wait` wrote to the spec debt lists, once (`recordSpecDebt`). */

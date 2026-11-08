@@ -26,8 +26,6 @@ export async function retryAgent(ctx: Context, id: string): Promise<string> {
   if (outcome.status === 'done') throw new OgwError(`job ${id} ended with a result file: ${String(outcome.output)}`);
   if (meta.role === 'play' || meta.role === 'judge') throw new OgwError(`job ${id} has a JSON input (${meta.role}); it is not retried`);
   if ((meta.variant ?? null) !== null) throw new OgwError(`job ${id} is a variant agent of ogw loop variants; it is not retried`);
-  if ((meta.seedRun ?? null) !== null) throw new OgwError(`job ${id} is a fixer of a seed-run of ogw regress; it is not retried`);
-  if (meta.role === 'seed') throw new OgwError(`job ${id} is a seed agent of ogw regress refresh; it is not retried`);
   const root = meta.retryRoot === '' ? job.id : meta.retryRoot;
   const original = root === job.id ? meta.input : (await readAgentJob(root, ctx.env)).meta.input;
   const text = await readText(original);

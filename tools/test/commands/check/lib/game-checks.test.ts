@@ -1,8 +1,4 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeMark } from '../../../../src/commands/regress/lib/mark.ts';
 // loop.ts first: loading the original api.ts loads loop.ts, which then would bind the original placeholderFailures
 import { gameChecks, type CheckSet } from '../../../../src/commands/check/lib/loop.ts';
 import { placeholderFailures, type CheckResult } from '../../../../src/commands/check/api.ts';
@@ -45,7 +41,6 @@ function pass(name: string, platform: string | null = null): CheckResult {
 }
 
 const ctx = { settings: () => Promise.resolve({ maxConcurrentInstances: 2, performanceLeaseWaitTimeoutMs: 1234 }), workspace: () => Promise.resolve({ root: '/ws' }) } as unknown as Context;
-// a git dir without the regression mark: the performance lease is that of a game outside the regression suite
 const game = { name: 'g', root: '/nowhere', commonDir: '/nowhere/.git' } as GameRepo;
 const UI_QUALITY = { settleLimitMs: 0, maxFontSizes: 4, minFontSize: 18, minContrast: 4.5, minLargeContrast: 3, maxEmptyShare: 0.6, minTouchTarget: 48 };
 const settings = { buildPlatforms: ['ios', 'web'], targetFps: 60, loadingTimeLimitMs: 1000, rowSimulationSeeds: 2, uiQuality: UI_QUALITY } as GameSettings;
@@ -84,17 +79,12 @@ describe('gameChecks', () => {
 
   it('measures the performance of every platform profile under one hold of the performance lease of this host', async () => {
     await names('core try');
-    expect(vi.mocked(performanceChecks).mock.calls.map((c) => [c[2], c[4].lease, c[4].regress])).toEqual([
-      [['ios', 'web'], { base: '/ws/.ogw/generation/performance-lease', waitMs: 1234 }, false],
+    expect(vi.mocked(performanceChecks).mock.calls.map((c) => [c[2], c[4].lease])).toEqual([
+      [['ios', 'web'], { base: '/ws/.ogw/generation/performance-lease', waitMs: 1234 }],
     ]);
     vi.mocked(performanceChecks).mockClear();
     await names('fun');
     expect(performanceChecks).not.toHaveBeenCalled();
-    // a game with the regression mark measures as a regress measurement
-    const commonDir = mkdtempSync(join(tmpdir(), 'ogw-mark-'));
-    await writeMark(commonDir, { kind: 'fix', state: 's' });
-    await gameChecks(ctx, { ...game, commonDir }, settings, options, { root: '/nowhere', dir: null, relative: false }, 'core try');
-    expect(vi.mocked(performanceChecks).mock.calls.map((c) => c[4].regress)).toEqual([true]);
   });
 
   it('gives the regression test the run and start limits of the merged core settings of the game', async () => {

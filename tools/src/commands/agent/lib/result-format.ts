@@ -83,18 +83,6 @@ async function playErrors(text: string, meta: AgentMeta, output: string): Promis
   return playFeedbackErrors(text, defects, (path) => exists(resolve(dirname(output), path)));
 }
 
-/** The values of `## result` of the result file of the seed agent (ogw.md `### result format` of `## agent`). */
-export const SEED_RESULTS = ['rebased', 'not rebased'] as const;
-
-/** seed: `## result`, one of `SEED_RESULTS`, and a `## reason`, which `ogw regress refresh` reads. */
-function seedErrors(text: string): string[] {
-  const errors: string[] = [];
-  const result = firstLine(text, 'result');
-  if (result === null || !(SEED_RESULTS as readonly string[]).includes(result)) errors.push(`\`## result\` is not one of ${SEED_RESULTS.map((r) => `\`${r}\``).join(', ')}`);
-  if (firstLine(text, 'reason') === null) errors.push('`## reason` is missing or empty');
-  return errors;
-}
-
 /**
  * The format errors of the result file `output` of an `ogw agent` job (ogw.md `### result format` of `## agent`), read
  * by the readers of the commands that read it; [] for a role without a check.
@@ -113,8 +101,6 @@ export async function resultFormatErrors(meta: AgentMeta, output: string): Promi
       return playErrors(text, meta, output);
     case 'judge':
       return judgeErrors(text, meta);
-    case 'seed':
-      return seedErrors(text);
     default:
       return [];
   }
