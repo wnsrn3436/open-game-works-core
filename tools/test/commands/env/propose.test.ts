@@ -102,6 +102,10 @@ function routes(): Record<string, Route> {
 }
 
 const FFMPEG_RELEASE = 'https://api.github.com/repos/eugeneware/ffmpeg-static/releases/tags/b6.1.1';
+const WALG_RELEASE = 'https://api.github.com/repos/wal-g/wal-g/releases/tags/v3.0.9';
+
+/** A `tools.walg` pin, so that the proposals of the tests other than its own have none for it. */
+const WALG_PIN = { version: 'wal-g/wal-g v3.0.9', downloads: [{ platform: 'linux-x64', url: 'https://gh/wal-g-pg-20.04-amd64', sha256: 'd'.repeat(64) }] };
 
 /** cp314 wheels of a release for macOS (with that platform tag), Linux and Windows. */
 function WHEELS(prefix: string, mac: string): Record<string, unknown>[] {
@@ -183,7 +187,7 @@ function compileCalls(uv: string): CompileCall[] {
 }
 
 function setup(): { ws: TestWorkspace; env: NodeJS.ProcessEnv; uv: string } {
-  const ws = makeWorkspace({ tools: realToolsWithout('ffmpeg', 'gdtoolkit'), resourceGeneration: METHODS });
+  const ws = makeWorkspace({ tools: { ...realToolsWithout('ffmpeg', 'gdtoolkit', 'walg'), walg: WALG_PIN }, resourceGeneration: METHODS });
   mkdirSync(join(ws.coreImpl, 'client', 'godot'), { recursive: true });
   writeFileSync(join(ws.coreImpl, 'client', 'godot', 'engine.json'), JSON.stringify({ godot: '4.5.1.stable' }));
   // `uv python find --system` names the Python of the method environments (`uv venv`): CPython 3.<OGW_TEST_PY_MINOR or 12>.
@@ -822,6 +826,50 @@ describe('ogw env propose', () => {
       ['measured:flux2-klein', [{ resolution: 512, jobMs: 9, result: 'ok' }, { resolution: 1024, jobMs: 20, result: 'timeout' }]],
       ['measured:cat', [{ result: 'ok' }]],
     ]);
+  });
+
+  it('proposes tools.walg without one: the linux-x64 and linux-arm64 PostgreSQL binaries of the fixed release, which the schema takes', async () => {
+    const { ws, env } = setup();
+    const settingsPath = join(ws.harness, 'settings.json');
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { tools: Record<string, unknown> };
+    delete settings.tools.walg;
+    writeFileSync(settingsPath, JSON.stringify(settings));
+    const digest = (c: string): string => `sha256:${c.repeat(64)}`;
+    const assets = [
+      { name: 'wal-g-pg-20.04-aarch64', browser_download_url: 'https://gh/wal-g-pg-20.04-aarch64', digest: digest('1') },
+      { name: 'wal-g-pg-20.04-aarch64.tar.gz', browser_download_url: 'https://gh/wal-g-pg-20.04-aarch64.tar.gz', digest: digest('2') },
+      { name: 'wal-g-pg-20.04-amd64', browser_download_url: 'https://gh/wal-g-pg-20.04-amd64', digest: digest('3') },
+      { name: 'wal-g-pg-20.04-amd64.tar.gz', browser_download_url: 'https://gh/wal-g-pg-20.04-amd64.tar.gz', digest: digest('4') },
+      { name: 'wal-g-pg-22.04-amd64', browser_download_url: 'https://gh/wal-g-pg-22.04-amd64', digest: digest('5') },
+      { name: 'wal-g-mysql-20.04-amd64', browser_download_url: 'https://gh/wal-g-mysql-20.04-amd64', digest: digest('6') },
+    ];
+    const net = (release: object) => fakeNet({ ...routes(), [WALG_RELEASE]: release }, { lsRemote: { [SPRITE]: COMMIT, [X_REPO]: X_REFS }, files: { [`${SPRITE} ${COMMIT} pyproject.toml`]: PYPROJECT } });
+    setNet(net({ assets }));
+    const out = JSON.parse((await ogw(ws, ['env', 'propose', '--json'], { env })).stdout) as { proposals: { id: string }[] };
+    expect(out.proposals.find((p) => p.id === 'tools.walg')).toEqual({
+      id: 'tools.walg',
+      path: 'tools.walg',
+      current: null,
+      value: {
+        version: 'wal-g/wal-g v3.0.9',
+        downloads: [
+          { platform: 'linux-x64', url: 'https://gh/wal-g-pg-20.04-amd64', sha256: '3'.repeat(64) },
+          { platform: 'linux-arm64', url: 'https://gh/wal-g-pg-20.04-aarch64', sha256: '1'.repeat(64) },
+        ],
+      },
+      reason: 'tools.walg is missing; WAL-G PostgreSQL binaries of wal-g/wal-g v3.0.9',
+    });
+    // the schema takes the linux-arm64 download
+    expect(await ogw(ws, ['env', 'propose', '--apply', 'tools.walg'], { env })).toMatchObject({ code: 0, stdout: 'applied: tools.walg\n' });
+    const applied = JSON.parse(readFileSync(settingsPath, 'utf8')) as { tools: { walg: { downloads: { platform: string }[] } } };
+    expect(applied.tools.walg.downloads.map((d) => d.platform)).toEqual(['linux-x64', 'linux-arm64']);
+    const again = JSON.parse((await ogw(ws, ['env', 'propose', '--json'], { env })).stdout) as { proposals: { id: string }[] };
+    expect(again.proposals.map((p) => p.id)).not.toContain('tools.walg');
+
+    delete settings.tools.walg;
+    writeFileSync(settingsPath, JSON.stringify(settings));
+    setNet(net({ assets: assets.filter((a) => a.name !== 'wal-g-pg-20.04-aarch64') }));
+    expect(await ogw(ws, ['env', 'propose', '--json'], { env })).toMatchObject({ code: 1, stderr: expect.stringContaining('release wal-g/wal-g v3.0.9 has no asset wal-g-pg-20.04-aarch64 with a sha256 digest') as unknown });
   });
 
   it('proposes tools.gdtoolkit and tools.ffmpeg again only when generation install could not get them', async () => {

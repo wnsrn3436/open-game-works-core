@@ -40,7 +40,8 @@ export interface AgentSettings {
 }
 
 export interface ToolDownload {
-  platform: 'macos-arm64' | 'linux-x64' | 'windows-x64' | 'any';
+  /** A host platform or `any`; `linux-arm64` is only a container platform (`tools.walg`). */
+  platform: 'macos-arm64' | 'linux-x64' | 'linux-arm64' | 'windows-x64' | 'any';
   url: string;
   sha256: string;
 }

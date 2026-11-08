@@ -4,7 +4,9 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { hostDownloads } from '../../../src/commands/env/lib/engines.ts';
 import { setNet } from '../../../src/commands/env/lib/net.ts';
+import { downloadFor, pinFiles } from '../../../src/commands/env/lib/tools.ts';
 import { walgPlatform, walgProgram } from '../../../src/commands/env/lib/walg.ts';
 import { makeWorkspace, realToolsWithout } from '../../helpers/workspace.ts';
 import { ctxOf } from '../generate/helpers.ts';
@@ -55,6 +57,17 @@ describe('walgProgram', () => {
     expect(readFileSync(inTar, 'utf8')).toBe('WALG-IN-TAR');
   });
 
+  it('gives no host a linux-arm64 download: it is a platform of the containers of tools.walg only', () => {
+    const arm = { platform: 'linux-arm64' as const, url: `${BASE}/wal-g-pg-20.04-aarch64`, sha256: 'a'.repeat(64) };
+    const x64 = { platform: 'linux-x64' as const, url: `${BASE}/wal-g-pg-20.04-amd64`, sha256: 'b'.repeat(64) };
+    for (const host of ['macos-arm64', 'linux-x64', 'windows-x64', null] as const) {
+      expect(downloadFor([arm], host)).toBeNull();
+      expect(pinFiles({ version: '1', downloads: [arm] }, host)).toBeNull();
+      expect(hostDownloads([arm], host)).toEqual([]);
+    }
+    expect(downloadFor([arm, x64], 'linux-x64')).toEqual(x64);
+  });
+
   it('fails without the pin, without a download of the platform, and on a SHA-256 that differs', async () => {
     setNet(fakeNet({ [`${BASE}/wal-g-pg-22.04-amd64`]: 'other bytes' }));
     await expect(walgProgram(ctxOf(workspace(null)), 'linux/amd64')).rejects.toThrow('harness settings tools.walg is missing');
@@ -62,5 +75,12 @@ describe('walgProgram', () => {
     await expect(walgProgram(ctxOf(pinned), 'linux/arm64')).rejects.toThrow('harness settings tools.walg has no linux-arm64 download');
     await expect(walgProgram(ctxOf(pinned), 'windows/amd64')).rejects.toThrow('tools.walg has no platform for Docker platform windows/amd64');
     await expect(walgProgram(ctxOf(pinned), 'linux/amd64')).rejects.toThrow('harness settings tools.walg linux-x64: SHA-256 differs from the pin');
+    const arm = Buffer.from('WALG-ARM64');
+    setNet(fakeNet({ [`${BASE}/wal-g-pg-20.04-aarch64`]: arm }));
+    const both = workspace([
+      { platform: 'linux-x64', url: `${BASE}/wal-g-pg-22.04-amd64`, sha256: '0'.repeat(64) },
+      { platform: 'linux-arm64', url: `${BASE}/wal-g-pg-20.04-aarch64`, sha256: sha256(arm) },
+    ]);
+    expect(readFileSync(await walgProgram(ctxOf(both), 'linux/arm64'), 'utf8')).toBe('WALG-ARM64');
   });
 });

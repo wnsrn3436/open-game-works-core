@@ -7,7 +7,7 @@ import { dataDir, safeSegment } from './host.ts';
 import { installItem, readMarker } from './install.ts';
 
 /** The `tools.walg` download platform of a Docker platform (`serverImage.platform`, the OS/arch of a Docker server). */
-export function walgPlatform(dockerPlatform: string): string | null {
+export function walgPlatform(dockerPlatform: string): 'linux-x64' | 'linux-arm64' | null {
   if (dockerPlatform === 'linux/amd64') return 'linux-x64';
   if (dockerPlatform === 'linux/arm64') return 'linux-arm64';
   return null;
@@ -35,8 +35,7 @@ export async function walgProgram(ctx: Context, dockerPlatform: string): Promise
   if (!pin) throw new OgwError('harness settings tools.walg is missing');
   const platform = walgPlatform(dockerPlatform);
   if (platform === null) throw new OgwError(`tools.walg has no platform for Docker platform ${dockerPlatform}`);
-  // the schema enum of a download platform has no linux-arm64 yet: such a download cannot be pinned
-  const download = pin.downloads.find((d) => (d.platform as string) === platform);
+  const download = pin.downloads.find((d) => d.platform === platform);
   if (!download) throw new OgwError(`harness settings tools.walg has no ${platform} download`);
   const dir = join(await dataDir(ctx), 'tools', 'walg', safeSegment(pin.version), platform);
   const result = await installItem({

@@ -658,6 +658,36 @@ async function ffmpegProposal(inputs: Inputs): Promise<Proposal[]> {
   return [{ id: 'tools.ffmpeg', path: 'tools.ffmpeg', current: current ?? null, value, reason: `${why}; ffmpeg static build of ${FFMPEG_SOURCE.repository} ${FFMPEG_SOURCE.tag}` }];
 }
 
+/**
+ * The fixed source of the `tools.walg` proposal: the PostgreSQL binaries (not the `.tar.gz` archives) of a WAL-G release,
+ * for the platforms of `serverImage.platform` and of this host's Docker. The SHA-256 GitHub gives is the one of the
+ * binary that `ogw deploy` and `ogw backup test` fetch and check.
+ */
+export const WALG_SOURCE = {
+  repository: 'wal-g/wal-g',
+  tag: 'v3.0.9',
+  assets: { 'linux-x64': 'wal-g-pg-20.04-amd64', 'linux-arm64': 'wal-g-pg-20.04-aarch64' } as const,
+};
+
+/** `tools.walg` from the fixed source: each asset URL and the SHA-256 GitHub gives as the asset digest. */
+export async function walgPin(): Promise<ToolPin> {
+  const release = await requestJson<GithubRelease>(`https://api.github.com/repos/${WALG_SOURCE.repository}/releases/tags/${WALG_SOURCE.tag}`);
+  const downloads = (['linux-x64', 'linux-arm64'] as const).map((platform) => {
+    const name = WALG_SOURCE.assets[platform];
+    const asset = (release.assets ?? []).find((a) => a.name === name);
+    const sha256 = /^sha256:([0-9a-f]{64})$/.exec(asset?.digest ?? '')?.[1];
+    if (asset === undefined || sha256 === undefined) throw new OgwError(`release ${WALG_SOURCE.repository} ${WALG_SOURCE.tag} has no asset ${name} with a sha256 digest`);
+    return { platform, url: asset.browser_download_url, sha256 };
+  });
+  return { version: `${WALG_SOURCE.repository} ${WALG_SOURCE.tag}`, downloads };
+}
+
+async function walgProposal(inputs: Inputs): Promise<Proposal[]> {
+  if (inputs.settings.tools.walg !== undefined) return [];
+  const value = await walgPin();
+  return [{ id: 'tools.walg', path: 'tools.walg', current: null, value, reason: `tools.walg is missing; WAL-G PostgreSQL binaries of ${WALG_SOURCE.repository} ${WALG_SOURCE.tag}` }];
+}
+
 /** The proposals. With `only`, the proposals that need a lookup are computed only for those ids. */
 export async function computeProposals(ctx: Context, inputs: Inputs, only?: ReadonlySet<string>): Promise<Proposal[]> {
   const wanted = (id: string): boolean => only === undefined || only.has(id);
@@ -671,6 +701,7 @@ export async function computeProposals(ctx: Context, inputs: Inputs, only?: Read
     ...(await sha256Proposals(ctx, inputs)),
     ...(wanted('tools.gdtoolkit') ? await gdtoolkitProposal(ctx, pypi, inputs) : []),
     ...(wanted('tools.ffmpeg') ? await ffmpegProposal(inputs) : []),
+    ...(wanted('tools.walg') ? await walgProposal(inputs) : []),
   ];
 }
 

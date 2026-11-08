@@ -33,6 +33,7 @@ export const COMMAND_FOLDERS: Readonly<Record<string, Loader>> = {
   resource: () => import('./resource/index.ts'),
   build: () => import('./build/index.ts'),
   deploy: () => import('./deploy/index.ts'),
+  backup: () => import('./backup/index.ts'),
   core: () => import('./core/index.ts'),
   code: () => import('./code/index.ts'),
   review: () => import('./review/index.ts'),

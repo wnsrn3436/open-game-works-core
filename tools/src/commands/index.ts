@@ -25,6 +25,7 @@ import { commands as translation } from './translation/index.ts';
 import { commands as resource } from './resource/index.ts';
 import { commands as build } from './build/index.ts';
 import { commands as deploy } from './deploy/index.ts';
+import { commands as backup } from './backup/index.ts';
 import { commands as core } from './core/index.ts';
 import { commands as code } from './code/index.ts';
 import { commands as review } from './review/index.ts';
@@ -65,6 +66,7 @@ export const commands: readonly CommandDef[] = [
   ...resource,
   ...build,
   ...deploy,
+  ...backup,
   ...core,
   ...code,
   ...review,

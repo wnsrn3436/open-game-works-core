@@ -906,9 +906,11 @@
       ],
       "properties": {
         "platform": {
+          "description": "The OS and CPU the file runs on. `ogw` installs the file of the host platform (`macos-arm64`, `linux-x64`, `windows-x64`) or `any` on this host; `linux-arm64` is no host platform and is only a platform of the containers of `tools.walg`",
           "enum": [
             "macos-arm64",
             "linux-x64",
+            "linux-arm64",
             "windows-x64",
             "any"
           ]
