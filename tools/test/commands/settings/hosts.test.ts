@@ -1,10 +1,17 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { concurrencyLimit } from '../../../src/commands/instance/lib/prepare.ts';
 import { typeRow } from '../../../src/commands/generation/check.ts';
+import { OgwError } from '../../../src/lib/errors.ts';
+import { writeJsonAtomic } from '../../../src/lib/fsx.ts';
 import { loadHarnessSettings } from '../../../src/lib/settings.ts';
 import { ogw, makeWorkspace, TEST_HOST_ID, type TestWorkspace } from '../../helpers/workspace.ts';
+
+vi.mock('../../../src/lib/fsx.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/lib/fsx.ts')>();
+  return { ...actual, writeJsonAtomic: vi.fn(actual.writeJsonAtomic) };
+});
 
 const OTHER = 'f'.repeat(32);
 
@@ -198,7 +205,7 @@ describe('local harness settings hold only local-scope paths', () => {
   it('fails reading harness settings while settings.local.json holds a criterion, and a write moves it to settings.json', async () => {
     writeLocal({ humanLanguage: 'ko', loop: { judgeVotes: 4, judgePanel: [] }, loopStop: { plateau: 9 } });
     await expect(loadHarnessSettings(ws.env)).rejects.toThrow(
-      'settings.local.json holds loop.judgeVotes, loopStop.plateau, which are not local-scope paths: set the value that applies on every host with ogw settings set loop.judgeVotes <JSON value>, which moves the paths that are not local-scope to settings.json',
+      'settings.local.json holds loop.judgeVotes, loopStop.plateau, which are not local-scope paths: set the value that applies on every host with ogw settings set harness loop.judgeVotes <JSON value>, which moves the paths that are not local-scope to settings.json',
     );
     expect(await settingsCmd('set', 'harness', 'loop.judgeVotes', '2')).toEqual({ code: 0, stdout: 'set loop.judgeVotes\n', stderr: '' });
     expect(read(localPath)).toEqual({ humanLanguage: 'ko', loop: { judgePanel: [] } });
@@ -206,5 +213,82 @@ describe('local harness settings hold only local-scope paths', () => {
     expect(shared.loop.judgeVotes).toBe(2);
     expect(shared.loopStop.plateau).toBe(9);
     expect((await loadHarnessSettings(ws.env)).loopStop.plateau).toBe(9);
+  });
+
+  it('fails ogw settings get of harness settings while settings.local.json holds a path that is not local-scope, with the command that moves it', async () => {
+    writeLocal({ jobWaitTimeoutMs: 1000 });
+    const message =
+      'settings.local.json holds jobWaitTimeoutMs, which is not a local-scope path: set the value that applies on every host with ogw settings set harness jobWaitTimeoutMs <JSON value>, which moves the paths that are not local-scope to settings.json\n';
+    for (const args of [['jobWaitTimeoutMs'], ['harness', 'jobWaitTimeoutMs'], ['harness', 'humanLanguage']]) {
+      expect(await settingsCmd('get', ...args)).toEqual({ code: 1, stdout: '', stderr: message });
+    }
+    expect(await settingsCmd('set', 'harness', 'jobWaitTimeoutMs', '1000')).toMatchObject({ code: 0 });
+    expect(await settingsCmd('get', 'jobWaitTimeoutMs')).toEqual({ code: 0, stdout: '1000\n', stderr: '' });
+  });
+});
+
+describe('a write of harness settings that a stop ends between its file writes', () => {
+  afterEach(() => {
+    vi.mocked(writeJsonAtomic).mockReset();
+  });
+
+  /** Makes the `n`-th write of a harness settings file throw, as a stop there would end the command. */
+  async function failWrite(n: number): Promise<void> {
+    const actual = (await vi.importActual<typeof import('../../../src/lib/fsx.ts')>('../../../src/lib/fsx.ts')).writeJsonAtomic;
+    let writes = 0;
+    vi.mocked(writeJsonAtomic).mockImplementation((file, value) => {
+      if (file === path || file === localPath) writes += 1;
+      return writes === n && (file === path || file === localPath) ? Promise.reject(new OgwError('stopped')) : actual(file, value);
+    });
+  }
+
+  /** The value of `unit` that the two files on disk give this host: settings.local.json, its host item, the host item of settings.json, settings.json. */
+  function onDisk(unit: string[]): unknown {
+    const at = (value: unknown): unknown => unit.reduce<unknown>((v, key) => (v !== null && typeof v === 'object' ? (v as Record<string, unknown>)[key] : undefined), value);
+    const local = read(localPath);
+    const shared = read(path);
+    const item = (file: Record<string, unknown>): unknown => (file.hosts as Record<string, unknown> | undefined)?.[TEST_HOST_ID];
+    return at(local) ?? at(item(local)) ?? at(item(shared)) ?? at(shared);
+  }
+
+  it('keeps a value that moves out of settings.local.json in one of the files, whichever write the stop ends', async () => {
+    for (const [setPath, json, value] of [
+      ['humanLanguage', '"en"', 'en'],
+      ['loopStop.plateau', '5', 5],
+    ] as const) {
+      for (const n of [1, 2]) {
+        writeLocal({ humanLanguage: 'ko', loopStop: { plateau: 9 } });
+        await failWrite(n);
+        expect((await settingsCmd('set', 'harness', setPath, json)).stderr).toBe('stopped\n');
+        expect(onDisk(['loopStop', 'plateau'])).toBe(9);
+      }
+      vi.mocked(writeJsonAtomic).mockReset();
+      expect(await settingsCmd('set', 'harness', setPath, json)).toMatchObject({ code: 0 });
+      expect(onDisk(setPath.split('.'))).toBe(value);
+      expect(read(localPath)).toEqual({ humanLanguage: setPath === 'humanLanguage' ? 'en' : 'ko' });
+      expect((read(path).loopStop as { plateau: number }).plateau).toBe(setPath === 'humanLanguage' ? 9 : 5);
+    }
+  });
+
+  it('keeps the host items, and the values that move out of settings.local.json with them, whichever write the stop ends', async () => {
+    const shared = read(path);
+    for (const [local, writes] of [
+      [{ humanLanguage: 'ko' }, 2],
+      [{ humanLanguage: 'ko', loopStop: { plateau: 9 } }, 3],
+    ] as const) {
+      for (let n = 1; n <= writes; n++) {
+        writeFileSync(path, JSON.stringify({ ...shared, hosts: { [TEST_HOST_ID]: { name: 'h', maxConcurrentInstances: 5 } } }));
+        writeLocal(local);
+        await failWrite(n);
+        expect((await settingsCmd('set', 'harness', 'humanLanguage', '"en"')).stderr).toBe('stopped\n');
+        expect(onDisk(['maxConcurrentInstances'])).toBe(5);
+        if ('loopStop' in local) expect(onDisk(['loopStop', 'plateau'])).toBe(9);
+      }
+      vi.mocked(writeJsonAtomic).mockReset();
+      expect(await settingsCmd('set', 'harness', 'humanLanguage', '"en"')).toMatchObject({ code: 0 });
+      expect(read(localPath)).toEqual({ humanLanguage: 'en', maxConcurrentInstances: 5 });
+      expect('hosts' in read(path)).toBe(false);
+      expect((await loadHarnessSettings(ws.env)).loopStop.plateau).toBe('loopStop' in local ? 9 : (shared.loopStop as { plateau: number }).plateau);
+    }
   });
 });

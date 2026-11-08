@@ -27,7 +27,8 @@ export async function commitWithoutHook(ctx: Context, game: GameRepo, paths: rea
     const sources = new Set(paths);
     const meta = (await syncStaged(ctx, project, ctx.env)).staged.filter((path) => sources.has(sourceOf(path)));
     const staged = [...new Set([...paths, ...meta])].sort();
-    return await commitPaths(game.root, staged, message, { ...options, noVerify: true });
+    // `paths` and the meta files of the sync are staged; staging again fails for a deleted file already out of the index
+    return await commitPaths(game.root, staged, message, { ...options, noVerify: true, staged: true });
   } catch (error) {
     await unstage(game.root, paths, project, before, ctx.env).catch(ignoreCleanupError);
     throw error;

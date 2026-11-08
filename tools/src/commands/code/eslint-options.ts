@@ -28,6 +28,6 @@ const OGW_PLUGIN: ESLint.Plugin = { rules: { 'no-swallowed-error': noSwallowedEr
 export function toolLintConfig(rootDir: string, maxComplexity: number, project?: string): Linter.Config[] {
   return [
     ...typescriptLintConfig(rootDir, maxComplexity, project),
-    { files: ['src/**/*.ts'], plugins: { ogw: OGW_PLUGIN }, rules: { 'ogw/no-swallowed-error': 'error' } },
+    { files: ['src/**/*.{ts,mts,cts,tsx}'], plugins: { ogw: OGW_PLUGIN }, rules: { 'ogw/no-swallowed-error': 'error' } },
   ];
 }

@@ -147,16 +147,18 @@ export async function showFile(cwd: string, rev: string, path: string, options: 
 
 /**
  * Stages and commits exactly `paths` (added, changed or deleted), and any change a pre-commit hook stages.
- * `noVerify` skips the pre-commit hook. Returns the new commit, or null when the paths have no change.
+ * `noVerify` skips the pre-commit hook. With `staged`, the caller has staged `paths` already and they are not staged
+ * again: staging a path that is gone from the working tree and already removed from the index fails. Returns the new
+ * commit, or null when the paths have no change.
  */
 export async function commitPaths(
   cwd: string,
   paths: readonly string[],
   message: string,
-  options: GitOptions & { noVerify?: boolean } = {},
+  options: GitOptions & { noVerify?: boolean; staged?: boolean } = {},
 ): Promise<string | null> {
   if (paths.length === 0) return null;
-  await git(cwd, ['add', '--all', '--', ...paths], options);
+  if (options.staged !== true) await git(cwd, ['add', '--all', '--', ...paths], options);
   const staged = await gitRaw(cwd, ['diff', '--cached', '--quiet', '--', ...paths], options);
   if (staged.code === 0) return null;
   await git(cwd, ['commit', '--quiet', ...(options.noVerify === true ? ['--no-verify'] : []), '-m', message, '--', ...paths], options);

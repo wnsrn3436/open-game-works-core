@@ -365,16 +365,20 @@ export function withRunSettings(schema: JsonObject, merged: JsonObject, run: Jso
   return out;
 }
 
-/** The merged harness settings; fails when `settings.local.json` holds a path that is not local-scope (ogw.md `## settings`). */
+/** Fails when `settings.local.json` of `files` holds a path that is not local-scope, which a read of harness settings does (ogw.md `## settings`). */
+export function checkLocalScope(schema: JsonObject, files: HarnessSettingsFiles): void {
+  const outside = nonLocalUnits(schema, files.local).map((unit) => unit.join('.'));
+  if (outside.length === 0) return;
+  const which = outside.length === 1 ? 'is not a local-scope path' : 'are not local-scope paths';
+  throw new OgwError(
+    `settings.local.json holds ${outside.join(', ')}, which ${which}: set the value that applies on every host with ogw settings set harness ${outside[0] as string} <JSON value>, which moves the paths that are not local-scope to settings.json`,
+  );
+}
+
+/** The merged harness settings; fails when `settings.local.json` holds a path that is not local-scope (`checkLocalScope`). */
 async function mergedChecked(schema: JsonObject, env: NodeJS.ProcessEnv): Promise<JsonObject> {
   const files = await readHarnessSettingsFiles(env);
-  const outside = nonLocalUnits(schema, files.local).map((unit) => unit.join('.'));
-  if (outside.length > 0) {
-    const which = outside.length === 1 ? 'is not a local-scope path' : 'are not local-scope paths';
-    throw new OgwError(
-      `settings.local.json holds ${outside.join(', ')}, which ${which}: set the value that applies on every host with ogw settings set ${outside[0] as string} <JSON value>, which moves the paths that are not local-scope to settings.json`,
-    );
-  }
+  checkLocalScope(schema, files);
   return mergedHarnessSettings(files);
 }
 

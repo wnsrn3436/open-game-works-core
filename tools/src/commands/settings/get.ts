@@ -1,6 +1,6 @@
 import { expectPositionals, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
-import { withDefaults } from '../../lib/settings.ts';
+import { checkLocalScope, withDefaults } from '../../lib/settings.ts';
 import { display, getAt, isIndex, isPlainObject, mergeSettings, type JsonObject, type Segments } from './lib/json-path.ts';
 import { expand, infoOf } from '../../lib/schema-nav.ts';
 import { isGameCoreKey, locatePath, openTarget, parsePath, type Target } from './lib/target.ts';
@@ -103,6 +103,8 @@ export const get: CommandDef = {
   async run(ctx, args) {
     const { target, rest } = await openTarget(ctx, args.positionals, this.usage, { harnessWithout: true });
     expectPositionals({ ...args, positionals: rest }, 1, 1, this.usage);
+    // the value it prints is the one commands read, and they do not read harness settings in that state
+    if (target.files !== null) checkLocalScope(target.schema, target.files);
     const segments = await parsePath(target, rest[0] as string);
     const path = display(segments);
     const resolved = await resolveValue(target, segments);

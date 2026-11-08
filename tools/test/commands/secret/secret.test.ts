@@ -306,6 +306,20 @@ describe('ogw secret generate', () => {
     expect(moved).toEqual(expect.arrayContaining(['ogw/mygame/STG/ssh-stg', 'ogw/mygame/signing/android-keystore', 'ogw/harness/gen-api-key']));
   });
 
+  it('reads no game settings for the move once moved.json has "done": true, so another game with settings that are not JSON does not stop it', async () => {
+    const old = join(ws.root, 'old-secrets.json');
+    writeFileSync(old, JSON.stringify({ 'ogw/mygame/STG/ssh-stg': 'ssh' }));
+    const env = { ...ws.env, OGW_TEST_OLD_SECRET_FILE: old };
+    expect((await ogw(ws, ['secret', 'set', 'mygame', 'DEV', 'atk-dev'], { stdin: 'v\n', env })).code).toBe(0);
+    expect(JSON.parse(readFileSync(join(ws.root, 'secrets.json.moved.json'), 'utf8'))).toMatchObject({ done: true });
+    makeGame(ws, 'other', { 'settings.json': '{' });
+    const generated = await ogw(ws, ['secret', 'generate', 'mygame', 'DEV'], { env });
+    expect(generated.code).toBe(0);
+    expect(generated.stdout).toContain('generated ');
+    expect(await ogw(ws, ['secret', 'set', 'mygame', 'DEV', 'dev-access'], { stdin: 'w\n', env })).toEqual({ code: 0, stdout: 'stored dev-access\n', stderr: '' });
+    expect(store()['ogw/mygame/DEV/dev-access']).toBe('w');
+  });
+
   it('reads and writes game settings in the game settings lock, so a change made by another command keeps', async () => {
     const held = await withGameSettingsLock(join(ws.games, 'mygame'), ws.env, async () => {
       // another holder of the lock reads, changes and writes the file while generate runs

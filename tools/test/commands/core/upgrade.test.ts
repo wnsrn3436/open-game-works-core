@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -414,6 +414,34 @@ describe('ogw core upgrade', () => {
       'settings.json:2: a failure at `coreVersion`, which the commit changes',
       'client/core/new_core:1: an absence failure in a folder of the commit',
     ]);
+  });
+
+  it('commits a file that ogw generate removed with the meta file that the sync removes for it', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
+      'client/generated/old.gd': 'class_name Old\n',
+      'client/generated/old.gd.uid': 'uid://old',
+    });
+    vi.mocked(generateCheckout).mockImplementationOnce(async (c, game) => {
+      rmSync(join(game.root, 'client/generated/old.gd'));
+      const applied = await generateWrites(c, game);
+      return { ...applied, removed: ['client/generated/old.gd'] };
+    });
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run).toMatchObject({ code: 0, stdout: 'coreVersion: 1.0.0 -> 1.1.0\n' });
+    expect(sh(dir, 'git', ['show', '--name-status', '--format=%s', 'HEAD']).trim().split('\n')).toEqual([
+      'core upgrade: 1.0.0 -> 1.1.0',
+      '',
+      'A\tclient/generated/contract/core_contract.gd',
+      'A\tclient/generated/contract/core_contract.gd.uid',
+      'D\tclient/generated/old.gd',
+      'D\tclient/generated/old.gd.uid',
+      'A\tgenerated.txt',
+      'M\tsettings.json',
+    ]);
+    expect(sh(dir, 'git', ['status', '--porcelain'])).toBe('');
   });
 
   it('stays committed and prints the reason when the static check of the upgraded checkout cannot run', async () => {

@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lineFile, parseDataLines, runData } from '../../../src/commands/data/api.ts';
 import { prodTagCandidates } from '../../../src/commands/data/lib/prod-tag.ts';
 import { runGenerate } from '../../../src/commands/generate/api.ts';
+import { withReader } from '../../../src/lib/rwlock.ts';
 import { ogw, commitAll, makeGame, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { ctxOf, GAME_SETTINGS, makeRelease, toolCalls, write } from '../generate/helpers.ts';
 
@@ -247,6 +248,60 @@ describe('runData', () => {
     await runData(ctx, game);
     expect(toolCalls(join(ws.coreReleases, '2.0.0'), 'data-tool.tgz').filter((c) => (c.args as string[]).includes('--binary')).length).toBe(before + 1);
     expect(worktreesOf(ws)).toHaveLength(1);
+  });
+
+  it('makes the build of a PROD data tag again when the game settings schema of the harness changes, as the data tool gets its defaults', async () => {
+    const ws = makeWorkspace();
+    const release = makeRelease(ws, '1.0.0');
+    const root = makeGame(ws, 'g', { 'settings.json': GAME_SETTINGS, 'data/version.txt': 'app1' });
+    sh(root, 'git', ['tag', 'prod-1.0.0']);
+    const ctx = ctxOf(ws);
+    const game = await ctx.game('g');
+    const binaries = (): Record<string, unknown>[] => toolCalls(release, 'data-tool.tgz').filter((c) => (c.args as string[]).includes('--binary'));
+    await runData(ctx, game);
+    expect(binaries()).toHaveLength(1);
+    const [before] = worktreesOf(ws);
+    const schemaFile = join(ws.harness, 'schemas', 'game-settings.schema.json');
+    const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as { properties: { loopIterationLimit: { default: number } } };
+    schema.properties.loopIterationLimit.default = 21;
+    writeFileSync(schemaFile, JSON.stringify(schema, null, 2));
+    await runData(ctx, game);
+    expect(binaries()).toHaveLength(2);
+    expect((binaries().at(-1)?.gameSettings as { loopIterationLimit: number }).loopIterationLimit).toBe(21);
+    expect(worktreesOf(ws)).toHaveLength(1);
+    expect(worktreesOf(ws)[0]).not.toBe(before);
+    await runData(ctx, game);
+    expect(binaries()).toHaveLength(2);
+  });
+
+  it('keeps a kept build that another run reads when a run that made a build removes the others, and removes it on a later such run', async () => {
+    const ws = makeWorkspace();
+    makeRelease(ws, '1.0.0');
+    const root = makeGame(ws, 'g', { 'settings.json': GAME_SETTINGS, 'data/version.txt': 'app1' });
+    sh(root, 'git', ['tag', 'prod-1.0.0']);
+    const ctx = ctxOf(ws);
+    const game = await ctx.game('g');
+    await runData(ctx, game);
+    const [read] = worktreesOf(ws);
+    const state = join(game.commonDir, 'ogw-prod-data', (read as string).slice('prod-data-'.length));
+    const tag = (n: number): void => {
+      write(join(root, 'data', 'version.txt'), `app${String(n)}`);
+      commitAll(root, `release ${String(n)}`);
+      sh(root, 'git', ['tag', `prod-${String(n)}.0.0`]);
+    };
+    // a data tool run of another process reads the build of prod-1.0.0 while a run makes the build of prod-2.0.0
+    await withReader({ base: `${state}.rw`, waitMs: 10_000 }, async () => {
+      tag(2);
+      await runData(ctx, game);
+      expect(worktreesOf(ws)).toHaveLength(2);
+      expect(worktreesOf(ws)).toContain(read);
+      expect(existsSync(`${state}.json`)).toBe(true);
+    });
+    tag(3);
+    await runData(ctx, game);
+    expect(worktreesOf(ws)).toHaveLength(1);
+    expect(worktreesOf(ws)).not.toContain(read);
+    expect(existsSync(`${state}.json`)).toBe(false);
   });
 
   it('fails when a bundle tag has no app tag or a previous binary build fails', async () => {

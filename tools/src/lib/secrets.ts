@@ -45,6 +45,8 @@ export interface SecretStore {
    * that the store does not read the old store. A store with no old store has none.
    */
   moveOld?(services: readonly string[]): void;
+  /** Whether the move of `moveOld` is done on this host: then `moveOld` moves nothing, and its services need no listing. */
+  oldMoved?(): boolean;
 }
 
 /** Entries of a credential store, one value per service, with no size handling. */
@@ -388,6 +390,7 @@ export function movingSecretStore(store: SecretStore, legacyStore: SecretStore, 
       });
       doneSeen = true;
     },
+    oldMoved: done,
   };
 }
 

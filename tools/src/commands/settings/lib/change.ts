@@ -2,11 +2,11 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { writeJsonAtomic } from '../../../lib/fsx.ts';
-import { localDefaults, localHarnessSettingsPath, type HarnessSettingsFiles, type Role } from '../../../lib/settings.ts';
+import { localDefaults, localHarnessSettingsPath, nonLocalUnits, type HarnessSettingsFiles, type Role } from '../../../lib/settings.ts';
 import { callerRole } from '../api.ts';
 import { implConstraints } from './core-files.ts';
 import { constraintIssues, gameIssues } from './game-check.ts';
-import { changedPaths, display, isPlainObject, type JsonObject } from './json-path.ts';
+import { changedPaths, display, getAt, isPlainObject, setAt, type JsonObject } from './json-path.ts';
 import { routeHarnessWrite } from './scope.ts';
 import { locatePath, withValue, type Target, type TargetKind } from './target.ts';
 import { schemaIssues, type Issue } from './validate.ts';
@@ -94,16 +94,42 @@ export async function settingsIssues(ctx: Context, target: Target, value: JsonOb
   return issues;
 }
 
+/** `local` with the value of `value` at each of `units` that `value` has. */
+function withUnits(local: JsonObject, units: readonly string[][], value: JsonObject): JsonObject {
+  let out = local;
+  for (const unit of units) {
+    const at = getAt(value, unit);
+    if (at !== undefined) out = setAt(out, unit, at, () => 'object');
+  }
+  return out;
+}
+
 /**
  * Writes the two harness settings files that hold `value` (`routeHarnessWrite`): a file whose value changes, or both
- * when the files on disk hold host items (`rewrite`), and `settings.local.json` first, so a stop between the writes
- * leaves the host values in `settings.local.json`, where they are read.
+ * when the files on disk hold host items (`rewrite`). A file that receives values moved out of the other file is
+ * written before that file, so that a stop between the writes loses no value: `settings.local.json` receives the host
+ * items (`rewrite`), and `settings.json` the paths of `settings.local.json` that are not local-scope. When both move,
+ * `settings.local.json` is written first still holding the paths that leave it, then `settings.json`, then
+ * `settings.local.json` without them.
  */
 async function writeHarnessFiles(ctx: Context, target: Target, files: HarnessSettingsFiles, value: JsonObject): Promise<void> {
   const next = routeHarnessWrite(target.schema, files, value);
   const rewrite = files.rewrite === true;
-  if (next.local !== null && (rewrite || !isDeepStrictEqual(next.local, files.local))) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), next.local);
-  if (rewrite || !isDeepStrictEqual(next.shared, files.shared)) await writeJsonAtomic(target.file, next.shared);
+  const writeLocal = async (local: JsonObject | null): Promise<void> => {
+    if (local !== null && (rewrite || !isDeepStrictEqual(local, files.local))) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), local);
+  };
+  const writeShared = async (): Promise<void> => {
+    if (rewrite || !isDeepStrictEqual(next.shared, files.shared)) await writeJsonAtomic(target.file, next.shared);
+  };
+  const leaving = nonLocalUnits(target.schema, files.local);
+  if (leaving.length === 0) {
+    await writeLocal(next.local);
+    await writeShared();
+    return;
+  }
+  if (rewrite) await writeLocal(withUnits(next.local ?? {}, leaving, value));
+  await writeShared();
+  await writeLocal(next.local);
 }
 
 /**
