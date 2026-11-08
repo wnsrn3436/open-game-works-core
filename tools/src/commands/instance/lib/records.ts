@@ -75,6 +75,11 @@ export interface InstancePlan {
   feedbackOff?: true;
   /** `--reward-presentation-off`: the supervisor sends the client `main` `set_reward_presentation_off on` first on each connection; absent: not. */
   rewardPresentationOff?: true;
+  /**
+   * `--random-base`: the decimal text of the random base, which every client gets as the launch value `OGW_RANDOM_BASE`
+   * and the server process with `start_local_server` of `testing`; absent: none.
+   */
+  randomBase?: string;
 }
 
 /** The window, fill mode and notch of a `uiCheckScreens` item, as `set_test_screen` and `set_virtual_notch` take them. */
@@ -157,6 +162,8 @@ export interface ExternalClient {
   devAccess: string;
   /** Dev account (`OGW_DEV_ACCOUNT`) the client logs in with. */
   devAccount: string;
+  /** The random base (`OGW_RANDOM_BASE`) of the instance as decimal text; absent when the instance has none. */
+  randomBase?: string;
 }
 
 /**

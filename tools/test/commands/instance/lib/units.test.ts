@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -23,8 +23,11 @@ import * as staticCsv from '../../../../src/commands/check/static/lib/csv.ts';
 import {
   clientLaunch,
   launchValueFileContent,
+  LOCAL_SERVER_SCRIPT,
   newLocalSecrets,
+  parseRandomBase,
   populateLaunch,
+  randomBaseText,
   renderingMethod,
   serverDataFolder,
   serverLaunch,
@@ -281,6 +284,51 @@ describe('launch', () => {
       cwd: join('/r', 'server'),
     });
     expect(serverDataFolder('/r')).toBe(join('/r', 'server', 'build', 'data'));
+  });
+
+  it('starts the server process of a random base with start_local_server of testing, same node, cwd and server start arguments', () => {
+    const sqlite = { kind: 'sqlite', file: '/db' } as const;
+    const args = ['--env', 'LOCAL', '--port', '9', '--db', '/db', '--matchmaker', '--secret-file', '/s'];
+    expect(serverLaunch({ root: '/r', port: 9, db: sqlite, matchmaker: true, secretFile: '/s', randomBase: '-7' })).toEqual({
+      command: process.execPath,
+      args: ['--input-type=module', '-e', LOCAL_SERVER_SCRIPT, '--', '-7', ...args],
+      cwd: join('/r', 'server'),
+    });
+  });
+
+  it('calls start_local_server with the server start arguments and the random base as a bigint', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ogw-local-server-'));
+    mkdirSync(join(root, 'server', 'core', 'testing', 'dev'), { recursive: true });
+    // the checks of the real start_local_server on its inputs, then what it got
+    writeFileSync(join(root, 'server', 'core', 'testing', 'dev', 'index.ts'), [
+      "import { writeFileSync } from 'node:fs';",
+      'export async function start_local_server(args: unknown, base: unknown) {',
+      "  if (!Array.isArray(args) || !args.every((a) => typeof a === 'string')) throw new Error('not a list of strings');",
+      "  if (typeof base !== 'bigint' || BigInt.asIntN(64, base) !== base) throw new Error('not an int64');",
+      "  writeFileSync('got.json', JSON.stringify({ args, base: String(base), cwd: process.cwd() }));",
+      '}',
+    ].join('\n'));
+    const db = { kind: 'sqlite', file: join(root, 'db.sqlite') } as const;
+    for (const base of [-(2n ** 63n), 2n ** 63n - 1n, 1n]) {
+      const start = { root, port: 9, db, matchmaker: false, secretFile: join(root, 's.json'), randomBase: randomBaseText(base) };
+      const launch = serverLaunch(start);
+      const result = await run(launch.command, launch.args, { cwd: launch.cwd, timeoutMs: 30_000 });
+      expect(result.stderr).toBe('');
+      expect(result.code).toBe(0);
+      const got = JSON.parse(readFileSync(join(root, 'server', 'got.json'), 'utf8')) as { args: string[]; base: string; cwd: string };
+      expect(got).toEqual({ args: serverStartArgs(start), base: String(base), cwd: realpathSync(join(root, 'server')) });
+    }
+  });
+
+  it('reads --random-base as a decimal int64 and writes a random base as its decimal text', () => {
+    expect(parseRandomBase('1')).toBe(1n);
+    expect(parseRandomBase('-9223372036854775808')).toBe(-(2n ** 63n));
+    expect(parseRandomBase('9223372036854775807')).toBe(2n ** 63n - 1n);
+    for (const bad of ['9223372036854775808', '-9223372036854775809', '1.5', '0x1', '+1', '', ' 1', '1e3']) {
+      expect(() => parseRandomBase(bad)).toThrow(`invalid --random-base: ${bad} is not a decimal int64`);
+    }
+    expect(randomBaseText(-5n)).toBe('-5');
+    expect(() => randomBaseText(2n ** 63n)).toThrow('the random base is not an int64: 9223372036854775808');
   });
 
   it('runs populate with the remote test server of connect_server', async () => {

@@ -2,7 +2,7 @@
  * Server core test and server regression test runs (`testing` `### test run`): vitest pinned by ogw, inputs as
  * environment variables, and a result in the `unit-test-core` result file format.
  */
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { readJsonIfExists, removeModulesLink, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { newId } from '../../../lib/ids.ts';
@@ -34,11 +34,12 @@ export const SERVER_TEST_ENV = [
   'OGW_CORE_FIXTURES',
   'OGW_POSTGRESQL',
   'OGW_DEFAULT_DB',
+  'OGW_TEST_RECORD',
 ] as const;
 
-/** The environment variables of a run. */
+/** The environment variables of a run; `OGW_TEST_RECORD` comes from `runServerTests`, which makes the test record. */
 export function serverTestEnv(inputs: ServerTestInputs): Record<string, string> {
-  const values: Record<(typeof SERVER_TEST_ENV)[number], string | null> = {
+  const values: Record<Exclude<(typeof SERVER_TEST_ENV)[number], 'OGW_TEST_RECORD'>, string | null> = {
     OGW_SERVER_MODULES: inputs.serverModules,
     OGW_SERVER_DATA: inputs.serverData,
     OGW_SHARED_FIXTURES: inputs.sharedFixtures,
@@ -193,6 +194,8 @@ export interface ServerTestRun {
   output: string;
   timedOut: boolean;
   exitCode: number | null;
+  /** What a server regression test run wrote to its test record (`OGW_TEST_RECORD`); absent for the other runs. */
+  testRecord?: string;
 }
 
 /** The vitest command line of a run. */
@@ -244,10 +247,13 @@ export async function runServerTests(options: ServerTestRunOptions): Promise<Ser
     // a temp folder of its own: runs that go at once (the SQLite and PostgreSQL runs of a module) do not see each other's files
     const tmp = join(work, 'tmp');
     await mkdir(tmp);
+    // a server regression test run gets a test record of its own, empty before the run (`testing` `### test run`)
+    const record = options.kind === 'regression' ? join(work, 'test-record.jsonl') : null;
+    if (record !== null) await writeFile(record, '');
     const startedAt = Date.now();
     const result = await run(process.execPath, vitestArgs(options, config, report, options.target.endsWith('.ts')), {
       cwd: options.checkout,
-      env: { ...runEnv(options.env, options.inputs), TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+      env: { ...runEnv(options.env, options.inputs), ...(record === null ? {} : { OGW_TEST_RECORD: record }), TMPDIR: tmp, TMP: tmp, TEMP: tmp },
       timeoutMs: options.timeoutMs,
     });
     const json = await readJsonIfExists<VitestJson>(report);
@@ -257,6 +263,7 @@ export async function runServerTests(options: ServerTestRunOptions): Promise<Ser
       output: `${result.stdout}${result.stderr}`,
       timedOut: result.timedOut,
       exitCode: result.code,
+      ...(record === null ? {} : { testRecord: await readFile(record, 'utf8') }),
     };
   } finally {
     await rm(work, { recursive: true, force: true });

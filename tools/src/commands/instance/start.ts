@@ -2,11 +2,12 @@ import { expectPositionals, flag, nonNegativeInt, positional, str, type CommandD
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { startInstance } from './api.ts';
+import { parseRandomBase } from './lib/launch.ts';
 import { START_LIMIT_MS } from './lib/supervisor.ts';
 
 export const start: CommandDef = {
   name: ['instance', 'start'],
-  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--network-delay <ms>] [--feedback-off] [--reward-presentation-off]',
+  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--network-delay <ms>] [--feedback-off] [--reward-presentation-off] [--random-base <n>]',
   options: {
     commit: { type: 'string' },
     platform: { type: 'string' },
@@ -16,6 +17,7 @@ export const start: CommandDef = {
     'network-delay': { type: 'string' },
     'feedback-off': { type: 'boolean' },
     'reward-presentation-off': { type: 'boolean' },
+    'random-base': { type: 'string' },
   },
   background: {
     game: (args) => args.positionals[0] ?? null,
@@ -27,6 +29,7 @@ export const start: CommandDef = {
     if (db !== undefined && db !== 'postgresql') throw new OgwError(`invalid --db: ${db}`);
     const inputLatencyMs = nonNegativeInt(args, 'input-latency');
     const networkDelayMs = nonNegativeInt(args, 'network-delay');
+    const randomBase = str(args, 'random-base');
     const info = await startInstance(ctx, {
       game: positional(args, 0, 'game'),
       commit: str(args, 'commit'),
@@ -37,6 +40,7 @@ export const start: CommandDef = {
       ...(networkDelayMs === undefined ? {} : { networkDelayMs }),
       ...(flag(args, 'feedback-off') ? { feedbackOff: true } : {}),
       ...(flag(args, 'reward-presentation-off') ? { rewardPresentationOff: true } : {}),
+      ...(randomBase === undefined ? {} : { randomBase: parseRandomBase(randomBase) }),
     });
     return {
       text: [`id: ${info.id}`, `address: ${info.serverUrl}`].join('\n'),

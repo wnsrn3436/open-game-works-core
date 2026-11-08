@@ -49,11 +49,12 @@ describe('server test inputs', () => {
   });
 
   it('drops inherited inputs and keeps the rest of the environment', () => {
-    const env = runEnv({ PATH: '/bin', OGW_POSTGRESQL: 'old', OGW_CORE_FIXTURES: 'old', OGW_HARNESS_ROOT: '/h' }, INPUTS);
+    const env = runEnv({ PATH: '/bin', OGW_POSTGRESQL: 'old', OGW_CORE_FIXTURES: 'old', OGW_TEST_RECORD: 'old', OGW_HARNESS_ROOT: '/h' }, INPUTS);
     expect(env.PATH).toBe('/bin');
     expect(env.OGW_HARNESS_ROOT).toBe('/h');
     expect(env.OGW_POSTGRESQL).toBeUndefined();
     expect(env.OGW_CORE_FIXTURES).toBeUndefined();
+    expect(env.OGW_TEST_RECORD).toBeUndefined();
     expect(env.OGW_DEFAULT_DB).toBe('sqlite');
   });
 
@@ -165,10 +166,11 @@ describe('env', () => {
 `;
 
 describe('vitest runs', () => {
-  it('runs a game regression test folder and one test file with the vitest of ogw', async () => {
+  it('runs a game regression test folder and one test file with the vitest of ogw, each with a test record of its own', async () => {
     const game = temp();
+    const line = '{"kind":"admin","operation":"grant","status":200}';
     writeFiles(game, {
-      'server/tests/a.test.ts': "it('a', () => { expect(process.env.OGW_SHARED_FIXTURES).toBe('/g/data/fixtures'); });\n",
+      'server/tests/a.test.ts': `import { appendFileSync } from 'node:fs';\nit('a', () => { expect(process.env.OGW_SHARED_FIXTURES).toBe('/g/data/fixtures'); appendFileSync(process.env.OGW_TEST_RECORD as string, '${line}\\n'); });\n`,
       'server/tests/sub/b.test.ts': "it('b', () => { expect(1).toBe(2); });\n",
       'server/core/x/tests/c.test.ts': "it('c', () => undefined);\n",
     });
@@ -179,9 +181,13 @@ describe('vitest runs', () => {
       ['server/tests/sub/b.test.ts::b', 'fail'],
     ]);
     expect(all.exitCode).toBe(1);
+    expect(all.testRecord).toBe(`${line}\n`);
     const one = await runServerTests({ ...options, target: 'server/tests/a.test.ts' });
     expect(one.result?.results.map((r) => r.name)).toEqual(['server/tests/a.test.ts::a']);
     expect(serverRunFailures(one, 'regression', 'server/tests', 1)).toEqual([]);
+    // the record of the second run starts empty, and that of a run whose tests write nothing is there and empty
+    expect(one.testRecord).toBe(`${line}\n`);
+    expect((await runServerTests({ ...options, target: 'server/tests/sub/b.test.ts' })).testRecord).toBe('');
   }, 60_000);
 
   it('runs a module core test once with sqlite and once with postgresql and keeps each result file', async () => {
@@ -212,17 +218,19 @@ describe('vitest runs', () => {
     expect(runs.map((r) => r.results.map((t) => t.name))).toEqual([['server/core/storage/tests/b.test.ts::b'], ['server/core/storage/tests/b.test.ts::b']]);
   }, 60_000);
 
-  it('gives each run its own temp folder in its work folder and the connection string of its database', async () => {
+  it('gives each run its own temp folder in its work folder and the connection string of its database, and a core test run no test record', async () => {
     const impl = temp();
     const seen = temp();
-    const test = `import { writeFileSync } from 'node:fs';\nimport { tmpdir } from 'node:os';\nit('env', () => { writeFileSync(${JSON.stringify(seen)} + '/' + process.env.OGW_DEFAULT_DB + '.json', JSON.stringify({ tmp: tmpdir(), postgresql: process.env.OGW_POSTGRESQL })); });\n`;
+    const test = `import { writeFileSync } from 'node:fs';\nimport { tmpdir } from 'node:os';\nit('env', () => { writeFileSync(${JSON.stringify(seen)} + '/' + process.env.OGW_DEFAULT_DB + '.json', JSON.stringify({ tmp: tmpdir(), postgresql: process.env.OGW_POSTGRESQL, record: process.env.OGW_TEST_RECORD ?? null })); });\n`;
     writeFiles(impl, { 'server/core/storage/tests/env.test.ts': test, 'server/core/storage/index.ts': 'export {};\n' });
-    const outcome = await serverModuleTest({ implDir: impl, module: 'storage', postgresql: { sqlite: 'postgresql://s', postgresql: 'postgresql://p' }, resultsDir: temp(), timeoutMs: 60_000, env: process.env });
+    const env = { ...process.env, OGW_TEST_RECORD: join(seen, 'inherited.jsonl') };
+    const outcome = await serverModuleTest({ implDir: impl, module: 'storage', postgresql: { sqlite: 'postgresql://s', postgresql: 'postgresql://p' }, resultsDir: temp(), timeoutMs: 60_000, env });
     expect(outcome.failures).toEqual([]);
-    const read = (db: string): { tmp: string; postgresql: string } => JSON.parse(readFileSync(join(seen, `${db}.json`), 'utf8')) as { tmp: string; postgresql: string };
+    const read = (db: string): { tmp: string; postgresql: string; record: string | null } => JSON.parse(readFileSync(join(seen, `${db}.json`), 'utf8')) as { tmp: string; postgresql: string; record: string | null };
     const sqlite = read('sqlite');
     const postgresql = read('postgresql');
     expect([sqlite.postgresql, postgresql.postgresql]).toEqual(['postgresql://s', 'postgresql://p']);
+    expect([sqlite.record, postgresql.record]).toEqual([null, null]);
     expect(sqlite.tmp).not.toBe(postgresql.tmp);
     for (const { tmp } of [sqlite, postgresql]) {
       expect(basename(tmp)).toBe('tmp');

@@ -360,8 +360,9 @@ export class Supervisor {
     const serverUrl = `http://127.0.0.1:${String(port)}`;
     const secretFile = join(this.folder, 'server-secrets.json');
     writeSecretFile(secretFile, serverSecretValues(secrets, db));
+    const randomBase = this.plan.randomBase;
     await span('server', async () => {
-      this.spawn('server', serverLaunch({ root: this.record.root, port, db, matchmaker: this.plan.realtime, secretFile }));
+      this.spawn('server', serverLaunch({ root: this.record.root, port, db, matchmaker: this.plan.realtime, secretFile, ...(randomBase === undefined ? {} : { randomBase }) }));
       await updateRecord(this.id, (r) => {
         r.serverUrl = serverUrl;
         r.adminSecret = secrets.adminSecret;
@@ -441,8 +442,15 @@ export class Supervisor {
     const channel = new ClientChannel('main');
     await channel.listen();
     this.channels.set('main', channel);
+    const randomBase = this.plan.randomBase;
     await updateRecord(this.id, (r) => {
-      r.external = { automationPort: channel.port, automationToken: channel.token, devAccess: secrets.devAccess, devAccount: MAIN_DEV_ACCOUNT };
+      r.external = {
+        automationPort: channel.port,
+        automationToken: channel.token,
+        devAccess: secrets.devAccess,
+        devAccount: MAIN_DEV_ACCOUNT,
+        ...(randomBase === undefined ? {} : { randomBase }),
+      };
     }, this.env);
   }
 
@@ -465,6 +473,7 @@ export class Supervisor {
       };
       const movie = client.name === 'main' ? (this.plan.movie ?? null) : null;
       if (movie !== null) values.OGW_FRAME_STEP_FPS = movieFps(movie);
+      if (this.plan.randomBase !== undefined) values.OGW_RANDOM_BASE = this.plan.randomBase;
       const valueFile = join(this.folder, `${client.name}.launch-values.json`);
       writeSecretFile(valueFile, launchValueFileContent(values));
       this.spawn(client.name, clientLaunch(this.plan, this.record.root, client.headless, valueFile, movie));

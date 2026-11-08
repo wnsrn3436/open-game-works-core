@@ -466,7 +466,7 @@ describe('performanceCheck', () => {
       { at: 2, scene_key: 'battle', duration_ms: 3001 },
     ]);
     const result = await performanceCheck(ctx, 'g', 'android', scenario, options(root));
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined, randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'p1');
     expect(calls[0]).toBe('set_quality_level High');
     const ev = ['ev/performance-android/samples.json'];
@@ -524,7 +524,7 @@ describe('performanceCheck', () => {
     const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { quality: false, db: 'postgresql' }));
     expect(result.result).toBe('pass');
     expect(calls).not.toContain('set_quality_level High');
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql' }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql', randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
   });
 
   it('bounds the fps by the refresh rate of the host display', async () => {

@@ -92,6 +92,24 @@ export interface ServerStart {
   matchmaker: boolean;
   /** The secret file with `serverSecretValues`. */
   secretFile: string;
+  /** `--random-base`: the decimal text of the random base of the instance; absent: none. */
+  randomBase?: string;
+}
+
+function isInt64(value: bigint): boolean {
+  return value >= -(2n ** 63n) && value < 2n ** 63n;
+}
+
+/** The decimal text of a random base (ogw.md `## runner` `--random-base`); a value outside int64 throws. */
+export function randomBaseText(base: bigint): string {
+  if (!isInt64(base)) throw new OgwError(`the random base is not an int64: ${String(base)}`);
+  return String(base);
+}
+
+/** The random base of `--random-base <n>`: a decimal int64; anything else throws. */
+export function parseRandomBase(text: string): bigint {
+  if (!/^-?[0-9]+$/.test(text) || !isInt64(BigInt(text))) throw new OgwError(`invalid --random-base: ${text} is not a decimal int64`);
+  return BigInt(text);
 }
 
 /** Server start arguments (server-core `## server start`) of an instance server. */
@@ -102,9 +120,26 @@ export function serverStartArgs(start: ServerStart): string[] {
   return args;
 }
 
-/** The server process of an instance: `node core/start.ts <server start arguments>` in the checkout's `server/`. */
+/**
+ * The program of the server process of an instance with a random base: `start_local_server(<server start arguments>,
+ * <random base>)` of `testing`, the random base first in argv and the server start arguments after it.
+ */
+export const LOCAL_SERVER_SCRIPT = [
+  "const { pathToFileURL } = await import('node:url');",
+  'const [, base, ...args] = process.argv;',
+  "const testing = await import(pathToFileURL('core/testing/dev/index.ts').href);",
+  'await testing.start_local_server(args, BigInt(base));',
+].join('\n');
+
+/**
+ * The server process of an instance in the checkout's `server/` (ogw.md `## runner`): `node core/start.ts <server start
+ * arguments>`, or with a random base a `node` process that calls `start_local_server` of `testing` with the same
+ * arguments and that random base.
+ */
 export function serverLaunch(start: ServerStart): Launch {
-  return { command: process.execPath, args: ['core/start.ts', ...serverStartArgs(start)], cwd: join(start.root, 'server') };
+  const cwd = join(start.root, 'server');
+  if (start.randomBase === undefined) return { command: process.execPath, args: ['core/start.ts', ...serverStartArgs(start)], cwd };
+  return { command: process.execPath, args: ['--input-type=module', '-e', LOCAL_SERVER_SCRIPT, '--', start.randomBase, ...serverStartArgs(start)], cwd };
 }
 
 /**
@@ -166,6 +201,8 @@ export interface LaunchValues {
   OGW_PLATFORM: string;
   /** The fps of the movie maker of a client that it records (`## runner` flash recording, `## video`): the frame step of TimeCore. */
   OGW_FRAME_STEP_FPS?: string;
+  /** The decimal text of the random base of the instance (`## runner` `--random-base`): the random base of TimeCore. */
+  OGW_RANDOM_BASE?: string;
 }
 
 /** The launch value file of a client (client-core engines/godot): the launch values that are not empty. */

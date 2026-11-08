@@ -18,6 +18,8 @@ interface FakeInstance {
   db?: string;
   played?: boolean;
   client?: string;
+  /** `--random-base` of the instance; absent for none. */
+  randomBase?: bigint;
   root: string;
   startedAt: number;
 }
@@ -100,7 +102,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     const root = join(fake.root, '..', 'instances', id);
     const fixture = opts.fixture as string | undefined;
     const fixtureText = fixture === undefined ? undefined : existsSync(fixture) ? readFileSync(fixture, 'utf8') : null;
-    const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, client: opts.client as string | undefined, root, startedAt: 100 };
+    const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, client: opts.client as string | undefined, ...(opts.randomBase === undefined ? {} : { randomBase: opts.randomBase as bigint }), root, startedAt: 100 };
     fake.instances.push(info);
     fake.runningAtStart.push(fake.running.size + fake.others);
     fake.runningIdsAtStart.set(id, [...fake.running]);
@@ -1491,6 +1493,9 @@ describe('ogw loop evaluate', () => {
     expect(headless.map((i) => [i.commit, i.client, i.played]).sort()).toEqual(
       [head, head, head, base, base, base].map((c) => [c, 'headless', undefined]).sort(),
     );
+    // the k-th run of each commit has random base k, so the two commits play the same worlds; the judges' have none
+    expect(headless.map((i) => `${i.commit} ${String(i.randomBase)}`).sort()).toEqual([head, base].flatMap((c) => [1, 2, 3].map((k) => `${c} ${String(k)}`)).sort());
+    expect(fake.instances.slice(6).filter((i) => i.randomBase !== undefined)).toEqual([]);
     expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, head, base, base, base].sort());
     // the bot runs poll at their own interval, not that of the agent jobs
     expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7, 7, 7, 7, 7]);
@@ -1527,6 +1532,8 @@ describe('ogw loop evaluate', () => {
     expect(retried.code).toBe(0);
     expect(retried.stderr).toContain(`shared telemetry: a bot run of ${base} did not reach every step`);
     expect(bots.runs.filter((r) => r.commit === base)).toHaveLength(5);
+    // the new runs count on: random bases 4 and 5
+    expect(fake.instances.filter((i) => i.commit === base && i.client === 'headless').map((i) => i.randomBase)).toEqual([1n, 2n, 3n, 4n, 5n]);
     expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([first, second, first, first]);
 
     // runs that do not reach every step, also when run again: no telemetry for any judge

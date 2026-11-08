@@ -102,6 +102,35 @@ describe('ogw instance start', () => {
     expect(o1.slice(at + 1).find((r) => r.command === 'b.opponent_step')?.args).toEqual(['[party]']);
   });
 
+  it('gives every client the random base of --random-base as OGW_RANDOM_BASE and starts the server process with it', async () => {
+    runner = setupRunner({ files: { 'data/tables/match_mode.csv': `${MATCH_MODE_HEADER}[duel],2,2,1,true,false\n` } });
+    mockState.modules = { client: ['RealtimeCore'], server: ['friend'] };
+    runner.config({ clients: { default: { commands: ['battle.opponent_step', 'friends.social_step'] } } });
+    await startFor(runner, ['--random-base', '-9223372036854775808']);
+    for (const client of ['main', 'social', 'opponent_1']) expect(launchValue(runner.clientValues(client), 'random-base')).toBe('-9223372036854775808');
+    expect(mockState.serverLaunches).toMatchObject([{ randomBase: '-9223372036854775808' }]);
+    await stopAll(runner);
+    // without it, no client gets one and the server process is that of the entry point
+    mockState.serverLaunches = [];
+    await startFor(runner);
+    for (const client of ['main', 'social', 'opponent_1']) expect(launchValue(runner.clientValues(client), 'random-base')).toBeUndefined();
+    expect(mockState.serverLaunches).toHaveLength(1);
+    expect(mockState.serverLaunches[0]).not.toHaveProperty('randomBase');
+    await stopAll(runner);
+    // the client the runner does not start gets it with its launch values
+    const { startInstance } = await import('../../../src/commands/instance/api.ts');
+    const outside = await startInstance(ctxOf(runner), { game: 'g', client: 'none', externalClient: true, randomBase: 7n });
+    expect(outside.external?.randomBase).toBe('7');
+    expect(launchValue(runner.clientValues('social'), 'random-base')).toBe('7');
+    await stopAll(runner);
+    expect((await startInstance(ctxOf(runner), { game: 'g', client: 'none', externalClient: true })).external).not.toHaveProperty('randomBase');
+    await stopAll(runner);
+    const bad = await ogw(runner.ws, ['instance', 'start', 'g', '--random-base', '9223372036854775808']);
+    expect([bad.code, bad.stderr]).toEqual([1, expect.stringContaining('invalid --random-base: 9223372036854775808 is not a decimal int64') as string]);
+    await expect(startInstance(ctxOf(runner), { game: 'g', randomBase: 2n ** 63n })).rejects.toThrow('the random base is not an int64');
+    expect(await listRecords(runner.ws.env)).toEqual([]);
+  });
+
   it('fails when the opponent bot client has not exactly one .opponent_step or .opponent_join_room', async () => {
     runner = setupRunner({ files: { 'data/tables/match_mode.csv': `${MATCH_MODE_HEADER}[duel],2,2,2,true,false\n` } });
     mockState.modules = { client: ['RealtimeCore'], server: [] };

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Slots, withInstance } from '../../../../src/commands/check/lib/instances.ts';
+import { onInstance, Slots, withInstance } from '../../../../src/commands/check/lib/instances.ts';
 import { listInstances, startInstance, stopInstance, type InstanceInfo, type StartHooks } from '../../../../src/commands/instance/api.ts';
 import { createContext, type Context } from '../../../../src/lib/command.ts';
 
@@ -79,5 +79,17 @@ describe('withInstance', () => {
     await withInstance(ctx, new Slots(1), { game: 'g' }, () => Promise.resolve('done'));
     expect(order).toEqual(['stop', 'stop']);
     expect(kept()).toBe(false);
+  });
+
+  it('starts every instance of a check with random base 1, and one with the random base its check gives', async () => {
+    vi.mocked(startInstance).mockResolvedValue(instance({}));
+    await withInstance(ctx, new Slots(1), { game: 'g', client: 'headless' }, () => Promise.resolve('done'));
+    await onInstance(ctx, { game: 'g', client: 'window' }, () => Promise.resolve('done'));
+    await withInstance(ctx, new Slots(1), { game: 'g', client: 'headless', randomBase: 3n }, () => Promise.resolve('done'));
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([
+      { game: 'g', client: 'headless', randomBase: 1n },
+      { game: 'g', client: 'window', randomBase: 1n },
+      { game: 'g', client: 'headless', randomBase: 3n },
+    ]);
   });
 });

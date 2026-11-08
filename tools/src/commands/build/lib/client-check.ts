@@ -15,8 +15,9 @@ import { isInside } from '../../../lib/paths.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import type { CheckResult } from '../../check/api.ts';
 import type { Evidence } from '../../check/lib/evidence.ts';
+import { CHECK_RANDOM_BASE } from '../../check/lib/instances.ts';
 import { contentTypeOf } from '../../deploy/lib/s3.ts';
-import { startInstance, stopInstance, type ExternalClient, type InstanceInfo, type InstanceOptions } from '../../instance/api.ts';
+import { startInstance, stopInstance, type ExternalClient, type InstanceInfo } from '../../instance/api.ts';
 import { automationRequest } from '../../instance/automation.ts';
 import { START_LIMIT_MS } from '../../instance/lib/supervisor.ts';
 import { addCommitCheckout, removeCommitCheckout } from './atcommit.ts';
@@ -93,20 +94,12 @@ export function ranToEnd(name: string, check: BuildCheck): BuildCheck {
   return { name, result: 'unknown', details: check.details.map((line) => `${name} did not run to the end: ${line}`) };
 }
 
-/** The random base of a check instance whose check says no other (ogw.md `### client checks`). */
-export const CHECK_RANDOM_BASE = 1;
-
-/**
- * The start options of a check instance: `randomBase` is the runner option `--random-base` (ogw.md `## runner`), which
- * gives the instance the random base of its check.
- */
-type CheckInstanceStart = InstanceOptions & { randomBase: number };
-
 /**
  * Runs `work` on a check instance (ogw.md `### client checks`): an instance without a client that is not a bot client,
- * whose automation channel `main` waits for an outside client, started with random base `randomBase`. `work` gets the
- * launch values of that instance on `platform`. It runs in `root` when given (`ClientCheckInput.checkout`), in the game
- * repo checkout otherwise.
+ * whose automation channel `main` waits for an outside client, started with the runner option `--random-base`
+ * `randomBase` (`CHECK_RANDOM_BASE` unless its check says another), so that its server process is `start_local_server`
+ * of `testing`. `work` gets the launch values of that instance on `platform`. It runs in `root` when given
+ * (`ClientCheckInput.checkout`), in the game repo checkout otherwise.
  */
 export async function withCheckInstance<T>(
   ctx: Context,
@@ -114,14 +107,13 @@ export async function withCheckInstance<T>(
   platform: string,
   work: (instance: InstanceInfo, external: ExternalClient, values: LaunchValues) => Promise<T>,
   root?: string,
-  randomBase: number = CHECK_RANDOM_BASE,
+  randomBase: bigint = CHECK_RANDOM_BASE,
 ): Promise<T> {
   const where = root === undefined || root === game.root ? {} : { root };
-  const options: CheckInstanceStart = { game: game.name, client: 'none', externalClient: true, platform, ...where, randomBase };
-  const instance = await startInstance(ctx, options);
+  const instance = await startInstance(ctx, { game: game.name, client: 'none', externalClient: true, platform, randomBase, ...where });
   try {
     if (instance.external === null) throw new OgwError(`instance ${instance.id} has no automation channel for the client`);
-    return await work(instance, instance.external, launchValuesOf(instance, instance.external, platform, randomBase));
+    return await work(instance, instance.external, launchValuesOf(instance, instance.external, platform));
   } finally {
     // an instance left running would take a slot and load the checks after this one: a stop that fails fails the check
     await stopInstance(ctx, instance.id);
@@ -180,8 +172,11 @@ export function measureGate(): { gate: MeasureGate; open: (reason: string | null
   return { gate: { exported, measure, opened: () => opened }, open, exportedOr: (done) => Promise.race([made, Promise.allSettled([done])]) };
 }
 
-/** The launch values of a check instance started with random base `randomBase` (ogw.md `### client checks`). */
-export function launchValuesOf(instance: InstanceInfo, external: ExternalClient, platform: string, randomBase: number): LaunchValues {
+/**
+ * The launch values of a check instance (ogw.md `### client checks`): `OGW_RANDOM_BASE` is the one the runner gives the
+ * bot clients of that instance (`ExternalClient.randomBase`).
+ */
+export function launchValuesOf(instance: InstanceInfo, external: ExternalClient, platform: string): LaunchValues {
   return {
     OGW_SERVER_URL: `http://127.0.0.1:${new URL(instance.serverUrl).port}`,
     OGW_INSTANCE_ID: instance.id,
@@ -190,7 +185,7 @@ export function launchValuesOf(instance: InstanceInfo, external: ExternalClient,
     OGW_PLATFORM: platform,
     OGW_DEV_ACCESS: external.devAccess,
     OGW_DEV_ACCOUNT: external.devAccount,
-    OGW_RANDOM_BASE: String(randomBase),
+    ...(external.randomBase === undefined ? {} : { OGW_RANDOM_BASE: external.randomBase }),
   };
 }
 

@@ -188,7 +188,7 @@ describe('rowSimulationCheck', () => {
     vi.mocked(stopInstance).mockResolvedValue();
     vi.mocked(automationRequest).mockImplementation(fakeAutomation((command) => (command === 'list_commands' ? ok(commands) : ok({ solved: true, metrics: { moves_left: 9 } }))));
     const result = await rowSimulationCheck(ctx, 'g', gameRoot({ level: LEVEL }), 2, { evidence, slots: new Slots(1), db: 'postgresql', pollMs: 1 });
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: 'postgresql' }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: 'postgresql', randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'r1');
     expect(result).toEqual({
       name: 'row simulation',

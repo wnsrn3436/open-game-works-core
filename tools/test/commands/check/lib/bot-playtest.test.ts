@@ -60,7 +60,7 @@ describe('botPlaytest', () => {
     const dir = root({ steps, goal });
     serve(1);
     const [noBlocker, fullFlow] = await botPlaytest(ctx, 'g', await readScenario(dir), { evidence: { root: dir, dir: 'ev', relative: true }, slots: new Slots(1), pollMs: 1 });
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: undefined }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: undefined, randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'b1');
     expect(noBlocker).toEqual({ name: 'no blocker', platform: null, result: 'pass', failures: [], warnings: [] });
     expect(fullFlow).toEqual({ name: 'full flow', platform: null, result: 'pass', failures: [], warnings: [] });
@@ -72,7 +72,7 @@ describe('botPlaytest', () => {
     const dir = root({ steps, goal });
     serve(0);
     const [noBlocker, fullFlow] = await botPlaytest(ctx, 'g', await readScenario(dir), { evidence: { root: dir, dir: 'ev', relative: true }, slots: new Slots(1), pollMs: 1, db: 'postgresql' });
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: 'postgresql' }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: 'postgresql', randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(noBlocker.result).toBe('pass');
     expect(fullFlow.failures).toEqual([
       { where: 'step 1', message: 'goal is not true after the last step', evidence: ['ev/bot-playtest/client.log', 'ev/bot-playtest/server.log'] },

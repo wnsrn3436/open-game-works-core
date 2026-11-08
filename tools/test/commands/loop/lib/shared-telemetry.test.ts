@@ -32,11 +32,13 @@ describe('withInputLatency', () => {
  * A fake `runOnce`: each run waits `ms` and then reaches every step unless the next of `fails` is true. It records the
  * order the runs start and end in (`s<n>` and `e<n>`, n from 0 in start order).
  */
-function fakeRuns(fails: boolean[], ms = 20): { runOnce: () => Promise<BotRun | null>; events: string[]; made: () => number } {
+function fakeRuns(fails: boolean[], ms = 20): { runOnce: (k: number) => Promise<BotRun | null>; events: string[]; made: () => number; ks: number[] } {
   const events: string[] = [];
+  const ks: number[] = [];
   let made = 0;
   return {
-    runOnce: async () => {
+    runOnce: async (k) => {
+      ks.push(k);
       const n = made++;
       const fail = fails.shift() ?? false;
       events.push(`s${String(n)}`);
@@ -46,6 +48,7 @@ function fakeRuns(fails: boolean[], ms = 20): { runOnce: () => Promise<BotRun | 
     },
     events,
     made: () => made,
+    ks,
   };
 }
 
@@ -56,6 +59,8 @@ describe('sideRuns', () => {
     expect(runs.made()).toBe(5);
     // the first three together, then the two missing ones together, after the first three
     expect(runs.events).toEqual(['s0', 's1', 's2', 'e0', 'e1', 'e2', 's3', 's4', 'e3', 'e4']);
+    // the k-th run has random base k, the new runs counted on
+    expect(runs.ks).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('stops once three runs that reached every step can no longer be made', async () => {
@@ -89,8 +94,10 @@ describe('pairRuns', () => {
     let running = 0;
     let most = 0;
     const sides: RunSide[] = [];
-    const result = await pairRuns(async (side) => {
+    const ks: Record<RunSide, number[]> = { commit: [], baseline: [] };
+    const result = await pairRuns(async (side, k) => {
       sides.push(side);
+      ks[side].push(k);
       running++;
       most = Math.max(most, running);
       await new Promise((r) => setTimeout(r, 10));
@@ -101,5 +108,7 @@ describe('pairRuns', () => {
     expect(result.baseline).toHaveLength(3);
     expect(most).toBe(6);
     expect(sides.filter((s) => s === 'commit')).toHaveLength(3);
+    // the two commits play the same worlds run for run
+    expect(ks).toEqual({ commit: [1, 2, 3], baseline: [1, 2, 3] });
   });
 });

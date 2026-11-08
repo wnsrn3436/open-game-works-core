@@ -12,6 +12,12 @@ import { writeEvidence, type Evidence } from './evidence.ts';
 export const CHECK_SLOTS = 'check instance slots';
 
 /**
+ * The random base of the instances of the checks (ogw.md `## check`, `### client checks`): a fixed value, so that the
+ * checks of a commit see the same game world on every run.
+ */
+export const CHECK_RANDOM_BASE = 1n;
+
+/**
  * At most `size` holders at a time; the rest wait in order. A spare holder (`spare`) takes only a slot that is free
  * while no holder waits, and is told when a holder comes to wait, so that it gives the slot back.
  */
@@ -147,7 +153,8 @@ export async function withInstance<T>(
 
 /**
  * {@link withInstance} for a caller that already holds its slot (a spare slot of `Slots.spare`). Once `signal` is
- * aborted, a start that has not ended stops and fails.
+ * aborted, a start that has not ended stops and fails. The instance has the random base of `options`, and
+ * `CHECK_RANDOM_BASE` when it gives none.
  */
 export async function onInstance<T>(
   ctx: Context,
@@ -162,7 +169,8 @@ export async function onInstance<T>(
       ctx.log(`cannot keep the logs of instance ${id}: ${(error as Error).message}`);
     });
   };
-  const instance = await startInstance(ctx, options, signal === undefined ? { beforeFailedStop: keep } : { beforeFailedStop: keep, signal });
+  const started = { ...options, randomBase: options.randomBase ?? CHECK_RANDOM_BASE };
+  const instance = await startInstance(ctx, started, signal === undefined ? { beforeFailedStop: keep } : { beforeFailedStop: keep, signal });
   let failed = false;
   try {
     return await work(instance);

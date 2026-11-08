@@ -122,7 +122,7 @@ async function oneRun(input: ClientCheckInput & { workspaces: CheckWorkspaces },
         // a boot that did not reach Done ran no scenario
         return { run: runOf(input.env, results), stats: loadingMs === null ? null : await readStats(ctx, instance.id) };
       });
-    }, checkoutOf(input), n);
+    }, checkoutOf(input), BigInt(n));
     if (repeat.run.result === 'pass') await rm(join(evidence.root, evidence.dir ?? ''), { recursive: true, force: true });
     return repeat;
   } catch (error) {

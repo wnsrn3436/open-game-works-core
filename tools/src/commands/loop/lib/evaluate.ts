@@ -216,6 +216,8 @@ interface Spec {
   rewardPresentationOff?: boolean;
   /** The id the instance gets: one a judge input named before the start. */
   id?: string;
+  /** `--random-base` of the instance: the k-th bot run of a commit of the shared telemetry has k; absent for none. */
+  randomBase?: bigint;
 }
 
 interface PlaySlot extends Holder {
@@ -624,6 +626,7 @@ async function start(state: State, spec: Spec, owner: Holder): Promise<InstanceI
   else if (spec.headless !== true) options.played = true;
   if (state.plan.db) options.db = state.plan.db;
   if (spec.id !== undefined) options.id = spec.id;
+  if (spec.randomBase !== undefined) options.randomBase = spec.randomBase;
   const reserved: string[] = [];
   let info: InstanceInfo | null = null;
   owner.live++;
@@ -1312,11 +1315,14 @@ function abortOnSignal(state: State): () => void {
   return off;
 }
 
-/** A bot run of the scenario on a new headless instance of `commit`; null when it did not start or reach every step. */
-async function botRunOf(state: State, job: TelemetryJob, commit: string, scenario: Scenario, degrade: Degrade = {}): Promise<BotRun | null> {
+/**
+ * The k-th bot run of the scenario on a new headless instance of `commit` with random base k; null when it did not start
+ * or reach every step.
+ */
+async function botRunOf(state: State, job: TelemetryJob, commit: string, scenario: Scenario, k: number, degrade: Degrade = {}): Promise<BotRun | null> {
   let instance: InstanceInfo | null = null;
   try {
-    instance = await start(state, { commit, headless: true, ...degrade }, job);
+    instance = await start(state, { commit, headless: true, randomBase: BigInt(k), ...degrade }, job);
     const run = instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.botPollMs);
     if (run === null) state.ctx.log(`shared telemetry: a bot run of ${commit} did not reach every step`);
     return run;
@@ -1372,11 +1378,11 @@ async function makeTelemetry(state: State, job: TelemetryJob): Promise<void> {
   const between = (): void => {
     checkStopped(state);
   };
-  const mine = sideRuns(() => botRunOf(state, job, pair.commit, scenario), between);
+  const mine = sideRuns((k) => botRunOf(state, job, pair.commit, scenario, k), between);
   const shared = state.baselineRuns.get(baselineKey(pair));
   const taken = job.makesBaseline ? null : (shared?.runs ?? null);
   if (!job.makesBaseline && taken === null) throw new OgwError(`the shared telemetry runs of ${pair.baseline as string} did not start before those of ${pair.commit}`);
-  const theirs = taken ?? sideRuns(() => botRunOf(state, job, pair.baseline as string, scenario, baselineDegrade(pair)), between);
+  const theirs = taken ?? sideRuns((k) => botRunOf(state, job, pair.baseline as string, scenario, k, baselineDegrade(pair)), between);
   if (shared?.maker === job) shared.runs = theirs;
   const [commitRuns = null, baselineRuns = null] = await allSettled([mine, theirs]);
   if (commitRuns !== null && baselineRuns !== null) await shareRuns(state, pair, commitRuns, baselineRuns);

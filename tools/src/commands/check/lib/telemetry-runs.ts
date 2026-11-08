@@ -20,9 +20,11 @@ export async function makeTelemetryRuns(ctx: Context, game: GameRepo, run: RunSt
   if (baseline === null) return;
   const shared = await scenarioAtHead(game, ctx.env);
   if (shared === null) return;
-  const once = async (sha: string): Promise<BotRun | null> => {
+  // the k-th run of a commit has random base k (ogw.md `## loop evaluate`), not the random base of the checks
+  const once = async (sha: string, k: number): Promise<BotRun | null> => {
     try {
-      const made = await withInstance(ctx, instance.slots, { game: game.name, commit: sha, client: 'headless', db: instance.db }, (started) =>
+      const options = { game: game.name, commit: sha, client: 'headless' as const, db: instance.db, randomBase: BigInt(k) };
+      const made = await withInstance(ctx, instance.slots, options, (started) =>
         botRun(ctx, started, shared.scenario, instance.pollMs),
       );
       if (made === null) ctx.log(`shared telemetry: a bot run of ${sha} did not reach every step`);
@@ -32,7 +34,7 @@ export async function makeTelemetryRuns(ctx: Context, game: GameRepo, run: RunSt
       return null;
     }
   };
-  const runs = await pairRuns((side) => span(`telemetry run ${side}`, () => once(side === 'commit' ? commit : baseline)));
+  const runs = await pairRuns((side, k) => span(`telemetry run ${side}`, () => once(side === 'commit' ? commit : baseline, k)));
   const file: CheckTelemetryRuns = { commit, baseline, scenario: shared.sha256, runs };
   await writeJsonAtomic(join(game.root, telemetryRunsRel(run, run.iteration)), file);
 }

@@ -6,11 +6,13 @@ import { span } from '../../../lib/spans.ts';
 import { isNotFound, whenNotFound } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { LIMITS } from '../../../lib/limits.ts';
+import { allSettledOrThrow } from '../../../lib/pool.ts';
 import type { CheckFailure, CheckResult } from '../api.ts';
 import { checkedScriptErrors, engineErrorLines, gutRun, type GutRunResult } from '../../core/lib/godot.ts';
 import { startPostgres } from '../../core/lib/postgres.ts';
 import { runServerTests, serverRunFailures, type ServerTestInputs, type ServerTestRun } from '../../core/lib/server-tests.ts';
 import { importClient } from './engine.ts';
+import { contractErrorPairs, testRecordCoverage } from './test-record.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from './evidence.ts';
 
 export { checkedScriptErrors, engineErrorLines };
@@ -98,26 +100,40 @@ export function targetWhere(path: string): string {
   return `${path}:1`;
 }
 
-/** A server test run of `target` in the checkout `game` (`testing` `### test run`). */
+/** A server test run of `target` in the checkout `game` (`testing` `### test run`), with its test record. */
 export function serverTestRun(ctx: Context, game: GameRepo, target: string, inputs: ServerTestInputs, timeoutMs: number): Promise<ServerTestRun> {
   return runServerTests({ checkout: game.root, target, kind: 'regression', inputs, env: ctx.env, timeoutMs });
 }
 
-/** Server regression test (`testing` `### test run`) of the `*.test.ts` files of `path`; none is run failure `no tests`. */
+/**
+ * Server regression test (`testing` `### test run`) of the `*.test.ts` files of `path`; none is run failure `no tests`.
+ * After a run of all test files (`server/tests`), the coverage failures of its test record are run failures of the run.
+ */
 export async function serverRegression(ctx: Context, game: GameRepo, path: string, options: ClientRunOptions): Promise<CheckFailure[]> {
   const root = game.root;
   const tests = (await filesUnder(join(root, path))).filter((file) => file.endsWith('.test.ts'));
   if (tests.length === 0) return [failure(targetWhere(path), 'run failure: no tests')];
+  const all = path === SERVER_TESTS;
   const db = await regressionDb(ctx, options.db);
   try {
     const timeoutMs = LIMITS.programMs;
     const inputs = regressionInputs(root, db?.url ?? null);
-    const run = await serverTestRun(ctx, game, path, inputs, timeoutMs);
+    // the contract read runs beside the test run, which takes far longer; a failure of one waits for the other, so that
+    // no test still uses the database that `close` removes
+    const running = serverTestRun(ctx, game, path, inputs, timeoutMs);
+    const reading = all ? contractErrorPairs(root, ctx.env) : Promise.resolve(null);
+    await allSettledOrThrow([running, reading]);
+    const [run, pairs] = [await running, await reading];
+    const coverage = run.testRecord === undefined || pairs === null ? [] : testRecordCoverage(run.testRecord, pairs);
+    if (run.result !== null) run.result.run_failures.push(...coverage.map((message) => ({ message })));
     const evidence = [
       run.result === null ? null : await writeEvidence(options.evidence, 'regression/server-result.json', `${JSON.stringify(run.result, null, 2)}\n`),
       await writeEvidence(options.evidence, 'regression/server-output.log', run.output),
     ];
-    return serverRunFailures(run, 'regression', targetWhere(path), timeoutMs).map((f) => failure(f.where, f.message, evidence));
+    const failures = serverRunFailures(run, 'regression', targetWhere(path), timeoutMs);
+    // a run without a result has no run failure list to hold them
+    if (run.result === null) failures.push(...coverage.map((message) => ({ where: targetWhere(path), message: `run failure: ${message}` })));
+    return failures.map((f) => failure(f.where, f.message, evidence));
   } finally {
     await db?.close();
   }

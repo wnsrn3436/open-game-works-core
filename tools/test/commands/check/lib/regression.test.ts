@@ -15,7 +15,7 @@ import { godotDataVariable } from '../../../../src/commands/core/lib/godot.ts';
 import { startPostgres } from '../../../../src/commands/core/lib/postgres.ts';
 import type { GameRepo } from '../../../../src/lib/game.ts';
 import { LIMITS } from '../../../../src/lib/limits.ts';
-import { fakeContext } from '../helpers.ts';
+import { EMPTY_GAME_CONTRACT, fakeContext } from '../helpers.ts';
 import { gitOnlyHarness } from '../../../helpers/workspace.ts';
 import { fakeProgram } from '../../../helpers/fake-child.ts';
 
@@ -353,6 +353,7 @@ describe('regressionTest', () => {
     const root = gameRoot({
       'server/tests/shop/buy.test.ts': "it('buys', () => { expect(process.env.OGW_DEFAULT_DB).toBe('sqlite'); expect(process.env.OGW_POSTGRESQL).toBeUndefined(); });\n",
       'server/tests/shop/sell.test.ts': "describe('sell', () => { it('sells', () => { expect(1).toBe(2); }); it.skip('later', () => undefined); });\n",
+      'server/generated/contract/game_contract.ts': EMPTY_GAME_CONTRACT,
     });
     const dir = mkdtempSync(join(tmpdir(), 'ogw-reg-ev-'));
     const evidence = { root: dir, dir: 'e', relative: true };
@@ -383,7 +384,10 @@ describe('regressionTest', () => {
     const remove = vi.fn(() => Promise.resolve());
     vi.mocked(startPostgres).mockResolvedValue({ id: 'c', createDatabase: (name) => Promise.resolve(`postgresql://p/${name}`), remove });
     const withSettings = { ...ctx, settings: () => Promise.resolve({ tools: { postgresql: { tag: '17', digest: 'sha256:x' } } }) } as unknown as typeof ctx;
-    const root = gameRoot({ 'server/tests/db.test.ts': "it('db', () => { expect(process.env.OGW_POSTGRESQL).toBe('postgresql://p/ogw_regression'); expect(process.env.OGW_DEFAULT_DB).toBe('postgresql'); });\n" });
+    const root = gameRoot({
+      'server/tests/db.test.ts': "it('db', () => { expect(process.env.OGW_POSTGRESQL).toBe('postgresql://p/ogw_regression'); expect(process.env.OGW_DEFAULT_DB).toBe('postgresql'); });\n",
+      'server/generated/contract/game_contract.ts': EMPTY_GAME_CONTRACT,
+    });
     const options = { godot: '/nonexistent', evidence: { root: '/tmp', dir: null, relative: true }, runTimeLimitMs: null, startTimeLimitMs: null, db: 'postgresql' as const };
     expect((await regressionTest(withSettings, checkout(root), { client: null, server: 'server/tests' }, options)).result).toBe('pass');
     expect(startPostgres).toHaveBeenCalledWith(withSettings, { tag: '17', digest: 'sha256:x' });
@@ -391,5 +395,72 @@ describe('regressionTest', () => {
     vi.mocked(startPostgres).mockResolvedValue({ id: 'c', createDatabase: () => Promise.reject(new Error('createdb failed')), remove });
     await expect(regressionTest(withSettings, checkout(root), { client: null, server: 'server/tests' }, options)).rejects.toThrow('createdb failed');
     expect(remove).toHaveBeenCalledTimes(2);
+  }, 60_000);
+
+  it('reads the test record of a run of all test files: an admin operation no test sent and a GameError no test received are run failures', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ogw-reg-ev-'));
+    const seen = join(dir, 'seen');
+    // test files that append the test record lines the test helper writes when the run has a test record
+    const append = (...lines: unknown[]) =>
+      `import { appendFileSync } from 'node:fs';\nit('t', () => { const file = process.env.OGW_TEST_RECORD; if (file !== undefined) for (const line of ${JSON.stringify(lines)}) appendFileSync(file, line + '\\n'); });\n`;
+    const contract = [
+      'export const GameError = { GAME_ERROR_UNSPECIFIED: 0, GAME_ERROR_NOT_ENOUGH_GOLD: 1000, GAME_ERROR_SOLD_OUT: 1001 };',
+      "export const RPCS = [{ name: 'BuyItem', errors: [1000, 1001] }, { name: 'ClaimQuest', errors: [] }];",
+      "export const CORE_ERRORS = new Map([['core/StartPlaySession', [1000]]]);",
+    ].join('\n');
+    const json = (o: unknown) => JSON.stringify(o);
+    const root = gameRoot({
+      'server/tests/shop/buy.test.ts': append(
+        json({ kind: 'admin_operation', operation: 'grant_gold' }),
+        json({ kind: 'admin_operation', operation: 'ban_user' }),
+        json({ kind: 'game_error', request: 'BuyItem', error: 'GAME_ERROR_NOT_ENOUGH_GOLD' }),
+      ),
+      'server/tests/shop/sell.test.ts': append(json({ kind: 'admin', operation: 'grant_gold', status: 200 }), 'torn'),
+      'server/tests/sub/seen.test.ts': `import { writeFileSync } from 'node:fs';\nit('seen', () => { writeFileSync(${JSON.stringify(seen)}, process.env.OGW_TEST_RECORD ?? 'none'); });\n`,
+      'server/generated/contract/game_contract.ts': contract,
+    });
+    const options = { godot: '/nonexistent', evidence: { root: dir, dir: 'e', relative: true }, runTimeLimitMs: null, startTimeLimitMs: null };
+    // the OGW_TEST_RECORD of the caller does not reach the tests: the run has its own, made empty before it
+    const inherited = join(dir, 'inherited.jsonl');
+    const caller = { ...ctx, env: { ...ctx.env, OGW_TEST_RECORD: inherited } };
+    const all = await regressionTest(caller, checkout(root), { client: null, server: 'server/tests' }, options);
+    expect(all.result).toBe('fail');
+    // the test files write their lines in any order: the malformed line is one of the five
+    const malformed = all.failures.filter((f) => /^run failure: test record line [1-5] is malformed$/.test(f.message));
+    expect(malformed).toHaveLength(1);
+    expect(all.failures.filter((f) => !malformed.includes(f)).map((f) => [f.where, f.message])).toEqual([
+      ['server/tests:1', 'run failure: admin operation ban_user is sent by no test'],
+      ['server/tests:1', 'run failure: BuyItem GAME_ERROR_SOLD_OUT is received by no test'],
+      ['server/tests:1', 'run failure: core/StartPlaySession GAME_ERROR_NOT_ENOUGH_GOLD is received by no test'],
+    ]);
+    expect(all.failures[0]?.evidence).toEqual(['e/regression/server-result.json', 'e/regression/server-output.log']);
+    expect(readFileSync(seen, 'utf8')).toMatch(/test-record\.jsonl$/);
+    // the coverage failures are run failures of the result
+    const result = JSON.parse(readFileSync(join(dir, 'e', 'regression', 'server-result.json'), 'utf8')) as { run_failures: { message: string }[] };
+    expect(result.run_failures.map((f) => f.message)).toContain('admin operation ban_user is sent by no test');
+    // a run of one test file or of a folder below server/tests/ has a test record too, but no coverage: the shop tests
+    // leave ban_user unsent
+    for (const target of ['server/tests/sub/seen.test.ts', 'server/tests/sub', 'server/tests/shop']) {
+      writeFileSync(seen, '');
+      expect((await regressionTest(caller, checkout(root), { client: null, server: target }, options)).result).toBe('pass');
+      if (target !== 'server/tests/shop') expect(readFileSync(seen, 'utf8')).toMatch(/test-record\.jsonl$/);
+    }
+    expect(existsSync(inherited)).toBe(false);
+    // with every pair received and every admin operation sent, the run passes
+    writeFileSync(join(root, 'server/tests/shop/sell.test.ts'), append(
+      json({ kind: 'admin', operation: 'grant_gold', status: 200 }),
+      json({ kind: 'admin', operation: 'ban_user', status: 403 }),
+      json({ kind: 'game_error', request: 'BuyItem', error: 'GAME_ERROR_SOLD_OUT' }),
+      json({ kind: 'game_error', request: 'core/StartPlaySession', error: 'GAME_ERROR_NOT_ENOUGH_GOLD' }),
+    ));
+    expect((await regressionTest(ctx, checkout(root), { client: null, server: 'server/tests' }, options)).failures).toEqual([]);
+  }, 60_000);
+
+  it('fails a run of all test files whose generated contract cannot be read, after the test run ended', async () => {
+    const root = gameRoot({ 'server/tests/a.test.ts': "it('a', () => undefined);\n" });
+    const options = { godot: '/nonexistent', evidence: { root: '/tmp', dir: null, relative: true }, runTimeLimitMs: null, startTimeLimitMs: null };
+    await expect(regressionTest(ctx, checkout(root), { client: null, server: 'server/tests' }, options)).rejects.toThrow(
+      'the GameError lists of server/generated/contract/game_contract.ts could not be read',
+    );
   }, 60_000);
 });

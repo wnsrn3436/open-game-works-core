@@ -61,3 +61,9 @@ export async function fakeRestartClient(ctx: Context, id: string, client: Client
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }
+
+/**
+ * `server/generated/contract/game_contract.ts` of a test game, in the form of `server-core` `## generated code`: the
+ * `GameError` enum, `RPCS` and `CORE_ERRORS`, here with no `GameError` to receive.
+ */
+export const EMPTY_GAME_CONTRACT = 'export const GameError = { GAME_ERROR_UNSPECIFIED: 0 };\nexport const RPCS = [];\nexport const CORE_ERRORS = new Map();\n';

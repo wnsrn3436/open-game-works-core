@@ -52,15 +52,17 @@ export type PairRuns = Record<RunSide, BotRun[] | null>;
 /**
  * The shared telemetry runs of one commit (ogw.md `## loop evaluate`): `SHARED_TELEMETRY_RUNS` runs at once, then the
  * runs that did not reach every step replaced together by as many new runs, up to `SHARED_TELEMETRY_RETRIES` new runs;
- * null, with no more runs, once `SHARED_TELEMETRY_RUNS` runs that reached every step can no longer be made. `runOnce`
- * makes one run on a new instance (null when it did not reach every step); `between` runs after each wait, and a stop it
- * throws ends the runs.
+ * null, with no more runs, once `SHARED_TELEMETRY_RUNS` runs that reached every step can no longer be made. `runOnce(k)`
+ * makes the k-th run (k from 1, the new runs counted on) on a new instance with random base k, so that the two commits
+ * of a pair play the same worlds run for run (null when it did not reach every step); `between` runs after each wait,
+ * and a stop it throws ends the runs.
  */
-export async function sideRuns(runOnce: () => Promise<BotRun | null>, between: () => void = () => undefined): Promise<BotRun[] | null> {
+export async function sideRuns(runOnce: (k: number) => Promise<BotRun | null>, between: () => void = () => undefined): Promise<BotRun[] | null> {
   const runs: BotRun[] = [];
   let retries = SHARED_TELEMETRY_RETRIES;
+  let started = 0;
   for (let count = SHARED_TELEMETRY_RUNS; ; ) {
-    const made = await Promise.all(Array.from({ length: count }, () => runOnce()));
+    const made = await Promise.all(Array.from({ length: count }, () => runOnce(++started)));
     between();
     for (const run of made) if (run !== null) runs.push(run);
     const missing = SHARED_TELEMETRY_RUNS - runs.length;
@@ -72,8 +74,8 @@ export async function sideRuns(runOnce: () => Promise<BotRun | null>, between: (
 }
 
 /** The shared telemetry runs of a pair (ogw.md `## loop evaluate`): those of each side (`sideRuns`), both sides at once. */
-export async function pairRuns(runOnce: (side: RunSide) => Promise<BotRun | null>, between: () => void = () => undefined): Promise<PairRuns> {
-  const [commit, baseline] = await Promise.all([sideRuns(() => runOnce('commit'), between), sideRuns(() => runOnce('baseline'), between)]);
+export async function pairRuns(runOnce: (side: RunSide, k: number) => Promise<BotRun | null>, between: () => void = () => undefined): Promise<PairRuns> {
+  const [commit, baseline] = await Promise.all([sideRuns((k) => runOnce('commit', k), between), sideRuns((k) => runOnce('baseline', k), between)]);
   between();
   return { commit, baseline };
 }

@@ -484,7 +484,7 @@ describe('uiQualityCheck', () => {
     const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
     const { calls } = fakeUi();
     const result = await uiQualityCheck(ctx, 'g', 'ios', options(root));
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'ios', client: 'window', db: undefined }, { beforeFailedStop: expect.any(Function) as unknown });
+    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'ios', client: 'window', db: undefined, randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
     expect(stopInstance).toHaveBeenCalledWith(ctx, 'u1');
     expect(result.name).toBe('UI quality');
     expect(result.platform).toBe('ios');

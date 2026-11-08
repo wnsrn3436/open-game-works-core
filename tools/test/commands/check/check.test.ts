@@ -22,7 +22,7 @@ import { changeRuns, newRunState } from '../../../src/lib/runstate.ts';
 import { workspaceFrom, loadHarnessSettings } from '../../../src/lib/settings.ts';
 import { commitAll, ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 import { fakeAgentJob } from '../instance/agents.ts';
-import { doneState, fakeAutomation, ok } from './helpers.ts';
+import { doneState, EMPTY_GAME_CONTRACT, fakeAutomation, ok } from './helpers.ts';
 
 vi.mock('../../../src/commands/check/lib/bot-playtest.ts', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../../src/commands/check/lib/bot-playtest.ts')>();
@@ -105,6 +105,8 @@ function setupGame(ws: TestWorkspace, files: Record<string, string | object> = {
     'settings.json': SETTINGS,
     'client/dev/bot/scenario.json': SCENARIO,
     'client/tests/a/test_a.gd': 'func test_a():\n',
+    // the generated server contract that the coverage of a server regression test run reads
+    'server/generated/contract/game_contract.ts': EMPTY_GAME_CONTRACT,
     ...files,
   });
 }
@@ -340,7 +342,7 @@ describe('ogw check --bot', () => {
       // the client is imported first, as --loop does
       const godot = vi.mocked(requireEngine).mock.results[0]?.value as Promise<string>;
       expect(readFileSync(join(dirname(await godot), 'imports'), 'utf8')).toBe('import\n');
-      expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless', db: undefined }]);
+      expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless', db: undefined, randomBase: 1n }]);
       expect(staticCheck).not.toHaveBeenCalled();
       expect(await head(root)).toBe(before);
       expect(existsSync(join(root, 'records/loops/create-1/check-1.json'))).toBe(false);
@@ -460,11 +462,13 @@ describe('ogw check --loop', () => {
     expect(startInstance).toHaveBeenCalledTimes(8);
     expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual(
       expect.arrayContaining([
-        { game: 'g', client: 'headless', db: 'postgresql' },
-        { game: 'g', platform: 'ios', client: 'window', db: 'postgresql' },
-        { game: 'g', platform: 'web', client: 'window', db: 'postgresql' },
+        { game: 'g', client: 'headless', db: 'postgresql', randomBase: 1n },
+        { game: 'g', platform: 'ios', client: 'window', db: 'postgresql', randomBase: 1n },
+        { game: 'g', platform: 'web', client: 'window', db: 'postgresql', randomBase: 1n },
       ]),
     );
+    // every instance of the check has random base 1
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual(Array<bigint>(8).fill(1n));
     // the flash recording of each platform profile: the phone screen at its CSS size, at targetFps (the profiles run side by side: in either order)
     const recordings = vi.mocked(startInstance).mock.calls.map((c) => c[1]).filter((o) => o.movie !== undefined).sort((a, b) => String(a.platform).localeCompare(String(b.platform)));
     expect(recordings.map((o) => [o.platform, o.client, o.db, o.movie?.resolution, o.movie?.fps, o.testScreen])).toEqual(
@@ -657,7 +661,7 @@ if (args.includes('--import')) {
     ]);
     expect(file.gate).toBe('pass');
     // one headless instance: the bot playtest
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless' }]);
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual([{ game: 'g', client: 'headless', randomBase: 1n }]);
   });
 
   it('--loop prints the first failures and warnings of a check and the count of the rest; the result file holds them all', async () => {
@@ -780,8 +784,11 @@ if (args.includes('--import')) {
     expect(run.code).toBe(0);
     // three headless runs of each commit, each on a new instance of its commit
     const starts = vi.mocked(startInstance).mock.calls.map((c) => c[1]);
-    expect(starts.filter((o) => o.commit === commit)).toEqual(Array.from({ length: 3 }, () => ({ game: 'g', commit, client: 'headless', db: undefined })));
-    expect(starts.filter((o) => o.commit === base)).toEqual(Array.from({ length: 3 }, () => ({ game: 'g', commit: base, client: 'headless', db: undefined })));
+    // the k-th run of a commit has random base k; every other instance of the check has random base 1
+    expect(starts.filter((o) => o.commit === commit)).toEqual([1n, 2n, 3n].map((randomBase) => ({ game: 'g', commit, client: 'headless', db: undefined, randomBase })));
+    expect(starts.filter((o) => o.commit === base)).toEqual([1n, 2n, 3n].map((randomBase) => ({ game: 'g', commit: base, client: 'headless', db: undefined, randomBase })));
+    expect(starts.filter((o) => o.commit === undefined).map((o) => o.randomBase)).toEqual(starts.filter((o) => o.commit === undefined).map(() => 1n));
+    expect(starts.filter((o) => o.commit === undefined).length).toBeGreaterThan(0);
     const scenario = createHash('sha256').update(readFileSync(join(root, 'client/dev/bot/scenario.json'))).digest('hex');
     const runs = JSON.parse(readFileSync(join(root, 'records/loops/update-1/evidence/check-1/telemetry-runs.json'), 'utf8')) as { commit: string; baseline: string; scenario: string; runs: Record<string, { telemetry: { started_at: number }; guide: string | null }[] | null> };
     expect({ commit: runs.commit, baseline: runs.baseline, scenario: runs.scenario }).toEqual({ commit, baseline: base, scenario });

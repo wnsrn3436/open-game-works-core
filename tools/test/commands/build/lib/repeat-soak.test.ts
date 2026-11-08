@@ -149,7 +149,7 @@ beforeEach(() => {
   vi.mocked(startInstance).mockImplementation(async (_ctx, options) => {
     started += 1;
     const id = `i${String(started)}`;
-    bases.set(id, (options as { randomBase?: number }).randomBase);
+    bases.set(id, options.randomBase === undefined ? undefined : Number(options.randomBase));
     const channel = new ClientChannel('main');
     await channel.listen();
     channels.set(id, channel);
@@ -157,7 +157,7 @@ beforeEach(() => {
     mostRunning = Math.max(mostRunning, running);
     const info: InstanceInfo = {
       id, game: 'g', root: '', commit: '', platform: options.platform ?? '', serverUrl: 'http://127.0.0.1:4321', adminSecret: 'a', startedAt: 0, fixture: false, clients: [], exited: {}, serverLog: '',
-      external: { automationPort: channel.port, automationToken: channel.token, devAccess: 'DEV-ACCESS', devAccount: 'main' },
+      external: { automationPort: channel.port, automationToken: channel.token, devAccess: 'DEV-ACCESS', devAccount: 'main', ...(options.randomBase === undefined ? {} : { randomBase: String(options.randomBase) }) },
     };
     return info;
   });
@@ -257,8 +257,8 @@ describe('repeat test', () => {
     // one export for the three runs, without launch values
     expect(vi.mocked(godotCheckExport).mock.calls.map((c) => ({ platform: c[2], values: c[5], dir: c[4].split('/').at(-1) }))).toEqual([{ platform: 'web', values: null, dir: 'web' }]);
     // run n starts its own check instance with random base n, and its page gets the launch values of that instance
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1]).sort((a, b) => ((a as { randomBase?: number }).randomBase ?? 0) - ((b as { randomBase?: number }).randomBase ?? 0))).toEqual(
-      [1, 2, 3].map((randomBase) => ({ game: 'g', client: 'none', externalClient: true, platform: 'web', randomBase })),
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1]).sort((a, b) => Number(a.randomBase ?? 0n) - Number(b.randomBase ?? 0n))).toEqual(
+      [1n, 2n, 3n].map((randomBase) => ({ game: 'g', client: 'none', externalClient: true, platform: 'web', randomBase })),
     );
     const pages = pageValues(s.bin);
     expect([...pages.keys()].sort()).toEqual(['i1', 'i2', 'i3']);
@@ -323,7 +323,7 @@ describe('repeat test', () => {
       return real.godotCheckPrepare(...args);
     });
     expect(await repeatTest({ ...s.input, checkout })).toEqual({ name: 'repeat test', result: 'pass', details: [] });
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', root: checkout, randomBase: 1 });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', root: checkout, randomBase: 1n });
     expect(heads).toEqual([git(checkout, 'rev-parse', 'HEAD')]);
     expect(heads[0]).not.toBe(git(s.dir, 'rev-parse', 'HEAD'));
   });
@@ -704,7 +704,7 @@ describe('soak test', () => {
     expect(samples.windows.map((w) => w.maxHeapMemoryBytes)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((w) => (200 + 4 * w + 3) * MIB));
     // its page read the current JavaScript heap, and got the launch values of its check instance with random base 1
     expect(readFileSync(join(s.bin, 'chromium.jsonl'), 'utf8')).toContain('"--enable-precise-memory-info"');
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toMatchObject({ randomBase: 1 });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toMatchObject({ randomBase: 1n });
     expect(pageValues(s.bin).get('i1')?.OGW_RANDOM_BASE).toBe('1');
     expect(existsSync(join(s.dir, 'builds/stg-0.2.0/soak-test/console.log'))).toBe(true);
     expect(vi.mocked(stopInstance)).toHaveBeenCalledTimes(1);

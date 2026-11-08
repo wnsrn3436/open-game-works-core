@@ -15,6 +15,7 @@ import { hostBootId, JobNotFound, readJob } from '../../lib/jobs.ts';
 import { isAlive, killTree } from '../../lib/proc.ts';
 import { gameSettingsPath, loadGameSettings, withGameSettingsLock } from '../../lib/settings.ts';
 import { controlCall, type ClientRef } from './automation.ts';
+import { randomBaseText } from './lib/launch.ts';
 import { concurrencyLimit, generateIfNeeded, importIfNeeded, instancePlatform, makePlan } from './lib/prepare.ts';
 import { removePostgres } from './lib/postgres.ts';
 import {
@@ -92,6 +93,11 @@ export interface InstanceOptions {
   feedbackOff?: boolean;
   /** `--reward-presentation-off`: the client `main` runs with reward presentation off of `QACore` from each boot. */
   rewardPresentationOff?: boolean;
+  /**
+   * `--random-base` (an int64): every client gets it as the launch value `OGW_RANDOM_BASE`, and the server process is
+   * `start_local_server` of `testing` with it (ogw.md `## runner`). Absent: the secure random of the server.
+   */
+  randomBase?: bigint;
   /** The id of the instance, made with `newId` by a caller that names the instance before it starts (a judge input); a new id otherwise. */
   id?: string;
 }
@@ -344,6 +350,7 @@ function checkOptions(options: InstanceOptions): void {
 
 async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks): Promise<InstanceInfo> {
   checkOptions(options);
+  const randomBase = options.randomBase === undefined ? undefined : randomBaseText(options.randomBase);
   const game = await gameOf(ctx, options);
   // an instance of a game repo is started with the run settings of its open loop run (ogw.md `## loop start`)
   const settings = options.root === undefined ? await runHarnessSettings(ctx, game) : await ctx.settings();
@@ -394,6 +401,7 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
         ...(options.networkDelayMs === undefined || options.networkDelayMs <= 0 ? {} : { networkDelayMs: options.networkDelayMs }),
         ...(options.feedbackOff === true ? { feedbackOff: true as const } : {}),
         ...(options.rewardPresentationOff === true ? { rewardPresentationOff: true as const } : {}),
+        ...(randomBase === undefined ? {} : { randomBase }),
       };
     }, ctx.env);
     checkAborted(signal);

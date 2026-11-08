@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consoleText, openHeadless } from '../../../../src/commands/build/lib/chromium.ts';
-import { buildCheckOf, clientCheckTiming, didNotRun, measureGate, serveFolder, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
+import { buildCheckOf, clientCheckTiming, didNotRun, launchValuesOf, measureGate, serveFolder, withCheckInstance, type ClientCheckInput } from '../../../../src/commands/build/lib/client-check.ts';
 import { appBlocker, devicePerformance } from '../../../../src/commands/build/lib/device-performance.ts';
 import { fpsSampling } from '../../../../src/commands/check/lib/performance.ts';
 import { webSmoke } from '../../../../src/commands/build/lib/web-smoke.ts';
@@ -13,7 +13,7 @@ import { runData } from '../../../../src/commands/data/api.ts';
 import { requireEngine, toolProgram } from '../../../../src/commands/env/api.ts';
 import { lanAddress, udpReaches } from '../../../../src/commands/env/lib/hostcheck.ts';
 import { gameModules } from '../../../../src/commands/generate/api.ts';
-import { startInstance, stopInstance, type InstanceInfo } from '../../../../src/commands/instance/api.ts';
+import { startInstance, stopInstance, type ExternalClient, type InstanceInfo } from '../../../../src/commands/instance/api.ts';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
 import { ClientChannel } from '../../../../src/commands/instance/lib/channel.ts';
 import { createContext } from '../../../../src/lib/command.ts';
@@ -73,11 +73,12 @@ interface Setup {
   requests: () => string[];
 }
 
-function fakeInstance(platform: string): InstanceInfo {
+/** An instance as the runner gives it: the outside client has the random base of the start. */
+function fakeInstance(platform: string, randomBase?: bigint): InstanceInfo {
   const ch = channel as ClientChannel;
   return {
     id: 'i1', game: 'g', root: '', commit: '', platform, serverUrl: 'http://127.0.0.1:4321', adminSecret: 'a', startedAt: 0, fixture: false, clients: [], exited: {}, serverLog: '',
-    external: { automationPort: ch.port, automationToken: ch.token, devAccess: 'DEV-ACCESS', devAccount: 'main' },
+    external: { automationPort: ch.port, automationToken: ch.token, devAccess: 'DEV-ACCESS', devAccount: 'main', ...(randomBase === undefined ? {} : { randomBase: String(randomBase) }) },
   };
 }
 
@@ -144,7 +145,7 @@ beforeEach(() => {
   vi.mocked(startInstance).mockImplementation(async (_ctx, options) => {
     channel = new ClientChannel('main');
     await channel.listen();
-    return fakeInstance(options.platform ?? '');
+    return fakeInstance(options.platform ?? '', options.randomBase);
   });
   vi.mocked(stopInstance).mockReset();
   vi.mocked(stopInstance).mockImplementation(async () => {
@@ -178,6 +179,21 @@ describe('build check helpers', () => {
     expect(didNotRun('web smoke', new Error('boom'))).toEqual({ name: 'web smoke', result: 'unknown', details: ['web smoke did not run: boom'] });
     expect(didNotRun('web smoke', 'text').details).toEqual(['web smoke did not run: text']);
     expect(() => didNotRun('web smoke', new Error('not defined: x'))).toThrow('not defined: x');
+  });
+
+  it('starts a check instance with random base 1, or the one its check gives, and gives its client that random base', async () => {
+    const s = await setup();
+    // the launch values the check gives the page or apk hold the random base the runner gives the clients of the instance
+    const values = async (base?: bigint) => {
+      const { given, external } = await withCheckInstance(s.input.ctx, s.input.game, 'web', (_instance, outside, launch) => Promise.resolve({ given: launch, external: outside }), undefined, base);
+      expect(given.OGW_RANDOM_BASE).toBe(external.randomBase);
+      return given;
+    };
+    expect((await values()).OGW_RANDOM_BASE).toBe('1');
+    expect((await values(36n)).OGW_RANDOM_BASE).toBe('36');
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual([1n, 36n]);
+    // an instance without a random base gives none
+    expect(launchValuesOf(fakeInstance('web'), fakeInstance('web').external as ExternalClient, 'web')).not.toHaveProperty('OGW_RANDOM_BASE');
   });
 
   it('serves a folder on loopback with content types and nothing outside it', async () => {
@@ -284,7 +300,7 @@ describe('web smoke', () => {
     expect(result?.check).toEqual({ name: 'web smoke', result: 'pass', details: [] });
     expect(result?.loadingMs).toBeGreaterThanOrEqual(0);
     // a check instance has random base 1
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', randomBase: 1 });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'web', randomBase: 1n });
     expect(vi.mocked(stopInstance)).toHaveBeenCalledWith(s.input.ctx, 'i1');
     // the page gets the launch values of its check instance from the launch value file that ogw_launch_values names on its port
     const values = JSON.parse(readFileSync(join(s.bin.bin, 'page-launch-values.json'), 'utf8')) as Record<string, string>;
@@ -440,7 +456,7 @@ describe('device performance', () => {
     const check = await devicePerformance(s.input);
     expect(check).toEqual({ name: 'device performance', result: 'pass', details: [] });
     expect(vi.mocked(udpReaches).mock.calls[0]?.slice(1)).toEqual(['emulator-5554', '192.168.0.9']);
-    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'android', randomBase: 1 });
+    expect(vi.mocked(startInstance).mock.calls[0]?.[1]).toEqual({ game: 'g', client: 'none', externalClient: true, platform: 'android', randomBase: 1n });
     // the apk holds the launch values of its check instance in generated/launch_values.json, which exclude_filter keeps
     const values = JSON.parse(readFileSync(join(s.bin.bin, 'installed.apk'), 'utf8')) as Record<string, string>;
     expect(values).toMatchObject({ OGW_SERVER_URL: 'http://127.0.0.1:4321', OGW_PLATFORM: 'android', OGW_DEV_ACCESS: 'DEV-ACCESS', OGW_DEV_ACCOUNT: 'main', OGW_INSTANCE_ID: 'i1', OGW_RANDOM_BASE: '1' });
