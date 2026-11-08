@@ -46,6 +46,7 @@ core `rpc` request field
 - A user has one session. When a new session opens, the access token and the session signing key of the previous session become invalid. The login token follows the login token rules of `auth` and does not become invalid when a new session opens
 - session record: `user_id` (`int64`), `session_id` (`string`. base64url of 16 bytes of secure random), `signing_key` (`string`. base64url of 32 bytes of secure random), `started_at` (`int64`. `server-time.now`(ctx)). Registered with `storage.register_table` as table `session_current` (`user` scope, key `user_id`, excluded from snapshots)
 - `start_session` deletes the previous session record of that user and writes a new record
+- `end_session` deletes the session record of the ctx user. In the ctx of a request with a session (`Logout`), it deletes it only when the session ID of the record is ctx `session_id`, so a later login of that user that committed after `routing` step 5 keeps its session; in an out-of-request change (`auth.revoke_login_tokens`, `user-snapshot-clone`), it deletes it whatever its session ID. Without a record it does nothing
 - `check_current`: `UNAUTHORIZED` when there is no session record, `SESSION_REPLACED` when the session ID of the record differs
 - `check_current` and `verify_signature` read the session record with `storage.read_db`
 
@@ -104,6 +105,7 @@ none
 
 ## test
 
+- When a `Logout` of session S1 passed `routing` step 5 and an `AutoLogin` of that user on another device committed session S2 before the `Logout` transaction, the `Logout` leaves the session record of S2: a request of S2 is `pass` and a request of S1 is `SESSION_REPLACED`
 - After a second login, an access token request of the first session and `RefreshToken` with the login token of the first session are `SESSION_REPLACED`
 - After `Logout`, a request of that session is `UNAUTHORIZED`. The same holds after a successful `auth.revoke_login_tokens` of that user, a user who has an `auth_social_link` row (for a user without one it is `conflict` and changes nothing)
 - A request in which one byte of the body, the request ID, the signature name or the timestamp was changed is `UNAUTHORIZED`

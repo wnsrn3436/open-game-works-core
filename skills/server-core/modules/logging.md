@@ -202,7 +202,7 @@ A server instance keeps the metric families below from its server start. `routin
 
 ### alert signal
 
-An alert signal is a condition of one server instance that the monitoring prepared for `## deploy` of the `build` skill alerts on through `ogw_alert_firing`. It is judged over the alert window: the log lines that `write` wrote at a `server-time.clock_now` later than the judgement time − `logging.alertWindowMs`.
+An alert signal is a condition of one server instance that the monitoring prepared for `## deploy` of the `build` skill alerts on through `ogw_alert_firing`. It is judged over the alert window: the log lines that `write` wrote at a `server-time.clock_now` later than the judgement time − `logging.alertWindowMs`, among the lines it still keeps. Each line that `write` writes at `clock_now` t drops the kept lines written at or before t − `logging.alertWindowMs`, so the kept lines take memory for at most one window; after the test clock of `testing` went back, a judgement does not count a line that a later line dropped.
 
 | alert | fires when |
 |---|---|
@@ -300,6 +300,7 @@ none
 
 ## test
 
+- With `logging.alertWindowMs` 100 and `logging.alertErrorLogCount` 2, after `error` lines at `clock_now` 1001 and 2000, a judgement at 1050 (the test clock moved back) does not fire `error_logs`: the line at 2000 dropped the line at 1001
 - For each request for which `routing` writes a `request` log, there is one `request` log line with all common fields
 - The `request` log level of a successful request and of a request that ended with `GameError` is `info`, and that of a request that ended with `INTERNAL` is `error`. The `request` log of a successful request that gave minimum level `warn` and fields with `annotate_request_log` has level `warn` and holds those fields. An `annotate_request_log` that violates the rules is `INTERNAL`
 - The `request` log `seed` of a request given a random seed through `testing.send` is the decimal string of that random seed
