@@ -354,7 +354,8 @@ storage leaves no logs. It returns failures to the caller as a throw or a failur
 | exceeding the game row lock wait, PostgreSQL deadlock, serialization failure | `FAILED` | `INTERNAL` | none |
 | `lock_game_row` wait exceeded or deadlock of a content handler or hook | throw | `INTERNAL` | none |
 | a statement of a transaction that PostgreSQL aborted, and a later `query` or storage operation that runs a statement on that transaction | throw. The operation that opened that transaction is `FAILED`, or throws when `### transaction` sets that | `INTERNAL` | none |
-| a throw of the function of `run_user_transaction`, `run_rollback_transaction`, `run_request_transaction` or `run_game_transaction` on a transaction that PostgreSQL did not abort | rolls back and throws | none | none |
+| a throw of the function of `run_user_transaction`, `run_rollback_transaction`, `run_request_transaction` or `run_game_transaction` on a transaction that PostgreSQL did not abort and that `fail_transaction` did not mark | rolls back and throws | none | none |
+| the function of a transaction that `fail_transaction` marked ends, by a return or a throw | rolls back, and the result is `FAILED` | `FAILED` | none |
 | change name registration error | server start failure | none | none |
 | `FAILED` of a user change application, throw of the apply function or fail function | retries. After the maximum attempts, moves to the `fail` phase or deletes the row | none | none |
 | throw outside the apply function and fail function while handling a selected row of `run_user_changes` | that server instance leaves the row out until the process ends; the run throws after its last row | none | `error` log by `routing` |
