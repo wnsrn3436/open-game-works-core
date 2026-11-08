@@ -479,7 +479,7 @@ Frame code of core does none of the following.
 
 - As an exception, on a path that runs only when a `LogCore.log_warn` or `LogCore.log_error` call is written, frame code creates the message `String` of that call and adds the one `Dictionary` key that records that this log was written, so that the log is written once per cause
 - A reused collection is sized once to its maximum size with `resize()` outside frame code, and the count in use is kept in an `int` field. Emptying it sets only the count to 0
-- An operation that returns a result list fills the buffer the caller gave from index 0 and returns the number filled. It does not change the buffer size. On overflow it fills only up to the buffer size and leaves an error log. The buffer of a list of enum values is `PackedInt32Array`. e.g. `AuthCore.list_linked_providers` (`LoginProvider` values)
+- An operation that returns a result list fills the buffer the caller gave from index 0 and returns the number filled. It does not change the buffer size. On overflow it fills only up to the buffer size and leaves an error log. The buffer of a list of enum values or `int` values is `PackedInt32Array`. e.g. `AuthCore.list_linked_providers` (`LoginProvider` values), `InputCore.get_connected_gamepads`, `AccessibilityCore.list_text_scales`, `InputCore.list_pad_axis_sensitivities`
 - A `Callable` is created in `init` or `_ready()` and kept in a field
 
 ## resource loading

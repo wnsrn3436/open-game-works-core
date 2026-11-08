@@ -62,7 +62,7 @@ Saves the user options for text size scale, color vision correction, voice subti
 
 ### text scale
 
-- The allowed values are the permille values in core settings `AccessibilityCore.textScales`. Content code offers them as `list_text_scales` fills them
+- The allowed values are the permille values in core settings `AccessibilityCore.textScales`. Content code offers them as `list_text_scales` fills them. `AccessibilityCore.textScales` has at most 8 values, so a caller buffer of length 8 holds every value that `list_text_scales` fills
 - Content code makes its UI so that text is not cut off or overlapped even at the largest allowed text scale. The UI quality check checks this
 
 ### color mode
@@ -110,7 +110,7 @@ none
 
 | key | type | source | owner | meaning |
 |---|---|---|---|---|
-| `AccessibilityCore.textScales` | array<integer> | core | human | list of allowed text scale permille values. It holds 1000, each element is 1 or more, and no element repeats |
+| `AccessibilityCore.textScales` | array<integer> | core | human | list of allowed text scale permille values. It has 1 to 8 elements, it holds 1000, each element is 1 or more, and no element repeats |
 | `AccessibilityCore.subtitlesDefault` | boolean | core | content | subtitles when there is no saved value |
 | `AccessibilityCore.colorFilterEnabled` | boolean | core | content | whether to use the color filter of core |
 | `AccessibilityCore.colorMatrices` | object | core | content | 3x3 color matrix (9 real numbers, row-major) for each of `Protanopia`, `Deuteranopia`, `Tritanopia` |
@@ -161,7 +161,7 @@ none
 - After `set_text_scale`(1250), `set_test_text_scale`(1500) and `release`, `LocalizationCore.get_text_scale` is 1500. After `init` and `apply_saved_settings` it is 1250
 - After `set_text_scale`(1250) and `set_test_text_scale`(1500), `text_scale_permille` of `get_settings` is 1250. `set_text_scale`(1250) after that leaves `LocalizationCore.get_text_scale` at 1500 and publishes no `AccessibilityChangedEvent`, and `set_text_scale`(1000) makes it 1000 and publishes `AccessibilityChangedEvent` once
 - `set_test_text_scale`(999) leaves an error log, and `LocalizationCore.get_text_scale` is unchanged
-- With `AccessibilityCore.textScales` [1500, 1000, 1250], `list_text_scales` with a buffer of length 3 fills 1000, 1250, 1500 and returns 3, and `set_text_scale` of each filled value is `true`. Before `init` it returns 0 with an error log
+- With `AccessibilityCore.textScales` [1500, 1000, 1250], `list_text_scales` with a buffer of length 3 fills 1000, 1250, 1500 and returns 3, and `set_text_scale` of each filled value is `true`. Before `init` it returns 0 with an error log. With 8 values, a buffer of length 8 holds all 8 without a log, and with 9 values `init` fails with an error log
 - With `AccessibilityCore.colorFilterEnabled` `true`, after `set_text_scale`(1250), `set_color_mode`(`Deuteranopia`), `set_subtitles` of the value that is not `AccessibilityCore.subtitlesDefault`, `set_reduce_shake`(`true`) and `set_reduce_flash`(`true`), `reset_settings` publishes `AccessibilityChangedEvent` once; after it `get_settings` is the default `AccessibilitySettings`, `LocalizationCore.get_text_scale` is 1000, a pure red screen pixel is unchanged, with the same `CameraCore.set_shake_seed` and the same `shake` call the shake offset in each frame is the offset with reduce shake off, and a `flash` with maximum opacity 1 reaches opacity 1. The `device` file has none of the keys of `## data`, and after `release`, `init` and `apply_saved_settings`, `get_settings` is the default. A second `reset_settings` publishes no `AccessibilityChangedEvent`
 - With subtitles on and `AccessibilityCore.subtitlesDefault` `false`, `reset_settings` hides a visible subtitle in that frame
 - After `set_test_text_scale`(1500) while the text scale option value is 1000, `reset_settings` leaves `LocalizationCore.get_text_scale` at 1500. After `set_text_scale`(1250) and `set_test_text_scale`(1500), `reset_settings` makes it 1000
