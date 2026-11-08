@@ -308,7 +308,7 @@ none
 
 - The DEV code of routing collects the cheat handlers that `cheat.list_cheat_handlers` returned and the cheat handlers written in `## DEV` of the modules, and handles them on the cheat paths of the path table. routing code that is not DEV code does not call cheats
 - In an environment that includes DEV code, the DEV code of routing calls registration function `registerDev(core)` of content `server/dev/main.ts` once at server start, right after `register`
-- In an environment that includes DEV code, `ServerError.detail` is filled in English with the failed step and the reason
+- In an environment that includes DEV code, `ServerError.detail` is filled in English with the failed step and the reason, as `step <n> <step name>: <reason>` (e.g. `step 11 field validation: notify_id: nul`)
 
 ## test
 

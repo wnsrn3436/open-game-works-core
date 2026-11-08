@@ -159,7 +159,7 @@ used table: `requirement`
 
 ## DEV
 
-- In an environment that includes DEV code, the `ServerError.detail` of a validator failure is `<field path>: <rule>`
+- In an environment that includes DEV code, the reason of a validator failure in `ServerError.detail` (step 11 of `routing`) is `<field path>: <rule>`
 
 ## test
 

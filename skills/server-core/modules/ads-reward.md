@@ -243,6 +243,7 @@ core cheat request field
 
 ## test
 
+- A reward notify ID that holds U+0000 in `ClaimAdReward` and `FakeAdCallback` is `INVALID_REQUEST` with validator rule `nul` (`validation`) without calling the handler, and a reward notify ID without U+0000 that is not a lower-case UUID v4 is `AD_REWARD_NOT_FOUND` at once without an error log
 - `BeginAdReward` → callback → `ClaimAdReward` grants `reward` once with source `AdReward`
 - Even when the callback of the same reward notify ID comes twice, grants only once
 - A callback with a wrong signature is HTTP 403 and does not grant
