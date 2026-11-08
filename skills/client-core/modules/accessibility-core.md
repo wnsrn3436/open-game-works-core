@@ -26,11 +26,13 @@ Saves the user options for text size scale, color vision correction, voice subti
 |---|---|---|---|---|
 | `apply_saved_settings` | none | none | none | `BootstrapCore`(`InitModules` stage) |
 | `get_settings` | none | `AccessibilitySettings` | default `AccessibilitySettings` | core, content code |
+| `list_text_scales` | caller buffer | number filled. Fills the values of `AccessibilityCore.textScales` in ascending order | `0` | content code |
 | `set_text_scale` | permille | success flag | `false` | content code |
 | `set_color_mode` | `ColorMode` | success flag | `false` | content code |
 | `set_subtitles` | on flag | none | none | content code |
 | `set_reduce_shake` | on flag | none | none | content code |
 | `set_reduce_flash` | on flag | none | none | content code |
+| `reset_settings` | none | none | none | content code |
 | `play_voice` | resource key, resource scope, subtitle translation key, `FormatArgs`(optional) | play handle of `SoundCore` | invalid handle | content code |
 
 ### type
@@ -48,6 +50,7 @@ Saves the user options for text size scale, color vision correction, voice subti
 - The option values are kept in the `device` file of `LocalDataCore`
 - `apply_saved_settings` reads the saved values and applies them all. When a key is missing, the type of a saved value differs from the type in `## data`, or a value is outside the allowed values, it uses the default. AccessibilityCore then leaves no log. Before it is called, the settings are the default and are not applied
 - `set_*` applies the value at once and saves it. When the value changes, it publishes `AccessibilityChangedEvent`. With the same value it does nothing
+- `reset_settings` sets each option to its value in the default `AccessibilitySettings`, applies the options whose value changes, and deletes the keys of `## data` from the `device` file with `LocalDataCore.remove_value`, so that `apply_saved_settings` reads the defaults. When one or more values change, it publishes `AccessibilityChangedEvent` once; when none changes, it publishes none
 
 | option | applies to |
 |---|---|
@@ -59,7 +62,7 @@ Saves the user options for text size scale, color vision correction, voice subti
 
 ### text scale
 
-- The allowed values are the permille values in core settings `AccessibilityCore.textScales`
+- The allowed values are the permille values in core settings `AccessibilityCore.textScales`. Content code offers them as `list_text_scales` fills them
 - Content code makes its UI so that text is not cut off or overlapped even at the largest allowed text scale. The UI quality check checks this
 
 ### color mode
@@ -90,7 +93,7 @@ none
 
 | event | when | payload |
 |---|---|---|
-| `AccessibilityChangedEvent` | after an option value changed by `set_*` is applied | none. The new values are read with `get_settings` |
+| `AccessibilityChangedEvent` | after the option values changed by one `set_*` or `reset_settings` are applied | none. The new values are read with `get_settings` |
 
 ## error
 
@@ -139,7 +142,7 @@ none
 |---|---|---|---|
 | `set_test_text_scale` | permille(1000 or more) | none | `QACore`, core test |
 
-- Applies the text scale with `LocalizationCore.set_text_scale` and does not save it. It does not change the option value, so `text_scale_permille` of `get_settings` and the value check of `set_text_scale` use the option value. That text scale stays until `LocalizationCore.release`, the next `apply_saved_settings`, the next `set_test_text_scale` or a `set_text_scale` that changes the option value
+- Applies the text scale with `LocalizationCore.set_text_scale` and does not save it. It does not change the option value, so `text_scale_permille` of `get_settings` and the value check of `set_text_scale` use the option value. That text scale stays until `LocalizationCore.release`, the next `apply_saved_settings`, the next `set_test_text_scale` or a `set_text_scale` or `reset_settings` that changes the text scale option value
 - The `QACore` command `set_text_scale` calls this operation
 - STG and PROD builds do not have this operation
 
@@ -158,4 +161,8 @@ none
 - After `set_text_scale`(1250), `set_test_text_scale`(1500) and `release`, `LocalizationCore.get_text_scale` is 1500. After `init` and `apply_saved_settings` it is 1250
 - After `set_text_scale`(1250) and `set_test_text_scale`(1500), `text_scale_permille` of `get_settings` is 1250. `set_text_scale`(1250) after that leaves `LocalizationCore.get_text_scale` at 1500 and publishes no `AccessibilityChangedEvent`, and `set_text_scale`(1000) makes it 1000 and publishes `AccessibilityChangedEvent` once
 - `set_test_text_scale`(999) leaves an error log, and `LocalizationCore.get_text_scale` is unchanged
+- With `AccessibilityCore.textScales` [1500, 1000, 1250], `list_text_scales` with a buffer of length 3 fills 1000, 1250, 1500 and returns 3, and `set_text_scale` of each filled value is `true`. Before `init` it returns 0 with an error log
+- With `AccessibilityCore.colorFilterEnabled` `true`, after `set_text_scale`(1250), `set_color_mode`(`Deuteranopia`), `set_subtitles` of the value that is not `AccessibilityCore.subtitlesDefault`, `set_reduce_shake`(`true`) and `set_reduce_flash`(`true`), `reset_settings` publishes `AccessibilityChangedEvent` once; after it `get_settings` is the default `AccessibilitySettings`, `LocalizationCore.get_text_scale` is 1000, a pure red screen pixel is unchanged, with the same `CameraCore.set_shake_seed` and the same `shake` call the shake offset in each frame is the offset with reduce shake off, and a `flash` with maximum opacity 1 reaches opacity 1. The `device` file has none of the keys of `## data`, and after `release`, `init` and `apply_saved_settings`, `get_settings` is the default. A second `reset_settings` publishes no `AccessibilityChangedEvent`
+- With subtitles on and `AccessibilityCore.subtitlesDefault` `false`, `reset_settings` hides a visible subtitle in that frame
+- After `set_test_text_scale`(1500) while the text scale option value is 1000, `reset_settings` leaves `LocalizationCore.get_text_scale` at 1500. After `set_text_scale`(1250) and `set_test_text_scale`(1500), `reset_settings` makes it 1000
 - After `release`, there is no color filter and no subtitle box

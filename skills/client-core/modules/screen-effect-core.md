@@ -64,7 +64,7 @@ Handles the color overlay that covers the whole visible game area with a solid c
 
 - An effect handle holds the result and the owner of one request. The owner is an object that the requester passes, and it ties the effect's lifetime to that object
 - Each channel has one current handle. A new request that passes the input check ends the current handle of the same channel with `Cancelled` and replaces it. A request that fails the input check does not replace the current handle
-- A replaced handle cannot control the overlay. `skip_to_end` and `clear_handle` on that handle do not change the state of the new handle
+- Only the current handle of a channel controls that channel's overlay. A handle that is not the current handle of its channel (a replaced handle, a handle cleared by `clear_handle`, `clear_owner` or owner destruction, a handle settled as `Failed`, a handle that World skip of `## DEV` settled) cannot control the overlay: `skip_to_end` and `clear_handle` on that handle change no overlay and no other handle
 - The result of a handle is set only once. `wait_result` after it is set returns that result without waiting
 
 ### playback
@@ -77,7 +77,7 @@ Handles the color overlay that covers the whole visible game area with a solid c
 - A request that passes the input check publishes `ScreenEffectStartedEvent` when playback starts
 - Playback runs through `TweenCore` with the `TimeBasis` of the request. With `RealTime`, game time pause and time scale do not change the end time. With `GameTime`, playback holds during a game time pause and advances with game time, so in step mode it advances only with the steps
 - A request whose durations are all 0 applies the end value to the overlay within the operation and ends with `Completed`
-- `skip_to_end` applies the end value and ends with `Completed`
+- `skip_to_end` of the current handle of a channel in progress applies the end value and ends with `Completed`. `skip_to_end` of any other handle does nothing
 - A finished fade or preset keeps the end value. A finished flash is at opacity 0
 - When `TweenCore` cannot start playback, the new handle ends with `Failed`, the replaced handle ends with `Cancelled`, and that channel goes to the state without an effect
 
@@ -127,11 +127,12 @@ none
 | `get_overlay_state` | `ScreenEffectChannel` | rectangle, color, opacity and whether displayed of that channel's overlay | empty rectangle, black, opacity 0, `false` | core test |
 | `set_world_skip` | whether skipped | none | none | `QACore`, core test |
 
-- World skip: off at `init`, changed by `set_world_skip`, and turned off by `release`. While it is on, a `fade`, `flash` or `play_preset` on `World` that passes the input check returns an effect handle settled as `Completed`, does not replace the current handle of `World`, changes no overlay, starts no tween and publishes no `ScreenEffectStartedEvent`. `skip_to_end` of such a handle changes no overlay, because the handle never controlled one, and `wait_result` of it gives `Completed` at once. A `World` effect that started before it turned on goes on. It does not change the `Cutscene` and `Transition` channels
+- World skip: off at `init`, changed by `set_world_skip`, and turned off by `release`. While it is on, a `fade`, `flash` or `play_preset` on `World` that passes the input check returns an effect handle settled as `Completed`, does not replace the current handle of `World`, changes no overlay, starts no tween and publishes no `ScreenEffectStartedEvent`. A `World` effect that started before it turned on goes on. It does not change the `Cutscene` and `Transition` channels
 
 ## test
 
 - A new request on the same channel ends `wait_result` of the earlier handle with `Cancelled`, and `clear_handle` of the earlier handle does not delete the new effect
+- While a `World` fade from opacity 0 to 1 over 1000 ms is in progress, `skip_to_end` and `clear_handle` of a `World` `fade` handle settled as `Failed` (owner object destroyed, and opacity 1.5) leave the overlay color and opacity of that frame unchanged and the fade in progress, and that fade then ends with `Completed` at opacity 1
 - In each of duration 0, normal completion, `skip_to_end`, replacement, owner destruction and `release`, `wait_result` is settled once, and `wait_result` after it is settled returns the same result without waiting
 - The overlay of a fade that kept its end value is at opacity 0 and hidden after the owner is destroyed
 - Requests with an out-of-range color, opacity or duration, and preset requests with infinite repeat, that change `Position`, or that have a step without a change, are `Failed`; the effect in progress stays as it is and there is no `ScreenEffectStartedEvent`. For each request that passes, the event of that channel comes once
@@ -143,4 +144,4 @@ none
 - Playing a preset that changes only `Opacity` on a channel without an effect makes the overlay color black. For a preset whose durations are all 0, when the operation returns, the end value is on the overlay and the result is `Completed`
 - After `release` there is no overlay, and after `init` again a fade ends with `Completed`
 - After `set_flash_opacity_limit`(0.3), during a `flash` with maximum opacity 1 the overlay opacity does not exceed 0.3 in any frame, and a `fade` reaches the target opacity 1
-- After `set_world_skip`(`true`), a `World` `flash` returns a handle whose `wait_result` is `Completed` without waiting, the `World` overlay stays hidden, and there is no `ScreenEffectStartedEvent` and no `TweenCore.TweenStartedEvent`. A `World` fade started before it keeps playing to its end, and a `Transition` fade plays and publishes its event. A request with an out-of-range opacity is still `Failed` with one error log. After `set_world_skip`(`false`), a `World` flash plays and publishes its event
+- After `set_world_skip`(`true`), a `World` `flash` returns a handle whose `wait_result` is `Completed` without waiting, the `World` overlay stays hidden, and there is no `ScreenEffectStartedEvent` and no `TweenCore.TweenStartedEvent`. A `World` fade started before it keeps playing to its end, also after `skip_to_end` and `clear_handle` of the handle of that flash, and a `Transition` fade plays and publishes its event. A request with an out-of-range opacity is still `Failed` with one error log. After `set_world_skip`(`false`), a `World` flash plays and publishes its event

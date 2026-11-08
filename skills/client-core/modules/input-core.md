@@ -14,7 +14,7 @@
 
 ## purpose
 
-Turns device input into actions and gestures and delivers them. Handles the input processing order, input device switching, changes of key bindings and gamepad button bindings, and input prompts.
+Turns device input into actions and gestures and delivers them. Handles the input processing order, input device switching, changes of key bindings and gamepad button bindings, stick axis inversion and sensitivity, and input prompts.
 
 ## dependency
 
@@ -51,6 +51,12 @@ Turns device input into actions and gestures and delivers them. Handles the inpu
 | `set_pad_buttons` | action, list of gamepad buttons and gamepad axis directions | success flag | `false` | content code |
 | `reset_pad_buttons` | none | none | none | content code |
 | `wait_pad_button` | none | async operation. the gamepad button or gamepad axis direction pressed next | button none | content code |
+| `set_pad_axis_inverted` | stick axis name, whether inverted | success flag | `false` | content code |
+| `is_pad_axis_inverted` | stick axis name | whether inverted | `false` | content code |
+| `set_pad_axis_sensitivity` | stick axis name, sensitivity permille | success flag | `false` | content code |
+| `get_pad_axis_sensitivity` | stick axis name | sensitivity permille | `1000` | content code |
+| `list_pad_axis_sensitivities` | caller buffer | number filled. Fills the values of `InputCore.padAxisSensitivities` in ascending order | `0` | content code |
+| `reset_pad_axes` | none | none | none | content code |
 | `get_prompt_family` | none | prompt family(`InputPromptFamily`) | `Touch` | core, content code |
 | `get_prompt` | action, the caller's `InputPrompt` | success flag. When `true`, fills `InputPrompt` | `false` | `LocalizationCore`, content code |
 
@@ -67,7 +73,7 @@ Turns device input into actions and gestures and delivers them. Handles the inpu
 - The action list and the default bindings are in the input map. The engine-specific implementation rules define the location and format of the input map. When the engine does not provide an input map, the engine-specific implementation rules define one file that the client core reads as the input map
 - gamepad button names: `a`, `b`, `x`, `y`, `back`, `guide`, `start`, `left_stick`, `right_stick`, `left_shoulder`, `right_shoulder`, `dpad_up`, `dpad_down`, `dpad_left`, `dpad_right`. The engine mapping is in the engine-specific implementation rules
 - gamepad axis names and ranges: `left_x`, `left_y`, `right_x`, `right_y` are from −1 to 1, and `trigger_left`, `trigger_right` are from 0 to 1. The engine mapping is in the engine-specific implementation rules
-- gamepad axis direction name: a gamepad axis name followed by `-` for the negative direction or `+` for the positive direction. e.g. `left_x-`. `trigger_left` and `trigger_right` have only `+`. The strength of an axis direction is the magnitude of the axis value in that direction, and it is 0 when that magnitude is less than `InputCore.padAxisDeadzone`. One gamepad axis input is, for each direction of that axis, a press of that gamepad axis direction when the strength of that direction is greater than 0, and a release of that gamepad axis direction when it is 0. The previous gamepad axis input is the gamepad axis input right before it on the same axis of the same gamepad, and when there is none, the axis value counts as 0. A press whose direction strength was greater than 0 in the previous gamepad axis input is a press that changes only the strength. One input whose value goes directly from positive to negative is a release of the positive direction and a press of the negative direction. Action state, device detection, back handling and key wait all use this strength
+- gamepad axis direction name: a gamepad axis name followed by `-` for the negative direction or `+` for the positive direction. e.g. `left_x-`. `trigger_left` and `trigger_right` have only `+`. The strength of an axis direction is the magnitude of the axis value in that direction, and it is 0 when that magnitude is less than `InputCore.padAxisDeadzone`. One gamepad axis input is, for each direction of that axis, a press of that gamepad axis direction when the strength of that direction is greater than 0, and a release of that gamepad axis direction when it is 0. The previous gamepad axis input is the gamepad axis input right before it on the same axis of the same gamepad, and when there is none, the axis value counts as 0. A press whose direction strength was greater than 0 in the previous gamepad axis input is a press that changes only the strength. One input whose value goes directly from positive to negative is a release of the positive direction and a press of the negative direction. Action state, device detection, back handling and key wait all use this strength, and the gamepad axis direction sources of `Gameplay` actions use it changed by the stick axis options
 - mouse button names: `mouse_left`, `mouse_right`, `mouse_middle`. The engine mapping is in the engine-specific implementation rules
 - core action: an action whose name the core defines. They are `back` (default binding ESC key, gamepad button `b`), `cutscene_advance` (`CutsceneCore` uses it for line progress. default binding Space key, Enter key, gamepad button `a`) and `cutscene_skip` (`CutsceneCore` uses it for skip. default binding Tab key, gamepad button `start`). When even one core action is missing from the input map, `init` leaves an error log and fails
 - Content code does not read device input directly. It receives world input with `is_pressed`, `is_just_pressed`, `is_just_released`, `get_strength`, `get_vector` and gesture events. It receives the mouse position and mouse motion with `get_mouse_position` and `get_mouse_motion`. Content code selects world objects by the position of gesture events
@@ -168,6 +174,16 @@ Device input is handled in the order below.
 - gamepad button binding: the list of gamepad buttons and gamepad axis directions in the binding of an action. `get_pad_buttons`, `set_pad_buttons`, `reset_pad_buttons`, `wait_pad_button` apply the same rules as `get_keys`, `set_keys`, `reset_keys`, `wait_key` to gamepad buttons and gamepad axis directions. The differences are that the count limit is `InputCore.maxPadButtonsPerAction`, the save key is `InputCore.pad_bindings`, and the names in an element are gamepad button names or gamepad axis direction names. `cancel_wait_key` also ends a waiting `wait_pad_button` with button none
 - `load_keys` applies the key bindings and the gamepad button bindings each by the rules above
 
+### stick axis options
+
+- stick axis: one of the gamepad axes `left_x`, `left_y`, `right_x`, `right_y`. The stick axis name of an operation is its gamepad axis name
+- stick axis options: per stick axis, whether it is inverted (default `false`) and its sensitivity in permille (default 1000). The allowed sensitivities are the values in core settings `InputCore.padAxisSensitivities`, and content code offers them as `list_pad_axis_sensitivities` fills them
+- The stick axis options apply only to the gamepad axis direction sources of the actions whose binding context is `Gameplay`. For such a source, a gamepad axis direction of an inverted stick axis takes the strength of the other direction of that axis (`right_y-` takes the strength of `right_y+`), and the strength of the source is that strength × the sensitivity of that axis ÷ 1000, and 1 when that is more than 1. Whether a gamepad axis input presses or releases that source, and whether a press changes only the strength, is judged with the strength of the source. The sources of `Ui` and `Cutscene` actions, key wait and the trigger axes use the strength of the axis direction
+- `set_pad_axis_inverted` and `set_pad_axis_sensitivity` with the current value return `true` and do nothing. A changed value is used for input right away and is written to the `device` file of `LocalDataCore`: `InputCore.pad_axis_inverted` holds the names of the inverted stick axes, and `InputCore.pad_axis_sensitivity` holds one element `<stick axis name>=<permille>` per stick axis whose sensitivity is not 1000. A key whose list becomes empty is deleted
+- `reset_pad_axes` sets the stick axis options of every stick axis to the default and deletes both keys. It does not change key bindings or gamepad button bindings, and `reset_keys` and `reset_pad_buttons` do not change the stick axis options
+- `set_pad_axis_inverted`, `set_pad_axis_sensitivity` and `reset_pad_axes` first release the pressed sources of `Gameplay` actions whose gamepad axis direction is of a stick axis whose options change
+- `load_keys` also applies the saved stick axis options. It does not apply an element in a wrong format, a name that is not a stick axis name, a stick axis with two or more elements in one key, or a sensitivity not in `InputCore.padAxisSensitivities`, leaves a warn log for each, and applies the other elements
+
 ### input prompt
 
 - input prompt: the screen display of the input that presses an action. An icon and a name
@@ -177,17 +193,17 @@ Device input is handled in the order below.
 - prompt input: the string that finds the input prompt of an action in a prompt family
   - `Touch`: the action name
   - `KeyboardMouse`: the key name of the first key of the key binding. When the key binding has no key, the mouse button name of the first mouse button
-  - gamepad family: the first gamepad button name of the gamepad button binding. When the gamepad button binding has no gamepad button, the first gamepad axis direction name
+  - gamepad family: the first gamepad button name of the gamepad button binding. When the gamepad button binding has no gamepad button, the first gamepad axis direction name; for an action whose binding context is `Gameplay`, the name of the other direction when that direction is of an inverted stick axis
   - The order inside a binding is in the engine-specific implementation rules
 - prompt table: the table from (`family`, `input`) of `input_prompt` to that row. The first `get_prompt` called while `DataCore.is_loaded` is `true` makes it from all rows of `input_prompt`, and `release` deletes it
 - When the `input` of a row whose `family` is `Touch` is not in the action list of the game, or the `input` of a row whose `family` is `KeyboardMouse` is neither a key name nor a mouse button name, the static check `action reference` blocks it
 - `get_prompt` is `false` without a log when there is no prompt input. Otherwise it finds the row of the prompt table whose `family` is the prompt family and whose `input` is the prompt input. When `DataCore.is_loaded` is `false`, it does not make or read the prompt table and treats it as no row, without a log. When the prompt family is `Xbox`, `PlayStation` or `Nintendo` and that row does not exist, it finds the row whose `family` is `Generic`. `family` of `InputPrompt` is the prompt family, `input` is the prompt input, and `icon` and `name_key` are the values of the found row. When there is no row or `icon` of the row is `null`, `icon` is the empty string, and when there is no row, `name_key` is none
 - `get_prompt` is also used for `back`
-- `InputPromptChangedEvent` is published when the prompt family changes and when a binding changes. A binding changes on a successful `set_keys`, `set_pad_buttons`, `reset_keys`, `reset_pad_buttons` and on a `load_keys` that applied one or more saved values. Once per call or per device input. When the input device also changes, it is published after `InputDeviceChangedEvent`
+- `InputPromptChangedEvent` is published when the prompt family changes, when a binding changes and when the inversion of a stick axis changes. A binding changes on a successful `set_keys`, `set_pad_buttons`, `reset_keys`, `reset_pad_buttons` and on a `load_keys` that applied one or more saved bindings. The inversion of a stick axis changes on a `set_pad_axis_inverted` that changes the value, a `reset_pad_axes` that turns one or more inversions off and a `load_keys` that applied a saved inversion. Once per call or per device input. When the input device also changes, it is published after `InputDeviceChangedEvent`
 
 ### lifecycle
 
-- `release` resets all actions to the default bindings and empties the list of connected gamepads. It does not delete the saved key bindings and gamepad button bindings
+- `release` resets all actions to the default bindings and every stick axis to the default stick axis options, and empties the list of connected gamepads. It does not delete the saved key bindings, gamepad button bindings and stick axis options
 
 ## hook
 
@@ -203,7 +219,7 @@ none
 | `DragEvent` | a drag phase was judged | `pointer_id`, `phase`, `start_position`, `position`, `delta` |
 | `SwipeEvent` | a swipe was judged | `pointer_id`, `start_position`, `end_position` |
 | `PinchEvent` | a pinch phase was judged | `phase`, `center`, `scale` |
-| `InputPromptChangedEvent` | the prompt family or a binding changed | `family`: `InputPromptFamily` |
+| `InputPromptChangedEvent` | the prompt family, a binding or the inversion of a stick axis changed | `family`: `InputPromptFamily` |
 | `GamepadConnectionChangedEvent` | the list of connected gamepads changed | `gamepad_id`, `connected` |
 
 ## error
@@ -224,7 +240,10 @@ none
 | `wait_key` while waiting | key none | error |
 | the list of `set_pad_buttons` has a value that is not the empty string and is neither a gamepad button name nor a gamepad axis direction name | `false`. All bindings stay as they are | error |
 | `wait_pad_button` while waiting | button none | error |
-| an action that `load_keys` did not apply | none | warn |
+| a name that is not a stick axis name for `set_pad_axis_inverted`, `is_pad_axis_inverted`, `set_pad_axis_sensitivity`, `get_pad_axis_sensitivity` | failure value. The stick axis options stay as they are | error |
+| a value of `set_pad_axis_sensitivity` not in `InputCore.padAxisSensitivities` | `false`. The sensitivity stays as it is | error |
+| `InputCore.padAxisSensitivities` has no 1000, an element less than 1, or a repeated element | `init` fails | error |
+| an action or a saved stick axis option element that `load_keys` did not apply | none | warn |
 
 ## settings
 
@@ -239,6 +258,7 @@ none
 | `InputCore.maxPadButtonsPerAction` | integer | core | content | maximum number of gamepad buttons and gamepad axis directions that `set_pad_buttons` accepts for one action |
 | `InputCore.padAxisWaitThreshold` | number | core | content | direction strength at which `wait_pad_button` passes a gamepad axis direction. More than 0 and at most 1 |
 | `InputCore.padAxisDeadzone` | number | core | content | a gamepad axis direction magnitude less than this value counts as strength 0. At least 0 and less than 1 |
+| `InputCore.padAxisSensitivities` | array<integer> | core | content | list of allowed stick axis sensitivity permille values. It holds 1000, each element is 1 or more, and no element repeats |
 
 ## data
 
@@ -267,6 +287,8 @@ none
 |---|---|---|---|
 | `device` | `InputCore.key_bindings` | `array<string>` | key bindings of the actions that differ from the default bindings |
 | `device` | `InputCore.pad_bindings` | `array<string>` | gamepad button bindings of the actions that differ from the default bindings |
+| `device` | `InputCore.pad_axis_inverted` | `array<string>` | names of the inverted stick axes |
+| `device` | `InputCore.pad_axis_sensitivity` | `array<string>` | `<stick axis name>=<permille>` per stick axis whose sensitivity is not 1000 |
 
 ## DEV
 
@@ -335,7 +357,7 @@ none
 - `set_keys` with the same key succeeds for an action whose binding context is `Gameplay` and for `cutscene_advance`, and a key of an overlapping action gives `false`. `set_keys` of a `Gameplay` action with the key of `back` succeeds, and `set_keys` of a `menu_` action with it gives `false`. After the key of a `Gameplay` action is changed, a `set_keys` that changes it back to the same key as `cutscene_advance` succeeds
 - When two actions that are overlapping actions have the same key in the default bindings, `init` gives an error log and fails
 - When the key binding of an action in the default bindings is longer than `InputCore.maxKeysPerAction`, `init` succeeds, `get_keys` of that action with a buffer of that length fills the whole key binding without a log, and `set_keys` of that action with the same list gives `false`
-- After `release`, the bindings, the back callback, the pointer observer, action state, pointers, the pinch enabled state, the previous value of the block start check, the gamepad family, the previous gamepad axis inputs and the prompt table are their initial values, and `get_connected_gamepads` is 0
+- After `release`, the bindings, the stick axis options, the back callback, the pointer observer, action state, pointers, the pinch enabled state, the previous value of the block start check, the gamepad family, the previous gamepad axis inputs and the prompt table are their initial values, and `get_connected_gamepads` is 0
 - `wait_key` returns the next key press, and that press does not go to UI, back or action state
 - When a block is acquired while a judge pointer in a drag and two judge pointers in a pinch are pressed, at the first block stage or first frame the drag and pinch publish `Cancel` once, those pointers give no long press, and the releases of those pointers in the blocked state publish no gesture event
 - A press at a position that cannot be used gives an error log and no gesture. A move that cannot be used during a drag gives an error log and no `DragEvent`, and a following release that cannot be used gives an error log and `End` at the previous position
@@ -365,3 +387,11 @@ none
 - An OS pointer cancel of a judge pointer in a drag gives one `DragEvent` `Cancel` and no `End`, `SwipeEvent` or `TapEvent`, and the callback of `set_ui_pointer_observer` is called once with whether pressed `false`. An OS pointer cancel of a pointer pressed on a pass list UI element of a block goes to the UI stage, and after that the pointer is not a passed pointer
 - When the content code process callback of frame F acquires a block while an action pressed with a key stays pressed, `is_just_released` of that action is `false` in F, `true` in the content code process callback of F+1, and `false` in F+2
 - When `DataCore.is_loaded` is `false`, `get_prompt` of an action that has a prompt input is `true` without a log, with an empty `icon` and a none `name_key`, and after a successful `DataCore.load`, the same call fills the values of the matching `input_prompt` row
+- Common conditions of the stick axis option tests below: `InputCore.padAxisDeadzone` 0.2, `InputCore.padAxisSensitivities` [2000, 1000, 500], and the gamepad button bindings `look_up` [`right_y-`], `look_down` [`right_y+`], `look_right` [`right_x+`] (`Gameplay` actions), `menu_down` [`right_y+`] and `menu_right` [`right_x+`] (`Ui` actions)
+- After `set_pad_axis_inverted`(`right_y`, `true`), a `right_y` value 0.6 presses `look_up` with strength 0.6, does not press `look_down`, and presses `menu_down` with strength 0.6. `is_pad_axis_inverted`(`right_y`) is `true` and `get_pad_buttons` of `look_up` is still [`right_y-`], and the same holds after `release`, `init` and `load_keys`
+- When the prompt family is a gamepad family, `set_pad_axis_inverted`(`right_y`, `true`) publishes `InputPromptChangedEvent` once, `input` of `get_prompt`(`look_up`) is `right_y+`, and `input` of `get_prompt`(`menu_down`) is `right_y+`. The same call again returns `true` and publishes no event, and `set_pad_axis_sensitivity` publishes none
+- After `set_pad_axis_sensitivity`(`right_x`, 2000), a `right_x` value 0.3 gives `get_strength`(`look_right`) 0.6 and `get_strength`(`menu_right`) 0.3, and a value 0.8 gives `get_strength`(`look_right`) 1. After `set_pad_axis_sensitivity`(`right_x`, 500), a value 1 gives `get_strength`(`look_right`) 0.5, `get_pad_axis_sensitivity`(`left_x`) is 1000, and during `wait_pad_button` a `right_x` value going from 0 to `InputCore.padAxisWaitThreshold` returns `right_x+`
+- `list_pad_axis_sensitivities` with a buffer of length 3 fills 500, 1000, 2000 and returns 3. `set_pad_axis_sensitivity`(`right_x`, 750) and `set_pad_axis_inverted`(`trigger_left`, `true`) each give `false` and an error log and change no stick axis option
+- While `look_up` is pressed with a `right_y` value −0.6, `set_pad_axis_inverted`(`right_y`, `true`) makes `is_pressed`(`look_up`) `false`, and the next `right_y` value −0.6 presses `look_down`
+- After `set_pad_axis_inverted`(`right_y`, `true`), `set_pad_axis_sensitivity`(`right_x`, 2000) and `set_pad_buttons`(`look_right`, [`right_x-`]), `reset_pad_axes` makes every stick axis not inverted with sensitivity 1000, publishes `InputPromptChangedEvent` once, deletes `InputCore.pad_axis_inverted` and `InputCore.pad_axis_sensitivity` from the `device` file, and leaves `get_pad_buttons`(`look_right`) at [`right_x-`]. `reset_pad_buttons` leaves the stick axis options as they are
+- `load_keys` with the saved `InputCore.pad_axis_inverted` [`right_y`, `trigger_left`] and `InputCore.pad_axis_sensitivity` [`right_x=2000`, `left_x=750`, `left_y`] inverts `right_y`, sets the sensitivity of `right_x` to 2000, leaves `left_x` and `left_y` at 1000, and leaves one warn log for each of `trigger_left`, `left_x=750` and `left_y`

@@ -29,6 +29,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 | `get_volume` | `SoundBus` | volume | `1` | core, content code |
 | `set_mute` | `SoundBus`, whether muted | none | none | content code |
 | `get_mute` | `SoundBus` | whether muted | `false` | core, content code |
+| `reset_volume_settings` | none | none | none | content code |
 | `play_bgm` | resource key, resource scope (optional) | none | none | core, content code |
 | `stop_bgm` | none | none | none | core, content code |
 | `return_bgm` | none | none | none | core, content code |
@@ -64,6 +65,7 @@ Handles per-bus volume and mute, BGM switching, sound effect playback and the co
 - A bus with mute on and a bus with volume 0 are silent. Mute does not change volume
 - The default is volume 1, mute `false`. `set_volume` and `set_mute` apply to the bus at once and write to the `device` file of `LocalDataCore`
 - `load_volume_settings` is called after `LocalDataCore.load_device_file` and applies the saved values to all buses. When a key is missing or a volume is NaN or out of range, it uses the default without a log. Before it is called, the values are the default
+- `reset_volume_settings` sets the volume and mute of every bus and the haptics-on value to the default, applies them at once, and deletes the keys of `## data` from the `device` file with `LocalDataCore.remove_value`, so that `load_volume_settings` reads the defaults
 
 ### playback common
 
@@ -202,7 +204,7 @@ none
 | `set_play_skip` | whether skipped | none | none | `QACore`, core test |
 
 - `inject_focus_change` does, without an engine notification, the same handling as the app losing focus for `false` and the app regaining focus for `true`
-- DEV mute: a mute per bus that only `set_dev_mute` changes. It is off for every bus at `init`, and `release` turns it off. A bus whose DEV mute is on is silent, the same as a bus with mute on, content positional players included. DEV mute does not change `get_mute`, does not write `LocalDataCore`, and `set_mute` and `load_volume_settings` do not change it. A `play` plays as usual (handle, playback count, end) whatever the DEV mute; whether it publishes `SoundPlayedEvent` is decided when its playback starts: a playback that starts on a bus whose DEV mute is on publishes none, also when that `play` was called before DEV mute turned on. A bus that is not an element of `SoundBus` follows the bus row of `## error`
+- DEV mute: a mute per bus that only `set_dev_mute` changes. It is off for every bus at `init`, and `release` turns it off. A bus whose DEV mute is on is silent, the same as a bus with mute on, content positional players included. DEV mute does not change `get_mute`, does not write `LocalDataCore`, and `set_mute`, `load_volume_settings` and `reset_volume_settings` do not change it. A `play` plays as usual (handle, playback count, end) whatever the DEV mute; whether it publishes `SoundPlayedEvent` is decided when its playback starts: a playback that starts on a bus whose DEV mute is on publishes none, also when that `play` was called before DEV mute turned on. A bus that is not an element of `SoundBus` follows the bus row of `## error`
 - play skip: off at `init`, changed by `set_play_skip`, and turned off by `release`. While it is on, a `play` whose bus and resource scope pass the checks of `## error` is decided not to play: it returns the invalid handle, does not load, leaves no log, and publishes no `SoundPlayedEvent`. A request made before it turned on plays as usual
 
 ## test
@@ -215,6 +217,7 @@ none
 - At volume 1, 0.5 and 0, the bus level is 0 dB, -6.02 dB (error at most 0.01) and silent
 - Turning mute on for a bus with volume 0.3 makes it silent, and turning it off returns it to the level of 0.3
 - Values of `set_volume`, `set_mute` and `set_haptic_enabled` are saved in `LocalDataCore` and `load_volume_settings` restores them. Out-of-range and NaN saved values become the default without a log
+- After `set_volume`(`Bgm`, 0.3), `set_mute`(`Sfx`, `true`), `set_volume`(`Master`, 0.5) and `set_haptic_enabled`(`false`), `reset_volume_settings` makes `get_volume` 1 and `get_mute` `false` for every bus and `is_haptic_enabled` `true`, and the `Bgm`, `Sfx` and `Master` bus levels are 0 dB in that frame. The `device` file has none of the keys of `## data`, and after `release`, `init` and `load_volume_settings` the values are the same. A bus whose DEV mute is on stays silent after `reset_volume_settings`
 - In a run with the limiter, the ceiling of the `Master` limiter is set from the settings values, and when the ceiling is lowered, the output true peak for the same input is at most that value
 - `play_bgm` of B while A is playing stops A after `SoundCore.bgmCrossfadeMs` and B's playback volume is 1. Calling C during the A→B crossfade stops A at once and B after its fade out, and C is the current BGM
 - `play_bgm` of the same key with scope S1 and then S2 continues the playback position, keeps playing after S1 is released, and stops after S2 is released with no current BGM

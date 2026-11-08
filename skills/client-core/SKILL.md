@@ -30,7 +30,7 @@ The common rules follow [`core`](../core/SKILL.md).
 | `RequirementCore` | [requirement-core](modules/requirement-core.md) | judgement of conditions defined in data |
 | `ResolutionCore` | [resolution-core](modules/resolution-core.md) | base resolution, maximum resolution, game area |
 | `SafeAreaCore` | [safe-area-core](modules/safe-area-core.md) | safe area, keyboard area |
-| `InputCore` | [input-core](modules/input-core.md) | input action, key and gamepad button binding, gesture, input prompt, gamepad family |
+| `InputCore` | [input-core](modules/input-core.md) | input action, key and gamepad button binding, stick axis inversion and sensitivity, gesture, input prompt, gamepad family |
 | `InputBlockCore` | [input-block-core](modules/input-block-core.md) | acquiring and releasing blocks, the pass flag that decides whether an input passes the active blocks |
 | `VirtualPadCore` | [virtual-pad-core](modules/virtual-pad-core.md) | virtual joystick and button |
 | `TweenCore` | [tween-core](modules/tween-core.md) | tween, tween preset |
