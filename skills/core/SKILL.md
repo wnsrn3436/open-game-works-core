@@ -70,6 +70,7 @@ A spec file has the headings below in this order. A heading with no content for 
 - `init` ends without waiting. A preparation that has to wait is a separate operation, called in the boot order
 - `release` returns the module to its state before `init`. It deletes the registered hooks, callbacks, event subscriptions and the engine objects the module made, and stops the async operations in progress. A stopped operation returns a failure value to the caller and does not call callbacks
 - When a module is destroyed by app exit without `release`, it is cleaned up the same way as by `release`
+- A `release` of a module that is not `init`ed does only this: it deletes the values that its operations called before `init` set (the DEV operations and the operations the spec says are called before `init`), except a state the spec says is kept after `release`. It calls no other module, leaves no log and ends no operation
 - A module after `release` can be `init` again, and behaves the same as a module after its first `init`
 - As an exception, a state that the spec says is kept after `release` is not deleted by `release` and stays after the next `init`. e.g. the pending token of `AuthCore`
 - An operation call before `init` or after `release` leaves an error log and returns a failure value. The init check and `release` work without a log

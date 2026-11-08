@@ -232,7 +232,7 @@ format argument
 - `shutdown`: returns the boot and all modules to their initial state between tests. It does these in order in the same frame
   1. Set the boot order to `Halted` and discard the remaining stages and a restart scheduled for the next frame
   2. When the current boot called `content_init`, call `content_release` of the content entry
-  3. `release` every core module with a lifecycle except `UnitTestCore`, in the reverse of the order rule of the module list. A module that is not `init`ed is also released, without a log: its `release` before `init` deletes the values that its DEV operations set before `init` (e.g. `DataCoreDev.set_test_data_location`), so no such value of one test reaches the next
+  3. `release` every core module with a lifecycle except `UnitTestCore`, in the reverse of the order rule of the module list. A module that is not `init`ed is also released: by `## lifecycle` of the `core` skill, that `release` only deletes the values that operations called before `init` set (e.g. `DataCore.set_test_data_location`, `AuthCore.use_dev_token_storage`), so no such value of one test reaches the next
   4. Remove the fatal screen
   5. Clear the update set, the read build info and the kept `BootTestReplacements`, and set `boot_stage` to `None`
 - `shutdown` does not do `AppQuitEvent`, `LogCore.notify_app_state(quit)`, `LocalDataCore.flush` or the process termination request. The boot from before `shutdown` does not go to the next stage even when an operation it was waiting for ends. A `start_boot` call after `shutdown` is the same as the first call
@@ -240,7 +240,7 @@ format argument
 
 ## test
 
-- After a test calls `DataCoreDev.set_test_data_location`(`res://x/`) and `ResourceCoreDev.set_test_key_list` before `DataCore` and `ResourceCore` `init` and ends without that `init`, the next test (after `shutdown`) reads the default built-in data location of `DataCore` and the generated resource key list of `ResourceCore`
+- After a test calls `DataCore.set_test_data_location`(`res://x/`) and `ResourceCore.set_test_key_list` before `DataCore` and `ResourceCore` `init` and ends without that `init`, the next test (after `shutdown`) reads the default built-in data location of `DataCore` and the generated resource key list of `ResourceCore`
 - When the `push-apns` value of build info `adapters` is `push-apns` or `push-apns-sandbox`, the APNs adapter is passed to `PushCore` on `ios`, and when the `push-fcm` value is `push-fcm`, the FCM adapter is passed on `android`
 - Calling `start_boot` with the test module list reaches `Done`, `current_scene_key` is the scene key of `select_first_scene`, there is no active block, and there is no unchecked error log
 - The operations of the boot order table are called once each, per stage, in the table order, and operations of modules not in the module list are not called

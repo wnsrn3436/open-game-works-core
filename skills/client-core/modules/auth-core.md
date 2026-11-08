@@ -237,7 +237,7 @@ Handles the screen flow of terms agreement, age confirmation, privacy choices, a
   2. Makes the code verifier and `state`, each as unpadded base64url of 32 secure random bytes. Opens with the system browser the URL `https://accounts.google.com/o/oauth2/v2/auth` with query `client_id`(game settings `loginGoogle.desktopClientId`), `redirect_uri`, `response_type` `code`, `scope` `openid`, `code_challenge`(unpadded base64url of the SHA-256 of the code verifier), `code_challenge_method` `S256`, `state`
   3. When the listener first receives a request with `state` or `error` in the query, it sends an HTTP 200 `text/html; charset=utf-8` response whose body is the translation of `[auth_google_desktop_done]` and closes the listener. When `state` differs from the value of step 2, `error` is present, or `code` is missing, it fails
   4. Returns the UTF-8 JSON object `{"authorization_code": <code>, "code_verifier": <code verifier>, "redirect_uri": <redirect URI>}` as the credential. The code and the code verifier are not logged
-- `release` deletes the received social adapters and the scope text
+- `release` deletes the received social adapters and the scope text, and the values of `set_fake_social_account`, `set_fake_tracking_status` and `use_dev_token_storage`
 - The fake adapter returns `fake:<fake account name>` as the credential without a screen. The fake account name is the value set with `set_fake_social_account`; when it is not set, `AuthCore.fake_account` of the `LocalDataCore` `device` file. When that value is missing, it creates a UUID v4 at first use and saves it
 
 ### release
