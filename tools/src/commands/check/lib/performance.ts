@@ -375,8 +375,6 @@ export interface MeasureOptions {
   onHost: boolean;
   /** Blocker of a client the runner did not start (`ScenarioOptions.blocker`). */
   blocker?: () => Promise<string | null>;
-  /** `ScenarioOptions.allowRetry`. */
-  allowRetry?: boolean;
 }
 
 /**
@@ -397,11 +395,7 @@ export async function measureScenario(ctx: Context, id: string, scenario: Scenar
   let ticks: FpsTick[];
   let outcome: ScenarioOutcome;
   try {
-    outcome = await runScenario(ctx, id, scenario, {
-      pollMs: options.pollMs,
-      ...(options.blocker ? { blocker: options.blocker } : {}),
-      ...(options.allowRetry === true ? { allowRetry: true } : {}),
-    });
+    outcome = await runScenario(ctx, id, scenario, { pollMs: options.pollMs, ...(options.blocker ? { blocker: options.blocker } : {}) });
   } finally {
     ticks = sampler.stop();
   }

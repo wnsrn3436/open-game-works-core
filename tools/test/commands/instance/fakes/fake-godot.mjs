@@ -55,8 +55,7 @@ writeFileSync(join(logDir, `${name}.args.json`), JSON.stringify(argv));
 if (argv.includes('--write-movie')) writeFileSync(argv[argv.indexOf('--write-movie') + 1], 'AVI');
 writeFileSync(join(logDir, `${name}.values.json`), JSON.stringify(values));
 // stepEffects[n] of the config applies to the state and telemetry marks when the n-th `step` (from 0, counted from the
-// last config change) runs; its `fail` then fails that step. inputMarks[command] of a client are telemetry marks that
-// each answer to that command adds, from the last config change on
+// last config change) runs; its `fail` then fails that step
 let configText = '';
 let stepCount = 0;
 let stepMarks = [];
@@ -100,7 +99,6 @@ const jpeg = (text) => Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.from(tex
 
 function answer(command, args) {
   if (mine.fail?.[command] !== undefined) return { ok: false, result: mine.fail[command] };
-  stepMarks.push(...(mine.inputMarks?.[command] ?? []));
   switch (command) {
     case 'get_state':
       if (bootStages.length > 0) state.boot_stage = bootStages.shift();

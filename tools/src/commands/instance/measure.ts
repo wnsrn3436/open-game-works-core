@@ -102,7 +102,7 @@ async function gameTargets(ctx: Context): Promise<Target[]> {
  * reason.
  */
 async function scenarioHolds(ctx: Context, id: string, scenario: Scenario, targetFps: number): Promise<{ holds: boolean; reason: string | null }> {
-  const measured = await measureScenario(ctx, id, scenario, { quality: false, pollMs: measureTiming.pollMs, targetFps, onHost: true, allowRetry: true });
+  const measured = await measureScenario(ctx, id, scenario, { quality: false, pollMs: measureTiming.pollMs, targetFps, onHost: true });
   if (measured.kind !== 'done' || measured.outcome.stop !== null) return { holds: false, reason: null };
   if (fpsHolds(measured.samples)) return { holds: true, reason: null };
   const judged = [...measured.samples.values()].some((values) => values.length >= MIN_SCENE_SAMPLES);

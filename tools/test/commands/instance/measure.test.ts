@@ -101,8 +101,7 @@ vi.mock('../../../src/commands/instance/automation.ts', () => ({
     while (command === 'tap' && (state.stats[id] ?? 0) < TICKS) await new Promise<void>((resolve) => state.waiters.push(resolve));
     const results: Record<string, unknown> = {
       get_state: { boot_stage: 'Done', scene_key: 'battle', score: 3 },
-      // the bot of each run retries (a Fail mark, then a Restart mark) before the until of its step: the measure goes on
-      get_telemetry: { started_at: 1, marks: state.calls.includes(`${id} tap enemy`) ? [{ at: 2, kind: 'Fail' }, { at: 3, kind: 'Restart' }] : [], goal_intervals: [{}] },
+      get_telemetry: { goal_intervals: [{}] },
       get_stats: { fps: 120 / state.running.size, quality_level: '' },
       'battle.bot_next_input': { command: 'tap', args: ['enemy'] },
     };

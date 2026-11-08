@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import type { CheckResult } from '../../check/api.ts';
-import { judge, keepStepTelemetry, readScenario } from '../../check/lib/bot-playtest.ts';
+import { judge, readScenario } from '../../check/lib/bot-playtest.ts';
 import { checkResult, failure, writeEvidence, type Evidence } from '../../check/lib/evidence.ts';
 import { instanceServerLog } from '../../check/lib/instance-probe.ts';
 import { clientErrorLines } from '../../check/lib/logs.ts';
@@ -52,7 +52,7 @@ function both(where: string, message: string, unknown: boolean, evidence: (strin
 
 /**
  * `### web smoke` 4 on an open page: waits for `boot_stage` `Done`, runs the scenario and judges no blocker and full flow;
- * the browser console, the server log and the telemetry of an `auto` step that failed on a retry go into `evidence`.
+ * the browser console and the server log go into `evidence`.
  */
 export async function webScenario(
   input: ClientCheckInput,
@@ -76,8 +76,7 @@ export async function webScenario(
     return { results: [noBlocker, checkResult('full flow', null, [failure('boot', 'the scenario did not start', files)])], loadingMs: null };
   }
   const outcome = await runScenario(ctx, instance.id, scenario, { pollMs: clientCheckTiming.pollMs, blocker });
-  const files = [...(await logs()), await keepStepTelemetry(evidence, '', outcome.stop)];
-  return { results: judge(outcome, scenario.steps.length, files), loadingMs: boot.at - page.openedAt };
+  return { results: judge(outcome, scenario.steps.length, await logs()), loadingMs: boot.at - page.openedAt };
 }
 
 /** The harness settings of `### web smoke` 3 and 4, or the reason the browser cannot run. */

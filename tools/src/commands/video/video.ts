@@ -92,7 +92,7 @@ export const video: CommandDef = {
           if (typeof scenario === 'string') throw new OgwError(scenario);
           const auto = scenario.steps.find((s) => s.kind === 'auto');
           if (auto?.until == null) throw new OgwError('client/dev/bot/scenario.json has no auto step');
-          const outcome = await runScenario(ctx, instance.id, { steps: [auto], goal: auto.until }, { pollMs: 200, allowRetry: true });
+          const outcome = await runScenario(ctx, instance.id, { steps: [auto], goal: auto.until }, { pollMs: 200 });
           if (outcome.stop !== null) throw new OgwError(`the bot stopped at step ${String(outcome.stop.step)}: ${outcome.stop.message}`);
           await sleep(videoTiming.tailMs);
         });

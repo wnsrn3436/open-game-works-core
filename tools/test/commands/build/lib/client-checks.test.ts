@@ -341,24 +341,6 @@ describe('web smoke', () => {
     expect((await webSmoke(s.input))?.check.result).toBe('unknown');
   });
 
-  it('fails full flow at an auto step in which the bot retried and keeps the telemetry of the step beside the logs', async () => {
-    const s = await setup();
-    writeFileSync(join(s.dir, 'client/dev/bot/scenario.json'), JSON.stringify({ steps: [{ kind: 'auto', command: 'f.bot_next_input', timeoutMs: 3000, until: GOAL }], goal: GOAL }));
-    const retry = [{ at: 2, kind: 'Fail' }, { at: 3, kind: 'Restart' }];
-    const telemetry = { started_at: 1, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: [{}], scene_loads: [], dropped: 0 };
-    s.config({ clients: { main: { results: { 'f.bot_next_input': { ok: true, result: { command: 'tap', args: [] } } }, inputMarks: { tap: retry } } }, telemetry });
-    const stg = await webSmoke({ ...s.input, env: 'STG' });
-    const retried = 'auto: 1 retries before until (a Fail mark, then a Restart mark with no Goal mark between): the bot failed before until, so the step does not reach its until the same way in every run';
-    expect(stg?.check).toEqual({
-      name: 'web smoke',
-      result: 'fail',
-      details: [`no blocker: step 1: blockers of step 1 and after were not checked: ${retried}`, `full flow: step 1: ${retried}`],
-    });
-    const kept = JSON.parse(readFileSync(join(s.dir, 'builds/stg-0.1.0/web-smoke/step-1-telemetry.json'), 'utf8')) as { start: { marks: unknown[] }; end: { marks: unknown[] } };
-    expect(kept.start.marks).toEqual([]);
-    expect(kept.end.marks).toEqual(retry);
-  });
-
   it('fails when the client does not boot within webSmokeBootTimeoutMs; is unknown when Chromium is missing or the instance does not start', async () => {
     const s = await setup({}, {}, { webSmokeBootTimeoutMs: 300 });
     s.config({ clients: { main: { exitOnStart: 0 } } });
