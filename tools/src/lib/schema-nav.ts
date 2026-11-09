@@ -123,6 +123,20 @@ export function isLocalScope(schema: JsonObject, segments: readonly string[]): b
 }
 
 /**
+ * The start of the path up to its first key that no node of `schema` reaches (after `$ref` and `allOf`), or null when
+ * a node reaches every key. `ogw settings unset harness` removes a harness settings path that no node reaches without
+ * the checks of the rest of harness settings (ogw.md `## settings`).
+ */
+export function unreachedStart(schema: JsonObject, segments: Segments): string[] | null {
+  let nodes: SchemaNode[] = [{ node: schema, root: schema }];
+  for (let i = 0; i < segments.length; i++) {
+    nodes = child(nodes, segments[i] as string);
+    if (nodes.length === 0) return segments.slice(0, i + 1);
+  }
+  return null;
+}
+
+/**
  * Whether a harness settings path is a run path: a node on the path (after `$ref` and `allOf`) declares `x-run`
  * `true`. A loop run records its value (ogw.md `## settings`).
  */

@@ -1,5 +1,6 @@
 import { expectPositionals, type CommandDef } from '../../lib/command.ts';
-import { writeChecked } from './lib/change.ts';
+import { unreachedStart } from '../../lib/schema-nav.ts';
+import { unsetUnreached, writeChecked } from './lib/change.ts';
 import { display, unsetAt } from './lib/json-path.ts';
 import { parsePath, withTarget } from './lib/target.ts';
 
@@ -12,9 +13,15 @@ export const unset: CommandDef = {
       expectPositionals({ ...args, positionals: rest }, 1, 1, usage);
       const segments = await parsePath(target, rest[0] as string);
       const path = display(segments);
-      const next = unsetAt(target.value, segments);
-      if (next === null) return { text: `${path} is not set`, data: { path, changed: false } };
-      await writeChecked(ctx, target, next, { unsetPath: path });
+      const notSet = { text: `${path} is not set`, data: { path, changed: false } };
+      if (target.files !== null && unreachedStart(target.schema, segments) !== null) {
+        // a harness settings path that no schema node reaches is removed without the checks of the rest (ogw.md `## settings`)
+        if (!(await unsetUnreached(ctx, target, target.files, segments))) return notSet;
+      } else {
+        const next = unsetAt(target.value, segments);
+        if (next === null) return notSet;
+        await writeChecked(ctx, target, next, { unsetPath: path });
+      }
       return { text: `unset ${path}`, data: { path, changed: true } };
     });
   },

@@ -38,6 +38,11 @@ function withoutPruned(value: JsonObject, segments: Segments): JsonObject {
   return out;
 }
 
+/** The two harness settings files without a value at `segments` in either: `settings.local.json` keeps no object this leaves empty. */
+export function withoutInFiles(files: HarnessSettingsFiles, segments: Segments): HarnessSettingsFiles {
+  return { shared: without(files.shared, segments), local: files.local === null ? null : withoutPruned(files.local, segments) };
+}
+
 /**
  * The two files `settings.json` and `settings.local.json` that hold harness settings `next`, from the files `files`
  * now hold. A changed local-scope path (`isLocalScope`) is written to `settings.local.json`, every other changed path

@@ -82,6 +82,35 @@ describe('local harness settings', () => {
     expect((await loadHarnessSettings(ws.env)).jobWaitTimeoutMs).toBe(2000);
   });
 
+  it('names the unset of each path of settings.local.json that no schema node reaches, which removes it from both files without the checks of the rest', async () => {
+    const shared = read(sharedPath);
+    writeLocal({ humanLanguage: 'ko', retiredLimit: 3, loop: { retiredJudge: OPUS, judgePanel: [] }, jobWaitTimeoutMs: 1000 });
+    patchShared({ retiredLimit: 2 });
+    const moveLine =
+      'settings.local.json holds jobWaitTimeoutMs, which is not a local-scope path: set the value that applies on every host with ogw settings set harness jobWaitTimeoutMs <JSON value>, which moves the paths that are not local-scope to settings.json';
+    await expect(loadHarnessSettings(ws.env)).rejects.toMatchObject({
+      message: `settings.local.json holds retiredLimit, loop.retiredJudge, which no node of the harness settings schema reaches: remove each with ogw settings unset harness retiredLimit, ogw settings unset harness loop.retiredJudge\n${moveLine}`,
+    });
+    // the schema check of the merged value refuses a set while such a path is there
+    expect((await settingsCmd('set', 'harness', 'loop.retiredJudge', 'null')).code).toBe(1);
+    // each unset works while the other path that the schema does not allow is still there
+    expect(await settingsCmd('unset', 'harness', 'retiredLimit')).toEqual({ code: 0, stdout: 'unset retiredLimit\n', stderr: '' });
+    expect(read(sharedPath)).toEqual(shared);
+    expect(read(localPath)).toEqual({ humanLanguage: 'ko', loop: { retiredJudge: OPUS, judgePanel: [] }, jobWaitTimeoutMs: 1000 });
+    await expect(loadHarnessSettings(ws.env)).rejects.toMatchObject({
+      message: `settings.local.json holds loop.retiredJudge, which no node of the harness settings schema reaches: remove it with ogw settings unset harness loop.retiredJudge\n${moveLine}`,
+    });
+    expect(await settingsCmd('unset', 'harness', 'loop.retiredJudge')).toEqual({ code: 0, stdout: 'unset loop.retiredJudge\n', stderr: '' });
+    expect(await settingsCmd('unset', 'harness', 'loop.retiredJudge')).toEqual({ code: 0, stdout: 'loop.retiredJudge is not set\n', stderr: '' });
+    expect(read(localPath)).toEqual({ humanLanguage: 'ko', loop: { judgePanel: [] }, jobWaitTimeoutMs: 1000 });
+    // a path that the schema has keeps the message that names the move to settings.json
+    await expect(loadHarnessSettings(ws.env)).rejects.toMatchObject({ message: moveLine });
+    expect(await settingsCmd('set', 'harness', 'jobWaitTimeoutMs', '2000')).toMatchObject({ code: 0 });
+    const settings = await loadHarnessSettings(ws.env);
+    expect(settings.humanLanguage).toBe('ko');
+    expect(settings.jobWaitTimeoutMs).toBe(2000);
+  });
+
   it('checks the merged result and writes no file when it does not pass', async () => {
     const shared = readFileSync(sharedPath, 'utf8');
     expect(await settingsCmd('set', 'harness', 'humanLanguage', '"k"')).toEqual({ code: 1, stdout: '', stderr: 'humanLanguage: must NOT have fewer than 2 characters\n' });

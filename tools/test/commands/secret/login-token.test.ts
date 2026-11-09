@@ -139,6 +139,29 @@ describe('ogw secret set --harness claude-code-oauth-token', () => {
     expect(store()).toEqual({});
   });
 
+  it('checks with the play agent, then the judge agent, before an item of loop.judgePanel that uses Claude Code with another model', async () => {
+    const agents = testSettings().agents as Record<string, object>;
+    const loop = testSettings().loop as Record<string, unknown>;
+    const codex = { cli: 'codex', model: 'm', effort: 'high' };
+    const judgePanel = [{ cli: 'claude-code', model: 'claude-haiku-5-5', effort: 'low' }];
+    const lastRun = (): string[] => readFileSync(log, 'utf8').trim().split('\n').at(-1)?.split('|') ?? [];
+    ws = makeWorkspace({ agents: { ...agents, play: { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'medium' } }, loop: { ...loop, judgePanel } });
+    env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
+    expect(await setToken('good')).toEqual({ code: 0, stdout: 'stored claude-code-oauth-token\n', stderr: '' });
+    const [playFolder, playSandboxed, , playArgs] = lastRun();
+    expect(playFolder?.startsWith(join(env.TMPDIR as string, 'ogw-play-'))).toBe(true);
+    expect(playSandboxed).toBe('yes');
+    expect(playArgs).toBe('-p --model claude-sonnet-5-5 --effort medium --permission-mode bypassPermissions --no-session-persistence --output-format stream-json --verbose');
+    // only judge of `agents` uses Claude Code
+    ws = makeWorkspace({ agents: { ...agents, play: codex, judge: { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' } }, loop: { ...loop, judgePanel } });
+    env = { ...env, ...ws.env, PATH: env.PATH, TMPDIR: env.TMPDIR };
+    expect(await setToken('good')).toEqual({ code: 0, stdout: 'stored claude-code-oauth-token\n', stderr: '' });
+    const [judgeFolder, judgeSandboxed, , judgeArgs] = lastRun();
+    expect(judgeFolder?.startsWith(join(env.TMPDIR as string, 'ogw-judge-'))).toBe(true);
+    expect(judgeSandboxed).toBe('yes');
+    expect(judgeArgs?.startsWith('-p --model claude-opus-5-5 --effort high ')).toBe(true);
+  });
+
   it('checks with the judge settings when only judge uses Claude Code, and stores nothing when neither does', async () => {
     const agents = testSettings().agents as Record<string, object>;
     const codex = { cli: 'codex', model: 'm', effort: 'high' };

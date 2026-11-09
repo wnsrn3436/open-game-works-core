@@ -228,6 +228,14 @@ describe('caller role', () => {
     expect(readFileSync(join(ws.root, 'out-runs.json'), 'utf8')).toContain('ogw settings set harness jobWaitTimeoutMs 1');
   });
 
+  it('refuses a role other than lead the unset of a harness settings path that no schema node reaches', async () => {
+    const local = join(ws.harness, 'settings.local.json');
+    writeFileSync(local, JSON.stringify({ retiredLimit: 3 }));
+    asRole('content');
+    expect(await unset('harness', 'retiredLimit')).toEqual({ code: 1, stdout: '', stderr: 'role content cannot change retiredLimit\n' });
+    expect(JSON.parse(readFileSync(local, 'utf8'))).toEqual({ retiredLimit: 3 });
+  });
+
   it('refuses a role other than lead a change at or below a humanDecided path', async () => {
     const locked = ['dailyResetOffsetMs', 'coreModules', 'core.InputBlockCore.maxDurationMs', 'consent'];
     writeGame({ ...validGameSettings(), dailyResetOffsetMs: 0, core: { 'InputBlockCore.maxDurationMs': 30000 }, humanDecided: locked });

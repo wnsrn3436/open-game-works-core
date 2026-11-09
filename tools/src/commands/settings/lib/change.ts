@@ -6,8 +6,8 @@ import { localDefaults, localHarnessSettingsPath, nonLocalUnits, type HarnessSet
 import { callerRole } from '../api.ts';
 import { implConstraints } from './core-files.ts';
 import { constraintIssues, gameIssues } from './game-check.ts';
-import { changedPaths, display, getAt, isPlainObject, setAt, type JsonObject } from './json-path.ts';
-import { routeHarnessWrite } from './scope.ts';
+import { changedPaths, display, getAt, isPlainObject, setAt, unsetAt, type JsonObject, type Segments } from './json-path.ts';
+import { routeHarnessWrite, withoutInFiles } from './scope.ts';
 import { locatePath, withValue, type Target, type TargetKind } from './target.ts';
 import { schemaIssues, type Issue } from './validate.ts';
 import { LOGOTYPE_METHOD } from '../../generation/api.ts';
@@ -130,6 +130,25 @@ async function writeHarnessFiles(ctx: Context, target: Target, files: HarnessSet
   if (rewrite) await writeLocal(withUnits(next.local ?? {}, leaving, value));
   await writeShared();
   await writeLocal(next.local);
+}
+
+/**
+ * Removes the harness settings path `segments`, which no schema node reaches, from `settings.local.json` and
+ * `settings.json` after only the check of the caller's role against the `x-owner` on the path (ogw.md `## settings`):
+ * the schema and the conditions of harness settings are not checked, so a value of another path that does not pass
+ * them does not block the removal. `settings.local.json` is written first: it receives the host items when the files
+ * on disk hold them (`rewrite`). False when neither file holds the path.
+ */
+export async function unsetUnreached(ctx: Context, target: Target, files: HarnessSettingsFiles, segments: Segments): Promise<boolean> {
+  const next = unsetAt(target.value, segments);
+  if (next === null) return false;
+  const denied = await permissionIssues(ctx, target, next, false);
+  if (denied.length > 0) throw new OgwError(denied.join('\n'), 1, { errors: denied });
+  const out = withoutInFiles(files, segments);
+  const rewrite = files.rewrite === true;
+  if (out.local !== null && (rewrite || !isDeepStrictEqual(out.local, files.local))) await writeJsonAtomic(localHarnessSettingsPath(ctx.env), out.local);
+  if (rewrite || !isDeepStrictEqual(out.shared, files.shared)) await writeJsonAtomic(target.file, out.shared);
+  return true;
 }
 
 /**
