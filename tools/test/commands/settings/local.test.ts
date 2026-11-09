@@ -139,13 +139,13 @@ describe('local harness settings', () => {
     const rows = (JSON.parse((await settingsCmd('list', 'harness', '--json')).stdout) as { paths: { path: string; xScope: string | null; xRun: true | null }[] }).paths;
     const local = rows.filter((r) => r.xScope === 'local').map((r) => r.path);
     expect(local).toEqual(expect.arrayContaining(['humanLanguage', 'agents', 'agents.content.model', 'useLocalCore', 'loop.judgePanel', 'maxConcurrentInstances', 'measured', 'webSmokeCpuThrottleRate']));
-    expect(local).toEqual(expect.arrayContaining(['loop.funIterations', 'loop.confirmJudge', 'loop.variants', 'loop.playTimeLimitMs', 'loop.judgeTimeLimitMs']));
+    expect(local).toEqual(expect.arrayContaining(['loop.funIterations', 'loop.variants', 'loop.playTimeLimitMs', 'loop.judgeTimeLimitMs']));
     // the criteria of the loop and of web smoke apply on every host
     for (const path of ['jobWaitTimeoutMs', 'loop', 'loop.judgeVotes', 'loop.playBudgetMs', 'loop.judgeInstanceBudgetMs', 'loopStop', 'loopStop.successJudges', 'webSmokeDeviceBenchmarkIndex', 'webSmokeBootTimeoutMs', 'hosts']) {
       expect(local).not.toContain(path);
     }
     const run = rows.filter((r) => r.xRun === true).map((r) => r.path);
-    expect(run).toEqual(expect.arrayContaining(['agents', 'agents.content.model', 'playInstances', 'imageMethod', 'measured', 'loop.funIterations', 'loop.judgePanel', 'loop.confirmJudge', 'loop.confirmFallback', 'loop.variants', 'loop.playTimeLimitMs', 'loop.judgeTimeLimitMs']));
+    expect(run).toEqual(expect.arrayContaining(['agents', 'agents.content.model', 'playInstances', 'imageMethod', 'measured', 'loop.funIterations', 'loop.judgePanel', 'loop.variants', 'loop.playTimeLimitMs', 'loop.judgeTimeLimitMs']));
     for (const path of ['humanLanguage', 'useLocalCore', 'maxConcurrentInstances', 'instanceMeasureLimit', 'reviewRunConcurrency', 'testDevices', 'webSmokeCpuThrottleRate', 'loop.judgeVotes']) expect(run).not.toContain(path);
     // a run path is a local-scope path
     expect(run.filter((path) => !local.includes(path))).toEqual([]);

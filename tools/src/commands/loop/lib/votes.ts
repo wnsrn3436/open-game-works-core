@@ -43,19 +43,6 @@ export function combinedVsBaseline(votes: readonly ElementVotes[], momentLost: b
   return 'indistinguishable';
 }
 
-/** The judges of the confirmation pair, whose element decisions take this in place of `loop.judgeVotes`. */
-export const CONFIRMATION_JUDGES = 2;
-
-/**
- * The confirmation of a `better` of step 4 (ogw.md `## loop evaluate`): `confirmed` when the pair decides `this` for an
- * element that step 4 decided `this` and decides `baseline` for none; `overturned` otherwise.
- */
-export function confirmationOutcome(step4: readonly ElementVotes[], pair: readonly ElementVotes[]): 'confirmed' | 'overturned' {
-  const step4This = new Set(step4.filter((v) => v.decision === 'this').map((v) => v.element));
-  const kept = pair.some((v) => v.decision === 'this' && step4This.has(v.element));
-  return kept && !pair.some((v) => v.decision === 'baseline') ? 'confirmed' : 'overturned';
-}
-
 /**
  * `vs reference` of the step 4 judges together: `fail` when any judge's is `fail`, `pass` when every judge that did not
  * fail has `pass` (and one did not fail), `unknown` otherwise.

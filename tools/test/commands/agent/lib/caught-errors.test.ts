@@ -5,9 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { agentHomeBlocked, dockerBlocked, sandboxed } from '../../../../src/commands/agent/lib/cli-command.ts';
 import { commitInCheckout } from '../../../../src/commands/agent/lib/launch.ts';
-import { agentHitLimit } from '../../../../src/commands/agent/lib/limit.ts';
 import { orderIds } from '../../../../src/commands/agent/lib/merge.ts';
-import { agentCliLog } from '../../../../src/commands/agent/lib/meta.ts';
 import { preparePlayInput } from '../../../../src/commands/agent/lib/play-input.ts';
 import { sessionKept } from '../../../../src/commands/agent/lib/prepare.ts';
 import { createContext } from '../../../../src/lib/command.ts';
@@ -73,13 +71,6 @@ describe('agent files', () => {
     mkdirSync(join(root, 'codex'));
     writeFileSync(join(root, 'codex', 'sessions'), 'a file');
     await expect(sessionKept('codex', env, 's1')).rejects.toMatchObject({ code: 'ENOTDIR' });
-  });
-
-  it('sees no limit message without the CLI log, and fails on a CLI log that cannot be read', async () => {
-    const ws = jobWorkspace();
-    expect(await agentHitLimit('ag1', 'claude-code', ws.env)).toBe(false);
-    mkdirSync(await agentCliLog('ag1', ws.env), { recursive: true });
-    await expect(agentHitLimit('ag1', 'claude-code', ws.env)).rejects.toMatchObject({ code: 'EISDIR' });
   });
 
   it('says a play input is not JSON only for a text that is not JSON; an input that cannot be read fails with its error', async () => {

@@ -76,13 +76,6 @@ async function judgeErrors(text: string, meta: AgentMeta): Promise<string[]> {
   return judgeResultErrors(text, judgeReadingOf(input));
 }
 
-/** play: `## observations`, and with defects to confirm in the input, `## defects` answering each of them. */
-async function playErrors(text: string, meta: AgentMeta, output: string): Promise<string[]> {
-  const input: unknown = JSON.parse(await readText(meta.agentInput));
-  const defects = isPlainObject(input) && Array.isArray(input.defects) ? input.defects.flatMap((d) => (isPlainObject(d) && typeof d.id === 'string' ? [d.id] : [])) : [];
-  return playFeedbackErrors(text, defects, (path) => exists(resolve(dirname(output), path)));
-}
-
 /**
  * The format errors of the result file `output` of an `ogw agent` job (ogw.md `### result format` of `## agent`), read
  * by the readers of the commands that read it; [] for a role without a check.
@@ -98,7 +91,7 @@ export async function resultFormatErrors(meta: AgentMeta, output: string): Promi
     case 'review':
       return reviewErrors(text, meta);
     case 'play':
-      return playErrors(text, meta, output);
+      return playFeedbackErrors(text);
     case 'judge':
       return judgeErrors(text, meta);
     default:

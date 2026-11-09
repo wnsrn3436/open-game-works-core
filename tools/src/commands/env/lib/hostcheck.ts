@@ -200,9 +200,8 @@ export function cliStates(env: NodeJS.ProcessEnv): CliStates {
 }
 
 /**
- * Each agent CLI, model, effort and sandbox that harness settings `agents` and the judges of `loop.judgePanel`,
- * `loop.confirmJudge` and `loop.confirmFallback` use: the CLI installed and logged in, and
- * the short prompt run with the `ogw agent` command of those settings. The prompts run together, each in its own
+ * Each agent CLI, model, effort and sandbox that harness settings `agents` and the judges of `loop.judgePanel` use:
+ * the CLI installed and logged in, and the short prompt run with the `ogw agent` command of those settings. The prompts run together, each in its own
  * new folder.
  */
 export async function agentCliChecks(ctx: Context, settings: HarnessSettings, cliState: CliStates = cliStates(ctx.env)): Promise<AgentCliCheck[]> {
@@ -220,8 +219,6 @@ export async function agentCliChecks(ctx: Context, settings: HarnessSettings, cl
   settings.loop.judgePanel.forEach((agent, i) => {
     add(`loop.judgePanel[${String(i)}]`, 'judge', agent);
   });
-  if (settings.loop.confirmJudge !== undefined) add('loop.confirmJudge', 'judge', settings.loop.confirmJudge);
-  if (settings.loop.confirmFallback !== undefined) add('loop.confirmFallback', 'judge', settings.loop.confirmFallback);
   return Promise.all(
     [...groups.values()].map(async ({ agent, sandbox, roles, runAs }): Promise<AgentCliCheck> => {
       const cli = agentCli(agent);

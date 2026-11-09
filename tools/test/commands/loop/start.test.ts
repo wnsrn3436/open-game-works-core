@@ -57,20 +57,6 @@ describe('ogw loop start', () => {
     expect(await listRuns(g.repo)).toEqual([]);
   });
 
-  it('does not start while only loop.confirmJudge or loop.confirmFallback uses Claude Code and the agent login token is not stored', async () => {
-    const codex = { cli: 'codex', model: 'm', effort: 'high' };
-    const claude = { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'low' };
-    const agents = { ...(testSettings().agents as object), play: codex, judge: codex };
-    for (const [confirm, users] of [[{ confirmJudge: claude }, 'loop.confirmJudge'], [{ confirmJudge: codex, confirmFallback: claude }, 'loop.confirmFallback']] as const) {
-      const g = setupGame({ agents, loop: { ...(testSettings().loop as object), ...confirm } });
-      writeFileSync(g.ws.env.OGW_TEST_SECRET_FILE as string, '{}');
-      const out = await ogw(g.ws, ['loop', 'start', 'g', '--command', 'update'], { stdin: 'add a boss\n' });
-      expect(out.code).toBe(1);
-      expect(out.stderr).toContain(`harness settings ${users} use Claude Code and harness secret claude-code-oauth-token is not in`);
-      expect(await listRuns(g.repo)).toEqual([]);
-    }
-  });
-
   it('starts an update run: work branch, request.md, run state', async () => {
     const g = setupGame();
     const base = git(g.root, 'rev-parse', 'HEAD');

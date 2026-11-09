@@ -235,7 +235,7 @@ function setup(): { ws: TestWorkspace; env: NodeJS.ProcessEnv; uv: string } {
     programs: { docker: { found: true, version: 'd' }, dockerBuildx: { found: false, version: null } },
     gh: { loggedIn: true, scopes: ['repo'] },
     testDevices: [{ serial: 'emu1', connected: true, udp: false }, { serial: 'p', connected: true, udp: true }],
-    agentClis: [{ cli: 'codex', model: 'gpt', effort: 'high', roles: ['translation', 'loop.confirmJudge'], installed: true, loggedIn: true, run: { ok: false, exitCode: 2, output: 'boom' } }, { cli: 'claude-code', roles: [], installed: true, loggedIn: true, run: { ok: true, exitCode: 0, output: 'ok' } }],
+    agentClis: [{ cli: 'codex', model: 'gpt', effort: 'high', roles: ['translation', 'loop.judgePanel[0]'], installed: true, loggedIn: true, run: { ok: false, exitCode: 2, output: 'boom' } }, { cli: 'claude-code', roles: [], installed: true, loggedIn: true, run: { ok: true, exitCode: 0, output: 'ok' } }],
     providerClis: [
       { provider: 'grok', methods: ['g1', 'g2'], installed: false, loggedIn: false, detail: null },
       { provider: 'codex', methods: ['c'], installed: true, loggedIn: true, billing: 'per-call', detail: 'logged in using an API key' },
@@ -323,7 +323,7 @@ describe('ogw env propose', () => {
     );
     expect(notices[1]?.detail).toBe('docker buildx is missing; GitHub CLI login has no write:packages scope. Install them or log in with gh auth refresh --scopes write:packages');
     expect(notices[2]?.detail).toBe('UDP does not reach this host from: emu1. Put the devices on the same LAN as the host');
-    expect(notices[3]?.detail).toBe('codex (model gpt, effort high) for translation, loop.confirmJudge did not finish in an empty folder: boom');
+    expect(notices[3]?.detail).toBe('codex (model gpt, effort high) for translation, loop.judgePanel[0] did not finish in an empty folder: boom');
     expect(notices[4]?.detail).toBe('grok CLI is not installed; used by g1, g2. Install it and log in');
     expect(notices[5]?.detail).toBe(
       'codex calls are billed per call (logged in using an API key); used by c. Tell the human before allowing those calls; a ChatGPT login (codex login) makes them use the subscription instead',

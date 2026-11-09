@@ -127,10 +127,6 @@ export interface HarnessSettings {
     funIterations: number;
     judgeVotes: number;
     judgePanel: AgentSettings[];
-    /** The judges of the confirmation pair and the success confirmation judges; absent: no confirmation pair. */
-    confirmJudge?: AgentSettings;
-    /** What a judge running with `confirmJudge` runs with once more after a limit message; absent: no fallback. */
-    confirmFallback?: AgentSettings;
     variants: number;
     playTimeLimitMs: number;
     playBudgetMs: number;
