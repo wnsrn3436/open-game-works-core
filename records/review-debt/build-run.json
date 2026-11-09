@@ -1,5 +1,12 @@
 {
   "target": "build run",
-  "nextId": 2,
-  "items": []
+  "nextId": 3,
+  "items": [
+    {
+      "id": "D2",
+      "location": "skills/build/SKILL.md:20",
+      "problem": "Step 4 says \"For the performance and UI quality results, does not return to 2 and puts them in the build report\", but `ogw check --loop` no longer has a `performance` check (tools/ogw.md `## check`: the check names are `regression test`, `static check`, `no blocker`, `full flow`, `UI quality`, `no placeholder`; removed in 29e42e4). tools/ogw.md:770 `## checks` of `## build report` lists only \"The UI quality results of the last `check-<iteration>.json` of the run\", and tools/src/commands/build/lib/report-sections.ts `checksBody` copies only `UI quality`. So the two defining documents differ about which loop check results go in the build report. The `build` procedure and `ogw build report` own this, not `ogw build run`",
+      "foundBy": "build run round 1"
+    }
+  ]
 }
