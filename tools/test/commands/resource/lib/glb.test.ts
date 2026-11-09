@@ -69,18 +69,33 @@ describe('glb model checks', () => {
     );
   });
 
-  /** A clean unwrap of [0, 1]² as `nx` × `ny` quads of two triangles each, and `extra` triangles after them. */
-  function unwrap(nx: number, ny: number, extra: number[] = []): Buffer {
+  /** An island: `nx` × `ny` quads of two triangles each over the square of side `side` whose low corner is (`u`, `v`). */
+  interface Island {
+    nx: number;
+    ny: number;
+    u?: number;
+    v?: number;
+    side?: number;
+  }
+
+  /** A clean unwrap of `islands` in one primitive, and `extra` triangles after them. */
+  function islandsGlb(islands: Island[], extra: number[] = []): Buffer {
     const points: number[] = [];
-    for (let y = 0; y <= ny; y++) for (let x = 0; x <= nx; x++) points.push(x / nx, y / ny);
     const indices: number[] = [];
-    const at = (x: number, y: number): number => y * (nx + 1) + x;
-    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) indices.push(at(x, y), at(x + 1, y), at(x, y + 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
+    for (const { nx, ny, u = 0, v = 0, side = 1 } of islands) {
+      const first = points.length / 2;
+      for (let y = 0; y <= ny; y++) for (let x = 0; x <= nx; x++) points.push(u + (x / nx) * side, v + (y / ny) * side);
+      const at = (x: number, y: number): number => first + y * (nx + 1) + x;
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) indices.push(at(x, y), at(x + 1, y), at(x, y + 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
+    }
     const first = points.length / 2;
     points.push(...extra);
     for (let i = 0; i < extra.length / 2; i++) indices.push(first + i);
     return glbOf([{ uv: floatUv(points), indices }]);
   }
+
+  /** A clean unwrap of [0, 1]² as `nx` × `ny` quads of two triangles each, and `extra` triangles after them. */
+  const unwrap = (nx: number, ny: number, extra: number[] = []): Buffer => islandsGlb([{ nx, ny }], extra);
 
   /**
    * `uvOverlap` of `glb` in a worker thread that is ended after 20 s: the check is synchronous, and the time limit of a
@@ -98,6 +113,18 @@ describe('glb model checks', () => {
     // a tall strip is the unwrap of a rope, a cable or a trunk: its triangles share one u range
     expect(await overlapWithin20s(unwrap(1, 100_000))).toBeNull();
     expect(await overlapWithin20s(unwrap(100_000, 1))).toBeNull();
+    // the column with its quads listed from the top down
+    expect(await overlapWithin20s(islandsGlb([{ nx: 1, ny: 100_000, u: 1, v: 1, side: -1 }]))).toBeNull();
+  });
+
+  it('checks clean islands of other shapes and texel densities in one model: two strips turned 90° from each other, and islands 100 times apart in density', async () => {
+    // two cylinders unwrapped as strips and packed with one turned; a detail part at a higher texel density than the body
+    expect(await overlapWithin20s(islandsGlb([{ nx: 40_000, ny: 1 }, { nx: 1, ny: 40_000, u: 2 }]))).toBeNull();
+    expect(await overlapWithin20s(islandsGlb([{ nx: 200, ny: 200 }, { nx: 200, ny: 200, u: 2, v: 2, side: 0.01 }]))).toBeNull();
+    // a triangle laid over the strip along v: it lies on the quads from v 0.5 on, the first of them at triangle 120000
+    expect(await overlapWithin20s(islandsGlb([{ nx: 40_000, ny: 1 }, { nx: 1, ny: 40_000, u: 2 }], [2.1, 0.5, 2.2, 0.5, 2.1, 0.6]))).toBe(
+      'triangle 120000 of mesh 0 primitive 0 and triangle 160000 of mesh 0 primitive 0',
+    );
   });
 
   it('checks a clean unwrap of 20000 triangles beside a triangle far taller than them, and one far away', async () => {
