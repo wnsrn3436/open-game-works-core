@@ -8,7 +8,7 @@ import { hostId } from './host.ts';
 import { isPlainObject, mergeSettings, valueUnits, type JsonObject } from './json.ts';
 import { withLock } from './lock.ts';
 import { harnessRoot, workspaceRoot } from './paths.ts';
-import { isLocalScope, runPaths } from './schema-nav.ts';
+import { isLocalScope, runPaths, unreachedStart } from './schema-nav.ts';
 
 export type Role =
   | 'content'
@@ -350,14 +350,33 @@ export function withRunSettings(schema: JsonObject, merged: JsonObject, run: Jso
   return out;
 }
 
-/** Fails when `settings.local.json` of `files` holds a path that is not local-scope, which a read of harness settings does (ogw.md `## settings`). */
+/**
+ * Fails when `settings.local.json` of `files` holds a path that is not local-scope, which a read of harness settings
+ * does (ogw.md `## settings`). A path that no schema node reaches is named up to its first key that none reaches, with
+ * the `ogw settings unset harness` that removes it; any other path with the `ogw settings set harness` that moves it.
+ */
 export function checkLocalScope(schema: JsonObject, files: HarnessSettingsFiles): void {
-  const outside = nonLocalUnits(schema, files.local).map((unit) => unit.join('.'));
-  if (outside.length === 0) return;
-  const which = outside.length === 1 ? 'is not a local-scope path' : 'are not local-scope paths';
-  throw new OgwError(
-    `settings.local.json holds ${outside.join(', ')}, which ${which}: set the value that applies on every host with ogw settings set harness ${outside[0] as string} <JSON value>, which moves the paths that are not local-scope to settings.json`,
-  );
+  const units = nonLocalUnits(schema, files.local);
+  if (units.length === 0) return;
+  const unreached: string[] = [];
+  const outside: string[] = [];
+  for (const unit of units) {
+    const start = unreachedStart(schema, unit);
+    if (start === null) outside.push(unit.join('.'));
+    else if (!unreached.includes(start.join('.'))) unreached.push(start.join('.'));
+  }
+  const lines: string[] = [];
+  if (unreached.length > 0) {
+    const commands = unreached.map((path) => `ogw settings unset harness ${path}`).join(', ');
+    lines.push(`settings.local.json holds ${unreached.join(', ')}, which no node of the harness settings schema reaches: remove ${unreached.length === 1 ? 'it' : 'each'} with ${commands}`);
+  }
+  if (outside.length > 0) {
+    const which = outside.length === 1 ? 'is not a local-scope path' : 'are not local-scope paths';
+    lines.push(
+      `settings.local.json holds ${outside.join(', ')}, which ${which}: set the value that applies on every host with ogw settings set harness ${outside[0] as string} <JSON value>, which moves the paths that are not local-scope to settings.json`,
+    );
+  }
+  throw new OgwError(lines.join('\n'));
 }
 
 /** The merged harness settings; fails when `settings.local.json` holds a path that is not local-scope (`checkLocalScope`). */

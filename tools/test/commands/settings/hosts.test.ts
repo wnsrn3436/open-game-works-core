@@ -269,6 +269,26 @@ describe('a write of harness settings that a stop ends between its file writes',
     }
   });
 
+  it('keeps the host items when it removes a path that no schema node reaches, whichever write the stop ends', async () => {
+    const shared = read(path);
+    const start = (): void => {
+      writeFileSync(path, JSON.stringify({ ...shared, hosts: { [TEST_HOST_ID]: { name: 'h', maxConcurrentInstances: 5 } } }));
+      writeLocal({ humanLanguage: 'ko', retiredLimit: 1 });
+    };
+    for (const n of [1, 2]) {
+      start();
+      await failWrite(n);
+      expect((await settingsCmd('unset', 'harness', 'retiredLimit')).stderr).toBe('stopped\n');
+      expect(onDisk(['maxConcurrentInstances'])).toBe(5);
+    }
+    vi.mocked(writeJsonAtomic).mockReset();
+    start();
+    expect(await settingsCmd('unset', 'harness', 'retiredLimit')).toEqual({ code: 0, stdout: 'unset retiredLimit\n', stderr: '' });
+    expect(read(localPath)).toEqual({ humanLanguage: 'ko', maxConcurrentInstances: 5 });
+    expect(read(path)).toEqual(shared);
+    expect((await loadHarnessSettings(ws.env)).maxConcurrentInstances).toBe(5);
+  });
+
   it('keeps the host items, and the values that move out of settings.local.json with them, whichever write the stop ends', async () => {
     const shared = read(path);
     for (const [local, writes] of [
