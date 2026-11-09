@@ -82,14 +82,9 @@ function loadAt(ticks: readonly FpsTick[], k: number): boolean {
   return !tick || !before || !tick.settled || tick.loadKey !== before.loadKey;
 }
 
-/** Whether tick `k` of `ticks` is kept: it neither has a scene load nor follows one. */
-export function isKeptTick(ticks: readonly FpsTick[], k: number): boolean {
-  return ticks[k] !== null && !loadAt(ticks, k) && !loadAt(ticks, k - 1);
-}
-
 /** The kept ticks: those that neither have a scene load nor follow one. */
 function keptTicks(ticks: readonly FpsTick[]): NonNullable<FpsTick>[] {
-  return ticks.filter((tick, k): tick is NonNullable<FpsTick> => isKeptTick(ticks, k));
+  return ticks.filter((tick, k): tick is NonNullable<FpsTick> => tick !== null && !loadAt(ticks, k) && !loadAt(ticks, k - 1));
 }
 
 /** The samples of the kept ticks by scene, and the scenes of kept ticks whose `get_stats` had no numeric `fps`. */
@@ -124,7 +119,7 @@ export function keptFrames(ticks: readonly FpsTick[]): { frames: Map<string, Fra
 }
 
 /** The fixed values of the frame judgement (ogw.md `## performance`), not settings. */
-export const FRAMES = { minKeptMs: 10_000, hitchBudgets: 1.5, maxHitchRatio: 10, maxIntervalMs: 100 } as const;
+const FRAMES = { minKeptMs: 10_000, hitchBudgets: 1.5, maxHitchRatio: 10, maxIntervalMs: 100 } as const;
 
 /** The hitch time of a frame interval: the interval minus one frame budget when it is longer than 1.5 frame budgets, else 0. */
 export function hitchTimeMs(intervalMs: number, budgetMs: number): number {
@@ -210,25 +205,13 @@ function numbers(value: unknown): number[] | null {
   return Array.isArray(value) && value.every((v) => typeof v === 'number' && Number.isFinite(v)) ? (value as number[]) : null;
 }
 
-/** What bounds the fps of a tick: game settings `targetFps`, the refresh rate (null for none) and `QualityCore.levels`. */
-export interface TickBound {
-  targetFps: number;
-  refreshHz: number | null;
-  levels: unknown;
-}
-
 /** Reads one tick of the fps sampler. */
-async function readTick(ctx: Context, id: string, bound: TickBound): Promise<FpsTick> {
+async function readTick(ctx: Context, id: string, bound: { targetFps: number; refreshHz: number | null; levels: unknown }): Promise<FpsTick> {
   const state = await automationRequest(ctx, id, 'get_state', []);
   const stats = await automationRequest(ctx, id, 'get_stats', []);
   if (!state.ok || !stats.ok) return null;
-  return tickOf(state.result, stats.result, bound);
-}
-
-/** A tick from the `result` of its `get_state` and `get_stats`, both answered `ok`. */
-export function tickOf(stateResult: unknown, statsResult: unknown, bound: TickBound): NonNullable<FpsTick> {
-  const s = stateResult as { scene_key?: unknown; boot_stage?: unknown; in_transition?: unknown } | null;
-  const t = (statsResult ?? {}) as { fps?: unknown; frame_intervals_ms?: unknown; quality_level?: unknown; last_scene_load_ms?: unknown; boot_ms?: unknown };
+  const s = state.result as { scene_key?: unknown; boot_stage?: unknown; in_transition?: unknown } | null;
+  const t = (stats.result ?? {}) as { fps?: unknown; frame_intervals_ms?: unknown; quality_level?: unknown; last_scene_load_ms?: unknown; boot_ms?: unknown };
   const frameLimit = frameLimitFps(bound.targetFps, bound.levels, t.quality_level);
   return {
     scene: sceneWhere(s?.scene_key),

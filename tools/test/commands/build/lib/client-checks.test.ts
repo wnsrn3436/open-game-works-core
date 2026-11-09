@@ -181,17 +181,13 @@ describe('build check helpers', () => {
     expect(() => didNotRun('web smoke', new Error('not defined: x'))).toThrow('not defined: x');
   });
 
-  it('starts a check instance with random base 1, or the one its check gives, and gives its client that random base', async () => {
+  it('starts a check instance with random base 1 and gives its client that random base', async () => {
     const s = await setup();
     // the launch values the check gives the page or apk hold the random base the runner gives the clients of the instance
-    const values = async (base?: bigint) => {
-      const { given, external } = await withCheckInstance(s.input.ctx, s.input.game, 'web', (_instance, outside, launch) => Promise.resolve({ given: launch, external: outside }), undefined, base);
-      expect(given.OGW_RANDOM_BASE).toBe(external.randomBase);
-      return given;
-    };
-    expect((await values()).OGW_RANDOM_BASE).toBe('1');
-    expect((await values(36n)).OGW_RANDOM_BASE).toBe('36');
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual([1n, 36n]);
+    const { given, external } = await withCheckInstance(s.input.ctx, s.input.game, 'web', (_instance, outside, launch) => Promise.resolve({ given: launch, external: outside }));
+    expect(given.OGW_RANDOM_BASE).toBe(external.randomBase);
+    expect(given.OGW_RANDOM_BASE).toBe('1');
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual([1n]);
     // an instance without a random base gives none
     expect(launchValuesOf(fakeInstance('web'), fakeInstance('web').external as ExternalClient, 'web')).not.toHaveProperty('OGW_RANDOM_BASE');
   });
@@ -313,8 +309,6 @@ describe('web smoke', () => {
     expect(opened.launchValues).toMatchObject({ path: expect.stringMatching(/^\/ogw-launch-values-[^/]+\.json$/) as string, status: 200, type: 'application/json' });
     // the export holds no launch values: generated/launch_values.json is neither written nor taken out of exclude_filter
     expect(existsSync(join(s.bin.bin, 'export-launch-values-index.html'))).toBe(false);
-    // the browser reads the current JavaScript heap
-    expect(chromiumCalls(s)[0]?.argv).toContain('--enable-precise-memory-info');
     expect(chromiumCalls(s).find((c) => c.method === 'Emulation.setCPUThrottlingRate')?.params).toEqual({ rate: 4 });
     const preset = readFileSync(join(s.bin.bin, 'preset.cfg'), 'utf8');
     expect(preset).toContain('name="web-dev"\nplatform="Web"\n');

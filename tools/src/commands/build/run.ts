@@ -4,8 +4,7 @@ import { expectPositionals, positional, type CommandDef, type Context } from '..
 import { OgwError } from '../../lib/errors.ts';
 import { readJson, writeJsonAtomic } from '../../lib/fsx.ts';
 import type { GameRepo } from '../../lib/game.ts';
-import { currentBranch, revParse, showFile } from '../../lib/git.ts';
-import { startJob } from '../../lib/jobs.ts';
+import { currentBranch, showFile } from '../../lib/git.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { span } from '../../lib/spans.ts';
 import { allSettledOrThrow } from '../../lib/pool.ts';
@@ -16,13 +15,11 @@ import { runData, type DataRun } from '../data/api.ts';
 import { gameModules } from '../generate/api.ts';
 import { dataVersionsAt, protocolHash, readDataVersions, type DataVersions } from './lib/atcommit.ts';
 import { addedConverters, convertersAt, convertersOf } from './lib/converters.ts';
-import { buildDir, buildRunFile, gameSettingsWithDefaults, LATE_CHECKS, requireBuildRun, type BuildCheck, type BuildRunResult, type LateChecks, type OpenBuildRun } from './lib/buildrun.ts';
+import { buildDir, buildRunFile, gameSettingsWithDefaults, requireBuildRun, type BuildCheck, type BuildRunResult, type OpenBuildRun } from './lib/buildrun.ts';
 import { settingsCheckInput } from './lib/inputs.ts';
 import { measureGate, withCheckWorkspaces, type CheckPlatform, type ClientCheckInput } from './lib/client-check.ts';
 import { devicePerformance } from './lib/device-performance.ts';
 import { webRunSettings, webSmoke } from './lib/web-smoke.ts';
-import { repeatTest } from './lib/repeat-test.ts';
-import { soakTest } from './lib/soak-test.ts';
 import { buildTagName, buildTags, lastProdTag, tagCommit, type BuildTag } from './lib/names.ts';
 import { nativePluginProblems } from './lib/native-plugins.ts';
 import { buildBundle, buildPlatforms, type Artifact } from './lib/platform.ts';
@@ -85,38 +82,10 @@ async function exportPlatforms(input: ClientCheckInput): Promise<CheckPlatform[]
 }
 
 /**
- * The checks that a DEV web build leaves to the late checks job: `repeat test` and `soak test` only warn in a DEV build,
- * so the hand-off of its artifacts does not wait for them (ogw.md `## build run`).
- */
-function lateCheckNames(b: Build): string[] {
-  return b.open.env === 'DEV' && b.platforms.includes('web') ? [...LATE_CHECKS] : [];
-}
-
-/**
- * DEV: starts the late checks job `ogw build late` on the build commit, after the platform build and the push of the
- * server image, so that nothing else of the run loads the host while it runs.
- */
-async function startLateChecks(b: Build, names: string[]): Promise<LateChecks> {
-  const commit = await revParse(b.game.root, 'HEAD', { env: b.ctx.env });
-  if (commit === null) throw new OgwError('the build branch has no commit');
-  const job = await startJob({
-    argv: ['build', 'late', b.game.name, '--commit', commit],
-    cwd: b.ctx.cwd,
-    command: 'build late',
-    game: b.game.name,
-    timeLimitMs: LIMITS.jobMs,
-    agentJob: null,
-    env: b.ctx.env,
-  });
-  return { names, job, commit };
-}
-
-/**
  * The client checks (ogw.md `## build run`). The check workspaces, and the check instances and exports of
  * `device performance` and `web smoke`, are made beside the other build-time checks (`load`). The checks that run the
- * game measure or judge times on the modelled device, so their runs start when all of that has ended: the runs of
- * `device performance` and `web smoke` together, `repeat test` when `web smoke` has ended, and `soak test` when
- * `repeat test` and `device performance` have ended.
+ * game measure or judge times on the modelled device, so their runs, on the device and in the browser, start together
+ * when all of that has ended.
  */
 async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promise<{ checks: CheckWithHuman[]; loadingMs: number | null }> {
   const base: ClientCheckInput = {
@@ -140,13 +109,9 @@ async function clientChecks(b: Build, load: readonly Promise<unknown>[]): Promis
       await Promise.allSettled([device, web]);
       await allSettledOrThrow(load);
     }
-    // a DEV build runs them after the platform build, in the late checks job (`startLateChecks`)
-    const late = lateCheckNames(b).length > 0;
-    const repeat = late ? Promise.resolve(null) : web.then(() => span('repeat test', () => repeatTest(input)));
-    const soak = late ? Promise.resolve(null) : Promise.allSettled([repeat, device]).then(() => allSettledOrThrow([repeat, device])).then(() => span('soak test', () => soakTest(input)));
-    await allSettledOrThrow([device, web, repeat, soak]);
+    await allSettledOrThrow([device, web]);
     const smoke = await web;
-    const checks = [await device, smoke?.check, await repeat, await soak].filter((c): c is BuildCheck => c !== null && c !== undefined);
+    const checks = [await device, smoke?.check].filter((c): c is BuildCheck => c !== null && c !== undefined);
     return { checks: checks.map((check) => ({ check, human: null })), loadingMs: smoke?.loadingMs ?? null };
   });
 }
@@ -289,8 +254,6 @@ async function serverImage(b: Build, image: ImageBuild): Promise<ServerImage> {
 
 function summary(result: BuildRunResult): string {
   const lines = result.checks.map((c) => `check ${c.name}: ${c.result}${c.details.length > 0 ? `\n  ${c.details.join('\n  ')}` : ''}`);
-  for (const name of result.lateChecks?.names ?? []) lines.push(`check ${name}: pending`);
-  if (result.lateChecks) lines.push(`late checks job ${result.lateChecks.job}`);
   for (const h of result.human) lines.push(`human check ${h.check}: ${h.targets.join(', ')}`);
   for (const a of result.artifacts) lines.push(`artifact ${a.platform}: ${a.path}${a.freeSigning === undefined ? '' : ` free signing: ${a.freeSigning}`}`);
   if (result.serverImage) lines.push(`server image ${result.serverImage.name}:${result.serverImage.tag}@${result.serverImage.digest}`);
@@ -377,9 +340,6 @@ async function runBuild(b: Build): Promise<{ exitCode: number; text: string; dat
     result.matchWaitMs = server.matchWaitMs;
   }
   Object.assign(result, await prod);
-  // the hand-off waits for no late check: they start when this run has nothing else to do
-  const late = lateCheckNames(b);
-  if (late.length > 0) result.lateChecks = await span('late checks start', () => startLateChecks(b, late));
   return finishResult(b, result, false);
 }
 
@@ -397,7 +357,7 @@ export const run: CommandDef = {
     const outDir = buildDir(game, open.env, open.version);
     await mkdir(outDir, { recursive: true });
     // a result of an earlier attempt must not read as this run's when this run stops with an error
-    for (const stale of ['privacy', 'update', 'build-run.json', 'late-checks.json']) await rm(join(outDir, stale), { recursive: true, force: true });
+    for (const stale of ['privacy', 'update', 'build-run.json']) await rm(join(outDir, stale), { recursive: true, force: true });
     const settings = await gameSettingsWithDefaults(game.root, ctx.env);
     const platforms = open.run.platforms;
     return runBuild({ ctx, game, open, settings, tags, lastProd: lastProdTag(tags), outDir, platforms });

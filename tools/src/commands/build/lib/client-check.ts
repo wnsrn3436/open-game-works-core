@@ -43,16 +43,6 @@ export interface ClientCheckInput {
   platforms: string[];
   /** The check workspaces the checks of one build run share; a check without them makes its own. */
   workspaces?: CheckWorkspaces;
-  /**
-   * The checkout the checks read the scenario from, make the check workspaces of (its HEAD) and run the check instances
-   * in: a worktree of the build commit for the late checks of a DEV build; the game repo checkout when absent.
-   */
-  checkout?: string;
-}
-
-/** The checkout of the checks of `input`. */
-export function checkoutOf(input: ClientCheckInput): string {
-  return input.checkout ?? input.game.root;
 }
 
 /**
@@ -97,20 +87,16 @@ export function ranToEnd(name: string, check: BuildCheck): BuildCheck {
 /**
  * Runs `work` on a check instance (ogw.md `### client checks`): an instance without a client that is not a bot client,
  * whose automation channel `main` waits for an outside client, started with the runner option `--random-base`
- * `randomBase` (`CHECK_RANDOM_BASE` unless its check says another), so that its server process is `start_local_server`
- * of `testing`. `work` gets the launch values of that instance on `platform`. It runs in `root` when given
- * (`ClientCheckInput.checkout`), in the game repo checkout otherwise.
+ * `CHECK_RANDOM_BASE`, so that its server process is `start_local_server` of `testing`. `work` gets the launch values
+ * of that instance on `platform`.
  */
 export async function withCheckInstance<T>(
   ctx: Context,
   game: GameRepo,
   platform: string,
   work: (instance: InstanceInfo, external: ExternalClient, values: LaunchValues) => Promise<T>,
-  root?: string,
-  randomBase: bigint = CHECK_RANDOM_BASE,
 ): Promise<T> {
-  const where = root === undefined || root === game.root ? {} : { root };
-  const instance = await startInstance(ctx, { game: game.name, client: 'none', externalClient: true, platform, randomBase, ...where });
+  const instance = await startInstance(ctx, { game: game.name, client: 'none', externalClient: true, platform, randomBase: CHECK_RANDOM_BASE });
   try {
     if (instance.external === null) throw new OgwError(`instance ${instance.id} has no automation channel for the client`);
     return await work(instance, instance.external, launchValuesOf(instance, instance.external, platform));
@@ -189,11 +175,6 @@ export function launchValuesOf(instance: InstanceInfo, external: ExternalClient,
   };
 }
 
-/** A memory reading of `get_stats` (`heap_memory_bytes`, `total_memory_bytes`): an integer of 0 or more, else null. */
-export function byteCount(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
 /** The platforms of the check exports. */
 export type CheckPlatform = 'android' | 'web';
 
@@ -213,16 +194,16 @@ interface WorkspaceCopy {
   prepared: CheckPrepared;
 }
 
-/** The outcome of work made once for several users, each of which gets its failure. */
+/** The outcome of the web check export. */
 type Outcome<T> = { value: T } | { error: unknown };
 
 /** The parts of a check workspace that a copy holds: the engine project and the folder its `client/resource` links to. */
 const COPIED = ['client', 'resource'];
 
 /**
- * The check workspaces of one build run or late checks job (ogw.md `### client checks`): per platform one build
- * workspace of the build branch HEAD, prepared and imported once when a check first asks for it, whose copies the check
- * exports are made in, and the one web check export that the web checks share. `close` removes them.
+ * The check workspaces of one build run (ogw.md `### client checks`): per platform one build workspace of the build
+ * branch HEAD, prepared and imported once when a check first asks for it, whose copies the check exports are made in,
+ * and the web check export of `web smoke`. `close` removes them.
  */
 export class CheckWorkspaces {
   private readonly made = new Map<CheckPlatform, Promise<PreparedWorkspace>>();
@@ -230,8 +211,7 @@ export class CheckWorkspaces {
   private readonly input: ClientCheckInput;
   private webCopied: Promise<WorkspaceCopy> | null = null;
   private webExported: Promise<Outcome<string>> | null = null;
-  private webFailure: { error: unknown } | null = null;
-  /** The copy and export folders of the web check export, deleted by `close`. */
+  /** The copy and export folders of the web check export, deleted by `endWebExport` and `close`. */
   private readonly webPaths: string[] = [];
 
   constructor(input: ClientCheckInput) {
@@ -252,7 +232,7 @@ export class CheckWorkspaces {
     const { ctx, game } = this.input;
     const engine = this.input.settings.engine ?? 'godot';
     if (engine !== 'godot') throw new OgwError(`not defined: the check export of engine ${engine}`);
-    const head = await revParse(checkoutOf(this.input), 'HEAD');
+    const head = await revParse(this.input.game.root, 'HEAD');
     if (head === null) throw new OgwError('the build branch has no commit');
     const repo = await addCommitCheckout(ctx, game, head, (path) => this.roots.push(path));
     return { root: repo.root, prepared: await godotCheckPrepare(ctx, this.build(platform, repo.root), platform, repo.root) };
@@ -296,7 +276,7 @@ export class CheckWorkspaces {
 
   /**
    * The copy of the web check export (`copyOf` `.ogw-copy/web/`), made on the first call, before the check instance of
-   * the web check that makes the export starts; its failure goes to every web check.
+   * `web smoke` starts.
    */
   webCopy(): Promise<WorkspaceCopy> {
     this.webCopied ??= this.copyOf('web', 'web', (...made) => this.webPaths.push(...made));
@@ -305,22 +285,19 @@ export class CheckWorkspaces {
 
   /**
    * Starts the web check export when it is not started yet (ogw.md `### client checks`): one export of `webCopy`
-   * without launch values into `.ogw-check/web/`, which the web checks of these workspaces share, each page getting the
-   * launch values of its own check instance when it opens.
+   * without launch values into `.ogw-check/web/`, whose page gets the launch values of the check instance of
+   * `web smoke` when it opens.
    */
   startWebExport(): void {
     this.webExported ??= this.webCopy()
       .then(({ copy, out, prepared }) => godotCheckExport(this.input.ctx, this.build('web', out), 'web', copy, out, null, prepared))
       .then(
         (value): Outcome<string> => ({ value }),
-        (error: unknown): Outcome<string> => {
-          this.webFailure = { error };
-          return { error };
-        },
+        (error: unknown): Outcome<string> => ({ error }),
       );
   }
 
-  /** The output file (`index.html`) of the web check export, made on the first call; its failure goes to every web check. */
+  /** The output file (`index.html`) of the web check export, made on the first call. */
   async webExport(): Promise<string> {
     this.startWebExport();
     const made = await (this.webExported as Promise<Outcome<string>>);
@@ -328,20 +305,16 @@ export class CheckWorkspaces {
     return made.value;
   }
 
-  /** The failure of the web check export once it has failed, else null. */
-  webExportFailure(): { error: unknown } | null {
-    return this.webFailure;
-  }
-
-  /** Resolves once the web check export, when it was started, has ended, whatever its result. */
-  async webExportEnded(): Promise<void> {
+  /** Waits until the web check export, when it was started, has ended, whatever its result, then deletes it and its copy. */
+  async endWebExport(): Promise<void> {
     await this.webExported;
+    for (const path of this.webPaths) await rm(path, { recursive: true, force: true });
   }
 
   /** Waits for the preparations and the web check export, deletes the web check export and its copy, then removes the build workspaces. */
   async close(): Promise<void> {
-    await Promise.allSettled([...this.made.values(), this.webCopied, this.webExported]);
-    for (const path of this.webPaths) await rm(path, { recursive: true, force: true });
+    await Promise.allSettled([...this.made.values(), this.webCopied]);
+    await this.endWebExport();
     for (const root of this.roots) await removeCommitCheckout(this.input.ctx, this.input.game, root);
   }
 }
@@ -374,10 +347,10 @@ export async function withCheckCopy<T>(input: ClientCheckInput, platform: CheckP
 /**
  * `### web smoke` 1 around `use`: runs `use` with the check workspaces of `input` once the copy of their web check
  * export is made (ogw.md `### client checks`: the copy comes before the check instance starts), with the export
- * started, when it is not made yet, beside the check instance that `use` starts; `use` takes it from `webExport`. It
- * ends only when the export has ended too, also when `use` ended without it (its check instance did not start), so
- * that the measured runs of `## build run`, which start when web smoke has made its export or ended, start with no
- * export loading the host.
+ * started beside the check instance that `use` starts; `use` takes it from `webExport`. It ends only when the export
+ * has ended too, also when `use` ended without it (its check instance did not start), so that the measured runs of
+ * `## build run`, which start when web smoke has made its export or ended, start with no export loading the host. Then
+ * it deletes the export and its copy, as its check has ended.
  */
 export async function withWebExport<T>(input: ClientCheckInput, use: (input: ClientCheckInput & { workspaces: CheckWorkspaces }) => Promise<T>): Promise<T> {
   return withWorkspacesOf(input, async (own) => {
@@ -386,7 +359,7 @@ export async function withWebExport<T>(input: ClientCheckInput, use: (input: Cli
     try {
       return await use(own);
     } finally {
-      await own.workspaces.webExportEnded();
+      await own.workspaces.endWebExport();
     }
   });
 }

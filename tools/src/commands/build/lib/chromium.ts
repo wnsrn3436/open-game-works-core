@@ -229,12 +229,12 @@ async function attach(page: Page, cdp: Cdp, url: string, cpuThrottleRate: number
 }
 
 /**
- * Starts the headless browser `chromium` with a new profile and the switches `switches`, sets the CPU throttle of a new
- * page with `Emulation.setCPUThrottlingRate`, and opens `url` in it. The caller closes the page.
+ * Starts the headless browser `chromium` with a new profile, sets the CPU throttle of a new page with
+ * `Emulation.setCPUThrottlingRate`, and opens `url` in it. The caller closes the page.
  */
-export async function openHeadless(ctx: Context, chromium: string, url: string, cpuThrottleRate: number, switches: readonly string[] = []): Promise<HeadlessPage> {
+export async function openHeadless(ctx: Context, chromium: string, url: string, cpuThrottleRate: number): Promise<HeadlessPage> {
   const profile = await newPrivateTempFolder('ogw-web-smoke-', ctx.env);
-  const args = ['--headless', '--no-first-run', '--no-default-browser-check', ...switches, `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'];
+  const args = ['--headless', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'];
   const browser = spawnTracked(chromium, args, { env: ctx.env, stdio: 'ignore' });
   const page = new Page(browser, profile);
   try {

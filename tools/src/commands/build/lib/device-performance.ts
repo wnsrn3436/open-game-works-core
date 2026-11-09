@@ -14,7 +14,6 @@ import type { BuildCheck } from './buildrun.ts';
 import {
   atGate,
   buildCheckOf,
-  checkoutOf,
   clientCheckTiming,
   didNotRun,
   ranToEnd,
@@ -117,7 +116,7 @@ export async function devicePerformance(input: ClientCheckInput, gate: MeasureGa
   // harness settings `testDevices` holds android devices only (`platform` is `android`)
   const device = ((await ctx.settings()).testDevices ?? [])[0];
   if (device === undefined) return unknown('harness settings testDevices has no android device');
-  const scenario = await readScenario(checkoutOf(input));
+  const scenario = await readScenario(input.game.root);
   if (typeof scenario === 'string') return buildCheckOf(NAME, input.env, [checkResult('performance', 'android', [failure('client/dev/bot/scenario.json:1', scenario)])]);
   const appId = input.settings.appId;
   if (typeof appId !== 'string' || appId === '') throw new OgwError('game settings appId is not set');

@@ -241,17 +241,17 @@
     },
     "webSmokeCpuThrottleRate": {
       "x-scope": "local",
-      "description": "The CPU throttle factor that build-time checks `web smoke`, `repeat test` and `soak test` apply to the headless browser on this host, so that the page runs at the speed of the device of `webSmokeDeviceBenchmarkIndex`. It is the `rate` of Chrome DevTools Protocol `Emulation.setCPUThrottlingRate`, which slows the CPU by that factor relative to this host. 1 is no throttle. The `host-env` skill sets it with revision `webSmokeCpuThrottleRate` of `ogw env propose`. When it is missing, these checks are `unknown`",
+      "description": "The CPU throttle factor that build-time check `web smoke` applies to the headless browser on this host, so that the page runs at the speed of the device of `webSmokeDeviceBenchmarkIndex`. It is the `rate` of Chrome DevTools Protocol `Emulation.setCPUThrottlingRate`, which slows the CPU by that factor relative to this host. 1 is no throttle. The `host-env` skill sets it with revision `webSmokeCpuThrottleRate` of `ogw env propose`. When it is missing, that check is `unknown`",
       "type": "integer",
       "minimum": 1
     },
     "webSmokeDeviceBenchmarkIndex": {
-      "description": "The benchmark index (`## env benchmark` of [ogw](../tools/ogw.md)) of the device that build-time checks `web smoke`, `repeat test` and `soak test` model",
+      "description": "The benchmark index (`## env benchmark` of [ogw](../tools/ogw.md)) of the device that build-time check `web smoke` models",
       "type": "integer",
       "minimum": 1
     },
     "webSmokeBootTimeoutMs": {
-      "description": "In build-time checks `web smoke`, `repeat test` and `soak test`, the time limit from opening the page until `boot_stage` of the client becomes `Done`, with the CPU throttle of `webSmokeCpuThrottleRate`, so that it is a time on the device of `webSmokeDeviceBenchmarkIndex`",
+      "description": "In build-time check `web smoke`, the time limit from opening the page until `boot_stage` of the client becomes `Done`, with the CPU throttle of `webSmokeCpuThrottleRate`, so that it is a time on the device of `webSmokeDeviceBenchmarkIndex`",
       "type": "integer",
       "minimum": 1
     },
@@ -514,7 +514,7 @@
         },
         "chromium": {
           "$ref": "#/$defs/tool",
-          "description": "The headless browser that build-time checks `web smoke`, `repeat test` and `soak test` and the browser run of client core tests start. It is `chrome-headless-shell` of Chrome for Testing"
+          "description": "The headless browser that build-time check `web smoke` and the browser run of client core tests start. It is `chrome-headless-shell` of Chrome for Testing"
         },
         "gdtoolkit": {
           "$ref": "#/$defs/pythonTool",
