@@ -167,7 +167,7 @@ none
 | `get_step_budget` | none | remaining step budget (ms) | `0` | `QACore`, `RealtimeCore` |
 | `set_random_base` | random base (int64) | none | none | `BootstrapCore`, core test |
 | `set_frame_step` | fps (integer 1 or more) | none | none | `BootstrapCore`, core test |
-| `get_frame_step_fps` | none | fps of the frame step. 0 without a frame step | `0` | `QACore` |
+| `get_frame_step_fps` | none | fps of the frame step. 0 without a frame step | `0` | core test |
 
 - A test clock is an object that gives monotonic time and device time. `set_test_clock` is called only before `init`. `release` deletes it
 - `set_random_base` sets the random base of `### random seed`, so that the dev runs given the same random base make the same random seeds. It is called only before `init`. `release` deletes the random base

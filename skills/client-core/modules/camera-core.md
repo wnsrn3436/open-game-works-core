@@ -178,9 +178,7 @@ none
 | operation | input | output | caller |
 |---|---|---|---|
 | `set_shake_seed` | random seed | none. Sets the random seed of the shake noise. The same random seed and the same input give the same offset | core test |
-| `set_shake_skip` | whether skipped | none | `QACore`, core test |
 
-- shake skip: off at `init`, changed by `set_shake_skip`, and turned off by `release`. Attaching and detaching a camera leave it as it is. While it is on, a `shake` that passes the checks of `## error` adds no trauma, leaves no log and publishes no `CameraShakeStartedEvent`. It does not change the trauma that is there or the shake scale
 
 ## test
 
@@ -220,4 +218,3 @@ none
 - For a 3D camera, `world_to_screen` of a world position behind the camera and of a world position between the camera and the near plane is the origin, with one error log each
 - A UI layer element at the same position does not change its screen position during camera movement, zoom and shake
 - After `release` there is no camera reference, a `move_to` and a `zoom_to` that were in progress are `Failed`, and after `init` again, `attach_camera` succeeds
-- After `set_shake_skip`(`true`), `shake`(0.5) leaves trauma unchanged and publishes no `CameraShakeStartedEvent`, a shake started before it decays as usual, and `shake`(0) still leaves one error log. After `set_shake_skip`(`false`), `shake` adds trauma and publishes the event. After `release` and `init`, shake skip is off

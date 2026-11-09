@@ -226,7 +226,6 @@ reserved string: `[network_confirm]`, `[network_retry]`, `[network_go_to_title]`
 |---|---|---|---|---|
 | `set_transport` | `NetworkTransport`. Called before `init` | none | none | core test, `UnitTestCore`, `BootstrapCore` |
 | `force_failure` | one communication failure of `FailureKind`. none clears it | none | none | `QACore` |
-| `force_delay` | delay in ms. `0` clears it | none | none | `QACore` |
 | `get_request_records` | caller buffer | number filled | `0` | `QACore` |
 | `send_auth_cheat` | request message of `service CoreCheat`, `AuthSendOptions` | async operation. `AuthSendResult` | failed `AuthSendResult` | `AuthCore`(`dev_login`) |
 | `set_dev_access` | dev access value | none | none | `BootstrapCore` |
@@ -237,7 +236,6 @@ reserved string: `[network_confirm]`, `[network_retry]`, `[network_go_to_title]`
 - When the value received with `set_dev_access` is not an empty string, `send_cheat` and `send_auth_cheat` put that value in header `X-Ogw-Dev-Access`. Other requests do not get it. That value is not written to logs and request records, and `release` deletes it
 - `send_cheat` goes through the same queue, session headers, response processing, delta apply as `send`, and sends a game cheat to `POST <base URL>/cheat/<rpc name>` and a core cheat to `POST <base URL>/core/cheat/<rpc name>`. The request kind is `Interaction`
 - A send started during `force_failure` becomes that failure without the token lookup and `NetworkTransport`
-- During `force_delay`, the result of `NetworkTransport` is treated as received after the delay. The timeout judgement and time sync also use that time
 - A request record holds, for each ended request, the request name, request kind, success flag, last error code, request body, last response body. In the environments that include DEV code, NetworkCore keeps them from `init` without calls from other modules. The bodies of `send_auth` and `sensitive` requests are empty bytes. It keeps the latest `NetworkCore.devRequestRecordCount` records in the order they ended
 
 ## test
@@ -287,7 +285,7 @@ reserved string: `[network_confirm]`, `[network_retry]`, `[network_go_to_title]`
 - The block of an `Interaction` request for which `get_access_token` waited longer than `InputBlockCore.maxDurationMs` and then `NetworkTransport` gave the result within `NetworkCore.requestTimeoutMs` is not released by forced release. Even when three `Interaction` requests received in a row each take `NetworkCore.requestTimeoutMs` − 1, there is no forced release
 - `send_cheat` keeps the queue order, goes to the cheat path, and passes the delta of the response to `apply_delta`
 - After `set_dev_access`, the `X-Ogw-Dev-Access` of `send_cheat` and `send_auth_cheat` requests is that value, `send` and `send_auth` requests do not have that header, and logs do not have that value
-- `force_failure`, `force_delay`, request records, `send_cheat`, `set_dev_access` equal behavior and do not exist in STG and PROD builds
+- `force_failure`, request records, `send_cheat`, `set_dev_access` equal behavior and do not exist in STG and PROD builds
 - In STG and PROD builds, `set_server_info` with an `http` base URL is `false` and leaves an error log. The environments that include DEV code accept it
 - After an `Interaction`, `Silent`, `SilentRetry` request ends with a communication failure, the `Resync` of the return from background and the `Resync` of `resync` go with `full` `true`, and a `Resync` after that `Resync` succeeds is `full` `false`. A `Resync` after a communication failure of a `Retry` request, a `ServerError` failure, or a request discarded in the session end state is `full` `false`
 - A `Resync` after a request stopped at response processing step 4 is `full` `true`. When a `Resync` with `full` `true` ends with a communication failure, the next `Resync` is also `full` `true`

@@ -20,7 +20,7 @@ Provides, in the environments that include DEV code (LOCAL, DEV), the debug scre
 
 `UtilCore`, `LogCore`, `EventCore`, `TimeCore`, `ResourceCore`, `DataCore`, `LocalizationCore`, `SoundCore`, `NetworkCore`, `UserStateCore`, `AuthCore`, `ResolutionCore`, `SafeAreaCore`, `InputCore`, `InputBlockCore`, `TweenCore`, `ScreenEffectCore`, `PoolCore`, `UICore`, `SceneCore`, `BootstrapCore`
 
-- optional dependency: `CutsceneCore`, `TutorialCore`, `RealtimeCore`, `QualityCore`, `AccessibilityCore`, `PushCore`, `CameraCore`. When one is missing, a command that calls that module fails. `CameraCore` is used only to subscribe to `CameraCore.CameraShakeStartedEvent` and by `### feedback switch`, which leaves it out when it is missing
+- optional dependency: `CutsceneCore`, `TutorialCore`, `RealtimeCore`, `QualityCore`, `AccessibilityCore`, `PushCore`, `CameraCore`. When one is missing, a command that calls that module fails. `CameraCore` is used only to subscribe to `CameraCore.CameraShakeStartedEvent`
 - The only `BootstrapCore` operations QACore calls are `BootstrapCore.get_build_info`, `BootstrapCore.boot_stage`, `BootstrapCore.get_launch_value`. QACore requests a restart with `EventCore.RestartRequestedEvent`
 - `BootstrapCore` runs `init` and `release` of QACore through the module list, and calls the DEV registration list when the init check of QACore is `true`. It calls no other QACore operation
 
@@ -91,9 +91,6 @@ A command marked setup is not real input. Bot playtest records that step as setu
 | `set_quality_level` | `Low`, `Medium`, `High` | setup. `QualityCore.set_test_level` | none | `level` |
 | `set_text_scale` | permille (integer 1000 or more) | setup. `AccessibilityCore.set_test_text_scale` | none | `permille` |
 | `force_network_failure` | `timeout`, `connection_failed`, `none` | setup. `NetworkCore.force_failure` | none | `kind` |
-| `set_network_delay` | ms (integer 0 or more. 0 clears) | setup. `NetworkCore.force_delay` | none | `ms` |
-| `set_feedback_off` | `on`, `off` | setup. Turns feedback off on or off (`### feedback switch`) | none | `mode` |
-| `set_reward_presentation_off` | `on`, `off` | setup. Turns reward presentation off on or off (`### feedback switch`) | none | `mode` |
 | `expire_access_token` | none | setup. `AuthCore.expire_access_token` | none | none |
 | `set_social_account` | fake account name (snake_case) | setup. `AuthCore.set_fake_social_account`. The next social login and account link use that fake account | none | `account` |
 | `simulate_push` | ID name of `push_message`, `received` or `opened` | setup. `PushCore.simulate_push`(message ID value, opened by a tap when `opened`) | none | `message`, `mode` |
@@ -158,7 +155,6 @@ QAState is a JSON object with the fields below as keys. A rectangle is a number 
 | `time_scale` | `TimeCore.get_time_scale` | integer (permille) | 1000 |
 | `step_mode` | `TimeCore.is_step_mode` | boolean | `false` |
 | `step_budget_ms` | `TimeCore.get_step_budget` | integer | 0 |
-| `frame_step_fps` | `TimeCore.get_frame_step_fps` | integer | 0 |
 | `window_size` | `ResolutionCore.get_window_size` | `[w, h]` integer array | `[0, 0]` |
 | `game_area`, `visible_game_area` | `ResolutionCore.get_game_area`, `ResolutionCore.get_visible_game_area` converted to window pixels | rectangle | `[0, 0, 0, 0]` |
 | `safe_area` | `SafeAreaCore.get_safe_area` converted to window pixels | rectangle | `[0, 0, 0, 0]` |
@@ -231,30 +227,6 @@ The play record that the judge agent and performance check read. Times (`started
 - Each item keeps up to `QACore.telemetryMaxRecords` records. Beyond that, the oldest are discarded first and added to `dropped`
 - telemetry JSON: `started_at`, `inputs`, `rewards`, `marks`, `idle_spans`, `goal_intervals`, `scene_loads`, `dropped`
 
-### feedback switch
-
-The two switches make the presentation of a run worse without changing the game code. Both are off at `init`.
-
-- feedback off: on from `set_feedback_off`(`on`) until `set_feedback_off`(`off`)
-- reward presentation off: on from `set_reward_presentation_off`(`on`) until `set_reward_presentation_off`(`off`). While it is on, each reward moment opens the reward window. `set_reward_presentation_off`(`off`) closes the reward window
-- reward moment: a `Goal` mark, and a moment that adds a record to `rewards` of `### telemetry` (a `Reward` mark, or an `ItemChange` of `UserStateCore.ItemChangedEvent` that `rewards` records)
-- reward window: from a reward moment until the first frame start at which `QACore.rewardPresentationWindowMs` advanced ms have passed since the last reward moment. A request made before the reward moment, also one earlier in the same frame, is not skipped. EventCore does not set the order of the callbacks of one event, so for an `ItemChange` reward moment a request made in another callback of that `ItemChangedEvent` is not skipped when that callback runs before the one of QACore. A `Goal` or `Reward` mark that content code makes before it starts the presentation of that moment (`client-content` `## automation channel`) has all of that presentation in the reward window
-- module state: a DEV state of another module that QACore sets with the operation of the table below. QACore keeps it on while its `on while` cell holds and off otherwise, so a state that both switches use stays on while either needs it
-
-  | module state | operation | on while |
-  |---|---|---|
-  | DEV mute of the `Sfx` and `Ui` buses | `SoundCore.set_dev_mute` | feedback off is on |
-  | play skip | `SoundCore.set_play_skip` | the reward window is open |
-  | shake skip | `CameraCore.set_shake_skip` | feedback off is on or the reward window is open |
-  | World skip | `ScreenEffectCore.set_world_skip` | feedback off is on or the reward window is open |
-  | effect skip | `PoolCore.set_effect_skip` | feedback off is on or the reward window is open |
-  | finite skip | `TweenCore.set_finite_skip` | the reward window is open |
-
-- When feedback off turns on, QACore also calls `CameraCore.stop_shake`, so no shake shows while it is on
-- When `CameraCore` is not in the module list, QACore leaves out its row, and the commands still succeed
-- The module states write no saved value and do not change the mute of `SoundCore.set_mute`, the shake scale of `CameraCore` or the flash opacity limit of `ScreenEffectCore`, so when a module state turns off, that module behaves as it did before the state turned on
-- A module state publishes no feedback event for what it mutes or skips, so `feedback` and `latency_ms` of `inputs` count only the feedback that was presented
-
 ### automation channel
 
 - The runner listens as a WebSocket server on `127.0.0.1`, and QACore connects to that server. QACore does not listen on a socket. This keeps the same path on every platform without a listen socket, which browsers block
@@ -284,7 +256,7 @@ The two switches make the presentation of a run worse without changing the game 
 ### lifecycle
 
 - `init`: leaves the debug screen closed, starts telemetry, makes the frame interval record, subscribes to events and connects to the automation channel
-- `release`: ends the commands in handling or waiting with `ok` = `false`, turns both switches of `### feedback switch` off, which turns off the module states they hold, drops the connection, deletes the registered content commands, invariants, `invariant_failures`, the content state callback, telemetry, the frame interval record, event subscriptions and the record of inputs held by input commands, and destroys the debug screen
+- `release`: ends the commands in handling or waiting with `ok` = `false`, drops the connection, deletes the registered content commands, invariants, `invariant_failures`, the content state callback, telemetry, the frame interval record, event subscriptions and the record of inputs held by input commands, and destroys the debug screen
 
 ## hook
 
@@ -331,7 +303,6 @@ none
 | `QACore.timeScaleMaxPermille` | integer | core | content | maximum permille of the `set_time_scale` command. 1000 or more |
 | `QACore.touchIndexCount` | integer | core | content | number of touch indexes QACore uses. A touch index is 0 or more and less than this value |
 | `QACore.frameIntervalMaxCount` | integer | core | human | number of intervals the frame interval record holds |
-| `QACore.rewardPresentationWindowMs` | integer | core | human | length of the reward window of reward presentation off, in advanced ms. 1 or more |
 | `baseResolution` | array<integer> | game | none | base resolution that `set_test_screen` passes to `ResolutionCore.set_test_screen` |
 
 ## data
@@ -388,7 +359,7 @@ The whole module is DEV code. STG and PROD builds have no QACore, no DEV registr
 - When the handler of a content command has not returned at the command time limit, that command is `ok` = `false` with one warn log from QACore, and when that handler returns later, QACore sends no second response, leaves no log and does not change the last command result
 - When the test clock passes the command time limit while `key` with ms 1000 holds its key, or while `drag` with ms 1000 holds its touch, that command is `ok` = `false` with one warn log, its key or touch is released at the first frame start after that, and the response comes when that frame ends. A `key_down` of that key or a `touch_down` of that touch index sent right after that response is `ok` = `true`. In step mode with budget 0 after `set_time_scale`(50), the same `key` of a key bound to an action makes `InputCore.is_just_released` of that action `true` in the process callback of a node that does not run while the engine features stop, in the frame its release goes in, and `step_budget_ms` of a `get_state` sent right after the response is 0
 - `set_language`, `restart` publish `EventCore.RestartRequestedEvent` once after sending the response
-- `set_network_delay`, `expire_access_token`, `set_social_account`, `simulate_push`, `set_push_permission` call the target DEV operation once. When `PushCore` is not in the module list, `simulate_push`, `set_push_permission` fail. `simulate_push` with an ID name that does not exist and `set_social_account` with a name that is not snake_case fail without the target operation
+- `expire_access_token`, `set_social_account`, `simulate_push`, `set_push_permission` call the target DEV operation once. When `PushCore` is not in the module list, `simulate_push`, `set_push_permission` fail. `simulate_push` with an ID name that does not exist and `set_social_account` with a name that is not snake_case fail without the target operation
 - The `result` of `get_requests`, `get_user_state`, `get_resources`, `get_sound` is the target operation's result moved into the JSON fields of the table. `get_user_state` with an unknown kind name fails. Non-JSON text, `[]`, a negative offset and a `1.5` offset for `extract_logs` fail without the target operation, and the offset of a path not in the list does not change the result. For a log file whose bytes are `a`, `한` (3 bytes), `b`, offset 2 gives `offset` 4 and `content` `b`. The `content` of a file containing one byte 0xFF that cannot be read as UTF-8 holds one U+FFFD in its place
 - For each built-in command of `list_commands`, `args` equals `args` of the table and `description` is not an empty string. `args` of `tap_anchor` is `["anchor", "key"]`
 - The result of a content command equals the handler result, and a second registration with the same name leaves an error log and the first handler stays
@@ -429,8 +400,4 @@ The whole module is DEV code. STG and PROD builds have no QACore, no DEV registr
 - The intervals are the real time between frames under the test clock, time scale 100 and step mode with budget 0. The interval that ends at the first frame point after `TimeCore.AppForegroundReturnedEvent` is not in `frame_intervals_ms`. The first `get_stats` of an automation channel connection holds only intervals that ended after the connection
 - With `QACore.frameIntervalMaxCount` 8, when a process callback waits 120 ms of real time in the 3rd of 20 frames after a `get_stats`, the next `get_stats` has none of its 8 values in `frame_intervals_ms` at 120 or more and a `max_frame_interval_ms` of 120 or more, and a `get_stats` 3 frames after it without a wait has a `max_frame_interval_ms` under 120 that equals the largest of its `frame_intervals_ms`. The interval that ends at the first frame point after `TimeCore.AppForegroundReturnedEvent` does not count in `max_frame_interval_ms`. A `get_stats` right after another, with no frame point between them, has `max_frame_interval_ms` 0
 - `heap_memory_bytes` and `total_memory_bytes` of `get_stats` are integers of 0 or more, also in headless. In a native run `heap_memory_bytes` equals `static_memory_bytes` of the same `get_stats`, and `total_memory_bytes` is greater than 0 on a platform for which the engine-specific implementation rules give a reading and 0 on the others. In a browser run `heap_memory_bytes` is greater than 0 and not smaller than that of the `get_stats` before it, and `total_memory_bytes` is at least `heap_memory_bytes`
-- `frame_step_fps` of `get_state` is 60 when `TimeCore.set_frame_step`(60) was called before `TimeCore` `init`, with or without a test clock, and 0 without a frame step
 - With the body and heading font weights of `LocalizationCore` set to 400 and 800 and a font chain whose first font has a `wght` axis that holds both, `font_weight` of `list_ui` is 800 for a text element in the `heading` text style and 400 for one in `body`. With both weights 0 it is the default of that axis, with a first font without a `wght` axis it is the weight class that font declares, and an element whose `text` is an empty string has 0
-- After `set_feedback_off`(`on`), `SoundCore.get_mute` of `Sfx` and `Ui` is unchanged, `Sfx` and `Ui` playback and a content positional player are silent and `Voice` playback is not, `SoundCore.play` on `Sfx` publishes no `SoundCore.SoundPlayedEvent` and on `Voice` one, `CameraCore.shake` gives no shake offset and no `CameraCore.CameraShakeStartedEvent`, a `World` `ScreenEffectCore.flash` is `Completed` when it returns with the overlay hidden and no `ScreenEffectCore.ScreenEffectStartedEvent`, and `PoolCore.borrow` of an auto-return instance publishes no `PoolCore.EffectSpawnedEvent`. A `tap` followed only by these has an empty `feedback`. After `set_feedback_off`(`off`), each of these behaves as before `on`, a shake scale set with `CameraCore.set_shake_scale`(500) before `on` applies again, and the `LocalDataCore` values of `SoundCore` are unchanged
-- After `set_reward_presentation_off`(`on`) and `mark`(`Goal`), a `TweenCore.play` of a definition with repeat count 1 before `QACore.rewardPresentationWindowMs` advanced ms pass ends with `Completed` at its end state before that frame ends and publishes no `TweenCore.TweenStartedEvent`, a tween of repeat count 0 plays, `SoundCore.play` returns the invalid handle, and `CameraCore.shake`, a `World` `ScreenEffectCore.fade` and `PoolCore.borrow` of an auto-return instance publish no feedback event. After the window, all of these play and publish their events. A `TweenCore.play` made before the mark in the same frame plays. A second `Goal` mark inside the window keeps it open until `QACore.rewardPresentationWindowMs` advanced ms after the second. A `UserStateCore.ItemChangedEvent` with an `ItemChange` of change amount 1 opens the window, and one whose `source` is `Cheat` does not. With reward presentation off off, a `Goal` mark skips nothing
-- With feedback off on, the end of a reward window leaves the shake skip, the World skip and the effect skip on, and `set_feedback_off`(`off`) inside a reward window leaves them on until the window ends. When `CameraCore` is not in the module list, `set_feedback_off`(`on`) is `ok` = `true`. `set_feedback_off`(`yes`) is `ok` = `false` and changes no module state. After `release`, every module state is off

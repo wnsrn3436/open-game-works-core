@@ -116,7 +116,7 @@ none
 
 | event | when | payload |
 |---|---|---|
-| `EffectSpawnedEvent` | When an auto-return instance is lent. `QACore` counts it as feedback. Not published while the effect skip of `## DEV` is on | none |
+| `EffectSpawnedEvent` | When an auto-return instance is lent. `QACore` counts it as feedback | none |
 
 ## error
 
@@ -148,13 +148,8 @@ none
 
 ## DEV
 
-| operation | input | output | caller |
-|---|---|---|---|
-| `set_effect_skip` | whether skipped | none | `QACore`, core test |
-
 - When there is no in-pool instance and a new one is made and lent, it leaves a `warn` log in the environments that include DEV code
 - leak check: in the environments that include DEV code, when after common cleanup `EventCore.count_subscriptions` counts 1 or more subscriptions whose subscriber is a component object, or a return cleaner returns 1 or more items left, PoolCore leaves an `error` log
-- effect skip: off at `init`, changed by `set_effect_skip`, and turned off by `release`. While it is on, a `borrow` of an auto-return instance lends it as usual and publishes no `EffectSpawnedEvent`, and PoolCore takes that instance back as `notify_finished` does, after the code of that frame that runs after the `borrow` and before that frame is drawn, so the instance is not drawn. A holder of its handle that checks `is_valid` then finds it invalid, as for an effect that ended. When the instance was returned or destroyed before that, the take-back does nothing and leaves no log. The record of instances waiting for the take-back is an exception to the no-allocation rule of `borrow`. How the take-back runs before the frame is drawn is in the engine-specific implementation rules
 
 ## test
 
@@ -177,4 +172,3 @@ none
 - After `release` and `init`, destroying the owner object of an owner-bound instance calls `on_return` of that instance once
 - For each condition of the error table, the failure value and log match the table
 - Repeating `borrow`, `is_valid`, `get_instance`, `get_pool_state`, `give_back` on a manual-return pool with in-pool instances allocates no memory. The `on_borrow`, `on_return` and return cleaner of that pool object do nothing
-- After `set_effect_skip`(`true`), a `borrow` of an auto-return instance returns a valid handle, calls `on_borrow`, publishes no `EffectSpawnedEvent`, and before the next frame `is_valid` of that handle is `false`, `on_return` was called once and the instance is in the pool. A `give_back` of that handle in the frame of the `borrow` returns it once, with no error log from the take-back. A `borrow` of a manual-return instance is not taken back. After `set_effect_skip`(`false`), `borrow` of an auto-return instance publishes `EffectSpawnedEvent` and is not taken back

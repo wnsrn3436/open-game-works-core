@@ -64,7 +64,7 @@ Handles the color overlay that covers the whole visible game area with a solid c
 
 - An effect handle holds the result and the owner of one request. The owner is an object that the requester passes, and it ties the effect's lifetime to that object
 - Each channel has one current handle. A new request that passes the input check ends the current handle of the same channel with `Cancelled` and replaces it. A request that fails the input check does not replace the current handle
-- Only the current handle of a channel controls that channel's overlay. A handle that is not the current handle of its channel (a replaced handle, a handle cleared by `clear_handle`, `clear_owner` or owner destruction, a handle settled as `Failed`, a handle that World skip of `## DEV` settled) cannot control the overlay: `skip_to_end` and `clear_handle` on that handle change no overlay and no other handle
+- Only the current handle of a channel controls that channel's overlay. A handle that is not the current handle of its channel (a replaced handle, a handle cleared by `clear_handle`, `clear_owner` or owner destruction, a handle settled as `Failed`) cannot control the overlay: `skip_to_end` and `clear_handle` on that handle change no overlay and no other handle
 - The result of a handle is set only once. `wait_result` after it is set returns that result without waiting
 
 ### playback
@@ -125,9 +125,7 @@ none
 | operation | input | output | failure value | caller |
 |---|---|---|---|---|
 | `get_overlay_state` | `ScreenEffectChannel` | rectangle, color, opacity and whether displayed of that channel's overlay | empty rectangle, black, opacity 0, `false` | core test |
-| `set_world_skip` | whether skipped | none | none | `QACore`, core test |
 
-- World skip: off at `init`, changed by `set_world_skip`, and turned off by `release`. While it is on, a `fade`, `flash` or `play_preset` on `World` that passes the input check returns an effect handle settled as `Completed`, does not replace the current handle of `World`, changes no overlay, starts no tween and publishes no `ScreenEffectStartedEvent`. A `World` effect that started before it turned on goes on. It does not change the `Cutscene` and `Transition` channels
 
 ## test
 
@@ -144,4 +142,3 @@ none
 - Playing a preset that changes only `Opacity` on a channel without an effect makes the overlay color black. For a preset whose durations are all 0, when the operation returns, the end value is on the overlay and the result is `Completed`
 - After `release` there is no overlay, and after `init` again a fade ends with `Completed`
 - After `set_flash_opacity_limit`(0.3), during a `flash` with maximum opacity 1 the overlay opacity does not exceed 0.3 in any frame, and a `fade` reaches the target opacity 1
-- After `set_world_skip`(`true`), a `World` `flash` returns a handle whose `wait_result` is `Completed` without waiting, the `World` overlay stays hidden, and there is no `ScreenEffectStartedEvent` and no `TweenCore.TweenStartedEvent`. A `World` fade started before it keeps playing to its end, also after `skip_to_end` and `clear_handle` of the handle of that flash, and a `Transition` fade plays and publishes its event. A request with an out-of-range opacity is still `Failed` with one error log. After `set_world_skip`(`false`), a `World` flash plays and publishes its event
