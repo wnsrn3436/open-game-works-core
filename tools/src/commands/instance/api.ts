@@ -425,52 +425,67 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
     if (evictFailure !== null) throw evictFailure;
     return info;
   } catch (error) {
-    const failures = await cleanUpFailedStart(ctx, game, id, made.worktree, hooks);
+    const { failures, notStopped } = await cleanUpFailedStart(ctx, game, id, made.worktree, hooks);
     // the start ends only once the removal ended, and a removal that failed fails it too
     const evictFailure = await evicted;
     if (evictFailure !== null && evictFailure !== error) failures.push(`removing the import cache entries beyond those kept: ${evictFailure.message}`);
-    throw withCleanupFailures(error, failures);
+    throw withCleanupFailures(error, failures, notStopped);
   }
 }
 
 /**
  * Stops the instance of a failed start and removes its worktree, each step even when another failed; the messages of
- * the steps that failed. An instance a stop already removed is no failure: a stop of the id (`onReserved`) that came
- * before the worktree add left the record gone and the worktree here.
+ * the steps that failed, and the instance with the failure of its stop when the stop failed. An instance a stop already
+ * removed is no failure: a stop of the id (`onReserved`) that came before the worktree add left the record gone and the
+ * worktree here.
  */
-async function cleanUpFailedStart(ctx: Context, game: GameRepo, id: string, worktree: string | null, hooks: StartHooks): Promise<string[]> {
+async function cleanUpFailedStart(ctx: Context, game: GameRepo, id: string, worktree: string | null, hooks: StartHooks): Promise<{ failures: string[]; notStopped: NotStopped | null }> {
   const failures: string[] = [];
-  const step = async (what: string, work: () => Promise<void>): Promise<void> => {
+  const step = async (what: string, work: () => Promise<void>): Promise<string | null> => {
     try {
       await work();
+      return null;
     } catch (error) {
-      if (!(error instanceof InstanceNotFound)) failures.push(`${what}: ${(error as Error).message}`);
+      if (error instanceof InstanceNotFound) return null;
+      const message = (error as Error).message;
+      failures.push(`${what}: ${message}`);
+      return message;
     }
   };
   const keep = hooks.beforeFailedStop;
   if (keep !== undefined) await step('keeping the instance files', () => keep(id));
-  await step(`stopping instance ${id}`, () => stopInstance(ctx, id));
+  const stopFailure = await step(`stopping instance ${id}`, () => stopInstance(ctx, id));
   // the stop removes the worktree its record names; one it did not remove is removed here
   if (worktree !== null && exists(worktree)) await step(`removing the worktree ${worktree}`, () => worktreeRemove(game.mainRoot, worktree, { env: ctx.env }));
-  return failures;
+  return { failures, notStopped: stopFailure === null ? null : { instance: id, error: stopFailure } };
 }
 
 /**
  * The failure of a start whose cleanup failed too: the start failure with the cleanup failures added to its message,
- * its exit code and `data` kept; the start failure itself when the cleanup did not fail.
+ * its exit code and `data` kept, and in `data` the instance the cleanup could not stop (`notStopped`); the start
+ * failure itself when the cleanup did not fail.
  */
-function withCleanupFailures(error: unknown, failures: readonly string[]): unknown {
+function withCleanupFailures(error: unknown, failures: readonly string[], notStopped: NotStopped | null): unknown {
   if (failures.length === 0) return error;
   const start = asStartFailure(error);
-  return new OgwError(`${start.message}\nthe cleanup after the failed start failed: ${failures.join('; ')}`, start.exitCode, start.data);
+  const data = notStopped === null ? start.data : { ...(start.data as StartFailure), notStopped } satisfies StartFailure;
+  return new OgwError(`${start.message}\nthe cleanup after the failed start failed: ${failures.join('; ')}`, start.exitCode, data);
+}
+
+/** The instance of a failed start that its cleanup could not stop, and the failure of that stop. */
+export interface NotStopped {
+  instance: string;
+  error: string;
 }
 
 /**
  * `data` of the `OgwError` `startInstance` throws: `wait-timeout` when no slot came within
- * `instanceWaitTimeoutMs`, `fixture` when a save fixture step failed, `start` for every other failure.
+ * `instanceWaitTimeoutMs`, `fixture` when a save fixture step failed, `start` for every other failure. `notStopped`
+ * is there when the cleanup after the failed start could not stop its instance, which may then still run.
  */
 export interface StartFailure {
   reason: 'wait-timeout' | 'fixture' | 'start';
+  notStopped?: NotStopped;
 }
 
 function asStartFailure(error: unknown): OgwError {

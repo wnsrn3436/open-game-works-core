@@ -21,8 +21,12 @@ vi.mock('../../../src/commands/instance/lib/launch.ts', async (importOriginal) =
   return { ...real, ...(await import('./mocks/apis.ts')).launchOverrides(real) };
 });
 
-/** Runs around the `git worktree add` of a `commit` start; reset after each test. */
-const worktreeHooks = vi.hoisted(() => ({ before: null as (() => Promise<void>) | null, after: null as (() => Promise<void>) | null }));
+/** Runs around the `git worktree add` of a `commit` start, and before each `git worktree remove`; reset after each test. */
+const worktreeHooks = vi.hoisted(() => ({
+  before: null as (() => Promise<void>) | null,
+  after: null as (() => Promise<void>) | null,
+  remove: null as (() => Promise<void>) | null,
+}));
 
 vi.mock('../../../src/lib/git.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../src/lib/git.ts')>();
@@ -33,6 +37,10 @@ vi.mock('../../../src/lib/git.ts', async (importOriginal) => {
       await real.worktreeAdd(...args);
       await worktreeHooks.after?.();
     },
+    worktreeRemove: async (...args: Parameters<typeof real.worktreeRemove>) => {
+      await worktreeHooks.remove?.();
+      await real.worktreeRemove(...args);
+    },
   };
 });
 
@@ -41,6 +49,7 @@ let runner: Runner | null = null;
 afterEach(async () => {
   worktreeHooks.before = null;
   worktreeHooks.after = null;
+  worktreeHooks.remove = null;
   if (runner) await stopAll(runner);
   runner = null;
 });
@@ -352,6 +361,23 @@ describe('ogw instance start', () => {
     expect(failure?.data).toEqual({ reason: 'start' });
     expect(seen).toEqual([{ folder: true, runnerLog: true, mainPid: true }]);
     expect(await listRecords(env)).toEqual([]);
+  });
+
+  it('names in the start failure the instance that the cleanup after the failed start could not stop', async () => {
+    runner = setupRunner();
+    runner.config({ clients: { main: { exitOnStart: 3 } } });
+    const ctx = ctxOf(runner);
+    const sha = sh(runner.root, 'git', ['rev-parse', 'HEAD']).trim();
+    let id = '';
+    // the stop of the cleanup fails at the removal of the worktree of the instance, and so does the removal after it
+    worktreeHooks.remove = () => Promise.reject(new Error('the worktree removal broke'));
+    const failure = await startInstance(ctx, { game: 'g', commit: sha }, { onReserved: (reserved) => (id = reserved) }).then(() => null, (error: unknown) => error as OgwError);
+    worktreeHooks.remove = null;
+    expect(failure?.message).toMatch(/\nthe cleanup after the failed start failed: stopping instance [^:]+: the worktree removal broke; removing the worktree .+: the worktree removal broke$/);
+    expect(failure?.data).toEqual({ reason: 'start', notStopped: { instance: id, error: 'the worktree removal broke' } });
+    // a cleanup whose stop does not fail names no instance (the failure of beforeFailedStop: `{ reason: 'start' }` above)
+    const plain = await startInstance(ctx, { game: 'g', commit: sha }).then(() => null, (error: unknown) => error as OgwError);
+    expect(plain?.data).toEqual({ reason: 'start' });
   });
 
   it('fails a start whose agent job record cannot be read, instead of taking that agent as ended or as none', async () => {

@@ -14,7 +14,7 @@ import { readEnvResult, writeEnvResult, type InstanceMeasureTarget, type Measure
 import { MIN_SCENE_SAMPLES, fpsHolds, measureScenario } from '../check/lib/performance.ts';
 import { parseScenario, type Scenario } from '../check/lib/scenario.ts';
 import { runStandardStage } from '../generation/lib/standard.ts';
-import { startInstance, stopInstance, type InstanceInfo, type InstanceOptions } from './api.ts';
+import { startInstance, stopInstance, type InstanceInfo, type InstanceOptions, type StartFailure } from './api.ts';
 import { gameTargetFps } from './lib/prepare.ts';
 
 /** Interval of `get_state` polling while a scenario condition is not true yet. */
@@ -114,16 +114,18 @@ async function scenarioHolds(ctx: Context, id: string, scenario: Scenario, targe
  */
 async function countHolds(ctx: Context, target: Target, scenario: Scenario, count: number): Promise<{ holds: boolean; reason: string | null }> {
   const started: InstanceInfo[] = [];
+  // the stops that failed in the cleanup of a failed start: those instances may still run
+  const failures: string[] = [];
   let held: { holds: boolean; reason: string | null } | null = null;
   let thrown: { error: unknown } | null = null;
   try {
-    held = await measureCount(ctx, target, scenario, count, started);
+    held = await measureCount(ctx, target, scenario, count, started, failures);
   } catch (error) {
     thrown = { error };
   }
-  // an instance left running would load the next count: a stop that fails fails the measure, after the others stopped
-  // (ogw.md `## instance measure`); an error the count threw stays the error, with the stop failures added to it
-  const failures: string[] = [];
+  // an instance left running would load the next count: a stop that fails, here or in the cleanup of a failed start,
+  // fails the measure, after the others stopped (ogw.md `## instance measure`); an error the count threw stays the
+  // error, with the stop failures added to it
   for (const info of started) {
     await stopInstance(ctx, info.id).catch((error: unknown) => {
       failures.push(`instance ${info.id}: ${(error as Error).message}`);
@@ -140,10 +142,25 @@ async function countHolds(ctx: Context, target: Target, scenario: Scenario, coun
   return held as { holds: boolean; reason: string | null };
 }
 
-/** Starts the instances of a count into `started` and runs the scenario on each (`countHolds`, which stops them). */
-async function measureCount(ctx: Context, target: Target, scenario: Scenario, count: number, started: InstanceInfo[]): Promise<{ holds: boolean; reason: string | null }> {
+/** The instance of a failed start that its cleanup could not stop, as a stop failure line (`StartFailure`); null otherwise. */
+function notStoppedLine(error: unknown): string | null {
+  const notStopped = error instanceof OgwError ? (error.data as Partial<StartFailure> | undefined)?.notStopped : undefined;
+  return notStopped === undefined ? null : `instance ${notStopped.instance}: ${notStopped.error}`;
+}
+
+/**
+ * Starts the instances of a count into `started` and runs the scenario on each (`countHolds`, which stops them). The
+ * instances of failed starts that their cleanup could not stop go to `notStopped`.
+ */
+async function measureCount(ctx: Context, target: Target, scenario: Scenario, count: number, started: InstanceInfo[], notStopped: string[]): Promise<{ holds: boolean; reason: string | null }> {
   const starts = await Promise.allSettled(Array.from({ length: count }, () => startInstance(ctx, { ...target.options, ignoreConcurrencyLimit: true })));
-  for (const start of starts) if (start.status === 'fulfilled') started.push(start.value);
+  for (const start of starts) {
+    if (start.status === 'fulfilled') started.push(start.value);
+    else {
+      const line = notStoppedLine(start.reason);
+      if (line !== null) notStopped.push(line);
+    }
+  }
   const failed = starts.findIndex((start) => start.status === 'rejected');
   if (failed >= 0) {
     const error = (starts[failed] as PromiseRejectedResult).reason as Error;

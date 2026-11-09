@@ -20,6 +20,10 @@ interface State {
   statsFailAt: number | null;
   /** Ids of the instances whose stop fails. */
   stopFails: Set<string>;
+  /** What fails in the cleanup of a start that fails (`startFailAt`): nothing, the removal of its worktree, or its stop. */
+  cleanupFails: 'worktree' | 'stop' | null;
+  /** Failed starts so far. */
+  failedStarts: number;
   seenRoots: string[];
   starting: number;
   maxStarting: number;
@@ -40,6 +44,8 @@ const state = vi.hoisted(
     startFailAt: null,
     statsFailAt: null,
     stopFails: new Set<string>(),
+    cleanupFails: null,
+    failedStarts: 0,
     seenRoots: [],
     starting: 0,
     maxStarting: 0,
@@ -54,8 +60,17 @@ vi.mock('../../../src/commands/core/api.ts', () => ({
 }));
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({
-  startInstance: (_ctx: unknown, options: Record<string, unknown>) => {
-    if (state.startFailAt !== null && state.running.size + 1 >= state.startFailAt) return Promise.reject(new Error('no free port'));
+  startInstance: async (_ctx: unknown, options: Record<string, unknown>) => {
+    if (state.startFailAt !== null && state.running.size + 1 >= state.startFailAt) {
+      if (state.cleanupFails === null) throw new Error('no free port');
+      // the start failure of startInstance with the failure of its cleanup (`StartFailure`)
+      const { OgwError } = await import('../../../src/lib/errors.ts');
+      state.failedStarts++;
+      const failed = `f${String(state.failedStarts)}`;
+      const cleanup = state.cleanupFails === 'stop' ? `stopping instance ${failed}: cannot kill ${failed}` : `removing the worktree /w/${failed}: busy`;
+      const notStopped = state.cleanupFails === 'stop' ? { notStopped: { instance: failed, error: `cannot kill ${failed}` } } : {};
+      throw new OgwError(`no free port\nthe cleanup after the failed start failed: ${cleanup}`, 1, { reason: 'start', ...notStopped });
+    }
     state.next++;
     const id = `i${String(state.next)}`;
     state.running.add(id);
@@ -162,6 +177,8 @@ afterEach(() => {
   state.startFailAt = null;
   state.statsFailAt = null;
   state.stopFails.clear();
+  state.cleanupFails = null;
+  state.failedStarts = 0;
   state.seenRoots = [];
   state.starting = 0;
   state.maxStarting = 0;
@@ -299,6 +316,8 @@ describe('ogw instance measure', () => {
     const { ws, env } = setup();
     state.versions = [];
     state.stopFails.add('i1');
+    // one instance first: no scenario of another instance of the count runs on after the count threw
+    measureHost.cpus = () => 2;
     const record = vi.mocked(readRecord).getMockImplementation() as typeof readRecord;
     // the scenario of instance i1 fails: the count throws, then the stop of i1 fails too
     vi.mocked(readRecord).mockImplementation((id, e) => (id === 'i1' ? Promise.reject(new Error('the record of i1 broke')) : record(id, e)));
@@ -310,7 +329,40 @@ describe('ogw instance measure', () => {
       expect(existsSync(join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'instance-measure.json'))).toBe(false);
     } finally {
       vi.mocked(readRecord).mockImplementation(record);
+      measureHost.cpus = () => 4;
     }
+  });
+
+  it('fails without a result when the cleanup of a failed start could not stop its instance; another cleanup failure only breaks the count', async () => {
+    const { ws, env } = setup();
+    state.versions = [];
+    const result = join(ws.harness, '.git', 'ogw-temp', 'ogw-env', 'instance-measure.json');
+    // a cleanup that removed no worktree but stopped the instance: the count did not hold, with the reason
+    state.startFailAt = 3;
+    state.cleanupFails = 'worktree';
+    const kept = await ogw(ws, ['instance', 'measure', '--json'], { env });
+    expect(JSON.parse(kept.stdout)).toMatchObject({ targets: [{ name: 'g', kind: 'game', value: 2, detail: 'instance 3 of 3 did not start: no free port\nthe cleanup after the failed start failed: removing the worktree /w/f3: busy' }] });
+    rmSync(result);
+    // a cleanup that could not stop the instance of the failed start: that instance would load the next count
+    state.failedStarts = 0;
+    state.cleanupFails = 'stop';
+    const run = await ogw(ws, ['instance', 'measure'], { env });
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain('g: the measured instances were not all stopped: instance f1: cannot kill f1; instance f2: cannot kill f2');
+    expect(state.running.size).toBe(0);
+    expect(existsSync(result)).toBe(false);
+    // at 1 instance the start failure stays the error, with the stop failure added to it
+    state.startFailAt = 1;
+    state.failedStarts = 0;
+    measureHost.cpus = () => 2;
+    let first: Awaited<ReturnType<typeof ogw>>;
+    try {
+      first = await ogw(ws, ['instance', 'measure'], { env });
+    } finally {
+      measureHost.cpus = () => 4;
+    }
+    expect(first.stderr).toContain('g: the first instance did not start: no free port\nthe cleanup after the failed start failed: stopping instance f1: cannot kill f1\ng: the measured instances were not all stopped: instance f1: cannot kill f1');
+    expect(existsSync(result)).toBe(false);
   });
 
   it('fails without a result when the first instance does not start', async () => {
