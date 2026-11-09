@@ -1,12 +1,5 @@
 {
   "target": "core test",
   "nextId": 2,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/src/commands/instance/lib/launch.ts:158",
-      "problem": "The runner does not pass the launch value `OGW_FRAME_STEP_FPS` that tools/ogw.md:666 (flash recording: \"gets the decimal text of the same fps, as a JSON string, as the launch value `OGW_FRAME_STEP_FPS`\") and tools/ogw.md:597 (`ogw video`) now require. `LaunchValues` has no `OGW_FRAME_STEP_FPS`, and `clientLaunch` with `movie` adds only `--resolution`, `--write-movie`, `--fixed-fps` to the engine arguments (launch.ts:188-191); `grep OGW_FRAME_STEP_FPS tools/src` finds nothing. Commit dd86197 removed the Godot TimeCore row that read the fps from `--fixed-fps` / `editor/movie_writer/fps`, so a core made to the current specs has `get_frame_step_fps` 0 in a flash recording: the frame step check of tools/ogw.md:388 (tools/src/commands/check/lib/flash-check.ts:248) then makes every flash check `unknown`, and `ogw video` records without a frame step",
-      "foundBy": "core test round 1"
-    }
-  ]
+  "items": []
 }
