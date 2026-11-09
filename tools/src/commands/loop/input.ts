@@ -8,7 +8,7 @@ import { changeOpenRun, type RunState } from '../../lib/runstate.ts';
 import { releasedProposals } from '../core/api.ts';
 import { DEFECT_COLUMNS, defectRow, type DefectsFile, type DefectStatus } from './lib/defects.ts';
 import { document, renderTable } from './lib/markdown.ts';
-import type { IterationKind } from './lib/files.ts';
+import { readMeasureFile, type IterationKind } from './lib/files.ts';
 import { abs, confirmOf, coreUpgrade, iterationKind, MEMORABLE_MOMENT_KEY, openTarget, readRunJson, runFileExists, runRel, settingsCommitFailures } from './lib/run.ts';
 import { ART_DIRECTION_FILE, MEMORABLE_MOMENT, NAME_FILE, readJudgeMoments } from './lib/setup.ts';
 
@@ -86,6 +86,26 @@ async function defectsBody(game: GameRepo, run: RunState, kind: IterationKind): 
   return defects.length > 0 ? renderTable([...DEFECT_COLUMNS], defects.map(defectRow)) : 'none';
 }
 
+/**
+ * `## measurements`: the path of the latest `measure-<n>.json` of an iteration before `iteration` and its targets whose
+ * `result` is `out`; `none` when no earlier iteration has a measure file. They are notes, not defects.
+ */
+async function measurementsBody(game: GameRepo, run: RunState, iteration: number): Promise<string> {
+  for (let n = iteration - 1; n >= 1; n -= 1) {
+    const rel = runRel(run, `measure-${String(n)}.json`);
+    const file = await readMeasureFile(abs(game, rel));
+    if (file === null) continue;
+    const out = file.targets.filter((t) => t.result === 'out');
+    const table = out.length > 0
+      ? renderTable(['metric', 'value', 'range', 'data'], out.map((t) => [
+        t.metric, t.value === null ? 'none' : String(t.value), `${String(t.min)}..${String(t.max)}`, t.data ?? 'none',
+      ]))
+      : 'none';
+    return `${rel}\n\n${table}`;
+  }
+  return 'none';
+}
+
 export const loopInput: CommandDef = {
   name: ['loop', 'input'],
   usage: USAGE,
@@ -113,6 +133,7 @@ export const loopInput: CommandDef = {
       ['request', await requestBody(game, run, brief)],
       ['previous record', runFileExists(game, run, previous) ? runRel(run, previous) : 'none'],
       ['defects', await defectsBody(game, run, kind)],
+      ['measurements', await measurementsBody(game, run, n)],
     ]);
     const rel = runRel(run, `content-input-${String(n)}.md`);
     await writeFileAtomic(abs(game, rel), text);

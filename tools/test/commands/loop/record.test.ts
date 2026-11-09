@@ -131,21 +131,19 @@ async function iterationOne(): Promise<{ g: TestGame; sha: string }> {
 }
 
 describe('ogw loop findings', () => {
-  it('collects check, measure, play and judge findings and discards incomplete ones', async () => {
+  it('collects check, play and judge findings, makes none of a target of ogw measure out of its range, and discards incomplete ones', async () => {
     const { g } = await iterationOne();
     // a row without a capture cell, and a row that cannot be read
     write(g.root, `${R}/play-1-1.md`, `${FEEDBACK}5000 | menu | open | freezes | stuck | blocker\n6000 | broken row\n`);
     commit(g.root);
     const out = await ogw(g.ws, ['loop', 'findings', 'g']);
-    expect(out).toMatchObject({ code: 0, stdout: `${R}/findings-1.json\nfindings: 9\ndiscarded: 4\n` });
+    expect(out).toMatchObject({ code: 0, stdout: `${R}/findings-1.json\nfindings: 7\ndiscarded: 4\n` });
     const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
     const base = { id: null, drop: null };
     expect(file.findings).toEqual([
       { ...base, source: 'check', severity: null, owner: null, where: 'data/tables/a.csv:3', what: 'id_name bad', why: null, evidence: [`${R}/check-1.json#static check`, 'log.txt'] },
       { ...base, source: 'check', severity: null, owner: 'client content', where: 'data/tables/s.csv:2', what: 'error [s1] crashed', why: null, evidence: [`${R}/check-1.json#row simulation`] },
       { ...base, source: 'check', severity: null, owner: 'data', where: 'data/tables/s.csv:3', what: 'out [s2] too slow', why: null, evidence: [`${R}/check-1.json#row simulation`] },
-      { ...base, source: 'check', severity: null, owner: 'design', where: 'fps', what: 'value 20 out of 30..60', why: null, evidence: [`${R}/measure-1.json#fps`] },
-      { ...base, source: 'check', severity: null, owner: 'data', where: 'gold_rate', what: 'value 9 out of 1..5', why: null, evidence: [`${R}/measure-1.json#gold_rate`] },
       { ...base, source: 'play', severity: 'blocker', owner: null, where: 'lobby', what: 'tap start → nothing happens', why: 'stuck', evidence: ['cap/1.png', `${R}/play-1-1.md:7`] },
       { ...base, source: 'play', severity: null, owner: null, where: 'run', what: 'dash → slow', why: 'bad', evidence: [`${R}/play-1-1.md:10`] },
       { ...base, source: 'play', severity: 'blocker', owner: null, where: 'menu', what: 'open → freezes', why: 'stuck', evidence: [`${R}/play-1-1.md:11`] },
@@ -168,16 +166,6 @@ describe('ogw loop findings', () => {
     git(g.root, 'rm', '-q', 'resource/resources.csv');
     commit(g.root);
     expect((await ogw(g.ws, ['loop', 'findings', 'g'])).code).toBe(0);
-  });
-
-  it('reads the integer bounds above 2^53 of measure-<n>.json with their digits', async () => {
-    const { g, sha } = await iterationOne();
-    // the digits as `ogw measure` writes them: a JSON number that a JS number would round
-    write(g.root, `${R}/measure-1.json`, `{"commit": "${sha}", "targets": [{"metric": "content.gold", "min": 9007199254740993, "max": 9007199254740995, "value": 9007199254740992, "result": "out", "data": null}]}\n`);
-    commit(g.root);
-    expect((await ogw(g.ws, ['loop', 'findings', 'g'])).code).toBe(0);
-    const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
-    expect(file.findings.filter((f) => f.where === 'content.gold').map((f) => f.what)).toEqual(['value 9007199254740992 out of 9007199254740993..9007199254740995']);
   });
 
   it('makes judge findings of the failed vs reference rows with the judge result path, for main and success judges', async () => {
@@ -326,8 +314,8 @@ describe('ogw loop record', () => {
 
   it('merges findings into the defect list and writes the iteration record', async () => {
     const { g, sha } = await iterationOne();
-    // an in-range target with integer bounds above 2^53, as `ogw measure` writes their digits: no finding, and its range
-    // in the record keeps the digits
+    // a target with integer bounds above 2^53, as `ogw measure` writes their digits: its range in the record keeps the
+    // digits, and no target makes a finding
     const measure = read(g.root, `${R}/measure-1.json`).replace(
       '"targets": [',
       '"targets": [{"metric": "content.gold", "min": 9007199254740993, "max": 9007199254740995, "value": 9007199254740994, "result": "in", "data": null}, ',
@@ -335,7 +323,7 @@ describe('ogw loop record', () => {
     write(g.root, `${R}/measure-1.json`, measure);
     await ogw(g.ws, ['loop', 'findings', 'g']);
     const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
-    const ids = ['static-bad', 'sim-crash', 'sim-slow', 'low-fps', 'gold', 'start-stuck', 'dash', 'boss'];
+    const ids = ['static-bad', 'sim-crash', 'sim-slow', 'start-stuck', 'dash', 'boss'];
     write(g.root, `${R}/content-1.md`, '## defects\n\n| id | result | note |\n|---|---|---|\n| static-bad | fixed | |\n');
     write(g.root, `${R}/defects.json`, {
       defects: [
@@ -346,7 +334,7 @@ describe('ogw loop record', () => {
       recordedBy: 'iteration-0',
     });
     commit(g.root);
-    write(g.root, `${R}/findings-1.json`, filled(file, (_f, i) => ({ id: i === 6 ? null : (ids[i] ?? 'x'), drop: i === 6 ? 'placeholder' : null })));
+    write(g.root, `${R}/findings-1.json`, filled(file, (_f, i) => ({ id: i === 4 ? null : (ids[i] ?? 'x'), drop: i === 4 ? 'placeholder' : null })));
     const out = await ogw(g.ws, ['loop', 'record', 'g']);
     expect(out).toMatchObject({ code: 0, stdout: `${R}/defects.json\n${R}/iteration-1.md\n` });
     const defects = readJsonFile(g.root, `${R}/defects.json`) as DefectsFile;
@@ -361,8 +349,6 @@ describe('ogw loop record', () => {
       ['static-bad', 'minor', 'open'],
       ['sim-crash', 'minor', 'open'],
       ['sim-slow', 'minor', 'open'],
-      ['low-fps', 'minor', 'open'],
-      ['gold', 'minor', 'open'],
       ['old', 'major', 'fixed'],
     ]);
     const record = read(g.root, `${R}/iteration-1.md`);
@@ -530,15 +516,11 @@ describe('ogw loop record', () => {
     await openLoopRun(g, { iteration: 2 });
     const d = (id: string, source: string, evidence: string[]): object => ({ id, severity: 'minor', owner: 'data', where: 'w', what: 'x', why: 'y', evidence, source, status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
     const perf = `${R}/check-1.json#performance`;
-    const fps = `${R}/measure-1.json#fps`;
     write(g.root, `${R}/defects.json`, {
       defects: [
         d('chk-pass', 'check', [perf]),
         d('chk-unknown', 'check', [`${R}/check-1.json#static check`]),
         d('chk-found', 'check', [perf]),
-        d('msr-in', 'check', [fps]),
-        d('msr-found', 'check', [fps]),
-        d('msr-unknown', 'check', [`${R}/measure-1.json#load`]),
         d('ply-fixed', 'play', ['p']),
         d('ply-found', 'play', ['p']),
         d('jdg', 'judge', ['j']),
@@ -575,17 +557,14 @@ describe('ogw loop record', () => {
       measure: `${R}/measure-2.json`,
     });
     const found = (id: string, source: string): object => ({ source, severity: 'minor', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: ['e'], id, drop: null });
-    write(g.root, `${R}/findings-2.json`, { findings: [found('chk-found', 'check'), found('msr-found', 'check'), found('ply-found', 'play')], discarded: [] });
+    write(g.root, `${R}/findings-2.json`, { findings: [found('chk-found', 'check'), found('ply-found', 'play')], discarded: [] });
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     const defects = (readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects;
     expect(defects.map((x) => [x.id, x.status, x.repeatedDefect])).toEqual([
       ['chk-found', 'open', 1],
-      ['msr-found', 'open', 1],
       ['ply-found', 'open', 1],
       ['chk-pass', 'fixed', 0],
       ['chk-unknown', 'awaiting confirmation', 0],
-      ['msr-in', 'fixed', 0],
-      ['msr-unknown', 'awaiting confirmation', 0],
       ['ply-fixed', 'fixed', 0],
       ['jdg', 'awaiting confirmation', 0],
       ['hrd', 'awaiting confirmation', 0],

@@ -172,7 +172,7 @@ Completeness is judged by the five elements below, and all of them are checked b
 
 1. The server hardening agent and the client hardening agent harden based on the contract
 2. When a hardening agent meets a problem that is solved only by editing outside its own folder (`server/` or `client/`), or a static check failure that the commit hardening starts from already has, it does not fix it and writes it in the hardening record in `records/`. Within the build command, the work goes back to the loop, the content agent fixes it, then hardening runs again
-3. Loop steps 2 to 4 run once with the hardened code. The DB is PostgreSQL. When one of regression test, static check, no blocker, full flow does not pass, or the judge result is worse than the baseline game, the work goes back to the loop
+3. Loop step 2 runs once with the hardened code. The DB is PostgreSQL. When one of regression test, static check, no blocker, full flow does not pass, the work goes back to the loop
 4. The game is built
 
 - The hardening result is committed. The next loop continues on top of the hardened code

@@ -8,7 +8,6 @@ import { branchExists, git, revParse, statusLines } from '../../lib/git.ts';
 import { changeRuns, newRunState, openRun, type RunState } from '../../lib/runstate.ts';
 import type { GameSettings } from '../../lib/settings.ts';
 import { adminCall } from '../admin/api.ts';
-import { requireReference } from '../loop/lib/api.ts';
 import { contractVersionAt, dataVersionsAt, withCommitCheckout } from './lib/atcommit.ts';
 import { buildDir, gameSettingsAt, type BuildRunData } from './lib/buildrun.ts';
 import { hostProblems, requireOperatorSecret } from './lib/host.ts';
@@ -32,8 +31,6 @@ async function preconditions(ctx: Context, game: GameRepo): Promise<void> {
   await refuseWhileCalibrating(ctx, game.name);
   const changes = await statusLines(game.root, { env: ctx.env });
   if (changes.length > 0) throw new OgwError(`the checkout has changes:\n${changes.join('\n')}`, 1, { changes });
-  // build step 4 runs the judge agents, which need every gameplay video; fail before hardening starts
-  await requireReference(game);
 }
 
 function choosePlatforms(given: string[], settings: GameSettings): string[] {

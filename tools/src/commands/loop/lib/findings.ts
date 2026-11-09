@@ -7,7 +7,7 @@ import type { RunState } from '../../../lib/runstate.ts';
 import { buildTagName, parseHardeningRecordName } from '../../build/lib/names.ts';
 import { parseKey, readList } from '../../resource/lib/list.ts';
 import { isSeverity, type Defect, type DefectsFile, type Finding, type FindingsFile } from './defects.ts';
-import type { CheckFile, EvaluateFile, MeasureFile } from './files.ts';
+import type { CheckFile, EvaluateFile } from './files.ts';
 import { cell, column, parseTable, section, type Table } from './markdown.ts';
 import { judgeDefects, observations, referenceRows } from './results.ts';
 import { abs, confirmOf, iterationResults, readGameText, runRel } from './run.ts';
@@ -68,18 +68,6 @@ export function checkFindings(check: CheckFile, checkPath: string): Finding[] {
     }
   }
   return out;
-}
-
-export function measureFindings(measure: MeasureFile, measurePath: string): Finding[] {
-  return measure.targets
-    .filter((t) => t.result === 'out')
-    .map((t) => finding({
-      source: 'check',
-      owner: t.data === null ? 'design' : 'data',
-      where: t.metric,
-      what: `value ${String(t.value)} out of ${String(t.min)}..${String(t.max)}`,
-      evidence: [`${measurePath}#${t.metric}`],
-    }));
 }
 
 export function playFindings(text: string, feedbackPath: string): Finding[] {
@@ -174,13 +162,14 @@ async function uiPlaceholders(game: GameRepo): Promise<boolean> {
 }
 
 /**
- * Findings of iteration `n`: its check file, and when it has an evaluate file, its measure, done plays and done judges.
+ * Findings of iteration `n`: its check file, and when it has an evaluate file, its done plays and done judges. The
+ * targets of `ogw measure` out of their range are no finding: the content input shows them (ogw.md `## agent`).
  * A confirmation iteration takes only the `blocker` observations of the plays.
  */
 export async function iterationFindings(game: GameRepo, run: RunState, n: number): Promise<FindingsFile> {
   const confirming = confirmOf(run, n) !== null;
   const all: Finding[] = [];
-  const { checkRel, check, evaluate, measure } = await iterationResults(game, run, n);
+  const { checkRel, check, evaluate } = await iterationResults(game, run, n);
   if (check) {
     const defectsText = await readGameText(game, runRel(run, 'defects.json'));
     const defects = defectsText === null ? [] : (JSON.parse(defectsText) as DefectsFile).defects;
@@ -188,7 +177,6 @@ export async function iterationFindings(game: GameRepo, run: RunState, n: number
   }
   if (evaluate) {
     all.push(...memorableMomentFindings(evaluate, runRel(run, `evaluate-${String(n)}.json`)));
-    if (evaluate.measure !== null && measure) all.push(...measureFindings(measure, evaluate.measure));
     for (const play of evaluate.plays.filter((p) => p.status === 'done')) {
       const text = await readGameText(game, play.result);
       if (text !== null) all.push(...playFindings(text, play.result).filter((f) => !confirming || f.severity === 'blocker'));

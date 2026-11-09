@@ -86,6 +86,7 @@
     "waitShare": 0.25,
     "idleShare": 0.2,
     "outlierRatio": 3,
+    "outlierMinMs": 10000,
     "history": 20
   },
   "paths": {

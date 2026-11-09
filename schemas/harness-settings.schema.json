@@ -435,6 +435,7 @@
         "waitShare",
         "idleShare",
         "outlierRatio",
+        "outlierMinMs",
         "history"
       ],
       "properties": {
@@ -454,6 +455,11 @@
           "description": "A span that lasts more than this many times the median of the earlier spans of its name and game is flagged `outlier`",
           "type": "number",
           "exclusiveMinimum": 1
+        },
+        "outlierMinMs": {
+          "description": "The shortest duration of a span that can be flagged `outlier`",
+          "type": "integer",
+          "minimum": 0
         },
         "history": {
           "description": "The number of the last earlier spans of the same name and game whose median `outlier` compares with",
