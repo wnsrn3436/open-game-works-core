@@ -104,9 +104,10 @@ The content agent requests, and in `game-loop` and `build`, `ogw loop dispatch` 
   - rows whose `status` is `requested` and whose resource key is in no request file written in this run
   - rows whose `status` is `temporary` and whose resource key is in no request file written in this run
   - rows whose `status` is `requested`, for which every request file of this run that holds that resource key has a result file `<request file name>-result.md`, and for which the number of those request files is at most harness settings `backgroundRetryLimit`. These are rows whose assigned work ended without them becoming final
-  - It leaves out a `nine_slice` row whose long side of `size` is under 256, and a `nine_slice` or `icon` row while `resources.csv` has no `image/ui_kit` row, changes nothing of that row, and prints its resource key
+  - It leaves out a `nine_slice` row whose long side of `size` is under 256, and a `nine_slice` or `icon` row while `resources.csv` has no `image/ui_kit` row or `image/ui_kit` ended this run unfinished, changes nothing of that row, and prints its resource key
+- `image/ui_kit` ended this run unfinished when its `status` is `temporary` or `requested`, it is in one or more request files of this run, each of them has a result file, and, for `requested`, they are more than `backgroundRetryLimit`. `--pending` does not request it again in this run, and a `nine_slice` or `icon` key cannot be finalized while `image/ui_kit` is not `final`
 - A request that names a `nine_slice` key whose long side of `size` is under 256 fails and changes nothing
-- A request that names a `nine_slice` or `icon` key fails and changes nothing when `resources.csv` has no `image/ui_kit` row, or when `image/ui_kit` is `placeholder` or `temporary`, is not a key of that request and is in no request file of this run
+- A request that names a `nine_slice` or `icon` key fails and changes nothing when `resources.csv` has no `image/ui_kit` row, or when `image/ui_kit` is not a key of that request and either is `placeholder` or `temporary` and in no request file of this run, or ended this run unfinished
 - `--see`: existing final resource keys to look at together. The content agent picks them
 - `--base`: an existing final resource key to use as the base when requesting a variant of the same target. The content agent picks it
 - A request file has three sections, `## keys` (the requested resource keys), `## see` and `## base`, and each section is a list with one resource key per line. An empty section is one line `none`

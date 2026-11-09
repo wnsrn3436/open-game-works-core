@@ -140,6 +140,47 @@ describe('ogw resource request', () => {
     expect(both).toMatchObject({ keys: ['icon/coin', 'nine_slice/panel', 'image/hero', 'image/ui_kit'], leftOut: [] });
   });
 
+  it('leaves out and refuses nine_slice and icon keys while image/ui_kit ended this run unfinished', async () => {
+    const keys = (list: string): string => `## keys\n\n${list}\n\n## see\n\nnone\n\n## base\n\nnone\n`;
+    const dir = 'records/loops/loop-1/resource-requests';
+    const pieces: Row[] = [
+      { key: 'icon/coin', spec: 'size=8x8', status: 'placeholder' },
+      { key: 'nine_slice/panel', spec: 'size=256x256;slice=8,8,8,8', status: 'requested' },
+      { key: 'image/hero', spec: 'size=8x8', status: 'placeholder' },
+    ];
+    // nine_slice/panel and the kit were in one finished request; backgroundRetryLimit is 2 in the test harness settings
+    const ended = (kit: Row, requests: Record<string, string>) =>
+      makeFixture({ 'resource/resources.csv': listCsv([...pieces, kit]), [`${dir}/100.md`]: keys('image/ui_kit\nnine_slice/panel'), [`${dir}/100-result.md`]: 'done\n', ...requests });
+    const temporaryKit: Row = { key: 'image/ui_kit', spec: 'size=8x8', status: 'temporary', method: 'flux2-klein' };
+    const requestedKit: Row = { key: 'image/ui_kit', spec: 'size=8x8', status: 'requested' };
+    const cases: [Row, Record<string, string>][] = [
+      [temporaryKit, {}],
+      [requestedKit, { [`${dir}/200.md`]: keys('image/ui_kit'), [`${dir}/200-result.md`]: 'done\n', [`${dir}/300.md`]: keys('image/ui_kit'), [`${dir}/300-result.md`]: 'done\n' }],
+    ];
+    for (const [kit, requests] of cases) {
+      const f = ended(kit, requests);
+      await openRun(f, {});
+      const reason = `image/ui_kit ended this run unfinished (${kit.status ?? ''}), and nine_slice and icon keys are made only from a final image/ui_kit`;
+      const pending = JSON.parse((await ogw(f.ws, ['resource', 'request', 'g', '--pending', '--json'])).stdout) as { keys: string[]; leftOut: string[] };
+      expect(pending).toMatchObject({ keys: ['image/hero'], leftOut: ['icon/coin', 'nine_slice/panel'] });
+      expect(rowOf(f.game, 'icon/coin').status).toBe('placeholder');
+      expect((await ogw(f.ws, ['resource', 'request', 'g', '--pending'])).stdout).toBe(`no pending resource\nleft out icon/coin: ${reason}\nleft out nine_slice/panel: ${reason}\n`);
+      expect(await ogw(f.ws, ['resource', 'request', 'g', 'icon/coin'])).toMatchObject({ code: 1, stderr: `icon/coin: ${reason}\n` });
+      expect(rowOf(f.game, 'icon/coin').status).toBe('placeholder');
+      // a request that names the kit again makes it with its pieces
+      expect((await ogw(f.ws, ['resource', 'request', 'g', 'image/ui_kit', 'icon/coin'])).code).toBe(0);
+    }
+
+    // while the kit's request runs, and while --pending asks for the kit again, its pieces are requested
+    const running = ended(temporaryKit, { [`${dir}/200.md`]: keys('image/ui_kit') });
+    await openRun(running, {});
+    expect((await ogw(running.ws, ['resource', 'request', 'g', 'icon/coin'])).code).toBe(0);
+    const again = ended(requestedKit, {});
+    await openRun(again, {});
+    const both = JSON.parse((await ogw(again.ws, ['resource', 'request', 'g', '--pending', '--json'])).stdout) as { keys: string[]; leftOut: string[] };
+    expect(both).toMatchObject({ keys: ['icon/coin', 'nine_slice/panel', 'image/hero', 'image/ui_kit'], leftOut: [] });
+  });
+
   it('leaves out a nine_slice whose long side is under 256 from --pending and refuses it by name', async () => {
     const f = makeFixture({
       'resource/resources.csv': listCsv([

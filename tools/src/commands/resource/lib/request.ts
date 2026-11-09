@@ -29,7 +29,10 @@ export interface RequestResult {
   /** Request file path relative to the checkout; null when `--pending` found nothing. */
   path: string | null;
   keys: string[];
-  /** Keys that `--pending` left out: a `nine_slice` whose long side of `size` is under 256, and a `nine_slice` or `icon` without an `image/ui_kit` row. */
+  /**
+   * Keys that `--pending` left out: a `nine_slice` whose long side of `size` is under 256, and a `nine_slice` or `icon` without
+   * an `image/ui_kit` row or while `image/ui_kit` ended this run unfinished.
+   */
   leftOut: LeftOut[];
 }
 
@@ -49,15 +52,32 @@ function madeFromKit(key: string): boolean {
 }
 
 /**
- * Why the named `nine_slice` and `icon` keys cannot be requested: no `image/ui_kit` row, or a kit that is `placeholder` or
- * `temporary`, is not a key of the request and is in no request file of this run.
+ * Whether `image/ui_kit` ended this run unfinished (`resource` `## resource request`): `temporary` or `requested`, in one or more
+ * request files of this run that all have their result file, and, for `requested`, in more than `backgroundRetryLimit` of them.
+ * `--pending` does not request it again in this run, and no `nine_slice` or `icon` key is finalized while it is not `final`.
  */
-function kitProblems(rows: readonly ResourceRow[], keys: readonly string[], written: ReadonlyMap<string, unknown>): string[] {
+function kitEnded(kit: ResourceRow, written: ReadonlyMap<string, WrittenKey>, retryLimit: number): boolean {
+  const w = written.get(UI_KIT);
+  if (w === undefined || !w.finished) return false;
+  return kit.status === 'temporary' || (kit.status === 'requested' && w.files > retryLimit);
+}
+
+function endedKitReason(kit: ResourceRow): string {
+  return `${UI_KIT} ended this run unfinished (${kit.status}), and nine_slice and icon keys are made only from a final ${UI_KIT}`;
+}
+
+/**
+ * Why the named `nine_slice` and `icon` keys cannot be requested: no `image/ui_kit` row, or a kit that is not a key of the
+ * request and either is `placeholder` or `temporary` and in no request file of this run, or ended this run unfinished.
+ */
+function kitProblems(rows: readonly ResourceRow[], keys: readonly string[], written: ReadonlyMap<string, WrittenKey>, retryLimit: number): string[] {
   const named = keys.filter(madeFromKit);
   if (named.length === 0) return [];
   const kit = findRow(rows, UI_KIT);
   if (!kit) return named.map((key) => `${key}: ${NO_KIT_REASON}; add it with spec size=1024x1024 and request it with its first nine_slice and icon keys`);
-  if ((kit.status !== 'placeholder' && kit.status !== 'temporary') || keys.includes(UI_KIT) || written.has(UI_KIT)) return [];
+  if (keys.includes(UI_KIT)) return [];
+  if (kitEnded(kit, written, retryLimit)) return named.map((key) => `${key}: ${endedKitReason(kit)}`);
+  if ((kit.status !== 'placeholder' && kit.status !== 'temporary') || written.has(UI_KIT)) return [];
   return named.map((key) => `${key}: ${UI_KIT} is ${kit.status} and in no request of this run; request it in the same request`);
 }
 
@@ -187,8 +207,9 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
       return w === undefined || (w.finished && w.files <= options.retryLimit);
     };
     const due = rows.filter((r) => r.status === 'placeholder' || (r.status === 'requested' && again(r.key)) || (r.status === 'temporary' && !written.has(r.key)));
-    const noKit = findRow(rows, UI_KIT) === undefined;
-    const reasonOf = (row: ResourceRow): string | null => (small(row) ? SMALL_REASON : noKit && madeFromKit(row.key) ? NO_KIT_REASON : null);
+    const kit = findRow(rows, UI_KIT);
+    const kitReason = kit === undefined ? NO_KIT_REASON : kitEnded(kit, written, options.retryLimit) ? endedKitReason(kit) : null;
+    const reasonOf = (row: ResourceRow): string | null => (small(row) ? SMALL_REASON : kitReason !== null && madeFromKit(row.key) ? kitReason : null);
     leftOut = due.flatMap((r) => {
       const reason = reasonOf(r);
       return reason === null ? [] : [{ key: r.key, reason }];
@@ -198,7 +219,7 @@ export async function requestResources(game: GameRepo, options: RequestOptions, 
     keys = [...new Set(options.keys)];
     const refused = keys.filter((key) => small(findRow(rows, key) as ResourceRow));
     if (refused.length > 0) throw new OgwError(refused.map((key) => `${key}: the long side of a nine_slice size is ${String(MIN_NINE_SLICE_SIDE)} or more`).join('\n'));
-    const kit = kitProblems(rows, keys, written);
+    const kit = kitProblems(rows, keys, written, options.retryLimit);
     if (kit.length > 0) throw new OgwError(kit.join('\n'));
   }
   if (keys.length === 0) return { path: null, keys, leftOut };
