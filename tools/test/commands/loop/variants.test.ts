@@ -372,16 +372,15 @@ describe('ogw loop variants', () => {
     expect(git(g.root, 'branch', '--list', 'agent/*')).toBe('');
   });
 
-  it('keeps the finished variants when the judging fails, and passes --db to the judge instances', async () => {
+  it('keeps the finished variants when the judging fails', async () => {
     const { g } = await funIteration({ maxConcurrentInstances: 2 });
     fake.votes = (k): Record<string, Vote> => (k === 1 ? { 'game feel': 'this' } : { 'game feel': 'baseline' });
     // the instances of variant 3 do not start; one judge at a time, so variants 1 and 2 were judged before
     fake.failStart = (c) => fake.commits.get(c) === 3;
-    const out = await ogw(g.ws, ['loop', 'variants', 'g', '--db', 'postgresql']);
+    const out = await ogw(g.ws, ['loop', 'variants', 'g']);
     expect(out.stderr).toBe('');
     expect(out.code).toBe(0);
     expect(fake.instances.length).toBeGreaterThan(0);
-    expect(fake.instances.every((i) => i.db === 'postgresql')).toBe(true);
     const file = readJsonFile(g.root, `${R}/variants-2.json`) as VariantsFile;
     expect(file.judging).toBe('instance start failed: no server');
     expect(file.variants.map((v) => [v.k, v.vsBaseline, v.votes === null, v.chosen])).toEqual([
@@ -405,7 +404,6 @@ describe('ogw loop variants', () => {
       [null, false],
       [null, false],
     ]);
-    expect((await ogw(all.g.ws, ['loop', 'variants', 'g', '--db', 'mysql'])).stderr).toContain('usage: ogw loop variants <game> [--db postgresql]');
   });
 
   it('waits for a variant agent that still runs when the judging fails, without killing it, and does not choose it over a judged one', async () => {

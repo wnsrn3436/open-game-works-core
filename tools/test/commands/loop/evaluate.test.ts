@@ -1270,7 +1270,6 @@ describe('ogw loop evaluate', () => {
     expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).stderr).toContain('reference.md is missing');
     git(g.root, 'rm', '-q', '-f', `${R}/check-1.json`);
     expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).stderr).toContain('check-1.json is missing');
-    expect((await ogw(g.ws, ['loop', 'evaluate', 'g', '--db', 'mysql'])).stderr).toContain('usage:');
   });
 
   it('starts no instance and no agent while a gameplay video of reference.md is not on this host, in a loop run and in a build run', async () => {
@@ -1288,12 +1287,12 @@ describe('ogw loop evaluate', () => {
     await openBuildRun(b, { iteration: 1 });
     write(b.root, 'records/loops/build-stg-0.2.0/check-1.json', { commit: git(b.root, 'rev-parse', 'HEAD'), checks: [], gate: 'pass' });
     rmSync(join(b.root, 'records/setup/reference/hollow.mp4'));
-    expect((await ogw(b.ws, ['loop', 'evaluate', 'g', '--db', 'postgresql'])).stderr).toContain(message);
+    expect((await ogw(b.ws, ['loop', 'evaluate', 'g'])).stderr).toContain(message);
     expect(fake.instances).toEqual([]);
     expect(fake.agents).toEqual([]);
   });
 
-  it('passes --db postgresql and runs no success judge in a build run', async () => {
+  it('runs no success judge in a build run', async () => {
     const g = setupGame({ playInstances: 1, backgroundRetryLimit: 0 });
     await openBuildRun(g, { iteration: 1 });
     fake.root = g.root;
@@ -1301,9 +1300,8 @@ describe('ogw loop evaluate', () => {
     const head = git(g.root, 'rev-parse', 'HEAD');
     write(g.root, 'records/loops/build-stg-0.2.0/check-1.json', { commit: head, checks: PASS_ALL.map((name) => ({ name, platform: null, result: 'pass', failures: [], warnings: [] })), gate: 'pass' });
     fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));
-    const out = await ogw(g.ws, ['loop', 'evaluate', 'g', '--db', 'postgresql']);
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
     expect(out.code).toBe(0);
-    expect(fake.instances.every((i) => i.db === 'postgresql')).toBe(true);
     const file = readJsonFile(g.root, 'records/loops/build-stg-0.2.0/evaluate-1.json') as EvaluateFile;
     expect(file.judges.map((j) => j.kind)).toEqual(['main', 'main']);
     expect(file.kind).toBe('completeness');

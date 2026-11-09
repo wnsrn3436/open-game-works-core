@@ -87,7 +87,6 @@ export interface EvaluatePlan {
     HarnessSettings,
     'maxConcurrentInstances' | 'instanceWaitTimeoutMs' | 'playInstances' | 'backgroundRetryLimit' | 'loopStop' | 'loop' | 'agents'
   >;
-  db: 'postgresql' | undefined;
   /** True when `ogw loop input` asked for the judge moment `memorable_moment` in this run. */
   memorableMoment: boolean;
   /** Folder of the save fixtures taken from the work branch HEAD (`fixturesAtHead`). */
@@ -128,7 +127,6 @@ export interface JudgingPlan {
   /** null: no comparison with the reference game. */
   reference: Reference | null;
   settings: EvaluatePlan['settings'];
-  db: 'postgresql' | undefined;
   fixtureDir?: string;
   site: EvaluateSite;
   /** Whether the success judges start, once every step 4 judge ended; absent: no success judge opens. */
@@ -508,7 +506,6 @@ async function start(state: State, spec: Spec, owner: Holder): Promise<InstanceI
   if (spec.platform !== undefined) options.platform = spec.platform;
   if (spec.fixture !== undefined) options.fixture = spec.fixture;
   else options.played = true;
-  if (state.plan.db) options.db = state.plan.db;
   if (spec.id !== undefined) options.id = spec.id;
   const reserved: string[] = [];
   let info: InstanceInfo | null = null;
@@ -1234,7 +1231,6 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
     moments: plan.moments,
     reference: plan.reference,
     settings: plan.settings,
-    db: plan.db,
     ...(plan.fixtureDir === undefined ? {} : { fixtureDir: plan.fixtureDir }),
     site: runSite(plan.game, plan.run),
     successOpen: (main) => successPrecondition({ kind: plan.kind, ...together(plan, main) }, (name) => checkResult(plan.check, name)),

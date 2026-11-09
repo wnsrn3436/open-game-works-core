@@ -111,7 +111,7 @@ export const judgeCalibrate: CommandDef = {
     const main = await span('prepare main', () => prepareMain(ctx, game));
     const ms = String(evaluateDeps.now());
     const pairs = await span('calibration pairs', () => calibrationPairs(ctx, game, main, settings));
-    const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db: undefined, site: calibrationSite(game.root, ms) };
+    const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, site: calibrationSite(game.root, ms) };
     const { groups, judgePairs } = groupsOf(plan, pairs);
     const slots = await span('judging', () => runJudging(ctx, plan, groups));
     const judged = new Map<CalibrationPair, { k: number; entry: JudgeEntry }[]>();

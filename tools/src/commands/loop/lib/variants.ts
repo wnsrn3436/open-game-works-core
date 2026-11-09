@@ -174,9 +174,8 @@ async function judgeVariants(
   baseline: string,
   started: readonly Started[],
   end: EndVariant,
-  db: 'postgresql' | undefined,
 ): Promise<string | null> {
-  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db, site: variantSite(game, run) };
+  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, site: variantSite(game, run) };
   const pairs = new Map<JudgePair, VariantEntry>();
   const waiting = [...started];
   const feed: JudgingFeed = {
@@ -293,7 +292,6 @@ export async function runVariants(
   run: RunState,
   settings: HarnessSettings,
   baseline: string | null,
-  db?: 'postgresql',
 ): Promise<VariantsResult> {
   const { base, started } = await startVariants(ctx, game, run, settings.loop.variants);
   const ended = new Map<number, VariantEntry>();
@@ -305,7 +303,7 @@ export async function runVariants(
     if (report !== null) reports.set(variant.k, report);
     return entry;
   };
-  const judging = baseline === null ? null : await span('judging', () => judgeVariants(ctx, game, run, settings, baseline, started, end, db));
+  const judging = baseline === null ? null : await span('judging', () => judgeVariants(ctx, game, run, settings, baseline, started, end));
   // the agents that had not ended when the judging ended: all of them without a baseline game, or after a failure
   const rest = started.filter((s) => !ended.has(s.k));
   const outcomes = await span('wait for variants', () => waitAgents(ctx, rest.map((s) => s.job)));
