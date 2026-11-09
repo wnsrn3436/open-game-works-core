@@ -400,6 +400,20 @@ describe('ogw core release', () => {
     expect(releaseBrowserRuns).toHaveBeenCalledWith(expect.anything(), ws.coreImpl);
   });
 
+  it('reads main HEAD again after its browser runs, which may commit generated files and record on that commit', async () => {
+    const { ws, env } = await setup();
+    vi.mocked(releaseBrowserRuns).mockImplementation(async () => {
+      writeFiles(ws.coreImpl, { 'generated.txt': 'written by the browser run' });
+      commitAll(ws.coreImpl, 'generated');
+      await recordAllPass(ws.coreImpl);
+      return [];
+    });
+    const run = await ogw(ws, ['core', 'release', '1.2.0', '--notes', NOTES], { env });
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(sh(ws.coreImpl, 'git', ['log', '-2', '--format=%s']).trim().split('\n')).toEqual(['core release 1.2.0: plugin URLs and SHA-256', 'generated']);
+  });
+
   it('fails without a commit, tag or reset when main moves while the release runs', async () => {
     const { ws, env, gh } = await setup();
     const before = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();

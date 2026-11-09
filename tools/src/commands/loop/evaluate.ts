@@ -19,7 +19,7 @@ export const loopEvaluate: CommandDef = {
   },
   async run(ctx, args) {
     expectPositionals(args, 1, 1, USAGE);
-    const { game, run } = await openTarget(ctx, positional(args, 0, 'game'));
+    const { game, run } = await openTarget(ctx, positional(args, 0, 'game'), 'loop');
     const n = String(run.iteration);
     const check = await readRunJson<CheckFile>(game, run, `check-${n}.json`);
     if (!check) throw new OgwError(`${runRel(run, `check-${n}.json`)} is missing; run ogw check --loop first`);
@@ -39,16 +39,14 @@ export const loopEvaluate: CommandDef = {
       baseline: await runBaseline(game, run),
       // a fun iteration gets only the moment where its hypothesis shows; every judge moment is judged in completeness iterations
       moments:
-        run.kind !== 'loop'
-          ? []
-          : kind === 'completeness'
-            ? await readJudgeMoments(game, runRel(run, 'request.md'))
-            : await hypothesisMoments(game, runRel(run, 'request.md'), runRel(run, `content-${n}.md`)),
+        kind === 'completeness'
+          ? await readJudgeMoments(game, runRel(run, 'request.md'))
+          : await hypothesisMoments(game, runRel(run, 'request.md'), runRel(run, `content-${n}.md`)),
       reference,
       kind,
       platforms,
       settings,
-      memorableMoment: run.kind === 'loop' && memorableMomentAsked(run),
+      memorableMoment: memorableMomentAsked(run),
     });
     const lines = [
       path,

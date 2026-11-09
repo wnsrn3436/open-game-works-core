@@ -347,7 +347,7 @@ For UI quality check, `ogw check` runs `capture_screen` and `list_ui` of `QACore
 
 ## loop evaluate
 
-`ogw loop evaluate` runs step 3 (play) and step 4 (judge) of `## iteration` of [game-loop](../skills/game-loop/SKILL.md). In this document, step 3 and step 4 name these two parts, a step 3 instance is an instance of a play agent, and a step 4 judge is a judge agent of step 4.
+`ogw loop evaluate` runs step 3 (play) and step 4 (judge) of `## iteration` of [game-loop](../skills/game-loop/SKILL.md), only in a loop run. In this document, step 3 and step 4 name these two parts, a step 3 instance is an instance of a play agent, and a step 4 judge is a judge agent of step 4.
 
 The tool starts instances in the group order below. It starts a group only when the number of running instances with that group added does not exceed harness settings `maxConcurrentInstances`; otherwise it starts the group, and no group after it, when instances stop and free up slots. The groups that fit start together, and the instances of a group start together: an instance start waits for no other start, only for a slot. The work after an agent ends (its feedback, its stops, a call again) and the stops of instances a judge gives back run beside the polls of the other agents and beside the starts, and the instances that one stop frees (those of an agent that ended) stop together.
 

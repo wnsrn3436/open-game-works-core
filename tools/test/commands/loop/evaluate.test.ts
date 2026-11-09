@@ -1204,6 +1204,32 @@ describe('ogw loop evaluate', () => {
     ]);
   });
 
+  it('runs the success confirmation judges with the agent of the first step 4 judge', async () => {
+    const panel = [
+      { cli: 'codex', model: 'gpt-x', effort: 'high' },
+      { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'medium' },
+    ];
+    const { g, head } = await loop({ playInstances: 1, backgroundRetryLimit: 0, loop: { funIterations: 3, judgeVotes: 4, judgePanel: panel, variants: 1 } });
+    fake.respond = (agent) => {
+      if (agent.role === 'play') return null;
+      const side = sideCommit(agent, 'A') === head ? 'A' : 'B';
+      return judgeText(side, side, 'pass');
+    };
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(0);
+    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
+    expect(file.judges.map((j) => [j.kind, j.agent.model])).toEqual([
+      ['main', 'gpt-x'],
+      ['main', 'gpt-x'],
+      ['main', 'claude-sonnet-5-5'],
+      ['main', 'claude-sonnet-5-5'],
+      ['success', 'gpt-x'],
+      ['success', 'gpt-x'],
+    ]);
+    const judges = fake.agents.filter((a) => a.role === 'judge');
+    expect(judges.slice(4).map((a) => a.agent)).toEqual([panel[0], panel[0]]);
+  });
+
   it('keeps a play whose client cannot answer telemetry or measure as done without its raw data, and says why it has none', async () => {
     const { g } = await loop();
     measure.dead = ['i9'];
@@ -1272,7 +1298,7 @@ describe('ogw loop evaluate', () => {
     expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).stderr).toContain('check-1.json is missing');
   });
 
-  it('starts no instance and no agent while a gameplay video of reference.md is not on this host, in a loop run and in a build run', async () => {
+  it('starts no instance and no agent while a gameplay video of reference.md is not on this host', async () => {
     const message = 'records/setup/reference/ lacks the gameplay videos that records/setup/reference/reference.md `## video` names: hollow.mp4. ';
     const { g } = await loop();
     rmSync(join(g.root, 'records/setup/reference/hollow.mp4'));
@@ -1282,31 +1308,19 @@ describe('ogw loop evaluate', () => {
     expect(fake.instances).toEqual([]);
     expect(fake.agents).toEqual([]);
     expect(git(g.root, 'ls-files', `${R}/evaluate-1.json`)).toBe('');
+  });
 
-    const b = setupGame({ playInstances: 1 });
-    await openBuildRun(b, { iteration: 1 });
-    write(b.root, 'records/loops/build-stg-0.2.0/check-1.json', { commit: git(b.root, 'rev-parse', 'HEAD'), checks: [], gate: 'pass' });
-    rmSync(join(b.root, 'records/setup/reference/hollow.mp4'));
-    expect((await ogw(b.ws, ['loop', 'evaluate', 'g'])).stderr).toContain(message);
+  it('runs only in a loop run', async () => {
+    const g = setupGame({ playInstances: 1 });
+    await openBuildRun(g, { iteration: 1 });
+    write(g.root, 'records/loops/build-stg-0.2.0/check-1.json', { commit: git(g.root, 'rev-parse', 'HEAD'), checks: [], gate: 'pass' });
+    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('run build-stg-0.2.0 is a build run; this command runs only in a loop run');
     expect(fake.instances).toEqual([]);
     expect(fake.agents).toEqual([]);
   });
 
-  it('runs no success judge in a build run', async () => {
-    const g = setupGame({ playInstances: 1, backgroundRetryLimit: 0 });
-    await openBuildRun(g, { iteration: 1 });
-    fake.root = g.root;
-    fake.run = 'build-stg-0.2.0';
-    const head = git(g.root, 'rev-parse', 'HEAD');
-    write(g.root, 'records/loops/build-stg-0.2.0/check-1.json', { commit: head, checks: PASS_ALL.map((name) => ({ name, platform: null, result: 'pass', failures: [], warnings: [] })), gate: 'pass' });
-    fake.respond = (agent) => (agent.role === 'play' ? null : judgeText('A', 'A', 'pass'));
-    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-    expect(out.code).toBe(0);
-    const file = readJsonFile(g.root, 'records/loops/build-stg-0.2.0/evaluate-1.json') as EvaluateFile;
-    expect(file.judges.map((j) => j.kind)).toEqual(['main', 'main']);
-    expect(file.kind).toBe('completeness');
-    expect(file.baseline).toBe(git(g.root, 'rev-parse', 'main'));
-  });
   it('judges a fun iteration with the judge panel, the fun elements, no reference, no save fixture instance, no play and no success judge', async () => {
     const panel = [
       { cli: 'codex', model: 'gpt-x', effort: 'high' },

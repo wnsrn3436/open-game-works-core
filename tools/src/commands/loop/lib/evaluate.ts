@@ -417,9 +417,9 @@ function playGroups(plan: EvaluatePlan): Group[] {
   return groups;
 }
 
-/** The success judges of a completeness iteration of a loop run, in `slots`: a random side each. */
+/** The success judges of a completeness iteration, in `slots`: a random side each. */
 function successGroups(plan: EvaluatePlan, pair: JudgePair, slots: number | null): Group[] {
-  if (plan.run.kind !== 'loop' || plan.kind !== 'completeness') return [];
+  if (plan.kind !== 'completeness') return [];
   const agent = judgeAgent(plan.settings, 1);
   const successJudges = plan.settings.loopStop.successJudges;
   return Array.from({ length: successJudges }, () =>

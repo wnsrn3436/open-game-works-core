@@ -200,6 +200,43 @@ describe('ogw judge calibrate', () => {
     expect(again).toContain('- raise loop.judgeVotes to 4 (false win rate 1.00 (6 of 6))');
   });
 
+  it('takes the order pair from the most recent judged pair', async () => {
+    const g = setupGame(SETTINGS);
+    const { base, better } = history(g);
+    write(g.root, 'client/a.txt', 'best');
+    const best = commit(g.root, 'best');
+    write(g.root, 'records/loops/update-1/iteration-2.md', RECORD(best, better));
+    commit(g.root, 'record 2');
+    fake.respond = sensible(best);
+    const run = await ogw(g.ws, ['judge', 'calibrate', 'g']);
+    expect(run.code).toBe(0);
+    const report = readFileSync(join(g.root, 'records/calibration/5000.md'), 'utf8');
+    expect(report).toContain(`| order | ${best} | ${better} | counted |`);
+    expect(report).not.toContain(`| order | ${better} | ${base} |`);
+  });
+
+  it('reads sensitivity from game feel of the degraded pair alone', async () => {
+    const g = setupGame(SETTINGS);
+    history(g);
+    // on the degraded pair, game feel goes to `fast` and every other element to `slow`; other pairs see no difference
+    const degraded = (fast: 'quick' | 'latent') => (agent: FakeAgent): Record<string, string> => {
+      if (!agent.output.includes('/judge-degraded-')) return Object.fromEntries(agent.input.elements.map((e) => [e, 'indistinguishable']));
+      const latentSide = sideOf(agent, 'A').latency > 0 ? 'A' : 'B';
+      const quickSide = latentSide === 'A' ? 'B' : 'A';
+      const [first, second] = fast === 'quick' ? [quickSide, latentSide] : [latentSide, quickSide];
+      return Object.fromEntries(agent.input.elements.map((e) => [e, e === 'game feel' ? first : second]));
+    };
+    fake.respond = degraded('quick');
+    expect((await ogw(g.ws, ['judge', 'calibrate', 'g'])).code).toBe(0);
+    expect(readFileSync(join(g.root, 'records/calibration/5000.md'), 'utf8')).toContain('- sensitivity: yes');
+    fake.agents = [];
+    fake.instances = [];
+    evaluateDeps.now = () => 6000;
+    fake.respond = degraded('latent');
+    expect((await ogw(g.ws, ['judge', 'calibrate', 'g'])).code).toBe(0);
+    expect(readFileSync(join(g.root, 'records/calibration/6000.md'), 'utf8')).toContain('- sensitivity: no');
+  });
+
   it('does not start with an open run, a running calibration, or changes in the checkout', async () => {
     const g = setupGame(SETTINGS);
     write(g.root, 'x.txt', 'x');
