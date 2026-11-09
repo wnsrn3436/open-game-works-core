@@ -254,11 +254,38 @@ export function rowSimulationFailures(simulation: RowSimulation): CheckFailure[]
 export const ROW_SIMULATION_WHERE = 'data/tables:1';
 
 /**
+ * Where the client of an instance stopped answering, in row order: that instance gives the rows from `from` on. `after`
+ * is true when its first request after row `from - 1` threw and is not one of row `from` (the client may have ended
+ * after it answered row `from - 1`), and false when a request of row `from` threw.
+ */
+interface Cut {
+  from: number;
+  after: boolean;
+}
+
+/** Whether `a` comes first on the runner alone: an end after row `r` comes before a request of row `r + 1` that throws. */
+function comesFirst(a: Cut, b: Cut | null): boolean {
+  return b === null || a.from < b.from || (a.from === b.from && a.after && !b.after);
+}
+
+/** The message of the error of `list_commands` on the instance `id`, or null when its client answers. */
+async function silence(ctx: Context, id: string): Promise<string | null> {
+  try {
+    await automationRequest(ctx, id, 'list_commands', []);
+    return null;
+  } catch (thrown) {
+    return thrown instanceof Error ? thrown.message : String(thrown);
+  }
+}
+
+/**
  * `row simulation` of `ogw check --loop`: a headless instance apart from the bot playtest reads the commands and runs
  * the rows in order, and helper instances in free slots of the check run rows beside it (ogw.md `### spare slots` of
  * `## check`); each row runs all its seeds on one instance. The rows keep the order of `simulateRows`. The result is
- * that of the reading instance alone: after a row whose client did not answer, the rows after it run in order on that
- * row's instance, as they would on the reading instance after that row, and what other instances gave for them is dropped.
+ * that of the reading instance alone, on which each row meets the client that the row before it left: an instance whose
+ * next row is not the one after its last row first checks that its client still answers. When a request of an instance
+ * throws, that instance gives the rows after the last request it answered, in order, as the reading instance would
+ * after that request, and what other instances gave for them is dropped.
  */
 export async function rowSimulationCheck(ctx: Context, game: string, root: string, seeds: number, options: InstanceCheckOptions): Promise<CheckResult> {
   const instanceOptions = { game, client: 'headless' as const, db: options.db };
@@ -271,22 +298,44 @@ export async function rowSimulationCheck(ctx: Context, game: string, root: strin
         const unit = plan.units[i] as RowUnit;
         return span(`row ${unit.table.name} ${unit.row.id}`, () => simulateRow(ctx, id, unit, seeds));
       };
-      // the first row, in row order, whose client did not answer: the rows after it are those of its instance
-      let cut = Infinity;
+      // the first cut on the runner alone: the rows from it on are those of its instance
+      let cut: Cut | null = null;
+      // the instance `id` gives the rows from `at.from` on, in order; `own` is its result of that row when a request of it threw
+      const takeOver = async (id: string, at: Cut, own?: RowResult): Promise<void> => {
+        if (!comesFirst(at, cut)) return;
+        cut = at;
+        shared.stopAfter(at.from - 1);
+        let i = at.from;
+        if (own !== undefined) rows[i++] = own;
+        // until a cut that comes first is found on another instance, whose instance then gives these rows
+        for (; i < plan.units.length && cut === at; i++) {
+          const { result } = await simulate(id, i);
+          if (cut === at) rows[i] = result;
+        }
+      };
       const runRows = async (id: string, next: () => number | null): Promise<void> => {
-        for (let i = next(); i !== null; i = next()) {
-          const { result, answered } = await simulate(id, i);
-          if (i > cut) continue;
-          rows[i] = result;
-          if (answered) continue;
-          cut = i;
-          shared.stopAfter(i);
-          // until a row before it is found not to answer on another instance, whose instance then runs the rows after it
-          for (let j = i + 1; j < plan.units.length && cut === i; j++) {
-            const later = await simulate(id, j);
-            if (cut === i) rows[j] = later.result;
+        let previous: number | null = null;
+        for (;;) {
+          const i = next();
+          // another instance runs the row after `previous`, or none does after it here
+          if (previous !== null && i !== previous + 1 && previous + 1 < plan.units.length) {
+            const after: Cut = { from: previous + 1, after: true };
+            const message = comesFirst(after, cut) ? await silence(ctx, id) : null;
+            if (message !== null) {
+              const unit = plan.units[previous] as RowUnit;
+              ctx.log(`row simulation: instance ${id} did not answer after row ${unit.table.name} ${unit.row.id}: ${message}`);
+              await takeOver(id, after);
+              return;
+            }
           }
-          return;
+          if (i === null) return;
+          const { result, answered } = await simulate(id, i);
+          if (!answered) {
+            await takeOver(id, { from: i, after: false }, result);
+            return;
+          }
+          if (cut === null || i < cut.from) rows[i] = result;
+          previous = i;
         }
       };
       const shared = shareUnits(

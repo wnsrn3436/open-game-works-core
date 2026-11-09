@@ -268,6 +268,67 @@ describe('rowSimulationCheck', () => {
     }
   });
 
+  // per case: the rows whose command ends the client of their instance, at which seed and whether that request answers
+  // first; the ms each request of a row takes (30 when the row is not named); the data lines the runner alone fails, and
+  // the row and seed of the first of them, whose request does not answer
+  const endings: {
+    name: string;
+    seeds: number;
+    ends: Record<string, { seed: number; answers: boolean }>;
+    ms: Record<string, number>;
+    lines: number[];
+    first: string;
+  }[] = [
+    // with 3 slots, the instance of [lv_2] takes [lv_4] next while another instance takes [lv_3]
+    { name: '[lv_2] answers, then its client ends', seeds: 1, ends: { '[lv_2]': { seed: 1, answers: true } }, ms: { '[lv_2]': 5 }, lines: [7, 8, 9, 10], first: '[lv_3]: seed 1' },
+    // with 2 or 3 slots, the instance of [lv_5] has no row left after it, and another instance takes [lv_6]
+    { name: '[lv_5] answers, then its client ends', seeds: 1, ends: { '[lv_5]': { seed: 1, answers: true } }, ms: { '[lv_5]': 5 }, lines: [10], first: '[lv_6]: seed 1' },
+    // with 3 slots, the instance of [lv_4] ran [lv_2] before it, and another instance ran [lv_3]
+    { name: 'the client of [lv_4] ends before it answers', seeds: 1, ends: { '[lv_4]': { seed: 1, answers: false } }, ms: { '[lv_2]': 5 }, lines: [8, 9, 10], first: '[lv_4]: seed 1' },
+    // [lv_3] does not answer its second seed on its own instance
+    { name: '[lv_3] answers its first seed, then its client ends', seeds: 2, ends: { '[lv_3]': { seed: 1, answers: true } }, ms: { '[lv_3]': 5 }, lines: [7, 8, 9, 10], first: '[lv_3]: seed 2' },
+    // with 2 or 3 slots, [lv_3] ends its client after its first seed before [lv_2] ends its client after its last
+    {
+      name: '[lv_2] answers its last seed, then its client ends, and [lv_3] its first',
+      seeds: 2,
+      ends: { '[lv_2]': { seed: 2, answers: true }, '[lv_3]': { seed: 1, answers: true } },
+      ms: { '[lv_3]': 5 },
+      lines: [7, 8, 9, 10],
+      first: '[lv_3]: seed 1',
+    },
+  ];
+
+  it.each(endings)('gives the result of the runner alone when $name, whatever the free slots', async ({ seeds, ends, ms, lines, first }) => {
+    const rowsCsv = ['desc,,', 'All,All,None', 'id(key),int,int?', 'id,moves,sim_moves_left_max', ...Array.from({ length: 6 }, (_, i) => `[lv_${String(i + 1)}],10,10`), ''].join('\n');
+    let n = 0;
+    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `r${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
+    vi.mocked(stopInstance).mockResolvedValue();
+    const ended = new Set<string>();
+    vi.mocked(automationRequest).mockImplementation(async (_c, id, command, args) => {
+      // a client that ended answers no request, list_commands included
+      if (ended.has(id)) throw new OgwError('the client of the instance does not answer');
+      if (command === 'list_commands') return ok(commands);
+      const [row = '', seed = ''] = args;
+      await new Promise((resolve) => setTimeout(resolve, ms[row] ?? 30));
+      const end = ends[row];
+      if (end?.seed === Number(seed)) {
+        ended.add(id);
+        if (!end.answers) throw new OgwError('the client of the instance does not answer');
+      }
+      return ok({ solved: true, metrics: { moves_left: 1 } });
+    });
+    const results: Awaited<ReturnType<typeof rowSimulationCheck>>[] = [];
+    for (const slots of [1, 2, 3]) {
+      n = 0;
+      ended.clear();
+      results.push(await rowSimulationCheck(ctx, 'g', gameRoot({ level: rowsCsv }), seeds, { evidence, slots: new Slots(slots), pollMs: 1 }));
+    }
+    const [alone] = results;
+    expect(alone?.failures.map((f) => f.where)).toEqual(lines.map((line) => `data/tables/level.csv:${String(line)}`));
+    expect(alone?.failures[0]?.message).toBe(`error ${first}: puzzle.simulate_level did not answer: the client of the instance does not answer`);
+    expect(results.slice(1)).toEqual([alone, alone]);
+  });
+
   it('is unknown when the instance does not start', async () => {
     vi.mocked(startInstance).mockRejectedValue(new Error('no slot'));
     expect(await rowSimulationCheck(ctx, 'g', gameRoot({}), 2, { evidence, slots: new Slots(1), pollMs: 1 })).toEqual({
