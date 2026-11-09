@@ -98,6 +98,10 @@ describe('ogw loop input', () => {
         '',
         'none',
         '',
+        '## measurements',
+        '',
+        'none',
+        '',
       ].join('\n'),
     );
     expect(git(g.root, 'log', '-1', '--name-only', '--format=')).toBe('records/loops/create-1/content-input-1.md');
@@ -151,6 +155,50 @@ describe('ogw loop input', () => {
     const fun = read(g.root, 'records/loops/update-1/content-input-3.md');
     expect(fun).toMatch(/^## kind\n\nfun\n\n## request\n/);
     expect(fun).toContain('## defects\n\n| id | severity | owner | where | what | why | evidence | source | status |\n|---|---|---|---|---|---|---|---|---|\n| bl | blocker | data | w | a\\|b | y | e1, e2 | check | reopened |\n');
+  });
+
+  it('notes the targets out of range of the latest ogw measure of an earlier iteration', async () => {
+    const g = setupGame();
+    await openLoopRun(g, { iteration: 4 });
+    const R = 'records/loops/update-1';
+    // iteration 2 measured; iteration 3 (a fun iteration) did not; iteration 4, this one, is not earlier
+    write(g.root, `${R}/measure-1.json`, { commit: 'a', targets: [{ metric: 'old', min: 1, max: 2, value: 9, result: 'out', data: null }] });
+    // the digits as `ogw measure` writes them: a bound above 2^53 that a JS number would round
+    const gold = '{"metric": "content.gold", "min": 9007199254740993, "max": 9007199254740995, "value": 9007199254740992, "result": "out", "data": "economy.gold"}';
+    const rows = [
+      '{"metric": "reward_interval_ms", "min": 30000, "max": 60000, "value": 90000, "result": "out", "data": "stage.reward_every"}',
+      '{"metric": "fps", "min": 30, "max": 60, "value": 45, "result": "in", "data": null}',
+      '{"metric": "load", "min": 0, "max": 1, "value": null, "result": "out", "data": null}',
+      gold,
+    ];
+    write(g.root, `${R}/measure-2.json`, `{"commit": "b", "targets": [${rows.join(', ')}]}\n`);
+    write(g.root, `${R}/measure-4.json`, { commit: 'c', targets: [{ metric: 'now', min: 1, max: 2, value: 9, result: 'out', data: null }] });
+    commit(g.root);
+    expect((await ogw(g.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
+    const text = read(g.root, `${R}/content-input-4.md`);
+    expect(text.slice(text.indexOf('## defects'))).toBe(
+      [
+        '## defects',
+        '',
+        'none',
+        '',
+        '## measurements',
+        '',
+        `${R}/measure-2.json`,
+        '',
+        '| metric | value | range | data |',
+        '|---|---|---|---|',
+        '| reward_interval_ms | 90000 | 30000..60000 | stage.reward_every |',
+        '| load | none | 0..1 | none |',
+        '| content.gold | 9007199254740992 | 9007199254740993..9007199254740995 | economy.gold |',
+        '',
+      ].join('\n'),
+    );
+    // every target in range: the path and no table
+    write(g.root, `${R}/measure-2.json`, { commit: 'b', targets: [{ metric: 'fps', min: 30, max: 60, value: 45, result: 'in', data: null }] });
+    commit(g.root);
+    expect((await ogw(g.ws, ['loop', 'input', 'g', 'content'])).code).toBe(0);
+    expect(read(g.root, `${R}/content-input-4.md`)).toContain(`## measurements\n\n${R}/measure-2.json\n\nnone\n`);
   });
 
   it('takes --brief only in iteration 1 of an update run, and none for a build run', async () => {

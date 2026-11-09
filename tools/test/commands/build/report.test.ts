@@ -54,19 +54,17 @@ async function devRun(ws: TestWorkspace) {
   write(dir, 'records/hardening/dev-0.2.0-server-2.md', '## changes\n\nx\n\n## unknown\n\n- server unknown\n');
   write(dir, 'records/hardening/dev-0.2.0-client-1.md', '## changes\n\nx\n\n## unknown\n\nnone\n');
   write(dir, 'records/hardening/dev-0.1.0-server-1.md', 'other build');
+  // the iterations of the run: the report reads the check of the last one, 10, not the last by name, 2
   write(dir, `records/loops/${run.name}/check-1.json`, { commit: 'a', checks: [{ name: 'UI quality', platform: 'android', result: 'fail', failures: [], warnings: [] }] });
-  write(dir, `records/loops/${run.name}/check-2.json`, {
-    commit: 'b',
+  write(dir, `records/loops/${run.name}/check-2.json`, { commit: 'b', checks: [{ name: 'UI quality', platform: 'android', result: 'fail', failures: [], warnings: [] }] });
+  write(dir, `records/loops/${run.name}/check-10.json`, {
+    commit: 'c',
     checks: [
       { name: 'UI quality', platform: 'android', result: 'pass', failures: [], warnings: [] },
       { name: 'UI quality', platform: 'web', result: 'unknown', failures: [], warnings: [] },
       { name: 'static check', platform: null, result: 'pass', failures: [], warnings: [] },
     ],
   });
-  write(dir, `records/loops/${run.name}/evaluate-1.json`, {});
-  write(dir, `records/loops/${run.name}/evaluate-2.json`, {});
-  // A fix iteration after step 4: `ogw check --loop` without `ogw loop evaluate`.
-  write(dir, `records/loops/${run.name}/check-3.json`, { commit: 'c', checks: [{ name: 'UI quality', platform: 'android', result: 'fail', failures: [], warnings: [] }] });
   write(dir, `records/loops/${run.name}/assumptions.md`, '# assumptions\n\n## a (needs human)\n\n- decision: b\n- evidence: e\n\n## c\n\n- decision: d\n- evidence: needs human later\n');
   write(dir, 'records/core-proposals/new.md', 'new');
   commit(dir, 'run files');
@@ -138,8 +136,8 @@ none
 - adapter: pass
 - license: warn
 - web smoke first loading ms: 1234
-- UI quality (android): pass (records/loops/${run.name}/check-2.json)
-- UI quality (web): unknown (records/loops/${run.name}/check-2.json)
+- UI quality (android): pass (records/loops/${run.name}/check-10.json)
+- UI quality (web): unknown (records/loops/${run.name}/check-10.json)
 
 ## store privacy
 

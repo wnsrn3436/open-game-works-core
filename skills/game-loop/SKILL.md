@@ -66,10 +66,10 @@ A defect has the fields below.
 | `id` | kebab-case. Defects with the same cause use the same `id` across iterations |
 | `severity` | `blocker`, `major`, `minor` |
 | `owner` | `client content`, `server content`, `data`, `resource`, `contract`, `design` |
-| `where` | When `source` is `play` or `judge`: scene, moment, screen area. When `check`: for a defect from a target of `ogw measure`, the metric name of that target; otherwise the `where` of `<failure>` in `check-<iteration>.json`. When `hardening`: the file:line of the hardening record item |
+| `where` | When `source` is `play` or `judge`: scene, moment, screen area. When `check`: the `where` of `<failure>` in `check-<iteration>.json`. When `hardening`: the file:line of the hardening record item |
 | `what` | The observed fact |
 | `why` | Why it is worse than the baseline game or the target range |
-| `evidence` | The path of `check-<iteration>.json` and the check name, the path of the `ogw measure` result file `records/loops/<run>/measure-<iteration>.json` and the metric name, a capture path under `records/loops/<run>/evidence/`, a capture of a judge result named `<instance id>-<unix ms>` (its file is in `records/loops/<run>/evidence/judge-<iteration>-<k>/`), a line of play feedback, a hardening record path, the path of `evaluate-<iteration>.json` |
+| `evidence` | The path of `check-<iteration>.json` and the check name, a capture path under `records/loops/<run>/evidence/`, a capture of a judge result named `<instance id>-<unix ms>` (its file is in `records/loops/<run>/evidence/judge-<iteration>-<k>/`), a line of play feedback, a hardening record path, the path of `evaluate-<iteration>.json` |
 | `source` | `check`, `play`, `judge`, `hardening` |
 | `status` | `open`, `awaiting confirmation`, `fixed`, `reopened`, `refused`. `ogw loop record` sets it. A defect the content agent reports `fixed` or `not reproduced` awaits confirmation |
 

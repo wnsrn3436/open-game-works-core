@@ -142,16 +142,17 @@ export function median(values: readonly number[]): number {
 export const OUTLIER_MIN_HISTORY = 5;
 
 /**
- * `outlier`: a span that ended lasts more than `outlierRatio` times the median of the last `history` spans of its name
- * and game that ended, without failing, at or before its start (`samples`, in end order), when there are at least
- * `OUTLIER_MIN_HISTORY` of them.
+ * `outlier`: a span that ended lasts at least `outlierMinMs` and more than `outlierRatio` times the median of the last
+ * `history` spans of its name and game that ended, without failing, at or before its start (`samples`, in end order),
+ * when there are at least `OUTLIER_MIN_HISTORY` of them.
  */
 export function outlierFlag(span: TimeSpan, samples: readonly Sample[], criteria: TimeCriteria): TimeFlag[] {
   if (span.kind === 'run' || span.open) return [];
+  const ms = lengthOf(span);
+  if (ms < criteria.outlierMinMs) return [];
   const earlier = samples.filter((sample) => sample.end <= span.start).slice(-criteria.history);
   if (earlier.length < OUTLIER_MIN_HISTORY) return [];
   const mid = median(earlier.map((sample) => sample.ms));
-  const ms = lengthOf(span);
   if (ms <= criteria.outlierRatio * mid) return [];
   return [{ flag: 'outlier', job: span.job, key: span.key, name: span.name, ms, median: mid, count: earlier.length }];
 }

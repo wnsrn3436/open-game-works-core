@@ -187,7 +187,7 @@ describe('ogw time', () => {
   });
 
   it('does not flag idle below time.idleShare', async () => {
-    const ws = jobWorkspace({ time: { waitShare: 0.25, idleShare: 0.4, outlierRatio: 3, history: 20 } });
+    const ws = jobWorkspace({ time: { waitShare: 0.25, idleShare: 0.4, outlierRatio: 3, outlierMinMs: 10_000, history: 20 } });
     job(ws, 'i3', 0, 100);
     spans(ws, 'i3', [
       ['a', 'first', null, 0, 30],
@@ -233,7 +233,7 @@ describe('ogw time', () => {
   });
 
   it('judges outlier only with at least 5 earlier spans, and against the last time.history of them', async () => {
-    const ws = jobWorkspace({ time: { waitShare: 0.25, idleShare: 0.2, outlierRatio: 3, history: 5 } });
+    const ws = jobWorkspace({ time: { waitShare: 0.25, idleShare: 0.2, outlierRatio: 3, outlierMinMs: 10_000, history: 5 } });
     for (let n = 0; n < 4; n += 1) job(ws, `a${String(n)}`, n * 20, n * 20 + 10, { game: 'g', command: 'deploy' });
     job(ws, 'few', 100, 200, { game: 'g', command: 'deploy' });
     expect(flagged(await timeOf(ws, ['few']), 'outlier')).toEqual([]);
@@ -248,6 +248,18 @@ describe('ogw time', () => {
     });
     job(ws, 'vid', 5000, 5040, { game: 'g', command: 'video' });
     expect(flagged(await timeOf(ws, ['vid']), 'outlier')).toEqual(['vid']);
+  });
+
+  it('flags outlier only on a span of at least time.outlierMinMs', async () => {
+    const ws = jobWorkspace();
+    // five earlier deploys of game g that took 1 s
+    for (let n = 0; n < 5; n += 1) job(ws, `d${String(n)}`, n * 20, n * 20 + 1, { game: 'g', command: 'deploy' });
+    // 9.9 s is more than 3 times the median 1 s, but shorter than time.outlierMinMs 10 s
+    job(ws, 'short', 200, 209.9, { game: 'g', command: 'deploy' });
+    expect(flagged(await timeOf(ws, ['short']), 'outlier')).toEqual([]);
+    // exactly time.outlierMinMs is flagged
+    job(ws, 'edge', 300, 310, { game: 'g', command: 'deploy' });
+    expect(flagged(await timeOf(ws, ['edge']), 'outlier')).toEqual(['edge']);
   });
 
   it('flags nothing on a quiet job', async () => {

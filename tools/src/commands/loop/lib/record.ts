@@ -6,7 +6,6 @@ import { LIST_PATH, temporaryKeys } from '../../resource/lib/list.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import {
   evidenceChecks,
-  evidenceMetrics,
   fillFromSameId,
   incompleteFindings,
   iterationLabel,
@@ -20,7 +19,7 @@ import {
 } from './defects.ts';
 import { costRows, runAgentJobs } from './cost.ts';
 import { runTimeSection } from '../../time/api.ts';
-import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry, type MeasureFile } from './files.ts';
+import { checkNames, checkResult, type CheckFile, type EvaluateFile, type IterationKind, type JudgeEntry } from './files.ts';
 import { hardeningRecords, latestHardeningFindings } from './findings.ts';
 import { iterationRecords, renderIterationRecord, type IterationRecordData, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
@@ -88,17 +87,13 @@ async function labelOf(game: GameRepo, run: RunState, hardening: boolean): Promi
 /** Results of this record that a confirmation of ogw.md `## loop record` reads. */
 interface Confirmations {
   check: CheckFile | null;
-  measure: MeasureFile | null;
   evaluate: EvaluateFile | null;
 }
 
-/** A check defect: a check or metric of its evidence gave a result. */
+/** A check defect: a check of its evidence gave a result. */
 function checkConfirmed(results: Confirmations, defect: Defect): boolean {
   const checks = evidenceChecks(defect);
-  const metrics = evidenceMetrics(defect);
-  const checked = results.check?.checks.some((c) => checks.includes(c.name) && (c.result === 'pass' || c.result === 'fail')) ?? false;
-  const measured = results.measure?.targets.some((t) => metrics.includes(t.metric) && (t.result === 'in' || t.result === 'out')) ?? false;
-  return checked || measured;
+  return results.check?.checks.some((c) => checks.includes(c.name) && (c.result === 'pass' || c.result === 'fail')) ?? false;
 }
 
 /**

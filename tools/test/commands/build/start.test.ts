@@ -9,7 +9,7 @@ import { runData } from '../../../src/commands/data/api.ts';
 import { planDevStg } from '../../../src/commands/build/lib/plan.ts';
 import type { GameRepo } from '../../../src/lib/game.ts';
 import { OgwError } from '../../../src/lib/errors.ts';
-import { ogw, makeWorkspace, realToolsWithout, testSettings, type TestWorkspace, sh } from '../../helpers/workspace.ts';
+import { ogw, makeWorkspace, realToolsWithout, type TestWorkspace, sh } from '../../helpers/workspace.ts';
 import { addSecrets, commit, fakeBin, git, openBuildRun, runsOf, setSecrets, setupGame, write } from './helpers.ts';
 
 vi.mock('../../../src/commands/core/api.ts', async (orig) => ({ ...(await orig<object>()), coreRelease: vi.fn(), coreReleaseOfGame: vi.fn(), extractedAsset: vi.fn() }));
@@ -62,8 +62,6 @@ function prepare(ws: TestWorkspace, coreSpec: object[] = [], coreSettings: objec
     ...deployed('STG', ['db', 'atk', 'usk', 'deploySsh', 'dbPassword', 'adminOgw']),
     'ogw/g/PROD/adminOgw': 's',
     'ogw/g/PROD/backupKey': 's',
-    // the loop steps of the build run play and judge agents with Claude Code
-    'ogw/harness/claude-code-oauth-token': 'token',
   });
   return { ...fakeBin(ws, { docker: DOCKER, gh: GH }).env, FAKE_SCOPE: "'write:packages'" };
 }
@@ -108,17 +106,17 @@ describe('build start preconditions', () => {
     expect(git(dir, 'branch', '--list', 'build/*')).toBe('');
   });
 
-  it('refuses while a gameplay video of the reference is missing, before anything is made', async () => {
+  it('starts without the gameplay videos of the reference and without the agent login token, as no build step plays or judges', async () => {
     const ws = makeWorkspace(WALG);
     const env = prepare(ws);
     const dir = setupGame(ws);
     git(dir, 'rm', '-q', 'records/setup/reference/hollow.mp4');
     commit(dir);
+    // prepare puts no harness secret claude-code-oauth-token, and agents.play and agents.judge use Claude Code
     const out = await ogw(ws, ['build', 'start', 'g', 'DEV'], { env });
-    expect(out.code).toBe(1);
-    expect(out.stderr).toContain('lacks the gameplay videos that records/setup/reference/reference.md `## video` names: hollow.mp4');
-    expect(await runsOf(ws)).toEqual([]);
-    expect(git(dir, 'branch', '--list', 'build/*')).toBe('');
+    expect(out.stderr).toBe('');
+    expect(out.code).toBe(0);
+    expect((await runsOf(ws)).map((run) => run.name)).toEqual(['build-dev-0.1.0']);
   });
 
   it('reports every host problem and makes nothing', async () => {
@@ -150,24 +148,11 @@ describe('build start preconditions', () => {
       'secret deploySsh of DEV is not in the secret store',
       'secret ogw/g/DEV/adminOgw is not in the secret store',
       'secret cdn of DEV is not in the secret store',
-      "harness settings agents.play and agents.judge use Claude Code and harness secret claude-code-oauth-token is not in this host's secret store: make a long-lived token with `claude setup-token` and store it on one line",
     ]) expect(out.stderr).toContain(line);
+    expect(out.stderr).not.toContain('claude-code-oauth-token');
     expect(out.stderr).toMatch(/^docker image postgres:[^@\s]+@sha256:[0-9a-f]+ is not on this host$/m);
     expect(git(dir, 'branch', '--list')).toBe('* main');
     expect(await runsOf(ws)).toEqual([]);
-  });
-
-  it('needs the agent login token only while play or judge uses Claude Code', async () => {
-    const ws = makeWorkspace({
-      agents: { ...(testSettings().agents as Record<string, object>), play: { cli: 'codex', model: 'm', effort: 'high' }, judge: { cli: 'codex', model: 'm', effort: 'high' } },
-    });
-    const env = prepare(ws);
-    setSecrets(ws, {});
-    setupGame(ws);
-    const out = await ogw(ws, ['build', 'start', 'g', 'DEV'], { env });
-    expect(out.code).toBe(1);
-    expect(out.stderr).toContain('secret deploySsh of DEV is not in the secret store');
-    expect(out.stderr).not.toContain('claude-code-oauth-token');
   });
 
   it('needs every secret ogw deploy writes: each environment secret and the secret of every operator', async () => {
@@ -537,7 +522,7 @@ describe('build start PROD', () => {
     write(join(ws2.games, 'g'), 'records/loops/build-stg-1.1.0/end.md', '## compatibility base\n\nnone\n');
     commit(join(ws2.games, 'g'), 'stg build');
     git(join(ws2.games, 'g'), 'tag', 'stg-1.1.0');
-    setSecrets(ws2, { 'ogw/g/PROD/adminOgw': 's', 'ogw/harness/claude-code-oauth-token': 'token' });
+    setSecrets(ws2, { 'ogw/g/PROD/adminOgw': 's' });
     const secret = await ogw(ws2, ['build', 'start', 'g', 'PROD'], { env: env2 });
     expect(secret.stderr).toBe('secret backup of PROD is not in the secret store\n');
   });
@@ -731,7 +716,7 @@ describe('build start host checks of build procedure 1', () => {
     commit(dir, 'v2');
     git(dir, 'tag', 'stg-1.1.0');
     restoreTest(dir);
-    setSecrets(ws, { 'ogw/harness/claude-code-oauth-token': 'token', 'ogw/g/PROD/backupKey': 's' });
+    setSecrets(ws, { 'ogw/g/PROD/backupKey': 's' });
     const out = await ogw(ws, ['build', 'start', 'g', 'PROD'], { env });
     expect(out.code).toBe(1);
     expect(out.stderr).toContain('secret ogw/g/PROD/adminOgw is not in the secret store');

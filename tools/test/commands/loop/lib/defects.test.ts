@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   defectRow,
   evidenceChecks,
-  evidenceMetrics,
   groupFindings,
   fillFromSameId,
   incompleteFindings,
@@ -11,7 +10,7 @@ import {
   type Defect,
   type Finding,
 } from '../../../../src/commands/loop/lib/defects.ts';
-import type { CheckFile, EvaluateFile, MeasureFile } from '../../../../src/commands/loop/lib/files.ts';
+import type { CheckFile, EvaluateFile } from '../../../../src/commands/loop/lib/files.ts';
 import { confirmedBy } from '../../../../src/commands/loop/lib/record.ts';
 
 function f(fields: Partial<Finding>): Finding {
@@ -238,9 +237,8 @@ describe('recordDefects', () => {
 });
 
 describe('defect helpers', () => {
-  it('tells measure defects and renders rows', () => {
+  it('tells the checks of the evidence and renders rows', () => {
     const evidence = ['records/loops/r/measure-2.json#fps', 'records/loops/r/check-2.json#UI quality', 'shot.png', 'check-3.json', 'r/check-1.json#no blocker'];
-    expect(evidenceMetrics({ evidence })).toEqual(['fps']);
     expect(evidenceChecks({ evidence })).toEqual(['UI quality', 'no blocker']);
     expect(defectRow(d({ evidence: ['a', 'b'] }))).toEqual(['a', 'minor', 'data', 'w', 'x', 'y', 'a, b', 'check', 'open']);
     expect(defectRow(d({ status: 'refused', refusedReason: 'why' }))[8]).toBe('refused (why)');
@@ -253,10 +251,6 @@ describe('confirmedBy', () => {
     commit: 'c',
     gate: 'pass',
     checks: [{ name, platform: 'web', result, failures: [], warnings: [] }, { name: 'other', platform: null, result: 'pass', failures: [], warnings: [] }],
-  });
-  const measure = (result: 'in' | 'out' | 'unknown', metric = 'fps'): MeasureFile => ({
-    commit: 'c',
-    targets: [{ metric, min: 0, max: 1, value: 1, result, data: null }, { metric: 'other', min: 0, max: 1, value: 1, result: 'in', data: null }],
   });
   const evaluate = (play: 'done' | 'failed', judge: 'done' | 'failed'): EvaluateFile => ({
     commit: 'c',
@@ -284,9 +278,8 @@ describe('confirmedBy', () => {
       },
     ],
   });
-  const none = { check: null, measure: null, evaluate: null };
+  const none = { check: null, evaluate: null };
   const checkDefect = d({ source: 'check', evidence: ['records/loops/r/check-1.json#performance'] });
-  const measureDefect = d({ source: 'check', evidence: ['records/loops/r/measure-1.json#fps'] });
 
   it('confirms a check defect only when its check passed or failed', () => {
     expect(confirmedBy({ ...none, check: check('pass') }, false, checkDefect)).toBe(true);
@@ -295,14 +288,6 @@ describe('confirmedBy', () => {
     expect(confirmedBy({ ...none, check: check('pass', 'UI quality') }, false, checkDefect)).toBe(false);
     expect(confirmedBy(none, false, checkDefect)).toBe(false);
     expect(confirmedBy({ ...none, check: check('pass') }, false, d({ source: 'check', evidence: ['x'] }))).toBe(false);
-  });
-
-  it('confirms a measure defect only when its metric was in or out', () => {
-    expect(confirmedBy({ ...none, measure: measure('in') }, false, measureDefect)).toBe(true);
-    expect(confirmedBy({ ...none, measure: measure('out') }, false, measureDefect)).toBe(true);
-    expect(confirmedBy({ ...none, measure: measure('unknown') }, false, measureDefect)).toBe(false);
-    expect(confirmedBy({ ...none, measure: measure('in', 'load') }, false, measureDefect)).toBe(false);
-    expect(confirmedBy({ ...none, check: check('pass') }, false, measureDefect)).toBe(false);
   });
 
   it('confirms play and judge defects when one of that source is done, judge defects only in a completeness iteration, hardening defects only by hardening', () => {

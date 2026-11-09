@@ -137,7 +137,7 @@ export interface HarnessSettings {
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };
   /** The criteria of the flags of `ogw time` (ogw.md `## time`). */
-  time: { waitShare: number; idleShare: number; outlierRatio: number; history: number };
+  time: { waitShare: number; idleShare: number; outlierRatio: number; outlierMinMs: number; history: number };
   paths: { coreImpl: string; coreReleases: string; games: string; worktrees: string };
   coreReleaseRepository: string;
   useLocalCore: boolean;

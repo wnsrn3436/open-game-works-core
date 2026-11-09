@@ -5,7 +5,6 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { gameSecretService, type SecretScope } from '../../../lib/secrets.ts';
 import type { GameSettings, HarnessSettings } from '../../../lib/settings.ts';
 import { ogwOperatorSecret } from '../../admin/api.ts';
-import { missingLoginToken } from '../../secret/lib/login-token.ts';
 import { coreRelease, coreReleaseOfGame, extractedAsset } from '../../core/api.ts';
 import { requireSupportedCore } from '../../core/lib/harness-core.ts';
 import { dockerBuildx, ghStatus, hostPlatform, postgresPresent, probeBuildTool, requireEngine, toolProgram, type BuildToolSpec } from '../../env/api.ts';
@@ -195,8 +194,5 @@ export async function hostProblems(ctx: Context, input: HostCheckInput): Promise
   problems.push(...(await dockerProblems(ctx, input)));
   problems.push(...deployProblems(ctx, input));
   problems.push(...(await backupProblems(ctx, input)));
-  // the loop steps of the build run play and judge agents
-  const tokenMissing = missingLoginToken(ctx, input.harness);
-  if (tokenMissing !== null) problems.push(tokenMissing);
   return problems;
 }

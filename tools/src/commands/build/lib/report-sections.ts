@@ -97,17 +97,13 @@ interface LoopCheck {
   result: string;
 }
 
-/**
- * `check-<iteration>.json` of the step 4 iteration: the highest iteration of the run on the branch that also has
- * `evaluate-<iteration>.json` (a fix iteration runs `ogw check --loop` without `ogw loop evaluate`); null when none.
- */
+/** The last `check-<iteration>.json` of the run on the branch: that of its highest iteration; null when none. */
 async function lastCheckFile(game: GameRepo, branch: string, run: string): Promise<{ path: string; checks: LoopCheck[] } | null> {
   const files = await filesAt(game, branch, `records/loops/${run}/`);
-  const evaluated = new Set(files.flatMap((path) => /\/evaluate-([1-9][0-9]*)\.json$/.exec(path)?.[1] ?? []));
   let best: { path: string; n: number } | null = null;
   for (const path of files) {
     const m = /\/check-([1-9][0-9]*)\.json$/.exec(path);
-    if (m && evaluated.has(m[1] as string) && (best === null || Number(m[1]) > best.n)) best = { path, n: Number(m[1]) };
+    if (m && (best === null || Number(m[1]) > best.n)) best = { path, n: Number(m[1]) };
   }
   if (!best) return null;
   const text = (await showFile(game.root, branch, best.path))?.toString('utf8') ?? '{}';

@@ -221,11 +221,6 @@ export function evidenceChecks(defect: Pick<Defect, 'evidence'>): string[] {
   return defect.evidence.map((e) => /check-\d+\.json#(.+)$/.exec(e)?.[1]).filter((name): name is string => name !== undefined);
 }
 
-/** Metric names the evidence points at (`measure-<n>.json#<metric>`). */
-export function evidenceMetrics(defect: Pick<Defect, 'evidence'>): string[] {
-  return defect.evidence.map((e) => /measure-\d+\.json#(.+)$/.exec(e)?.[1]).filter((name): name is string => name !== undefined);
-}
-
 export const DEFECT_COLUMNS = ['id', 'severity', 'owner', 'where', 'what', 'why', 'evidence', 'source', 'status'] as const;
 
 export function defectRow(defect: Defect): string[] {
