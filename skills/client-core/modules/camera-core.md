@@ -39,7 +39,7 @@ Owns following, camera shake, zoom, screen bounds, and the conversion between sc
 | `set_bounds` | world bounds(an x, y rectangle in 2D; in 3D, a rectangle over the two horizontal axes on the height-0 horizontal plane) | success flag | `false` | content code |
 | `clear_bounds` | none | none | none | content code |
 | `shake` | trauma amount | none | none | content code |
-| `stop_shake` | none | none | none | content code, `QACore` |
+| `stop_shake` | none | none | none | content code |
 | `set_shake_scale` | shake scale permille(at least 0, at most 1000) | none | none | `AccessibilityCore` |
 | `get_view_center` | none | base position (shake offset excluded). For a 2D camera, the world position at the screen center; for a 3D camera, the camera position | origin | core, content code |
 | `screen_to_world` | position in game coordinates of `ResolutionCore` | world position | origin | core, content code |
