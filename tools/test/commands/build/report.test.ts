@@ -75,65 +75,6 @@ async function devRun(ws: TestWorkspace) {
   return { dir, run };
 }
 
-/** A record of the late checks job `id` of the DEV build run in the jobs folder. */
-function lateJob(ws: TestWorkspace, id: string, status: 'running' | 'done' | 'failed', exitCode: number | null): void {
-  const dir = jobsDir(ws);
-  mkdirSync(dir, { recursive: true });
-  const record = {
-    id, argv: ['build', 'late', 'g', '--commit', 'c1'], cwd: ws.root, command: 'build late', game: 'g', startedAt: Date.now(), endedAt: status === 'running' ? null : Date.now(),
-    status, exitCode, supervisorPid: null, pid: null, timeLimitMs: 1000, agentJob: null, summary: null, meta: {},
-  };
-  writeFileSync(join(dir, `${id}.json`), JSON.stringify(record));
-}
-
-describe('build report: late checks', () => {
-  it('writes the late checks of a DEV build as pending, then their results with --late once their job ended, or unknown when it ended without them', async () => {
-    const ws = makeWorkspace();
-    const { dir, run } = await devRun(ws);
-    write(dir, 'builds/dev-0.2.0/build-run.json', buildRun({ lateChecks: { names: ['repeat test', 'soak test'], job: 'late1', commit: 'c1' } }));
-    fakeJob(ws, 'job1', 0, '');
-    lateJob(ws, 'late1', 'running', null);
-    const end = (): string => readFileSync(join(dir, 'records/loops', run.name, 'end.md'), 'utf8');
-    expect((await ogw(ws, ['build', 'report', 'g', '--result', 'done'])).code).toBe(0);
-    expect(end()).toContain('## checks\n\n- adapter: pass\n- license: warn\n- repeat test: pending\n- soak test: pending\n');
-    // while the job runs, --late changes nothing
-    const running = await ogw(ws, ['build', 'report', 'g', '--late']);
-    expect([running.code, running.stderr]).toEqual([1, 'late checks job late1 is still running: wait for it with ogw job wait late1\n']);
-    expect(end()).toContain('- repeat test: pending');
-    lateJob(ws, 'late1', 'done', 0);
-    write(dir, 'builds/dev-0.2.0/late-checks.json', {
-      commit: 'c1',
-      checks: [{ name: 'repeat test', result: 'warn', details: ['1 of 36 runs failed: crash 1, softlock 0, error log 0, failed goal 0, other 0'] }, { name: 'soak test', result: 'pass', details: [] }],
-    });
-    const late = await ogw(ws, ['build', 'report', 'g', '--late']);
-    expect([late.code, late.stderr]).toEqual([0, '']);
-    expect(late.stdout).toContain('check repeat test: warn\n  1 of 36 runs failed: crash 1, softlock 0, error log 0, failed goal 0, other 0\ncheck soak test: pass\n');
-    expect(end()).toContain('## result\n\ndone\n');
-    expect(end()).toContain('- license: warn\n- repeat test: warn\n- soak test: pass\n');
-    expect(git(dir, 'log', '-1', '--format=%s')).toBe(`build: late checks ${run.name}`);
-    expect(git(dir, 'status', '--porcelain')).toBe('');
-    // a build report written again keeps the late results that late-checks.json holds
-    expect((await ogw(ws, ['build', 'report', 'g', '--result', 'done'])).code).toBe(0);
-    expect(end()).toContain('- repeat test: warn\n- soak test: pass\n');
-    // a job that ended without its result (or a result of another commit): unknown with the reason
-    lateJob(ws, 'late1', 'failed', 1);
-    write(dir, 'builds/dev-0.2.0/late-checks.json', { commit: 'other', checks: [] });
-    const failed = await ogw(ws, ['build', 'report', 'g', '--late']);
-    expect(failed.stdout).toContain('check repeat test: unknown\n  repeat test did not run: the late checks job late1 ended (failed, exit code 1) without its result\n');
-    // the committed report carries the reason of each unknown under its line
-    const reason = (name: string): string => `  - ${name} did not run: the late checks job late1 ended (failed, exit code 1) without its result`;
-    expect(end()).toContain(['- repeat test: unknown', reason('repeat test'), '- soak test: unknown', reason('soak test'), ''].join('\n'));
-    expect((await ogw(ws, ['build', 'report', 'g', '--late', '--result', 'done'])).code).toBe(1);
-  });
-
-  it('has nothing to write without late checks', async () => {
-    const ws = makeWorkspace();
-    await devRun(ws);
-    const out = await ogw(ws, ['build', 'report', 'g', '--late']);
-    expect([out.code, out.stdout]).toEqual([0, 'no late checks\n']);
-  });
-});
-
 describe('build report', () => {
   it('checks its arguments', async () => {
     const ws = makeWorkspace();

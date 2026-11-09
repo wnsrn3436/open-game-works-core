@@ -5,7 +5,7 @@ import type { GameRepo } from '../../../lib/game.ts';
 import { git, gitRaw, showFile } from '../../../lib/git.ts';
 import { jobLogPaths, listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { jobsOfRun, type RunState } from '../../../lib/runstate.ts';
-import type { BuildCheck, BuildRunResult } from './buildrun.ts';
+import type { BuildRunResult } from './buildrun.ts';
 import { FAILED_STEP } from '../../deploy/api.ts';
 import { needsHumanLines } from '../../loop/lib/api.ts';
 import { bullets, contentItems, sectionLines, stripBullet } from './markdown.ts';
@@ -115,26 +115,8 @@ async function lastCheckFile(game: GameRepo, branch: string, run: string): Promi
   return { path: best.path, checks: parsed.checks ?? [] };
 }
 
-/**
- * The lines of the checks of `ogw build run`, and of its late checks with their results from `late` or `pending`; an
- * `unknown` late check has the reason it could not be checked under its line.
- */
-function runCheckLines(result: BuildRunResult | null, late: readonly BuildCheck[]): string[] {
+export async function checksBody(game: GameRepo, branch: string, run: string, result: BuildRunResult | null): Promise<string> {
   const lines = (result?.checks ?? []).map((check) => `- ${check.name}: ${check.result}`);
-  for (const name of result?.lateChecks?.names ?? []) {
-    const check = late.find((c) => c.name === name);
-    lines.push(`- ${name}: ${check?.result ?? 'pending'}`);
-    if (check?.result === 'unknown') lines.push(...check.details.map((detail) => `  - ${detail}`));
-  }
-  return lines;
-}
-
-/**
- * `## checks`: each check of `ogw build run`, then each late check of a DEV build with its result from `late`, or
- * `pending` while it has none.
- */
-export async function checksBody(game: GameRepo, branch: string, run: string, result: BuildRunResult | null, late: readonly BuildCheck[] = []): Promise<string> {
-  const lines = runCheckLines(result, late);
   if (result && result.webSmokeLoadingMs !== null) lines.push(`- web smoke first loading ms: ${String(result.webSmokeLoadingMs)}`);
   const checkFile = await lastCheckFile(game, branch, run);
   for (const check of checkFile?.checks ?? []) {

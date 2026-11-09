@@ -17,7 +17,6 @@ import { openHeadless, type HeadlessPage } from './chromium.ts';
 import {
   atGate,
   buildCheckOf,
-  checkoutOf,
   clientCheckTiming,
   didNotRun,
   ranToEnd,
@@ -98,9 +97,6 @@ export async function webRunSettings(ctx: Context): Promise<WebRun | string> {
   return { chromium, rate, bootLimitMs };
 }
 
-/** The switches of the headless browser of the web checks: the JavaScript heap that `get_stats` reads is the current one. */
-export const WEB_CHECK_SWITCHES: readonly string[] = ['--enable-precise-memory-info'];
-
 /**
  * `### web smoke` 2 and 4 around `use`: serves the folder of the web check export `file`, and on the same port `values`
  * (the launch values of the check instance of the page) as a launch value file (`application/json`) under a path with
@@ -115,7 +111,7 @@ export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, va
     const path = new URLSearchParams(query).get('ogw_launch_values') ?? '';
     const host = await serveFolder(dirname(file), { [path]: { file: join(folder, basename(path)), contentType: 'application/json' } });
     try {
-      const page = await openHeadless(ctx, run.chromium, `${host.url}/index.html?${query}`, run.rate, WEB_CHECK_SWITCHES);
+      const page = await openHeadless(ctx, run.chromium, `${host.url}/index.html?${query}`, run.rate);
       try {
         return await use(page);
       } finally {
@@ -132,13 +128,13 @@ export async function withWebPage<T>(ctx: Context, run: WebRun, file: string, va
 
 /**
  * Check `web smoke` (`build` `## build-time check`, ogw.md `### web smoke`). Null when the build has no web platform. Its
- * check instance and the web check export (made here when no web check made it yet) start together; the page opens
- * when both are ready and `gate` lets it measure.
+ * check instance and the web check export start together; the page opens when both are ready and `gate` lets it
+ * measure.
  */
 export async function webSmoke(input: ClientCheckInput, gate: MeasureGate = NO_GATE): Promise<WebSmokeResult | null> {
   if (!input.platforms.includes('web')) return null;
   const { ctx } = input;
-  const scenario = await readScenario(checkoutOf(input));
+  const scenario = await readScenario(input.game.root);
   if (typeof scenario === 'string') return { check: buildCheckOf(NAME, input.env, both('client/dev/bot/scenario.json:1', scenario, false)), loadingMs: null };
   try {
     const run = await webRunSettings(ctx);

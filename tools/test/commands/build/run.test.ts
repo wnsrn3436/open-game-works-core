@@ -4,13 +4,10 @@ import * as tar from 'tar';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BuildRunResult } from '../../../src/commands/build/lib/buildrun.ts';
 import type { MeasureGate } from '../../../src/commands/build/lib/client-check.ts';
-import { startJob } from '../../../src/lib/jobs.ts';
 import { devicePerformance } from '../../../src/commands/build/lib/device-performance.ts';
 import { buildBundle, buildPlatforms } from '../../../src/commands/build/lib/platform.ts';
 import { saveSchemaCheck } from '../../../src/commands/build/lib/saveschema.ts';
 import { appCheckLimit } from '../../../src/commands/build/lib/update.ts';
-import { repeatTest } from '../../../src/commands/build/lib/repeat-test.ts';
-import { soakTest } from '../../../src/commands/build/lib/soak-test.ts';
 import { webSmoke } from '../../../src/commands/build/lib/web-smoke.ts';
 import { placeholderFailures } from '../../../src/commands/check/api.ts';
 import { staticCheck } from '../../../src/commands/check/static-api.ts';
@@ -33,8 +30,6 @@ vi.mock('../../../src/commands/build/lib/web-smoke.ts', async (orig) => {
   const real = await orig<typeof import('../../../src/commands/build/lib/web-smoke.ts')>();
   return { ...real, webSmoke: vi.fn(real.webSmoke) };
 });
-vi.mock('../../../src/commands/build/lib/repeat-test.ts', async (orig) => ({ ...(await orig<object>()), repeatTest: vi.fn() }));
-vi.mock('../../../src/commands/build/lib/soak-test.ts', async (orig) => ({ ...(await orig<object>()), soakTest: vi.fn() }));
 vi.mock('../../../src/commands/build/lib/device-performance.ts', async (orig) => {
   const real = await orig<typeof import('../../../src/commands/build/lib/device-performance.ts')>();
   return { ...real, devicePerformance: vi.fn(real.devicePerformance) };
@@ -43,8 +38,6 @@ vi.mock('../../../src/commands/build/lib/saveschema.ts', async (orig) => {
   const real = await orig<typeof import('../../../src/commands/build/lib/saveschema.ts')>();
   return { ...real, saveSchemaCheck: vi.fn(real.saveSchemaCheck) };
 });
-// the late checks job of a DEV build is started, not run: `ogw build late` has its own tests
-vi.mock('../../../src/lib/jobs.ts', async (orig) => ({ ...(await orig<object>()), startJob: vi.fn(() => Promise.resolve('late-job')) }));
 
 const DOCKER = `case "$1 $2" in
   "login ghcr.io") cat > /dev/null;;
@@ -76,9 +69,6 @@ function fakeData(): void {
 }
 
 beforeEach(() => {
-  // the web checks after web smoke pass; their own tests run them
-  vi.mocked(repeatTest).mockImplementation((input) => Promise.resolve(input.platforms.includes('web') && input.env !== 'PROD' ? { name: 'repeat test', result: 'pass', details: [] } : null));
-  vi.mocked(soakTest).mockImplementation((input) => Promise.resolve(input.platforms.includes('web') && input.env !== 'PROD' ? { name: 'soak test', result: 'pass', details: [] } : null));
   vi.mocked(staticCheck).mockResolvedValue({ name: 'static check', platform: null, result: 'pass', failures: [], warnings: [] });
   vi.mocked(placeholderFailures).mockResolvedValue([]);
   vi.mocked(runContract).mockResolvedValue({ exitCode: 0, violations: [], stderr: '' });
@@ -391,10 +381,9 @@ describe('build run', () => {
     expect(result(dir, 'dev-0.1.0').checks.filter((c) => c.result === 'fail')).toEqual([]);
     expect([out.code, out.stderr]).toEqual([0, '']);
     const r = result(dir, 'dev-0.1.0');
-    // a build without android has no device performance check; a DEV build leaves repeat test and soak test to its late checks job
+    // a build without android has no device performance check
     expect(r.checks.at(-1)).toEqual({ name: 'web smoke', result: 'warn', details: ['no blocker: step 2: softlock'] });
-    expect(r.checks.some((c) => c.name === 'device performance' || c.name === 'repeat test' || c.name === 'soak test')).toBe(false);
-    expect(r.lateChecks?.names).toEqual(['repeat test', 'soak test']);
+    expect(r.checks.some((c) => c.name === 'device performance')).toBe(false);
     expect(r.webSmokeLoadingMs).toBe(1234);
     expect(out.stdout).toContain('check web smoke: warn\n  no blocker: step 2: softlock');
     expect(out.stdout).toContain('web smoke first loading ms 1234');
@@ -412,43 +401,7 @@ describe('build run', () => {
     expect(buildPlatforms).not.toHaveBeenCalled();
   });
 
-  it('hands a DEV web build over without its repeat test and soak test: a late checks job on the build commit runs them, started after the platform build and the push; a blocked build starts none', async () => {
-    const ws = makeWorkspace();
-    const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
-    (environments.DEV as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
-    const { dir, env, log } = prepare(ws, { buildPlatforms: ['web'], environments });
-    await openBuildRun(ws, dir, { platforms: ['web'] });
-    const order: string[] = [];
-    vi.mocked(buildPlatforms).mockImplementation((_c, input) => {
-      order.push('platform build');
-      write(join(input.outDir, 'web'), 'index.html', 'page');
-      return Promise.resolve({ artifacts: [{ platform: 'web', path: 'builds/dev-0.1.0/web' }], devCode: [] });
-    });
-    vi.mocked(startJob).mockClear();
-    vi.mocked(startJob).mockImplementation((options) => {
-      order.push(`job ${options.argv.join(' ')}`, `pushed before: ${String(readFileSync(log, 'utf8').includes('--push'))}`);
-      return Promise.resolve('late-job');
-    });
-    const repeats = vi.mocked(repeatTest).mock.calls.length;
-    const soaks = vi.mocked(soakTest).mock.calls.length;
-    const out = await ogw(ws, ['build', 'run', 'g'], { env });
-    expect([out.code, out.stderr]).toEqual([0, '']);
-    // the run itself runs neither: its hand-off does not wait for them
-    expect([vi.mocked(repeatTest).mock.calls.length, vi.mocked(soakTest).mock.calls.length]).toEqual([repeats, soaks]);
-    const head = git(dir, 'rev-parse', 'HEAD');
-    expect(order).toEqual(['platform build', `job build late g --commit ${head}`, 'pushed before: true']);
-    expect(vi.mocked(startJob).mock.calls[0]?.[0]).toMatchObject({ command: 'build late', game: 'g' });
-    expect(result(dir, 'dev-0.1.0').lateChecks).toEqual({ names: ['repeat test', 'soak test'], job: 'late-job', commit: head });
-    expect(out.stdout).toContain('check repeat test: pending\ncheck soak test: pending\nlate checks job late-job');
-    // a DEV build that a check blocks goes back to the loop: it starts no late checks job
-    vi.mocked(startJob).mockClear();
-    vi.mocked(staticCheck).mockResolvedValueOnce({ name: 'static check', platform: null, result: 'fail', failures: [{ where: 'client/x.gd:3', message: 'DEV reference dev/bot.gd', evidence: [] }], warnings: [] });
-    expect((await ogw(ws, ['build', 'run', 'g'], { env })).code).toBe(1);
-    expect(vi.mocked(startJob)).not.toHaveBeenCalled();
-    expect(result(dir, 'dev-0.1.0').lateChecks ?? null).toBeNull();
-  });
-
-  it('runs the build-time checks that run no game together with the instances and exports of the measurements; the measured runs after them: device performance and web smoke together, repeat test after web smoke, soak test after both; a STG failure blocks', async () => {
+  it('runs the build-time checks that run no game together with the instances and exports of the measurements; the measured runs after them: device performance and web smoke together', async () => {
     const ws = makeWorkspace();
     const environments = gameSettings().environments as Record<string, Record<string, unknown>>;
     (environments.STG as Record<string, unknown>).adapters = { cdn: 'cdn-r2' };
@@ -465,9 +418,8 @@ describe('build run', () => {
     const allStarted = async (): Promise<void> => {
       for (let i = 0; i < 250 && !load.every((name) => started.has(name)); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     };
-    // device performance outlasts web smoke and the repeat test: the soak test waits for it too
     // the Gradle export outlasts the other parts that run no game: the measured runs wait for it
-    const lasts: Record<string, number> = { 'device performance': 400, 'repeat test': 100, 'device performance export': 300 };
+    const lasts: Record<string, number> = { 'device performance export': 300 };
     const step = async (name: string): Promise<void> => {
       order.push(`${name} start`);
       started.add(name);
@@ -492,8 +444,6 @@ describe('build run', () => {
     vi.mocked(runContract).mockImplementationOnce(traced('contract', { exitCode: 0, violations: [], stderr: '' }));
     vi.mocked(devicePerformance).mockImplementationOnce(measured('device performance', { name: 'device performance', result: 'pass' as const, details: [] }));
     vi.mocked(webSmoke).mockImplementationOnce(measured('web smoke', { check: { name: 'web smoke', result: 'pass' as const, details: [] }, loadingMs: 10 }));
-    vi.mocked(repeatTest).mockImplementationOnce(traced('repeat test', { name: 'repeat test', result: 'pass' as const, details: [] }));
-    vi.mocked(soakTest).mockImplementationOnce(traced('soak test', { name: 'soak test', result: 'pass' as const, details: [] }));
     const out = await ogw(ws, ['build', 'run', 'g'], { env });
     expect([out.code, out.stderr]).toEqual([0, '']);
     const at = (event: string): number => order.indexOf(event);
@@ -502,23 +452,10 @@ describe('build run', () => {
     // the parts that run no game start before any of them ends: the Gradle export of device performance with them
     for (const name of load) expect(at(`${name} start`)).toBeLessThan(loadEnd);
     // the measured runs start after all of those ended; device performance and web smoke overlap as before
-    for (const name of ['device performance', 'web smoke', 'repeat test', 'soak test']) expect(at(`${name} start`)).toBeGreaterThan(lastLoadEnd);
+    for (const name of ['device performance', 'web smoke']) expect(at(`${name} start`)).toBeGreaterThan(lastLoadEnd);
     expect(Math.max(at('device performance start'), at('web smoke start'))).toBeLessThan(Math.min(at('device performance end'), at('web smoke end')));
-    expect(at('repeat test start')).toBeGreaterThan(at('web smoke end'));
-    expect(at('soak test start')).toBeGreaterThan(Math.max(at('device performance end'), at('repeat test end')));
     const checks = result(dir, 'stg-0.2.0').checks.map((c) => `${c.name}:${c.result}`);
-    expect(checks.slice(-6)).toEqual(['placeholder:pass', 'device performance:pass', 'web smoke:pass', 'repeat test:pass', 'soak test:pass', 'backward compatibility:pass']);
-    expect(vi.mocked(repeatTest).mock.calls[0]?.[0]).toMatchObject({ env: 'STG', version: '0.2.0', exportVersion: '0.2.0', platforms: ['web', 'android'] });
-
-    vi.mocked(buildPlatforms).mockClear();
-    const stg = makeWorkspace();
-    const second = prepare(stg, { buildPlatforms: ['web'] });
-    await openBuildRun(stg, second.dir, { env: 'STG', version: '0.2.0', platforms: ['web'] });
-    vi.mocked(soakTest).mockResolvedValueOnce({ name: 'soak test', result: 'fail', details: ['tick 42: softlock {"kind":"NoResponse"}'] });
-    const failed = await ogw(stg, ['build', 'run', 'g'], { env: second.env });
-    expect(failed.code).toBe(1);
-    expect(failed.stdout).toContain('check soak test: fail\n  tick 42: softlock {"kind":"NoResponse"}');
-    expect(buildPlatforms).not.toHaveBeenCalled();
+    expect(checks.slice(-4)).toEqual(['placeholder:pass', 'device performance:pass', 'web smoke:pass', 'backward compatibility:pass']);
   });
 
   it.each([
