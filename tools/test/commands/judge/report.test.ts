@@ -22,7 +22,7 @@ function pair(kind: CalibrationPair['kind'], fields: Partial<CalibrationPair> = 
 }
 
 function judge(k: number, side: 'A' | 'B', votes: Record<string, Vote>): { k: number; entry: JudgeEntry } {
-  const entry: JudgeEntry = { kind: 'main', result: `r${String(k)}`, agent: { cli: 'claude-code', model: 'm', effort: 'high' }, A: 'c', B: 'b', instanceSide: side, omittedMoments: [], votes, lostMoments: [], vsReference: null, telemetry: null, status: 'done' };
+  const entry: JudgeEntry = { kind: 'main', result: `r${String(k)}`, agent: { cli: 'claude-code', model: 'm', effort: 'high' }, A: 'c', B: 'b', instanceSide: side, omittedMoments: [], votes, lostMoments: [], vsReference: null, status: 'done' };
   return { k, entry };
 }
 

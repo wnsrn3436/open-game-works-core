@@ -102,8 +102,6 @@ export interface JudgeEntry {
   lostMoments: string[];
   /** null in a fun iteration, which has no `vs reference`. */
   vsReference: VsReference | null;
-  /** Absolute path of the judge input `telemetry`, or null. */
-  telemetry: string | null;
   status: 'done' | 'failed';
 }
 

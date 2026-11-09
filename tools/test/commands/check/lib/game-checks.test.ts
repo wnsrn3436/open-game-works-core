@@ -90,32 +90,6 @@ describe('gameChecks', () => {
     vi.mocked(mergedCoreSettings).mockResolvedValue({});
   });
 
-  it('gives the work alongside the checks the instance slots of the check', async () => {
-    const alongside = vi.fn<(instance: unknown) => Promise<void>>(() => Promise.resolve());
-    const checks = await gameChecks(ctx, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all', [{ name: 'beside', work: alongside }]);
-    expect(checks.map((c) => [c.name, c.platform])).toEqual([
-      ['regression test', null],
-      ['static check', null],
-      ['no blocker', null],
-      ['full flow', null],
-      ['UI quality', 'ios'],
-      ['UI quality', 'web'],
-      ['no placeholder', null],
-    ]);
-    expect(alongside.mock.calls[0]?.[0]).toBe(vi.mocked(botPlaytest).mock.calls[0]?.[3]);
-  });
-
-  it('logs the failure of each work beside the checks under the name of that work, and the checks go on', async () => {
-    const logs: string[] = [];
-    const logged = { ...ctx, log: (line: string) => logs.push(line) } as Context;
-    const checks = await gameChecks(logged, game, settings, options, { root: '/nowhere', dir: null, relative: false }, 'all', [
-      { name: 'shared telemetry runs', work: () => Promise.reject(new Error('no baseline worktree')) },
-      { name: 'quiet', work: () => Promise.resolve() },
-    ]);
-    expect(logs).toEqual(['shared telemetry runs: no baseline worktree']);
-    expect(checks.map((c) => c.name)).toContain('UI quality');
-  });
-
   it('runs the regression test and no placeholder beside the import of the checkout, and the static check and the instances after it', async () => {
     const turn = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
     let finish: (failure: string | null) => void = () => undefined;

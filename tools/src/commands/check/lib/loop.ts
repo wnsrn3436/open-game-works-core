@@ -16,7 +16,6 @@ import { coreSetting, importClient } from './engine.ts';
 import { checkResult, failure, type Evidence } from './evidence.ts';
 import { Slots } from './instances.ts';
 import { regressionTest } from './regression.ts';
-import { makeTelemetryRuns } from './telemetry-runs.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
 import { platformProfiles, uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
@@ -99,19 +98,11 @@ function uiSettings(settings: GameSettings): { languages: string[]; screens: UiC
   };
 }
 
-/** Work of the check beside the checks that is not a check, named in the log line of its failure. */
-export interface WorkBeside {
-  name: string;
-  /** Starts once the import of the checkout has ended; takes its instances within `instance.slots`. */
-  work: (instance: InstanceCheckOptions) => Promise<void>;
-}
-
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder`; `fun` runs only the regression test, the static check and the bot playtest
- * (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry runs of
- * `--loop`); the failure of each is logged under its name. The work that does not read the checkout's `client/` (the
- * server regression test and no placeholder) runs beside its import.
+ * (ogw.md `## check`). The work that does not read the checkout's `client/` (the server regression test and no
+ * placeholder) runs beside its import.
  */
 export async function gameChecks(
   ctx: Context,
@@ -120,7 +111,6 @@ export async function gameChecks(
   options: LoopOptions,
   evidence: Evidence,
   set: CheckSet,
-  alongside: readonly WorkBeside[] = [],
 ): Promise<CheckResult[]> {
   const [slots, modules, scenario, merged] = await Promise.all([slotsOf(ctx), gameModules(ctx, game), readScenario(game.root), mergedCoreSettings(ctx, game)]);
   const instance: InstanceCheckOptions = { evidence, slots, db: options.db, pollMs: options.pollMs };
@@ -152,18 +142,13 @@ export async function gameChecks(
     afterImport(() => span('bot playtest', () => botPlaytest(ctx, game.name, scenario, instance))),
     ...(fun ? [] : profiles.map((p) => afterImport(() => span(`UI quality ${p}`, () => uiQualityCheck(ctx, game.name, p, ui))))),
   ];
-  const besides = alongside.map((beside) =>
-    afterImport(() => beside.work(instance)).catch((error: unknown) => {
-      ctx.log(`${beside.name}: ${(error as Error).message}`);
-    }),
-  );
   const tasks: Promise<CheckResult | CheckResult[] | null>[] = [
     span('regression test', () => guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))),
     afterImport((imported) => span('static check', () => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })))),
     ...instances,
     ...(all ? [span('no placeholder', () => guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game))))] : []),
   ];
-  const [results] = await Promise.all([Promise.all(tasks), ...besides]);
+  const results = await Promise.all(tasks);
   const done = await settled;
   if ('error' in done) throw done.error;
   return results.flatMap((r) => (r === null ? [] : [r].flat())).sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
@@ -179,10 +164,7 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const commit = await head(game.root, { env: ctx.env });
   const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
   const set = iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all';
-  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`)
-  const checks = await gameChecks(ctx, game, settings, options, evidence, set, [
-    { name: 'shared telemetry runs', work: (instance) => span('shared telemetry runs', () => makeTelemetryRuns(ctx, game, run, commit, instance)) },
-  ]);
+  const checks = await gameChecks(ctx, game, settings, options, evidence, set);
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
   await span('record', async () => {

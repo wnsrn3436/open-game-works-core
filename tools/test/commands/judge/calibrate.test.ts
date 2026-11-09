@@ -15,7 +15,7 @@ interface FakeInstance {
 
 interface FakeAgent {
   id: string;
-  input: { A: { instance: string } | null; B: { instance: string } | null; elements: string[]; telemetry: string | null; reference: unknown; fixtures: unknown[] };
+  input: { A: { instance: string } | null; B: { instance: string } | null; elements: string[]; reference: unknown; fixtures: unknown[] };
   output: string;
   calibration: { output: string; evidence: string } | undefined;
 }
@@ -23,7 +23,7 @@ interface FakeAgent {
 const fake = vi.hoisted(() => {
   /** The winner per element the judge writes for its input; null for a failed judge. */
   const respond: (agent: FakeAgent) => Record<string, string> | null = () => ({});
-  return { instances: [] as FakeInstance[], agents: [] as FakeAgent[], bots: [] as { commit: string; latency: number }[], respond };
+  return { instances: [] as FakeInstance[], agents: [] as FakeAgent[], respond };
 });
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({
@@ -65,16 +65,6 @@ vi.mock('../../../src/lib/jobs.ts', async (importOriginal) => {
   return { ...original, readJob: vi.fn((id: string, env?: NodeJS.ProcessEnv) => (fake.agents.some((a) => a.id === id) ? Promise.resolve({ id, meta: {} }) : original.readJob(id, env))) };
 });
 
-vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
-  botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {
-    const started = fake.instances.find((i) => i.id === instance.id) as FakeInstance;
-    fake.bots.push({ commit: started.commit, latency: started.latency });
-    const telemetry = { started_at: 0, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
-    return Promise.resolve({ telemetry, guide: null });
-  }),
-}));
-
 const RECORD = (instance: string, baseline: string): string =>
   `## commit\n\n- instance: ${instance}\n- baseline: ${baseline}\n- confirms: none\n- kind: fun\n\n## checks\n\nnone\n\n## judge\n\n### records/loops/update-1/judge-1-1.md\n\n- kind: main\n- status: done\n\n## votes\n\nnone\n`;
 
@@ -112,7 +102,6 @@ const SETTINGS = { calibration: { nullPairs: 2, orderRuns: 1, degradeLatencyMs: 
 beforeEach(() => {
   fake.instances = [];
   fake.agents = [];
-  fake.bots = [];
   evaluateDeps.pollMs = 1;
   evaluateDeps.random = () => 0.1;
   evaluateDeps.now = () => 5000;
@@ -128,7 +117,6 @@ describe('ogw judge calibrate', () => {
       { A: missing, B: better, answers: { 'game feel': 'A' }, note: '', at: 2 },
     ];
     write(g.root, 'records/calibration/labels.json', labels);
-    write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } });
     commit(g.root, 'labels');
     const main = sh(g.root, 'git', ['rev-parse', 'HEAD']).trim();
     sh(g.root, 'git', ['checkout', '--quiet', '-b', 'other']);
@@ -167,22 +155,16 @@ describe('ogw judge calibrate', () => {
       expect(agent.input).toMatchObject({ elements: ['game feel', 'tension and release', 'no friction'], fixtures: [], reference: null });
       expect(agent.calibration?.output).toMatch(new RegExp(`^${g.root}/records/calibration/5000/judge-[a-z0-9-]+-[12]\\.md$`));
       expect(agent.calibration?.evidence).toMatch(new RegExp(`^${g.root}/builds/calibration/5000/judge-`));
-      expect(agent.input.telemetry).toMatch(new RegExp(`^${g.root}/builds/calibration/5000/telemetry-`));
+      // the judges read telemetry with ogw telemetry compare on the instances they play
+      expect(Object.keys(agent.input).sort()).toEqual(['A', 'B', 'elements', 'fixtures', 'reference']);
     }
-    // the degraded pair: the baseline instances, and the bot run of the baseline, have the input latency
+    // the degraded pair: the baseline instances have the input latency
     const latent = fake.instances.filter((i) => i.latency > 0);
-    expect(latent.map((i) => `${i.commit} ${String(i.latency)} ${i.client}`).sort()).toEqual([
-      `${main} 150 headless`,
-      `${main} 150 headless`,
-      `${main} 150 headless`,
-      `${main} 150 window`,
-      `${main} 150 window`,
-    ]);
+    expect(latent.map((i) => `${i.commit} ${String(i.latency)} ${i.client}`).sort()).toEqual([`${main} 150 window`, `${main} 150 window`]);
     // a judge of the degraded pair gets the latent instance on the side opposite this commit
     for (const agent of fake.agents.filter((a) => a.output.includes('/judge-degraded-'))) {
       expect(sideOf(agent, 'A').latency + sideOf(agent, 'B').latency).toBe(150);
     }
-    expect(fake.bots.filter((b) => b.latency > 0)).toHaveLength(3);
     const committed = sh(g.root, 'git', ['show', '--name-only', '--format=%s', 'main']).trim().split('\n');
     expect(committed[0]).toBe('judge calibration 5000');
     expect(committed).toContain('records/calibration/5000.md');

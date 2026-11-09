@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,9 +16,6 @@ interface FakeInstance {
   fixtureText?: string | null;
   db?: string;
   played?: boolean;
-  client?: string;
-  /** `--random-base` of the instance; absent for none. */
-  randomBase?: bigint;
   root: string;
   startedAt: number;
 }
@@ -99,7 +95,7 @@ vi.mock('../../../src/commands/instance/api.ts', () => ({
     const root = join(fake.root, '..', 'instances', id);
     const fixture = opts.fixture as string | undefined;
     const fixtureText = fixture === undefined ? undefined : existsSync(fixture) ? readFileSync(fixture, 'utf8') : null;
-    const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, client: opts.client as string | undefined, ...(opts.randomBase === undefined ? {} : { randomBase: opts.randomBase as bigint }), root, startedAt: 100 };
+    const info = { id, commit: opts.commit as string, platform: opts.platform as string | undefined, fixture, fixtureText, db: opts.db as string | undefined, played: opts.played as boolean | undefined, root, startedAt: 100 };
     fake.instances.push(info);
     fake.runningAtStart.push(fake.running.size + fake.others);
     fake.runningIdsAtStart.set(id, [...fake.running]);
@@ -214,36 +210,6 @@ vi.mock('../../../src/commands/measure/api.ts', () => ({
   }),
 }));
 
-/** The bot runs of the shared telemetry: by instance id, the telemetry, or null for a run that did not reach every step. */
-interface Bots {
-  runs: { id: string; commit: string; pollMs: number }[];
-  fail: Set<string>;
-  failRuns: Map<string, number>;
-  /** The run of the scenario on an instance, before its result. */
-  running: (id: string) => Promise<void>;
-}
-
-const bots = vi.hoisted((): Bots => ({ runs: [], fail: new Set(), failRuns: new Map(), running: () => Promise.resolve() }));
-
-vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
-  botRun: vi.fn(async (_ctx: unknown, instance: { id: string }, _scenario: unknown, pollMs: number) => {
-    const commit = fake.instances.find((i) => i.id === instance.id)?.commit ?? '';
-    bots.runs.push({ id: instance.id, commit, pollMs });
-    await bots.running(instance.id);
-    if (bots.fail.has(commit)) return Promise.resolve(null);
-    const failing = bots.failRuns.get(commit) ?? 0;
-    if (failing > 0) {
-      bots.failRuns.set(commit, failing - 1);
-      return Promise.resolve(null);
-    }
-    // this commit (the first started) answers input 30 ms late, the baseline 90 ms, in every run
-    const latency = commit === fake.instances[0]?.commit ? 30 : 90;
-    const telemetry = { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: latency, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
-    return Promise.resolve({ telemetry, guide: null });
-  }),
-}));
-
 const R = 'records/loops/update-1';
 
 /**
@@ -341,12 +307,7 @@ beforeEach(() => {
   measure.collect = [];
   measure.dead = [];
   measure.summarizing = () => Promise.resolve();
-  bots.runs = [];
-  bots.running = () => Promise.resolve();
-  bots.fail = new Set();
-  bots.failRuns = new Map();
   evaluateDeps.pollMs = 0;
-  evaluateDeps.botPollMs = 7;
   evaluateDeps.random = () => 0.1;
   let ms = 1000;
   evaluateDeps.now = () => ms;
@@ -393,7 +354,7 @@ describe('ogw loop evaluate', () => {
     // ogw loop input did not ask for memorable_moment in this run
     expect(file.memorableMoment).toBeUndefined();
     const agent = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' };
-    const entry = { agent, omittedMoments: [], votes: { 'game feel': 'this', 'tension and release': null, progression: null, 'one more run': null, 'no friction': null, presentation: null }, lostMoments: [], telemetry: null, status: 'done' };
+    const entry = { agent, omittedMoments: [], votes: { 'game feel': 'this', 'tension and release': null, progression: null, 'one more run': null, 'no friction': null, presentation: null }, lostMoments: [], status: 'done' };
     expect(file.judges).toEqual([
       { kind: 'main', result: `${R}/judge-1-1.md`, A: head, B: base, instanceSide: 'A', vsReference: 'pass', ...entry },
       { kind: 'main', result: `${R}/judge-1-2.md`, A: base, B: head, instanceSide: 'B', vsReference: 'pass', ...entry },
@@ -414,9 +375,10 @@ describe('ogw loop evaluate', () => {
     expect(file.plays[3]).toEqual({ result: '', instance: '', platform: 'android', moment: 'broken', status: 'failed' });
     // main judge: the boss pair and the broken pair (null), then this commit and the baseline from the first screen,
     // started in the order the judge plays them
-    const mainInput = judgeAgents()[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string; playGuide: string; names: unknown }; fixtures: unknown[]; reference: unknown; elements: string[]; telemetry: unknown };
+    const mainInput = judgeAgents()[0]?.input as { A: { instance: string; playGuide: string }; B: { instance: string; playGuide: string; names: unknown }; fixtures: unknown[]; reference: unknown; elements: string[] };
     expect(mainInput.elements).toEqual(file.elements);
-    expect(mainInput.telemetry).toBeNull();
+    // the input holds only the fields of the judge input format
+    expect(Object.keys(mainInput).sort()).toEqual(['A', 'B', 'elements', 'fixtures', 'reference']);
     expect(fake.instances.slice(0, 4).map((i) => [i.id, i.commit, i.fixture !== undefined])).toEqual([
       ['i1', head, true],
       ['i2', base, true],
@@ -666,7 +628,6 @@ describe('ogw loop evaluate', () => {
         votes: null,
         lostMoments: [],
         vsReference: 'unknown',
-        telemetry: null,
         status: 'done',
       },
     ]);
@@ -1385,7 +1346,7 @@ describe('ogw loop evaluate', () => {
     ]);
     const judges = fake.agents.filter((a) => a.role === 'judge');
     expect(judges.map((a) => a.agent)).toEqual([panel[0], panel[0], panel[1], panel[1]]);
-    for (const judge of judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], telemetry: null, reference: null });
+    for (const judge of judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], reference: null });
     // no save fixture instance and no play of a moment
     expect(fake.instances.filter((i) => i.fixture !== undefined)).toEqual([]);
     expect(file.plays).toEqual([]);
@@ -1416,144 +1377,10 @@ describe('ogw loop evaluate', () => {
     const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
     expect(file.plays).toEqual([]);
   });
-
-  it('shares the telemetry of three bot runs per commit with every judge, named by its sides', async () => {
-    const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
-    const goal = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
-    write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal });
-    commit(g.root);
-    fake.respond = (agent) => {
-      if (agent.role === 'play') return null;
-      const side = sideCommit(agent, 'A') === head ? 'A' : 'B';
-      return judgeText(side, side, 'pass');
-    };
-    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-    expect(out.stderr).toBe('');
-    expect(out.code).toBe(0);
-    // six headless instances first, started together, three of this commit and three of the baseline game, stopped
-    // before the judges start
-    const headless = fake.instances.slice(0, 6);
-    expect(headless.map((i) => [i.commit, i.client, i.played]).sort()).toEqual(
-      [head, head, head, base, base, base].map((c) => [c, 'headless', undefined]).sort(),
-    );
-    // the k-th run of each commit has random base k, so the two commits play the same worlds; the judges' have none
-    expect(headless.map((i) => `${i.commit} ${String(i.randomBase)}`).sort()).toEqual([head, base].flatMap((c) => [1, 2, 3].map((k) => `${c} ${String(k)}`)).sort());
-    expect(fake.instances.slice(6).filter((i) => i.randomBase !== undefined)).toEqual([]);
-    expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, head, base, base, base].sort());
-    // the bot runs poll at their own interval, not that of the agent jobs
-    expect(bots.runs.map((r) => r.pollMs)).toEqual([7, 7, 7, 7, 7, 7]);
-    expect(fake.stopped).toEqual(expect.arrayContaining(['i1', 'i2', 'i3', 'i4', 'i5', 'i6']));
-    const judgeIds = judgeAgents().flatMap((a) => {
-      const input = a.input as { A: { instance: string }; B: { instance: string } | null; fixtures: { A: string | null; B: string | null }[] };
-      return [input.A.instance, input.B?.instance ?? null, ...input.fixtures.flatMap((f) => [f.A, f.B])].filter((id): id is string => id !== null);
-    });
-    for (const id of judgeIds) expect(fake.runningIdsAtStart.get(id)?.filter((r) => headless.some((h) => h.id === r)) ?? []).toEqual([]);
-    const first = join(g.root, `${R}/evidence/telemetry-1-1.md`);
-    const second = join(g.root, `${R}/evidence/telemetry-1-2.md`);
-    expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 30, B 90');
-    expect(read(g.root, `${R}/evidence/telemetry-1-2.md`)).toContain('input_latency_ms: A 90, B 30');
-    const file = readJsonFile(g.root, `${R}/evaluate-1.json`) as EvaluateFile;
-    expect(file.judges.map((j) => [j.kind, j.instanceSide, j.telemetry])).toEqual([
-      ['main', 'A', first],
-      ['main', 'B', second],
-      ['success', 'A', first],
-      ['success', 'A', first],
-    ]);
-    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([first, second, first, first]);
-    // evidence is not committed
-    expect(git(g.root, 'ls-files', `${R}/evidence`)).toBe('');
-
-    // a bot run that does not reach every step is replaced by a new run
-    fake.instances = [];
-    fake.agents = [];
-    counters.judge = 0;
-    counters.play = 0;
-    bots.runs = [];
-    bots.failRuns = new Map([[base, 2]]);
-    rmSync(join(g.root, `${R}/evidence`), { recursive: true, force: true });
-    const retried = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-    expect(retried.code).toBe(0);
-    expect(retried.stderr).toContain(`shared telemetry: a bot run of ${base} did not reach every step`);
-    expect(bots.runs.filter((r) => r.commit === base)).toHaveLength(5);
-    // the new runs count on: random bases 4 and 5
-    expect(fake.instances.filter((i) => i.commit === base && i.client === 'headless').map((i) => i.randomBase)).toEqual([1n, 2n, 3n, 4n, 5n]);
-    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([first, second, first, first]);
-
-    // runs that do not reach every step, also when run again: no telemetry for any judge
-    fake.instances = [];
-    fake.agents = [];
-    counters.judge = 0;
-    counters.play = 0;
-    bots.runs = [];
-    bots.fail = new Set([base]);
-    rmSync(join(g.root, `${R}/evidence`), { recursive: true, force: true });
-    expect((await ogw(g.ws, ['loop', 'evaluate', 'g'])).code).toBe(0);
-    expect(fake.agents.filter((a) => a.role === 'judge').map((a) => a.input.telemetry)).toEqual([null, null, null, null]);
-    expect(existsSync(first)).toBe(false);
-  });
-
-  it('takes the shared telemetry runs that ogw check --loop made of the same two commits with the same scenario, and makes them itself otherwise', async () => {
-    const { g, head, base } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
-    const goal = { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 };
-    const scenarioFile = { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal };
-    write(g.root, 'client/dev/bot/scenario.json', scenarioFile);
-    commit(g.root);
-    const sha256 = createHash('sha256').update(`${JSON.stringify(scenarioFile, null, 2)}\n`).digest('hex');
-    const runOf = (latency: number) => ({ telemetry: { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: latency, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 }, guide: null });
-    const runs = (commitRuns: unknown, baselineRuns: unknown, scenario = sha256): void => {
-      write(g.root, `${R}/evidence/check-1/telemetry-runs.json`, { commit: head, baseline: base, scenario, runs: { commit: commitRuns, baseline: baselineRuns } });
-    };
-    fake.respond = (agent) => {
-      if (agent.role === 'play') return null;
-      const side = sideCommit(agent, 'A') === head ? 'A' : 'B';
-      return judgeText(side, side, 'pass');
-    };
-    const evaluate = async (): Promise<void> => {
-      resetRun();
-      bots.runs = [];
-      const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-      expect(out.stderr).toBe('');
-      expect(out.code).toBe(0);
-    };
-    const telemetry = join(g.root, `${R}/evidence/telemetry-1-1.md`);
-
-    // the runs of the check: no bot run and no headless instance, and the judges compare them
-    runs([runOf(40), runOf(40), runOf(40)], [runOf(120), runOf(120), runOf(120)]);
-    await evaluate();
-    expect(bots.runs).toEqual([]);
-    expect(fake.instances.filter((i) => i.client === 'headless')).toEqual([]);
-    expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 40, B 120');
-    expect(judgeAgents().map((a) => a.input.telemetry)).toEqual([telemetry, join(g.root, `${R}/evidence/telemetry-1-2.md`), telemetry, telemetry]);
-
-    // runs of the check that fell short for a commit: no telemetry, and no runs again
-    runs([runOf(40), runOf(40), runOf(40)], null);
-    rmSync(telemetry);
-    await evaluate();
-    expect(bots.runs).toEqual([]);
-    expect(judgeAgents().map((a) => a.input.telemetry)).toEqual([null, null, null, null]);
-
-    // runs of another scenario, or of other commits: it makes the runs itself
-    for (const [scenario, baseline] of [['0'.repeat(64), base], [sha256, head]] as const) {
-      write(g.root, `${R}/evidence/check-1/telemetry-runs.json`, { commit: head, baseline, scenario, runs: { commit: [runOf(40), runOf(40), runOf(40)], baseline: [runOf(120), runOf(120), runOf(120)] } });
-      await evaluate();
-      expect(bots.runs.map((r) => r.commit).sort()).toEqual([head, head, head, base, base, base].sort());
-      expect(read(g.root, `${R}/evidence/telemetry-1-1.md`)).toContain('input_latency_ms: A 30, B 90');
-    }
-  });
 });
 
 function judgeAgents(): FakeAgent[] {
   return fake.agents.filter((a) => a.role === 'judge');
-}
-
-function resetRun(): void {
-  fake.instances = [];
-  fake.agents = [];
-  fake.running = new Set();
-  fake.stopped = [];
-  fake.runningAtStart = [];
-  counters.judge = 0;
-  counters.play = 0;
 }
 
 /** Waits until `done` holds or `ms` passed: the timeout is what a version that never gets there meets. */
@@ -1563,16 +1390,6 @@ async function until(done: () => boolean, ms: number): Promise<boolean> {
 }
 
 const PLAY_DONE = '## coverage\n\nunknown: none\n';
-const SCENARIO = { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } };
-
-/** Records the boot of each instance that is not headless: `play` for one of the `playInstances` plays (it has a platform). */
-function recordBoots(events: string[]): void {
-  fake.booting = (id) => {
-    const instance = fake.instances.find((i) => i.id === id);
-    if (instance?.client !== 'headless') events.push(instance?.platform === undefined ? 'judge or moment' : 'play');
-    return Promise.resolve();
-  };
-}
 
 /** The instance ids that the inputs of the judges name. */
 function judgeInstanceIds(): string[] {
@@ -1603,50 +1420,6 @@ describe('ogw loop evaluate work beside each other', () => {
     expect(out.code).toBe(0);
     expect(most).toBe(7);
     // no start ran beside 8 instances
-    expect(fake.runningAtStart.every((n) => n < 8)).toBe(true);
-  });
-
-  it('starts the plays while the shared telemetry runs, and the judges once the runs ended', async () => {
-    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0 });
-    write(g.root, 'client/dev/bot/scenario.json', SCENARIO);
-    commit(g.root);
-    fake.respond = (agent) => (agent.role === 'play' ? PLAY_DONE : judgeText('A', 'A', 'pass'));
-    const events: string[] = [];
-    bots.running = async () => {
-      // the runs end once the play started, or after 300 ms: a version whose plays wait for the runs gets there
-      await until(() => events.includes('play'), 300);
-      events.push('bot');
-    };
-    recordBoots(events);
-    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-    expect(out.stderr).toBe('');
-    expect(out.code).toBe(0);
-    // the play started before the runs ended; the judges, whose input names the runs, after all six ended
-    expect(events.indexOf('play')).toBeLessThan(events.indexOf('bot'));
-    const ids = judgeInstanceIds();
-    expect(ids.length).toBeGreaterThan(0);
-    const headless = (id: string): boolean => fake.instances.find((i) => i.id === id)?.client === 'headless';
-    for (const id of ids) expect(fake.runningIdsAtStart.get(id)?.filter(headless) ?? []).toEqual([]);
-    expect(judgeAgents().every((a) => typeof a.input.telemetry === 'string')).toBe(true);
-  });
-
-  it('keeps the slots the shared telemetry runs and their judges take for them: no play starts in them', async () => {
-    // 8 slots: the 6 runs and the 2 instances each of the 2 step 4 judges start with leave none for a play meanwhile
-    const { g } = await loop({ playInstances: 1, backgroundRetryLimit: 0, maxConcurrentInstances: 8 });
-    write(g.root, 'client/dev/bot/scenario.json', SCENARIO);
-    commit(g.root);
-    fake.respond = (agent) => (agent.role === 'play' ? PLAY_DONE : judgeText('A', 'A', 'pass'));
-    const events: string[] = [];
-    bots.running = async () => {
-      await new Promise((r) => setTimeout(r, 30));
-      events.push('bot');
-    };
-    recordBoots(events);
-    const out = await ogw(g.ws, ['loop', 'evaluate', 'g']);
-    expect(out.stderr).toBe('');
-    expect(events.slice(0, 6)).toEqual(['bot', 'bot', 'bot', 'bot', 'bot', 'bot']);
-    // the judges start first, as they did after the runs
-    expect(events[6]).toBe('judge or moment');
     expect(fake.runningAtStart.every((n) => n < 8)).toBe(true);
   });
 

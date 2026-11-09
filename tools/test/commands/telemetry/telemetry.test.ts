@@ -2,8 +2,8 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { summaryLines, telemetrySummary } from '../../../src/commands/telemetry/api.ts';
-import { compareRepeatedTelemetry, compareTelemetry, distance, failureIsNone, formatComparison, freeScenes } from '../../../src/commands/telemetry/lib/compare.ts';
-import { isMetric, median, metricValue, toTelemetry, windowTelemetry, type Telemetry } from '../../../src/commands/telemetry/lib/metrics.ts';
+import { compareTelemetry, distance, failureIsNone, formatComparison, freeScenes } from '../../../src/commands/telemetry/lib/compare.ts';
+import { isMetric, median, metricValue, toTelemetry, windowTelemetry, withInputLatency, type Telemetry } from '../../../src/commands/telemetry/lib/metrics.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { ogw } from '../../helpers/workspace.ts';
 import { setupRunner, startFor, stopAll, type Runner } from '../instance/runner.ts';
@@ -376,27 +376,36 @@ describe('ogw telemetry', () => {
     expect(await fail(['--from-a', '0', '--to-a', '5'])).toContain('the windows of A and B go together');
     expect(await fail(['--from-a', 'x', '--to-a', '1', '--from-b', '0', '--to-b', '1'])).toContain('invalid --from-a: x');
   });
+
+  it('adds the --input-latency of an instance to each input latency it compares, as the client measures from when it gets the input', async () => {
+    const latent = await startFor(runner, ['--input-latency', '150']);
+    try {
+      const base = Date.now();
+      runner.config({
+        telemetryByInstance: {
+          [a]: telemetry({ started_at: base, inputs: [input(base + 50, 40, { Sound: 1 }), input(base + 60, 60, { Sound: 1 })] }),
+          [latent]: telemetry({ started_at: base, inputs: [input(base + 50, 40, { Sound: 1 }), input(base + 60, null), input(base + 70, 60, { Sound: 1 })] }),
+        },
+      });
+      // the degraded pair of ogw judge calibrate: the same commit, its baseline side held 150 ms per input
+      const out = await ogw(runner.ws, ['telemetry', 'compare', a, latent]);
+      expect(out.stdout).toContain('game feel: winner A, margin decisive\n  input_latency_ms: A 40, B 190, d 0.789');
+      const swapped = await ogw(runner.ws, ['telemetry', 'compare', latent, a, '--json']);
+      const feel = (JSON.parse(swapped.stdout) as { elements: { element: string; winner: string; metrics: { metric: string; a: number; b: number }[] }[] }).elements[0];
+      expect(feel).toMatchObject({ element: 'game feel', winner: 'B' });
+      expect(feel?.metrics.find((m) => m.metric === 'input_latency_ms')).toMatchObject({ a: 190, b: 40 });
+      // ogw telemetry shows the telemetry of the client as it is
+      expect((JSON.parse((await ogw(runner.ws, ['telemetry', latent])).stdout) as Telemetry).inputs.map((i) => i.latency_ms)).toEqual([40, null, 60]);
+    } finally {
+      await ogw(runner.ws, ['instance', 'stop', latent]);
+    }
+  });
 });
 
-describe('compareRepeatedTelemetry', () => {
-  const goals = (counts: number[]) => ({ started_at: 0, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: counts.map((input_count, i) => ({ start_ms: i * 1000, end_ms: i * 1000 + 500, input_count })), scene_loads: [], dropped: 0 }) as never;
-
-  it('counts no difference when the runs of the two sides overlap', () => {
-    const noFriction = compareRepeatedTelemetry([goals([20]), goals([13])], [goals([14]), goals([16])], false)[4];
-    expect(noFriction?.winner).toBe('indistinguishable');
-    expect(noFriction?.metrics.find((m) => m.metric === 'goal_input_count')).toMatchObject({ a: 16.5, b: 15, d: 0, runs: { a: [20, 13], b: [14, 16] } });
-  });
-
-  it('counts no difference when the gap between the runs is not larger than the spread of a side', () => {
-    // same commit in a real calibration: feedback 1 1 1 against 2 2 3
-    const noFriction = compareRepeatedTelemetry([goals([1]), goals([1]), goals([1])], [goals([2]), goals([2]), goals([3])], false)[4];
-    expect(noFriction?.winner).toBe('indistinguishable');
-    expect(noFriction?.metrics.find((m) => m.metric === 'goal_input_count')?.d).toBe(0);
-  });
-
-  it('counts the difference of the means when the runs are apart', () => {
-    const noFriction = compareRepeatedTelemetry([goals([10]), goals([11])], [goals([20]), goals([22])], false)[4];
-    expect(noFriction?.winner).toBe('A');
-    expect(formatComparison([noFriction as never])).toContain('(runs A 10 11, B 20 22)');
+describe('withInputLatency', () => {
+  it('adds the held ms to each measured input latency and keeps an input without a response', () => {
+    const t = telemetry({ inputs: [input(1, 16), input(2, null), input(3, 33)] });
+    expect(withInputLatency(t, 150).inputs.map((i) => i.latency_ms)).toEqual([166, null, 183]);
+    expect(withInputLatency(t, 0)).toBe(t);
   });
 });

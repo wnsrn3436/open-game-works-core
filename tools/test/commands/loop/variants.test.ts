@@ -43,8 +43,6 @@ interface Fake {
   ended: (k: number) => boolean;
   /** The start of a variant agent before it makes its worktree. */
   starting: (k: number) => Promise<void>;
-  /** The commit of each shared telemetry bot run, in run order. */
-  botRuns: string[];
 }
 
 const fake = vi.hoisted(
@@ -63,18 +61,8 @@ const fake = vi.hoisted(
     merges: [],
     ended: () => true,
     starting: () => Promise.resolve(),
-    botRuns: [],
   }),
 );
-
-vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
-  botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {
-    fake.botRuns.push(fake.instances.find((i) => i.id === instance.id)?.commit ?? '');
-    const telemetry = { started_at: 0, inputs: [{ at: 10, command: 'tap', latency_ms: 30, feedback: { sound: 1 } }], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
-    return Promise.resolve({ telemetry, guide: null });
-  }),
-}));
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({
   startInstance: vi.fn((_ctx: unknown, opts: { commit: string; db?: string }) => {
@@ -209,7 +197,6 @@ beforeEach(() => {
   fake.merges = [];
   fake.ended = () => true;
   fake.starting = () => Promise.resolve();
-  fake.botRuns = [];
   evaluateDeps.pollMs = 0;
   evaluateDeps.random = () => 0.1;
   variantDeps.pollMs = 0;
@@ -284,7 +271,7 @@ describe('ogw loop variants', () => {
       [2, `${R}/judge-2-v2-1.md`],
       [2, `${R}/judge-2-v2-2.md`],
     ]);
-    for (const judge of fake.judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], telemetry: null, reference: null });
+    for (const judge of fake.judges) expect(judge.input).toMatchObject({ fixtures: [], elements: ['game feel', 'tension and release', 'no friction'], reference: null });
     expect(fake.judges.map((j) => fake.commits.get(commitOf(j.input, 'A')) === j.k)).toEqual([true, false, true, false]);
     expect(fake.instances.filter((i) => !fake.commits.has(i.commit)).every((i) => i.commit === base)).toBe(true);
     // the record of the choice
@@ -577,23 +564,5 @@ describe('ogw loop variants work beside each other', () => {
       [3, 'indistinguishable', false],
     ]);
     expect(fake.judges.map((j) => j.k).sort()).toEqual([1, 1, 2, 2, 3, 3]);
-  });
-
-  it('makes the shared telemetry runs of the baseline game commit once for every variant', async () => {
-    const { g, base } = await funIteration();
-    write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } });
-    commit(g.root);
-    const out = await ogw(g.ws, ['loop', 'variants', 'g']);
-    expect(out.stderr).toBe('');
-    expect(out.code).toBe(0);
-    // three runs of the baseline commit, and three of each variant commit
-    expect(fake.botRuns.filter((c) => c === base)).toHaveLength(3);
-    for (const k of [1, 2, 3]) expect(fake.botRuns.filter((c) => fake.commits.get(c) === k)).toHaveLength(3);
-    // each judge compares its variant with the same baseline runs
-    expect(fake.judges).toHaveLength(6);
-    for (const judge of fake.judges) {
-      expect(typeof judge.input.telemetry).toBe('string');
-      expect(read(g.root, (judge.input.telemetry as string).slice(g.root.length + 1))).toContain('input_latency_ms');
-    }
   });
 });

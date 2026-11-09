@@ -18,8 +18,6 @@ export interface MetricComparison {
   b: number | null;
   /** null unless both values exist. */
   d: number | null;
-  /** `compareRepeatedTelemetry`: the value of each run of `A` and of `B`. */
-  runs?: { a: (number | null)[]; b: (number | null)[] };
 }
 
 export interface ElementComparison {
@@ -80,48 +78,6 @@ export function compareTelemetry(a: Telemetry, b: Telemetry, noFailure: boolean,
   });
 }
 
-function mean(values: readonly (number | null)[]): number | null {
-  if (values.some((v) => v === null) || values.length === 0) return null;
-  return (values as number[]).reduce((x, y) => x + y, 0) / values.length;
-}
-
-/**
- * The runs of the two sides are apart: the gap between the closest runs of `A` and of `B` is larger than the spread
- * (largest minus smallest run) of either side. Runs that only just miss each other are not apart.
- */
-function apart(a: readonly number[], b: readonly number[]): boolean {
-  const gap = Math.max(Math.min(...a) - Math.max(...b), Math.min(...b) - Math.max(...a));
-  const spread = Math.max(Math.max(...a) - Math.min(...a), Math.max(...b) - Math.min(...b));
-  return gap > spread;
-}
-
-/**
- * The comparison of several runs of `A` and of `B` (ogw.md `## loop evaluate` shared telemetry): a metric value is
- * the mean of its runs, and `d` is 0 unless the runs of `A` and of `B` are apart, because otherwise the difference is
- * not larger than the difference between runs of one commit.
- */
-export function compareRepeatedTelemetry(
-  a: readonly Telemetry[],
-  b: readonly Telemetry[],
-  noFailure: boolean,
-  freeA: FreeScenes = null,
-  freeB: FreeScenes = null,
-): ElementComparison[] {
-  return ELEMENTS.map(({ element, metrics, failureOnly }) => {
-    const rows = metrics.map((metric) => {
-      const ra = a.map((t) => metricValue(metric, [{ telemetry: t, state: {} }], freeA));
-      const rb = b.map((t) => metricValue(metric, [{ telemetry: t, state: {} }], freeB));
-      const va = mean(ra);
-      const vb = mean(rb);
-      let d: number | null = null;
-      if (va !== null && vb !== null) d = apart(ra as number[], rb as number[]) ? metricDistance(metric, va, vb) : 0;
-      return { metric, a: va, b: vb, d, runs: { a: ra, b: rb } };
-    });
-    if (failureOnly && noFailure) return { element, metrics: rows, winner: 'n/a', margin: '' };
-    return { element, metrics: rows, ...judge(rows) };
-  });
-}
-
 /** The content under `## failure` of a play guide is `none`. */
 export function failureIsNone(playGuide: string): boolean {
   const lines = sectionLines(playGuide, 'failure');
@@ -154,10 +110,7 @@ export function formatComparison(elements: readonly ElementComparison[]): string
   for (const e of elements) {
     const verdict = e.margin === '' ? `winner ${e.winner}` : `winner ${e.winner}, margin ${e.margin}`;
     lines.push(`${e.element}: ${verdict}`);
-    for (const m of e.metrics) {
-      const runs = m.runs === undefined ? '' : ` (runs A ${m.runs.a.map(num).join(' ')}, B ${m.runs.b.map(num).join(' ')})`;
-      lines.push(`  ${m.metric}: A ${num(m.a)}, B ${num(m.b)}, d ${num(m.d)}${runs}`);
-    }
+    for (const m of e.metrics) lines.push(`  ${m.metric}: A ${num(m.a)}, B ${num(m.b)}, d ${num(m.d)}`);
   }
   return lines.join('\n');
 }

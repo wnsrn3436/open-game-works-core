@@ -280,7 +280,6 @@ describe('confirmedBy', () => {
         votes: null,
         lostMoments: [],
         vsReference: 'pass',
-        telemetry: null,
         status: judge,
       },
     ],

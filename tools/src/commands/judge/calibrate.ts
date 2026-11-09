@@ -64,7 +64,6 @@ function calibrationSite(root: string, ms: string): EvaluateSite {
   const builds = join(root, 'builds', 'calibration', ms);
   return {
     input: (role, at) => join(builds, `input-${role}-${String(at)}.json`),
-    telemetry: (pair, k) => join(builds, `telemetry-${pair.name}-${String(k)}.md`),
     measure: (instance) => join(builds, `measure-${instance}.json`),
     judgePlace: (pair, k) => ({ output: join(records, `judge-${pair.name}-${String(k)}.md`), evidence: join(builds, `judge-${pair.name}-${String(k)}`) }),
   };
