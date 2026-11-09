@@ -1,0 +1,12 @@
+{
+  "target": "build start",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/judge/calibrate.ts:109",
+      "problem": "`ogw judge calibrate` throws when `missingLoginToken` reports the harness secret `claude-code-oauth-token` missing (since a436993). `skills/host-env/SKILL.md:38` now says the command does not start without it, but `tools/ogw.md` `## judge calibrate` (line 514) does not define this check: that section never mentions the secret or the login token. So `ogw judge calibrate` has behavior outside its defining document, and `tools/test/commands/judge/calibrate.test.ts` has no test of it (it has no mention of the login token). Run path: harness settings `agents.judge` uses Claude Code and the secret store has no `claude-code-oauth-token` → `ogw judge calibrate <game>` fails before `prepareMain`. `tools/ogw.md` `## judge calibrate` does not say this happens",
+      "foundBy": "build start round 2"
+    }
+  ]
+}
