@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { interiorsIntersect, modelProblems, readGlb, transformProblems, uvOverlap } from '../../../../src/commands/resource/lib/glb.ts';
 import { boxGlb } from '../../../../src/commands/resource/lib/gltf.ts';
+import { inWorker } from '../../../helpers/worker.ts';
 import { floatUv, glbOf, type Attr } from './glb-fixture.ts';
 
 function byteUv(points: number[]): Attr {
@@ -73,18 +74,24 @@ describe('glb model checks', () => {
     return glbOf([{ uv: floatUv(points), indices }]);
   }
 
-  it('checks a clean unwrap of 20000 triangles with an island far outside the 0-1 tile', () => {
-    expect(uvOverlap(readGlb(unwrap(100, [100, 100, 101, 100, 100, 101]), 'm'), 'm')).toBeNull();
-    // a triangle laid over the last quad overlaps it
-    expect(uvOverlap(readGlb(unwrap(100, [0.995, 0.995, 0.999, 0.995, 0.995, 0.999]), 'm'), 'm')).toBe('triangle 19999 of mesh 0 primitive 0 and triangle 20000 of mesh 0 primitive 0');
-  }, 20_000);
+  /**
+   * `uvOverlap` of `glb` in a worker thread that is ended after 20 s: the check is synchronous, and the time limit of a
+   * test does not stop it, so a check that does not end on large meshes fails the test there.
+   */
+  const overlapWithin20s = (glb: Buffer): Promise<unknown> => inWorker(new URL('./glb-overlap-worker.ts', import.meta.url), glb, 20_000);
 
-  it('stops at the first overlapping pair of an unwrap whose 20000 triangles all cover the unit square', () => {
+  it('checks a clean unwrap of 20000 triangles with an island far outside the 0-1 tile', async () => {
+    expect(await overlapWithin20s(unwrap(100, [100, 100, 101, 100, 100, 101]))).toBeNull();
+    // a triangle laid over the last quad overlaps it
+    expect(await overlapWithin20s(unwrap(100, [0.995, 0.995, 0.999, 0.995, 0.995, 0.999]))).toBe('triangle 19999 of mesh 0 primitive 0 and triangle 20000 of mesh 0 primitive 0');
+  });
+
+  it('stops at the first overlapping pair of an unwrap whose 20000 triangles all cover the unit square', async () => {
     const indices = Array.from({ length: 10_000 }, () => [0, 1, 2, 1, 3, 2]).flat();
     const reset = glbOf([{ uv: floatUv([0, 0, 1, 0, 0, 1, 1, 1]), indices }]);
     // the two triangles of one quad share an edge; the first triangle of the next quad lies on the first one
-    expect(uvOverlap(readGlb(reset, 'm'), 'm')).toBe('triangle 0 of mesh 0 primitive 0 and triangle 2 of mesh 0 primitive 0');
-  }, 20_000);
+    expect(await overlapWithin20s(reset)).toBe('triangle 0 of mesh 0 primitive 0 and triangle 2 of mesh 0 primitive 0');
+  });
 
   it('reads the values of a sparse accessor over its base values', () => {
     // base: two triangles apart; the sparse values move the second onto the first
