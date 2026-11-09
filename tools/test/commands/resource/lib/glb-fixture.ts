@@ -30,9 +30,11 @@ export function glbOf(prims: { uv: Attr; indices?: number[]; mode?: number }[], 
     const uv = add(p.uv.data, { componentType: p.uv.componentType, type: p.uv.type, count: p.uv.count, ...(p.uv.normalized ? { normalized: true } : {}) });
     const prim: Record<string, unknown> = { attributes: { TEXCOORD_0: uv }, ...(p.mode === undefined ? {} : { mode: p.mode }) };
     if (p.indices) {
-      const data = Buffer.alloc(p.indices.length * 2);
-      p.indices.forEach((v, i) => data.writeUInt16LE(v, i * 2));
-      prim.indices = add(data, { componentType: 5123, type: 'SCALAR', count: p.indices.length });
+      // unsigned short indices, or unsigned int ones when a vertex index does not fit in 16 bits
+      const wide = p.indices.some((v) => v > 0xffff);
+      const data = Buffer.alloc(p.indices.length * (wide ? 4 : 2));
+      p.indices.forEach((v, i) => (wide ? data.writeUInt32LE(v, i * 4) : data.writeUInt16LE(v, i * 2)));
+      prim.indices = add(data, { componentType: wide ? 5125 : 5123, type: 'SCALAR', count: p.indices.length });
     }
     return { primitives: [prim] };
   });

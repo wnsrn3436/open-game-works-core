@@ -239,30 +239,86 @@ function uvTriangles(glb: Glb, where: string): UvTriangle[] {
   return out;
 }
 
+/** min u, min v, max u, max v. */
+type Box = [number, number, number, number];
+
+/** The median of `values`. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] as number;
+}
+
+interface UvGrid {
+  /** The level of each box: the lowest level whose cell is as large as the box. */
+  levelOf: number[];
+  /** The levels that hold a box, lowest first. */
+  levels: number[];
+  /** The keys of the cells of level `k` that box `b` meets. */
+  cellsOf: (b: Box, k: number) => string[];
+}
+
 /**
- * The first pair of triangles of `TEXCOORD_0` whose interiors intersect, as `<triangle> and <triangle>`, or null when no
- * pair does. A sweep over u: the triangles in the order of the lowest u of their box, each checked against the earlier
- * ones whose box still reaches that u, so that the work follows the pairs whose boxes meet, wherever the UVs lie, and
- * the check stops at the first overlap.
+ * The grid of levels of `uvOverlap` over `boxes`: the cells of level 0 have the median width and height of the boxes,
+ * and each level doubles them. The cells count from the median low corner of the boxes, which keeps every cell index
+ * within about 2 × 10^9: each box is at least the two margins of its coordinates wide, and a box of at most the median
+ * width lies at or past that corner, so a far box does not make the indices of the others large.
+ */
+function uvGrid(boxes: readonly Box[]): UvGrid {
+  const [su, sv] = [median(boxes.map((b) => b[2] - b[0])), median(boxes.map((b) => b[3] - b[1]))];
+  const [u0, v0] = [median(boxes.map((b) => b[0])), median(boxes.map((b) => b[1]))];
+  const levelOf = boxes.map((b) => {
+    let k = 0;
+    while (b[2] - b[0] > su * 2 ** k || b[3] - b[1] > sv * 2 ** k) k++;
+    return k;
+  });
+  const cellsOf = (b: Box, k: number): string[] => {
+    const [cu, cv] = [su * 2 ** k, sv * 2 ** k];
+    const keys: string[] = [];
+    for (let x = Math.floor((b[0] - u0) / cu); x <= Math.floor((b[2] - u0) / cu); x++) {
+      for (let y = Math.floor((b[1] - v0) / cv); y <= Math.floor((b[3] - v0) / cv); y++) keys.push(`${String(k)} ${String(x)} ${String(y)}`);
+    }
+    return keys;
+  };
+  return { levelOf, levels: [...new Set(levelOf)].sort((a, b) => a - b), cellsOf };
+}
+
+/**
+ * The first pair of triangles of `TEXCOORD_0` whose interiors intersect, as `<triangle> and <triangle>` in list order, or
+ * null when no pair does. The pairs to check come from the grid of `uvGrid`, where a triangle is kept at its level. The
+ * triangles are taken from the highest level down, each checked against those taken before it in the cells that its
+ * box meets at its level and above, so that each pair whose boxes meet is checked once, the work follows those pairs
+ * whichever way the UV islands lie, and the check stops at the first overlap.
  */
 export function uvOverlap(glb: Glb, where: string): string | null {
   const tris = uvTriangles(glb, where);
-  const order = tris.map((_, i) => i).sort((a, b) => (tris[a] as UvTriangle).box[0] - (tris[b] as UvTriangle).box[0] || a - b);
-  let active: number[] = [];
+  if (tris.length < 2) return null;
+  // the approximate boxes, grown by a margin for rounding, only choose the pairs to check; the exact boxes and points decide
+  const boxes = tris.map((t): Box => [t.box[0] - margin(t.box[0]), t.box[1] - margin(t.box[1]), t.box[2] + margin(t.box[2]), t.box[3] + margin(t.box[3])]);
+  const { levelOf, levels, cellsOf } = uvGrid(boxes);
+  const grid = new Map<string, number[]>();
+  const order = tris.map((_, i) => i).sort((a, b) => (levelOf[b] as number) - (levelOf[a] as number) || a - b);
   for (const i of order) {
-    const t = tris[i] as UvTriangle;
-    // the approximate boxes only choose the pairs to check, with a margin for rounding; the exact boxes and points decide
-    active = active.filter((j) => (tris[j] as UvTriangle).box[2] + margin((tris[j] as UvTriangle).box[2]) >= t.box[0]);
-    for (const j of active) {
+    const [t, b, own] = [tris[i] as UvTriangle, boxes[i] as Box, levelOf[i] as number];
+    const met = new Set<number>();
+    for (const k of levels) if (k >= own) for (const key of cellsOf(b, k)) for (const j of grid.get(key) ?? []) met.add(j);
+    for (const j of [...met].sort((x, y) => x - y)) {
       const o = tris[j] as UvTriangle;
-      if (o.box[3] + margin(o.box[3]) < t.box[1] || t.box[3] + margin(t.box[3]) < o.box[1]) continue;
-      const [ba, bb] = [o.exactBox, t.exactBox];
-      if (ba[2] <= bb[0] || bb[2] <= ba[0] || ba[3] <= bb[1] || bb[3] <= ba[1]) continue;
-      if (interiorsIntersect(o.p, t.p)) return j < i ? `${o.label} and ${t.label}` : `${t.label} and ${o.label}`;
+      if (overlaps(o, t)) return j < i ? `${o.label} and ${t.label}` : `${t.label} and ${o.label}`;
     }
-    active.push(i);
+    for (const key of cellsOf(b, own)) {
+      const members = grid.get(key);
+      if (members) members.push(i);
+      else grid.set(key, [i]);
+    }
   }
   return null;
+}
+
+/** Whether the interiors of two triangles intersect, their exact boxes first. */
+function overlaps(a: UvTriangle, b: UvTriangle): boolean {
+  const [ea, eb] = [a.exactBox, b.exactBox];
+  if (ea[2] <= eb[0] || eb[2] <= ea[0] || ea[3] <= eb[1] || eb[3] <= ea[1]) return false;
+  return interiorsIntersect(a.p, b.p);
 }
 
 /** A bound on the rounding of an approximate UV coordinate near `v`. */

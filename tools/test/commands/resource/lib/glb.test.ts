@@ -55,19 +55,27 @@ describe('glb model checks', () => {
     const inside = [5, 0, 5.5, 0, 5, 0.04];
     expect(uvOverlap(readGlb(glbOf([{ uv: floatUv([...wide, ...row, ...inside]) }]), 'm'), 'm')).toBe('triangle 0 of mesh 0 primitive 0 and triangle 51 of mesh 0 primitive 0');
     expect(uvOverlap(readGlb(glbOf([{ uv: floatUv([...wide, ...row, 5, 0.06, 5.5, 0.06, 5, 0.1]) }]), 'm'), 'm')).toBeNull();
+    // a large triangle after the small ones in the list, over one of them: the pair is found across the grid levels
+    const small = Array.from({ length: 50 }, (_, i) => [i, 0, i + 0.5, 0, i, 0.5]).flat();
+    expect(uvOverlap(readGlb(glbOf([{ uv: floatUv([...small, 24.9, -1, 26, -1, 24.9, 2]) }]), 'm'), 'm')).toBe('triangle 25 of mesh 0 primitive 0 and triangle 50 of mesh 0 primitive 0');
+    expect(uvOverlap(readGlb(glbOf([{ uv: floatUv([...small, 24.6, -1, 24.9, -1, 24.6, 2]) }]), 'm'), 'm')).toBeNull();
+    // a triangle over the two triangles of a quad: the pair with the earlier one is named
+    expect(uvOverlap(readGlb(glbOf([{ uv: floatUv([0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0.4, 0.4, 0.7, 0.4, 0.4, 0.7]) }]), 'm'), 'm')).toBe(
+      'triangle 0 of mesh 0 primitive 0 and triangle 2 of mesh 0 primitive 0',
+    );
     // the triangles in another order than their u: the pair is found whatever triangle comes between them in the list
     expect(uvOverlap(readGlb(glbOf([{ uv: floatUv([0, 0, 1, 0, 0, 1, 5, 0, 6, 0, 5, 1, 0.1, 0.1, 0.5, 0.1, 0.1, 0.5]) }]), 'm'), 'm')).toBe(
       'triangle 0 of mesh 0 primitive 0 and triangle 2 of mesh 0 primitive 0',
     );
   });
 
-  /** A clean unwrap of [0, 1]² as `n` × `n` quads of two triangles each, and `extra` triangles after them. */
-  function unwrap(n: number, extra: number[] = []): Buffer {
+  /** A clean unwrap of [0, 1]² as `nx` × `ny` quads of two triangles each, and `extra` triangles after them. */
+  function unwrap(nx: number, ny: number, extra: number[] = []): Buffer {
     const points: number[] = [];
-    for (let y = 0; y <= n; y++) for (let x = 0; x <= n; x++) points.push(x / n, y / n);
+    for (let y = 0; y <= ny; y++) for (let x = 0; x <= nx; x++) points.push(x / nx, y / ny);
     const indices: number[] = [];
-    const at = (x: number, y: number): number => y * (n + 1) + x;
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) indices.push(at(x, y), at(x + 1, y), at(x, y + 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
+    const at = (x: number, y: number): number => y * (nx + 1) + x;
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) indices.push(at(x, y), at(x + 1, y), at(x, y + 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
     const first = points.length / 2;
     points.push(...extra);
     for (let i = 0; i < extra.length / 2; i++) indices.push(first + i);
@@ -81,9 +89,23 @@ describe('glb model checks', () => {
   const overlapWithin20s = (glb: Buffer): Promise<unknown> => inWorker(new URL('./glb-overlap-worker.ts', import.meta.url), glb, 20_000);
 
   it('checks a clean unwrap of 20000 triangles with an island far outside the 0-1 tile', async () => {
-    expect(await overlapWithin20s(unwrap(100, [100, 100, 101, 100, 100, 101]))).toBeNull();
+    expect(await overlapWithin20s(unwrap(100, 100, [100, 100, 101, 100, 100, 101]))).toBeNull();
     // a triangle laid over the last quad overlaps it
-    expect(await overlapWithin20s(unwrap(100, [0.995, 0.995, 0.999, 0.995, 0.995, 0.999]))).toBe('triangle 19999 of mesh 0 primitive 0 and triangle 20000 of mesh 0 primitive 0');
+    expect(await overlapWithin20s(unwrap(100, 100, [0.995, 0.995, 0.999, 0.995, 0.995, 0.999]))).toBe('triangle 19999 of mesh 0 primitive 0 and triangle 20000 of mesh 0 primitive 0');
+  });
+
+  it('checks a clean strip unwrap of 200000 triangles as fast in a column as in a row', async () => {
+    // a tall strip is the unwrap of a rope, a cable or a trunk: its triangles share one u range
+    expect(await overlapWithin20s(unwrap(1, 100_000))).toBeNull();
+    expect(await overlapWithin20s(unwrap(100_000, 1))).toBeNull();
+  });
+
+  it('checks a clean unwrap of 20000 triangles beside a triangle far taller than them, and one far away', async () => {
+    expect(await overlapWithin20s(unwrap(100, 100, [5, 0, 5.005, 0, 5, 1e7]))).toBeNull();
+    expect(await overlapWithin20s(unwrap(100, 100, [1e30, 1e30, 1.0001e30, 1e30, 1e30, 1.0001e30]))).toBeNull();
+    expect(await overlapWithin20s(unwrap(100, 100, [-1e30, -1e30, -0.9999e30, -1e30, -1e30, -0.9999e30]))).toBeNull();
+    // the tall triangle lies over the first quad
+    expect(await overlapWithin20s(unwrap(100, 100, [0.001, 0.001, 0.003, 0.001, 0.001, 1e7]))).toBe('triangle 0 of mesh 0 primitive 0 and triangle 20000 of mesh 0 primitive 0');
   });
 
   it('stops at the first overlapping pair of an unwrap whose 20000 triangles all cover the unit square', async () => {
