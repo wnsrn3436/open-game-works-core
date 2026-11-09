@@ -1,0 +1,12 @@
+{
+  "target": "loop findings",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/loop/lib/record.ts:96",
+      "problem": "`checkConfirmed` now reads only `check-<n>.json` (`evidenceChecks` matches only `check-\\d+\\.json#`, tools/src/commands/loop/lib/defects.ts:220), and `evidenceMetrics` and the `measure` confirmation were removed in this range. A defect that an earlier `ogw loop findings` made from an out-of-range target of `ogw measure` (evidence `records/loops/<run>/measure-<n>.json#<metric>`, `source` `check`) in a run that is open across this change (continued with `ogw loop resume --repin`) can never get a confirmation result: when the content agent reports it `fixed`, it stays `awaiting confirmation` in every later record, and when the lead agent filled `severity` `major` it keeps the success condition of AGENTS.md `## loop` from being met. Neither tools/ogw.md `## loop record` nor `## loop resume` says what happens to such a defect of an open run",
+      "foundBy": "loop findings round 1"
+    }
+  ]
+}
