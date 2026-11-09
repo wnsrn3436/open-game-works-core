@@ -63,6 +63,9 @@ tester.run('ogw/no-swallowed-error', noSwallowedError, {
     "import { whenNotFound } from './fsx.ts'; const h = whenNotFound(null); read().catch(h);",
     "import { ignoreCleanupError } from '../lib/errors.ts'; const h = ignoreCleanupError; rm(tmp).catch(h);",
     'function mk() { const h = (e: unknown) => { throw e; }; return h; } read().catch(mk());',
+    // a return whose value is a call that always throws ends by that throw
+    "function stop(): never { throw new Error('x'); } try { read(); } catch { return stop(); }",
+    { code: "import { fail } from '../../lib/errors.ts'; try { read(); } catch { return fail('x'); }", filename: 'src/commands/demo/run.ts' },
   ],
   invalid: [
     { code: 'try { read(); } catch { return null; }', errors: swallowed },
@@ -111,5 +114,11 @@ tester.run('ogw/no-swallowed-error', noSwallowedError, {
     { code: 'function mk() { const h = () => null; return h; } read().catch(mk());', errors: swallowed },
     { code: 'let h = g; const g = h; read().catch(h);', errors: swallowed },
     { code: "import fail = require('../lib/errors.ts'); try { read(); } catch { fail(); }", errors: swallowed },
+    // a name assigned again or declared again can hold another value when the handler runs
+    { code: 'let h = ignoreCleanupError; if (x) h = () => null; read().catch(h);', errors: swallowed },
+    { code: 'var h = (e: unknown) => { throw e; }; var h = () => null; read().catch(h);', errors: swallowed },
+    { code: "let stop = (): never => { throw new Error('x'); }; stop = () => {}; try { read(); } catch { stop(); }", errors: swallowed },
+    // a return of a call that can return is an end other than by a throw
+    { code: 'function quiet(): null { return null; } try { read(); } catch { return quiet(); }', errors: swallowed },
   ],
 });

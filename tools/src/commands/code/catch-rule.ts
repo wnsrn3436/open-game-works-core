@@ -31,7 +31,8 @@ function isFunction(node: ESTree.Node | null | undefined): node is FunctionNode 
 /**
  * What a name refers to in its file: a function with a body, a variable whose value is another expression, an import,
  * a parameter, `none` for a name that the file does not define (or only declares without a body, as `declare function`
- * and overload signatures do), or `other`.
+ * and overload signatures do), or `other` (also for a name defined more than once or assigned after its definition,
+ * which can hold another value when it is used).
  */
 type Definition =
   | { kind: 'function'; node: FunctionNode }
@@ -42,13 +43,15 @@ type Definition =
   | { kind: 'other' };
 
 function classify(variable: Scope.Variable): Definition {
-  // an overloaded function has a definition per signature: the one with a body is the implementation
-  for (const def of variable.defs) if (def.type === 'FunctionName' && isFunction(def.node)) return { kind: 'function', node: def.node };
-  const def = variable.defs[0];
+  // an overloaded function has a definition per signature: only the one with a body is the implementation
+  const defs = variable.defs.filter((def) => def.type !== 'FunctionName' || isFunction(def.node));
+  if (defs.length > 1 || variable.references.some((ref) => ref.isWrite() && ref.init !== true)) return { kind: 'other' };
+  const def = defs[0];
   switch (def?.type) {
     case undefined:
-    case 'FunctionName':
       return { kind: 'none' };
+    case 'FunctionName':
+      return isFunction(def.node) ? { kind: 'function', node: def.node } : { kind: 'none' };
     case 'Variable': {
       const init = def.node.init;
       if (init === null || init === undefined) return { kind: 'other' };
@@ -181,7 +184,8 @@ function exits(a: Analysis, node: ESTree.Statement, labels: readonly string[] = 
     case 'ThrowStatement':
       return new Set();
     case 'ReturnStatement':
-      return new Set(['return']);
+      // `return fail(...)` ends by the throw of its call
+      return node.argument !== null && node.argument !== undefined && throwingCall(a, node.argument) ? new Set() : new Set(['return']);
     case 'BreakStatement':
       return new Set([jump(BREAK, node.label)]);
     case 'ContinueStatement':
