@@ -1,7 +1,7 @@
 import { chmod, copyFile, link, mkdir, readdir, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
-import { exists, readJsonIfExists, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
+import { exists, isNotFound, readJsonIfExists, whenNotFound, writeFileAtomic, writeJsonAtomic } from '../../../lib/fsx.ts';
 import { gitRaw } from '../../../lib/git.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { withLock } from '../../../lib/lock.ts';
@@ -246,17 +246,25 @@ async function reuseFile(from: string, to: string, expected: string): Promise<bo
 
 /**
  * Puts at `to` the file `from` of another install when its SHA-256 is `expected`: a hard link, or a copy when no hard
- * link can be made. The other install keeps its file. True when put.
+ * link can be made. The other install keeps its file. The other install is not under the lock of this install folder,
+ * so its file can be removed or replaced meanwhile: a `from` that is gone (`ENOENT`) is not put, and the SHA-256 is read
+ * from the file put at `to`, which is removed when it differs. True when put.
  */
 async function linkFile(from: string, to: string, expected: string): Promise<boolean> {
-  if (!exists(from) || (await sha256File(from)) !== expected) return false;
   await mkdir(dirname(to), { recursive: true });
   await rm(to, { force: true });
-  await link(from, to).catch((error: unknown) => {
-    if (!NO_HARD_LINK.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
-    return copyFile(from, to);
-  });
-  return true;
+  const put = await link(from, to).then(
+    () => true,
+    (error: unknown) => {
+      if (isNotFound(error)) return false;
+      if (!NO_HARD_LINK.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      return copyFile(from, to).then(() => true, whenNotFound(false));
+    },
+  );
+  if (!put) return false;
+  if ((await sha256File(to)) === expected) return true;
+  await rm(to, { force: true });
+  return false;
 }
 
 /** The `link` errors that say no hard link of the file can be made there (another file system, or one without hard links). */
