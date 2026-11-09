@@ -1,0 +1,12 @@
+{
+  "target": "resource finalize",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "tools/src/commands/resource/lib/glb.ts:155",
+      "problem": "A `TEXCOORD_0` float that is NaN or ±Infinity makes `exactUv` call `BigInt` on a non-integer, which throws a `RangeError` instead of an `OgwError` naming the file and the triangle: `modelProblems(glbOf([{ uv: floatUv([0, 0, 1, 0, NaN, 1]) }]), 'm')` throws `RangeError: The number NaN cannot be converted to a BigInt because it is not an integer`, so `ogw resource finalize` of such a GLB ends in an internal error rather than a problem line. The code is from 2e36db1, before the range",
+      "foundBy": "resource finalize round 3"
+    }
+  ]
+}
