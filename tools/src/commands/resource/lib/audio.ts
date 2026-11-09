@@ -4,7 +4,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { LIMITS } from '../../../lib/limits.ts';
 import { run } from '../../../lib/proc.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
-import { integratedLoudness, limitTruePeak, loudnessRange, maxMomentaryLoudness, truePeak } from './loudness.ts';
+import { integratedLoudness, limitTruePeak, maxMomentaryLoudness, truePeak } from './loudness.ts';
 
 export const SAMPLE_RATE = 48000;
 
@@ -77,8 +77,6 @@ export interface SoundTarget {
   ogg: boolean;
   /** The shortest a shaped sound may be (half the length it was made for); null for no check. */
   minLengthMs: number | null;
-  /** The widest loudness range (LU) of the shaped sound; null for no check. */
-  maxRangeLu: number | null;
 }
 
 export interface SoundResult {
@@ -369,10 +367,6 @@ function shapedProblems(pcm: Pcm, target: SoundTarget, file: string): string | n
   const ms = lengthMs(pcm);
   if (target.minLengthMs !== null && ms < target.minLengthMs) {
     return `${file}: the sound is ${fixed(ms)} ms after the cuts, shorter than half of the ${fixed(target.minLengthMs * 2)} ms it was made for`;
-  }
-  const range = target.maxRangeLu === null ? null : loudnessRange(pcm);
-  if (range !== null && target.maxRangeLu !== null && range > target.maxRangeLu) {
-    return `${file}: the loudness range is ${fixed(range)} LU, over the ${fixed(target.maxRangeLu)} LU of a looped bgm`;
   }
   return null;
 }

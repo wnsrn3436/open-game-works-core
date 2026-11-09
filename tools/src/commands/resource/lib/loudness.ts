@@ -2,7 +2,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import type { Pcm } from './audio.ts';
 
 /**
- * Loudness (ITU-R BS.1770-4, EBU Tech 3341 and 3342) and true peak of 48 kHz PCM, and the true peak limiter of
+ * Loudness (ITU-R BS.1770-4 and EBU Tech 3341) and true peak of 48 kHz PCM, and the true peak limiter of
  * `ogw resource finalize` (`production.md` `## finalize` step 2).
  */
 
@@ -12,11 +12,8 @@ const RATE = 48000;
 const BLOCK = (RATE * 400) / 1000;
 /** Hop of the gating blocks: 75 % overlap. */
 const HOP = BLOCK / 4;
-/** Short-term window of EBU Tech 3342: 3 s, with the 100 ms hop of the gating blocks. */
-const SHORT_TERM = RATE * 3;
 const ABSOLUTE_GATE = -70;
 const RELATIVE_GATE = -10;
-const LRA_RELATIVE_GATE = -20;
 
 interface Biquad {
   b0: number;
@@ -116,26 +113,6 @@ export function maxMomentaryLoudness(pcm: Pcm): number | null {
   let best = 0;
   for (let end = 1; end <= power.length; end++) best = Math.max(best, (sums[end] as number) - (sums[Math.max(0, end - BLOCK)] as number));
   return best > 0 ? lufs(best / BLOCK) : null;
-}
-
-/** EBU Tech 3342 loudness range (LU) of the 3 s short-term loudness; null for a sound shorter than 3 s or silent. */
-export function loudnessRange(pcm: Pcm): number | null {
-  requireRate(pcm);
-  const values = windowPowers(weightedPower(pcm, 0), SHORT_TERM, HOP)
-    .filter((p) => p > 0 && lufs(p) > ABSOLUTE_GATE)
-    .map(lufs);
-  if (values.length === 0) return null;
-  const relative = 10 * Math.log10(mean(values.map((l) => 10 ** (l / 10)))) + LRA_RELATIVE_GATE;
-  const gated = values.filter((l) => l > relative).sort((a, b) => a - b);
-  return percentile(gated, 0.95) - percentile(gated, 0.1);
-}
-
-/** The value at `p` of sorted values, interpolated between the neighbours. */
-function percentile(sorted: readonly number[], p: number): number {
-  const at = p * (sorted.length - 1);
-  const low = Math.floor(at);
-  const high = Math.min(sorted.length - 1, low + 1);
-  return (sorted[low] as number) + ((sorted[high] as number) - (sorted[low] as number)) * (at - low);
 }
 
 /** Oversampling of the true peak meter: 4 times at 48 kHz (BS.1770-4 Annex 2). */

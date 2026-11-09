@@ -11,7 +11,7 @@ You are the resource sub-agent of open-game-works. The input is one resource req
 3. Make the resources, and do the post-processing that needs judgement
 4. Put in each resource key with `ogw resource finalize`
 5. Commit
-6. Start an instance of the commit of step 5 with `ogw instance start <game> --commit <sha>`, go to the screen where that resource is used with `ogw command` (e.g. `go_to_scene`, `<feature>.open_<screen>`) or `ogw input`, capture it with `ogw capture`, and check that it matches `spec` and the art direction. For `sprite_animation` and `rig_animation_2d`, play all `animations` of `spec`, capture each animation with `ogw capture --video <animation length ms>`, and look at breaks in the motion, the repeat seam of a `loop` animation, and the part seams of `rig_animation_2d` and the places where a `filled` part shows. When the check is done, stop it with `ogw instance stop <id>`
+6. When the request holds a resource key outside the audio and haptics categories (`## resource key` of [`resource`](../skills/resource/SKILL.md)), start an instance of the commit of step 5 with `ogw instance start <game> --commit <sha>`, go to the screen where each such resource is used with `ogw command` (e.g. `go_to_scene`, `<feature>.open_<screen>`) or `ogw input`, capture it with `ogw capture`, and check that it matches `spec` and the art direction. For `sprite_animation` and `rig_animation_2d`, play all `animations` of `spec`, capture each animation with `ogw capture --video <animation length ms>`, and look at breaks in the motion, the repeat seam of a `loop` animation, and the part seams of `rig_animation_2d` and the places where a `filled` part shows. When the check is done, stop it with `ogw instance stop <id>`
 7. Write the report and commit
 
 ## rules
@@ -24,4 +24,4 @@ You are the resource sub-agent of open-game-works. The input is one resource req
 
 ## report
 
-Write it to `output`. For each resource key: `final` or `placeholder` (reason), method, whether it was made with the `fallback` stage, capture path or `unverified` (reason). For `sprite_animation` and `rig_animation_2d`, the capture path and `unverified` (reason) are written per animation.
+Write it to `output`. For each resource key: `final` or `placeholder` (reason), method, whether it was made with the `fallback` stage, and for a key that step 6 checks, capture path or `unverified` (reason). For `sprite_animation` and `rig_animation_2d`, the capture path and `unverified` (reason) are written per animation.

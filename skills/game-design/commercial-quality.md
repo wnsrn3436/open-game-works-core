@@ -80,7 +80,7 @@ Automated checks decide what a tool can decide: the option entries of [`client-c
 
 ## sound
 
-An agent cannot hear, so it measures what it can, and a human's ears decide: `ogw resource finalize` matches the loudness and true peak of each sound and gives them, and a human judges the sound by ear in a build and gives feedback with `update game`.
+An agent cannot hear, and a human's ears decide: `ogw resource finalize` matches the loudness and true peak of each sound and gives them, and a human judges the sound by ear in a build and gives feedback with `update game`.
 
 - The sound of this game's thing: an effect is the sound of what the thing is in this game's fiction and mood (the spirit's bolt of light, a shadow scattering, a coin picked up), not a stand-in from another fiction that is heavier or more real (a crossbow for a bolt of light, a sack of ash for a scattering shadow, a bronze coin slapped on a table for a coin pickup, a key dropped in a pouch for every pickup), even when the stand-in has more weight, more power between 250 Hz and 4 kHz and no single tone. A version that stays close to the game's source and is only firmer is better (a hit, a button press)
 - Same thing, same sound: the variants of a repeated effect are takes of one sound (one source, material and action), so that repetition reads as one thing

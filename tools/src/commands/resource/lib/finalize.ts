@@ -272,8 +272,6 @@ function soundBus(job: Job): string {
 
 /** Gain over the bus loudness per `sfx` `level` (`production.md` `## finalize`). */
 const LEVEL_OFFSET_DB: Record<SfxLevel, number> = { quiet: -8, normal: 0, loud: 4 };
-/** The widest loudness range (LU) of a looped `bgm`. */
-const BGM_LOOP_RANGE_LU = 7;
 
 /**
  * Half the length an `sfx` played once was made for: `length` of `spec`, or the `durationMs` of the stage of `--method`
@@ -324,7 +322,6 @@ async function soundPlan(job: Job, plan: Plan): Promise<void> {
       peakMaxDbtp: target.peak,
       ogg: ext === '.ogg',
       minLengthMs: minLengthMs(job),
-      maxRangeLu: job.parsed.type === 'bgm' && job.spec.loop ? BGM_LOOP_RANGE_LU : null,
     }, job.ctx.env);
     const path = keyPath(job.row.key, ext, variants ? i + 1 : null);
     plan.changes.write(path, result.bytes);

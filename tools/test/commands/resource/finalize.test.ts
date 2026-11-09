@@ -267,24 +267,16 @@ describe('ogw resource finalize', () => {
     expect(bad.stderr).toContain('bpm must be a number over 0 and beatsPerBar an integer of 1 or more');
   });
 
-  it('fails without a change a looped bgm whose loudness range is over 7 LU', async () => {
+  it('finalizes a looped bgm whose level drops 10 dB within the song', async () => {
     const f = setup([{ key: 'bgm/run', spec: 'length=20000;loop=true', status: 'requested' }]);
     await sync(f);
     const music = work(f, 'music.json');
     writeFileSync(music, JSON.stringify({ bpm: 240, beatsPerBar: 4 }));
-    const before = snapshot(f);
-    // 11 s of a tone, then 11 s of it 10 dB lower: a loudness range of about 10 LU
+    // 11 s of a tone, then 11 s of it 10 dB lower
     const dropping = work(f, 'drop.wav');
     writeFileSync(dropping, pcmWav([[...sine(11000, 440, 0.3), ...sine(11000, 440, 0.095)]]));
-    const bad = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', dropping, '--music', music]);
-    expect(bad.code).toBe(1);
-    expect(bad.stderr).toMatch(/drop\.wav: the loudness range is (9|10|11)\.[0-9] LU, over the 7\.0 LU of a looped bgm/);
-    expect(snapshot(f)).toBe(before);
-    // 6 dB lower: under 7 LU
-    const steady = work(f, 'steady.wav');
-    writeFileSync(steady, pcmWav([[...sine(11000, 440, 0.3), ...sine(11000, 440, 0.15)]]));
-    const ok = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', steady, '--music', music]);
-    expect(ok.stderr).toBe('');
+    const run = await finalize(f, ['bgm/run', '--method', 'ace-step', '--file', dropping, '--music', music]);
+    expect(run.stderr).toBe('');
     expect(rowOf(f.game, 'bgm/run').status).toBe('final');
   });
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Pcm } from '../../../../src/commands/resource/lib/audio.ts';
-import { integratedLoudness, limitTruePeak, loudnessRange, maxMomentaryLoudness, truePeak } from '../../../../src/commands/resource/lib/loudness.ts';
+import { integratedLoudness, limitTruePeak, maxMomentaryLoudness, truePeak } from '../../../../src/commands/resource/lib/loudness.ts';
 import { run } from '../../../../src/lib/proc.ts';
 import { pcmWav, realFfmpegs } from '../fixture.ts';
 
@@ -67,13 +67,6 @@ describe('loudness', () => {
     // the loudest window of a sound that gets louder
     expect(maxMomentaryLoudness(joined(tone(2, 1000, -30), tone(1, 1000, -20), tone(2, 1000, -30))) as number).toBeCloseTo(-20, 1);
     expect(maxMomentaryLoudness(silence(1))).toBeNull();
-  });
-
-  // EBU Tech 3342 test signals
-  it('gives the loudness range of a 20 s stereo 1 kHz sine at -20 dBFS and then -30 dBFS as 10 LU, and of -20 then -15 as 5 LU', () => {
-    expect(loudnessRange(joined(tone(20, 1000, -20), tone(20, 1000, -30))) as number).toBeCloseTo(10, 0);
-    expect(loudnessRange(joined(tone(20, 1000, -20), tone(20, 1000, -15))) as number).toBeCloseTo(5, 0);
-    expect(loudnessRange(tone(2, 1000, -20))).toBeNull();
   });
 
   it('finds the true peak between samples: a 12 kHz sine whose samples miss its peaks by 3 dB', () => {
