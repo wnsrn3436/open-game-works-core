@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChannelResponse } from '../../../src/commands/instance/lib/channel.ts';
 import { InputLatency } from '../../../src/commands/instance/lib/latency.ts';
 import { restartClient } from '../../../src/commands/instance/automation.ts';
-import { startInstance } from '../../../src/commands/instance/api.ts';
 import { instanceFolder, readPlayAccess, readRecord } from '../../../src/commands/instance/lib/records.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { ogw } from '../../helpers/workspace.ts';
@@ -350,46 +349,4 @@ describe('ogw instance start --feedback-off and --reward-presentation-off', () =
       await stopAll(runner);
     });
   }
-});
-
-describe('the movie and test screen of the flash check', () => {
-  let runner: Runner;
-
-  beforeAll(() => {
-    runner = setupRunner();
-  });
-
-  afterAll(async () => {
-    await stopAll(runner);
-  });
-
-  const ctx = () => createContext({ cwd: runner.ws.root, env: runner.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
-
-  it('starts the client main with the movie window and fps and sends it the test screen after the other connection commands, on each connection', async () => {
-    const from = runner.requests('main').length;
-    const file = join(runner.logDir, 'frame.png');
-    const testScreen = { window: [1179, 2556] as [number, number], fillMode: 'Crop', notch: [0, 59, 0, 34] as [number, number, number, number] };
-    const instance = await startInstance(ctx(), { game: 'g', client: 'window', networkDelayMs: 100, movie: { file, resolution: [393, 852], fps: 30 }, testScreen });
-    expect((await readRecord(instance.id, runner.ws.env)).plan).toMatchObject({ movie: { file, resolution: [393, 852], fps: 30 }, testScreen });
-    const args = runner.clientArgs('main');
-    expect(args.slice(0, args.indexOf('--'))).toEqual(expect.arrayContaining(['--resolution', '393x852', '--write-movie', file, '--fixed-fps', '30']));
-    expect(JSON.parse(readFileSync(join(runner.logDir, 'main.values.json'), 'utf8'))).toMatchObject({ OGW_FRAME_STEP_FPS: '30' });
-    await restartClient(ctx(), instance.id);
-    const all: string[][] = [[]];
-    for (const line of runner.requests('main').slice(from).map((r) => [r.command, ...r.args].join(' '))) {
-      (all.at(-1) as string[]).push(line);
-      if (line === 'restart') all.push([]);
-    }
-    expect(all).toHaveLength(2);
-    for (const connection of all) expect(connection.slice(0, 3)).toEqual(['set_network_delay 100', 'set_test_screen 1179 2556 Crop', 'set_virtual_notch 0 59 0 34']);
-    await stopAll(runner);
-  });
-
-  it('fails the start when the first set_test_screen is not ok', async () => {
-    runner.config({ clients: { main: { fail: { set_test_screen: 'bad size' } } } });
-    const testScreen = { window: [100, 100] as [number, number], fillMode: 'Letterbox', notch: [0, 0, 0, 0] as [number, number, number, number] };
-    await expect(startInstance(ctx(), { game: 'g', client: 'window', testScreen })).rejects.toThrow('main: set_test_screen failed: "bad size"');
-    runner.config({});
-    await stopAll(runner);
-  });
 });

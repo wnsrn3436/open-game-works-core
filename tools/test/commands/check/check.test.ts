@@ -12,8 +12,7 @@ import { coreReleaseOfGame, extractedAsset } from '../../../src/commands/core/ap
 import { runData } from '../../../src/commands/data/api.ts';
 import { requireEngine } from '../../../src/commands/env/api.ts';
 import { gameModules, installEnginePackages, mergedCoreSettings } from '../../../src/commands/generate/api.ts';
-import { listInstances, startInstance, stopInstance, type InstanceOptions } from '../../../src/commands/instance/api.ts';
-import { encodePng } from '../../../src/commands/resource/lib/image.ts';
+import { listInstances, startInstance, stopInstance } from '../../../src/commands/instance/api.ts';
 import { automationRequest } from '../../../src/commands/instance/automation.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { resolveGame } from '../../../src/lib/game.ts';
@@ -121,8 +120,7 @@ function serveClient(): string[] {
     calls.push([command, ...args].join(' '));
     switch (command) {
       case 'get_state':
-        // the clock of the client follows the movie maker frame step of the flash check (targetFps 60)
-        return ok(doneState({ frame_step_fps: 60 }));
+        return ok(doneState());
       case 'get_telemetry':
         return ok({ started_at: 0, goal_intervals: [{}], scene_loads: [{ scene_key: 'lobby', duration_ms: 10 }] });
       case 'get_stats':
@@ -152,14 +150,6 @@ function serveClient(): string[] {
 let ws: TestWorkspace;
 let assetDir: string;
 
-/** The movie maker of a client the flash check records: a second of one still image. */
-async function stillMovie(options: InstanceOptions): Promise<void> {
-  if (options.movie === undefined) return;
-  const [width, height] = options.movie.resolution ?? [1, 1];
-  const png = await encodePng({ width, height, data: Buffer.alloc(width * height * 4, 128) });
-  for (let f = 0; f < 60; f++) writeFileSync(join(dirname(options.movie.file), `frame${String(f).padStart(8, '0')}.png`), png);
-}
-
 beforeEach(() => {
   ws = makeWorkspace({ maxConcurrentInstances: 2 });
   assetDir = mkdtempSync(join(tmpdir(), 'ogw-asset-'));
@@ -173,10 +163,7 @@ beforeEach(() => {
   vi.mocked(mergedCoreSettings).mockReset().mockResolvedValue({ 'AccessibilityCore.textScales': [1000, 1300], 'UnitTestCore.runTimeLimitMs': 30_000 });
   vi.mocked(installEnginePackages).mockReset().mockResolvedValue({ written: [], removed: [] });
   let n = 0;
-  vi.mocked(startInstance).mockReset().mockImplementation(async (_c, given) => {
-    await stillMovie(given);
-    return { id: `i${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>;
-  });
+  vi.mocked(startInstance).mockReset().mockImplementation(() => Promise.resolve({ id: `i${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
   vi.mocked(listInstances).mockReset().mockResolvedValue([]);
   vi.mocked(instanceProcesses).mockReset().mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
@@ -458,8 +445,8 @@ describe('ogw check --loop', () => {
     expect(file.checks[4]?.hostLoad).toEqual({ cpuMaxPercent: expect.any(Number) as number, memoryMaxPercent: expect.any(Number) as number, instancesMax: 0 });
     expect(existsSync(join(root, 'records/loops/create-1/evidence/check-1/old'))).toBe(false);
     expect(existsSync(join(root, 'records/loops/create-1/evidence/check-1/regression/client-result.json'))).toBe(true);
-    // the bot playtest, the row simulation, and per platform profile the performance, the captures and the flash recording
-    expect(startInstance).toHaveBeenCalledTimes(8);
+    // the bot playtest, the row simulation, and per platform profile the performance and the captures
+    expect(startInstance).toHaveBeenCalledTimes(6);
     expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual(
       expect.arrayContaining([
         { game: 'g', client: 'headless', db: 'postgresql', randomBase: 1n },
@@ -468,13 +455,10 @@ describe('ogw check --loop', () => {
       ]),
     );
     // every instance of the check has random base 1
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual(Array<bigint>(8).fill(1n));
-    // the flash recording of each platform profile: the phone screen at its CSS size, at targetFps (the profiles run side by side: in either order)
-    const recordings = vi.mocked(startInstance).mock.calls.map((c) => c[1]).filter((o) => o.movie !== undefined).sort((a, b) => String(a.platform).localeCompare(String(b.platform)));
-    expect(recordings.map((o) => [o.platform, o.client, o.db, o.movie?.resolution, o.movie?.fps, o.testScreen])).toEqual(
-      ['ios', 'web'].map((p) => [p, 'window', 'postgresql', [411, 731], 60, { window: [1080, 1920], fillMode: 'Crop', notch: [0, 0, 0, 0] }]),
-    );
-    expect(stopInstance).toHaveBeenCalledTimes(8);
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual(Array<bigint>(6).fill(1n));
+    // no instance of the check records with the movie maker
+    expect(vi.mocked(startInstance).mock.calls.filter((c) => c[1].movie !== undefined)).toEqual([]);
+    expect(stopInstance).toHaveBeenCalledTimes(6);
     expect(calls).toContain('set_quality_level High');
     expect(calls).toContain('set_text_scale 1300');
     // the loop imported client/ before the checks: the static type check does not import again

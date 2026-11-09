@@ -17,15 +17,12 @@ import {
   touchTargetProblems,
   uiQualityCheck,
   missingPixelRatios,
-  withFlash,
   type UiCheckScreen,
   type UiElement,
   type UiQualityOptions,
 } from '../../../../src/commands/check/lib/ui-quality.ts';
 import { fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
 import { encodePng, type Rgba } from '../../../../src/commands/resource/lib/image.ts';
-import { flashCheck } from '../../../../src/commands/check/lib/flash-check.ts';
-import { checkResult } from '../../../../src/commands/check/lib/evidence.ts';
 import { OgwError } from '../../../../src/lib/errors.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({
@@ -33,8 +30,6 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
 }));
 vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
-// the flash check has its own tests (flash-check.test.ts): here it passes unless a test says otherwise
-vi.mock('../../../../src/commands/check/lib/flash-check.ts', () => ({ flashCheck: vi.fn() }));
 
 const ctx = fakeContext();
 
@@ -386,8 +381,6 @@ function options(evidenceRoot: string, extra: Partial<UiQualityOptions> = {}): U
     gamepadSupported: true,
     maxTextScale: 1400,
     quality: NO_LIMITS,
-    targetFps: 60,
-    scenario: 'no scenario in this test',
     ...extra,
   };
 }
@@ -396,41 +389,6 @@ beforeEach(() => {
   vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'u1' } as Awaited<ReturnType<typeof startInstance>>);
   vi.mocked(stopInstance).mockReset().mockResolvedValue();
   vi.mocked(listInstances).mockResolvedValue([]);
-  vi.mocked(flashCheck).mockReset().mockResolvedValue({ failures: [], unknown: false });
-});
-
-describe('UI quality with its flash check', () => {
-  const flashFailure = { where: 'scene/play', message: 'flash general: more than 3 flashes in one second over 30000 CSS px² of a 341x256 CSS px field, frames 1-90 in scene/play (phone)', evidence: [] };
-  const gap = { where: 'client/dev/bot/scenario.json:1', message: 'flash: get_state frame_step_fps is missing, not targetFps 60: the client clock does not follow the movie maker frame step', evidence: [] };
-  const own = { where: 'lobby', message: 'clipped a/b in lobby (ko, phone, shop.open_main, text scale 1000)', evidence: [] };
-
-  it('fails with the failures of the parts that fail, is unknown with the reasons of the parts that could not judge, and passes when both pass', () => {
-    const pass = checkResult('UI quality', 'ios', []);
-    const fail = checkResult('UI quality', 'ios', [own]);
-    const unknown = checkResult('UI quality', 'ios', [{ where: 'settings.json:1', message: 'UI quality did not run: x', evidence: [] }], true);
-    expect(withFlash(pass, { failures: [], unknown: false })).toEqual(pass);
-    expect(withFlash(pass, { failures: [flashFailure], unknown: false })).toMatchObject({ result: 'fail', failures: [flashFailure] });
-    expect(withFlash(fail, { failures: [flashFailure], unknown: false })).toMatchObject({ result: 'fail', failures: [own, flashFailure] });
-    // a flash check that could not judge leaves a failing capture fail with its own failures, and a passing one unknown
-    expect(withFlash(fail, { failures: [gap], unknown: true })).toMatchObject({ result: 'fail', failures: [own] });
-    expect(withFlash(pass, { failures: [gap], unknown: true })).toMatchObject({ result: 'unknown', failures: [gap] });
-    expect(withFlash(unknown, { failures: [flashFailure], unknown: false })).toMatchObject({ result: 'fail', failures: [flashFailure] });
-    expect(withFlash(unknown, { failures: [gap], unknown: true })).toMatchObject({ result: 'unknown', failures: [...unknown.failures, gap] });
-  });
-
-  it('runs the flash check of the platform with the measured screens of the orientation of baseResolution, the movie fps and the scenario', async () => {
-    fakeUi();
-    vi.mocked(flashCheck).mockResolvedValue({ failures: [gap], unknown: true });
-    const root = mkdtempSync(join(tmpdir(), 'ogw-ui-'));
-    const given = options(root, { languages: ['en'], gamepadSupported: false, targetFps: 30 });
-    const result = await uiQualityCheck(ctx, 'g', 'ios', given);
-    const call = vi.mocked(flashCheck).mock.calls[0];
-    expect(call?.slice(1, 3)).toEqual(['g', 'ios']);
-    expect(call?.[3]).toMatchObject({ targetFps: 30, scenario: 'no scenario in this test', baseResolution: [1080, 1920], screens: [given.screens[0]] });
-    // the captures of this fake fail: their failures stand, and the flash reason is not one
-    expect(result.result).toBe('fail');
-    expect(result.failures).not.toContainEqual(gap);
-  });
 });
 
 describe('uiQualityCheck', () => {

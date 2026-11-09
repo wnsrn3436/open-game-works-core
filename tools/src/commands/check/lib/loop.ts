@@ -116,14 +116,13 @@ export type CheckSet = 'all' | 'fun' | 'core try';
 const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality'];
 
 /** The values of game settings that the UI quality check reads. */
-function uiSettings(settings: GameSettings): { languages: string[]; screens: UiCheckScreen[]; baseResolution: [number, number]; gamepadSupported: boolean; quality: UiQualityLimits; targetFps: number } {
+function uiSettings(settings: GameSettings): { languages: string[]; screens: UiCheckScreen[]; baseResolution: [number, number]; gamepadSupported: boolean; quality: UiQualityLimits } {
   return {
     languages: settings.supportedLanguages ?? [],
     screens: (settings.uiCheckScreens ?? []) as UiCheckScreen[],
     baseResolution: (settings.baseResolution ?? [0, 0]) as [number, number],
     gamepadSupported: settings.gamepadSupported === true,
     quality: settings.uiQuality as UiQualityLimits,
-    targetFps: numberSetting(settings, 'targetFps'),
   };
 }
 
@@ -172,7 +171,7 @@ export async function gameChecks(
     sampleMs: options.sampleMs,
     lease: { base: leaseBase, waitMs: harness.performanceLeaseWaitTimeoutMs },
   };
-  const ui = { ...instance, ...uiSettings(settings), maxTextScale: maxTextScale(merged, modules.client), scenario };
+  const ui = { ...instance, ...uiSettings(settings), maxTextScale: maxTextScale(merged, modules.client) };
   // One import before the instances start, with the engine packages put in first: an instance skips its import once
   // `client/.godot/` exists, so no import may still be writing it when the instances start, and the import that the
   // instance clients run on holds the plugins that their runner's `ogw generate` puts in later. A failed import removed

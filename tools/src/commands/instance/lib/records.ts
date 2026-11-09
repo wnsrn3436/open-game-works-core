@@ -60,13 +60,8 @@ export interface InstancePlan {
   feedbackWindowMs?: number | null;
   /** Game settings `targetFps` (or its default); `ogw input` takes 1000 / it as the client frame time. */
   targetFps?: number;
-  /**
-   * The client `main` writes its frames and sound to `file` with the engine's movie maker (`ogw video`, the flash check
-   * of `ogw check`), in a window of `resolution`, at `fps` frames per second (`MOVIE_FPS` when absent).
-   */
-  movie?: { file: string; resolution: [number, number]; fps?: number };
-  /** The flash check: the supervisor sends the client `main` `set_test_screen` and `set_virtual_notch` of this screen on each connection. */
-  testScreen?: TestScreen;
+  /** The client `main` writes its frames and sound to `file` with the engine's movie maker (`ogw video`), in a window of `resolution`, at `MOVIE_FPS`. */
+  movie?: { file: string; resolution: [number, number] };
   /** `--input-latency`: the ms by which the supervisor delays each input command to the client `main`; absent: none. */
   inputLatencyMs?: number;
   /** `--network-delay`: the ms of `set_network_delay` the supervisor sends the client `main` on each connection; absent: none. */
@@ -80,13 +75,6 @@ export interface InstancePlan {
    * and the server process with `start_local_server` of `testing`; absent: none.
    */
   randomBase?: string;
-}
-
-/** The window, fill mode and notch of a `uiCheckScreens` item, as `set_test_screen` and `set_virtual_notch` take them. */
-export interface TestScreen {
-  window: [number, number];
-  fillMode: string;
-  notch: [number, number, number, number];
 }
 
 /** Dev account of the client `main` when no play or judge agent plays it. */

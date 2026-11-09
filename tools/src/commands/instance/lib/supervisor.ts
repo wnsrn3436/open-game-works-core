@@ -18,7 +18,7 @@ import {
   clientLaunch,
   freePort,
   launchValueFileContent,
-  movieFps,
+  MOVIE_FPS,
   newLocalSecrets,
   populateLaunch,
   serverLaunch,
@@ -69,19 +69,14 @@ function restartCommand(body: Record<string, unknown>): { command: string; args:
 /**
  * The commands the supervisor sends the client `main` on each connection of its automation channel (ogw.md
  * `## runner`), in sending order: the feedback switches of `--feedback-off` and `--reward-presentation-off` before
- * any other command, then `set_network_delay` of `--network-delay`, then `set_test_screen` and `set_virtual_notch` of
- * the test screen of the flash check.
+ * any other command, then `set_network_delay` of `--network-delay`.
  */
-export function connectionCommands(plan: Pick<InstancePlan, 'feedbackOff' | 'rewardPresentationOff' | 'networkDelayMs' | 'testScreen'>): { command: string; args: string[] }[] {
+export function connectionCommands(plan: Pick<InstancePlan, 'feedbackOff' | 'rewardPresentationOff' | 'networkDelayMs'>): { command: string; args: string[] }[] {
   const commands: { command: string; args: string[] }[] = [];
   if (plan.feedbackOff === true) commands.push({ command: 'set_feedback_off', args: ['on'] });
   if (plan.rewardPresentationOff === true) commands.push({ command: 'set_reward_presentation_off', args: ['on'] });
   const delayMs = plan.networkDelayMs ?? 0;
   if (delayMs > 0) commands.push({ command: 'set_network_delay', args: [String(delayMs)] });
-  if (plan.testScreen !== undefined) {
-    const { window, fillMode, notch } = plan.testScreen;
-    commands.push({ command: 'set_test_screen', args: [String(window[0]), String(window[1]), fillMode] }, { command: 'set_virtual_notch', args: notch.map(String) });
-  }
   return commands;
 }
 
@@ -491,7 +486,7 @@ export class Supervisor {
         OGW_PLATFORM: this.record.platform,
       };
       const movie = client.name === 'main' ? (this.plan.movie ?? null) : null;
-      if (movie !== null) values.OGW_FRAME_STEP_FPS = movieFps(movie);
+      if (movie !== null) values.OGW_FRAME_STEP_FPS = String(MOVIE_FPS);
       if (this.plan.randomBase !== undefined) values.OGW_RANDOM_BASE = this.plan.randomBase;
       const valueFile = join(this.folder, `${client.name}.launch-values.json`);
       writeSecretFile(valueFile, launchValueFileContent(values));
