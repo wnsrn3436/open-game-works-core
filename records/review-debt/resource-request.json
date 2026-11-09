@@ -1,12 +1,5 @@
 {
   "target": "resource request",
   "nextId": 2,
-  "items": [
-    {
-      "id": "D1",
-      "location": "skills/resource/SKILL.md:109",
-      "problem": "A named request accepts `nine_slice` or `icon` keys while `image/ui_kit` is `temporary` once the kit is in a request file of this run (tools/src/commands/resource/lib/request.ts:60, `written.has(UI_KIT)`), and `ogw resource finalize` of those keys fails while the kit is not `final` (tools/src/commands/resource/lib/finalize.ts:133; skills/resource/production.md:138). When the job of that kit request ended (result file written) with the kit still `temporary`, `--pending` never requests the kit again (a `temporary` row is due only while it is in no request file of this run, tools/src/commands/resource/lib/request.ts:189), but it requests its `placeholder` and `requested` pieces again up to `backgroundRetryLimit` times (tools/src/commands/resource/lib/request.ts:185-189). Each of those resource jobs then fails to finalize them for the rest of the run. The same holds for a kit that is `requested` and whose request files exceed `backgroundRetryLimit`. The defining documents set no rule for pieces whose kit can no longer become `final` in this run",
-      "foundBy": "resource request round 1"
-    }
-  ]
+  "items": []
 }
