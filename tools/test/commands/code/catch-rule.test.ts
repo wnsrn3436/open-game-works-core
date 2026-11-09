@@ -66,6 +66,10 @@ tester.run('ogw/no-swallowed-error', noSwallowedError, {
     // a return whose value is a call that always throws ends by that throw
     "function stop(): never { throw new Error('x'); } try { read(); } catch { return stop(); }",
     { code: "import { fail } from '../../lib/errors.ts'; try { read(); } catch { return fail('x'); }", filename: 'src/commands/demo/run.ts' },
+    // a type, an interface or a namespace of the same name does not change the value that runs
+    'const h = (e: unknown) => { throw e; }; interface h { a: number } read().catch(h);',
+    "const stop = (): never => { throw new Error('x'); }; type stop = number; try { read(); } catch { stop(); }",
+    "function stop(): never { throw new Error('x'); } namespace stop { export const a = 1; } try { read(); } catch { stop(); }",
   ],
   invalid: [
     { code: 'try { read(); } catch { return null; }', errors: swallowed },

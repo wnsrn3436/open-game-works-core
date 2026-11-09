@@ -42,9 +42,13 @@ type Definition =
   | { kind: 'none' }
   | { kind: 'other' };
 
+/** The definitions of the typescript-eslint scope manager that give a name no value: a type alias or interface, a namespace. */
+const NO_VALUE = new Set(['Type', 'TSModuleName']);
+
 function classify(variable: Scope.Variable): Definition {
-  // an overloaded function has a definition per signature: only the one with a body is the implementation
-  const defs = variable.defs.filter((def) => def.type !== 'FunctionName' || isFunction(def.node));
+  // an overloaded function has a definition per signature: only the one with a body is the implementation; a type,
+  // an interface or a namespace of the same name does not change the value that runs
+  const defs = variable.defs.filter((def) => !NO_VALUE.has(def.type as string) && (def.type !== 'FunctionName' || isFunction(def.node)));
   if (defs.length > 1 || variable.references.some((ref) => ref.isWrite() && ref.init !== true)) return { kind: 'other' };
   const def = defs[0];
   switch (def?.type) {
