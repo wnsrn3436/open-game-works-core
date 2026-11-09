@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { lastReviewResults } from '../../../src/commands/review/api.ts';
 import { createContext } from '../../../src/lib/command.ts';
-import { readJob } from '../../../src/lib/jobs.ts';
-import { commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
+import { jobLogPaths, readJob, waitJob } from '../../../src/lib/jobs.ts';
+import { commitAll, makeWorkspace, ogw, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { changeDefinition, finding, mergeDefinitions, next, reviewer, reviewFile, wait } from './review-fixture.ts';
 
 interface State {
@@ -14,6 +14,7 @@ interface State {
     startCommit: string;
     codeCheckJob: string;
     result: string | null;
+    fixBase?: string | null;
     fixChecks?: { job: string; commit: string; fixBase: string | null; result: string | null }[];
   }[];
 }
@@ -22,6 +23,25 @@ const statePath = (ws: TestWorkspace): string => join(ws.harness, '.git', 'ogw-r
 const readState = (ws: TestWorkspace): State => JSON.parse(readFileSync(statePath(ws), 'utf8')) as State;
 const medium = (id: string): string => `| ${id} | \`correctness\` | medium | src/a.ts:3 | run x | check y | no | 90 |`;
 const resultOf = (stdout: string): string => /^result: ([\w ]+)\n/.exec(stdout)?.[1] ?? stdout;
+
+/**
+ * Waits for the code check job `job` and makes its `fix test proof` a `fail` on `base`, as the proof gives when the fix's
+ * tests pass on the code before the fix: the harness of the test workspace has no test runner for a real proof.
+ * Returns the proof's failure line.
+ */
+async function proofFails(ws: TestWorkspace, job: string, base: string): Promise<string> {
+  const waited = await waitJob(job, 120_000, ws.env);
+  const output = JSON.parse(waited.stdout) as { checks: { name: string; result: string; failures: string[] }[] };
+  const line = `the changed tests pass on ${base.slice(0, 12)}, the code before the fix, so they do not test the fixed behavior: test/a.test.ts`;
+  output.checks = [...output.checks.filter((c) => c.name !== 'fix test proof'), { name: 'fix test proof', result: 'fail', failures: [line] }];
+  writeFileSync((await jobLogPaths(waited.job, ws.env)).stdout, JSON.stringify(output));
+  return line;
+}
+
+/** The `ogw review status tool` output. */
+async function status(ws: TestWorkspace): Promise<string> {
+  return (await ogw(ws, ['review', 'status', 'tool'])).stdout;
+}
 
 /** The lead agent's fix of a tool target: a committed change of the harness. */
 function leadFix(ws: TestWorkspace, name: string): string {
@@ -64,7 +84,10 @@ describe('ogw review: tool', () => {
     expect((await readJob(check?.job as string, ws.env)).argv).toEqual(['code', 'check', 'tool', '--commit', fixed, '--fix-base', state.rounds[0]?.startCommit, '--target', 'agent merge', '--json']);
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     expect(await lastReviewResults(ctx, 'tool')).toEqual(new Map([['agent merge', 'running']]));
+    // the round is judged; its fix check is not
+    expect(await status(ws)).toBe('agent merge round 1 running spec change: none job: none\n');
     expect(await wait(ws, ['tool', 'agent', 'merge'])).toMatchObject({ code: 0, stdout: 'result: fixed\nround: 1\n' });
+    expect(await status(ws)).toBe('agent merge round 1 fixed spec change: none job: none\n');
     expect(readState(ws).rounds[0]?.result).toBe('fixed');
     expect(await lastReviewResults(ctx, 'tool')).toEqual(new Map([['agent merge', 'fixed']]));
     // the review ended: no round, no fix check
@@ -118,12 +141,52 @@ describe('ogw review: tool', () => {
     expect(failed.stdout).toMatch(/^result: check fail\nround: 1\ncode check fail: type check\n/);
     expect(failed.stdout).toContain("  broken.ts:1:14 TS2322 Type 'string' is not assignable to type 'number'.\n");
     expect(readState(ws).rounds[0]?.result).toBe('fix');
+    expect(await status(ws)).toBe('agent merge round 1 check fail spec change: none job: none\n');
     rmSync(join(ws.harness, 'tools', 'broken.ts'));
     const fixed = commitAll(ws.harness, 'the fix of the check');
     expect((await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, {}))).stdout).toMatch(/^round: 1\nfix check job: /);
     expect(readState(ws).rounds[0]?.fixChecks?.map((c) => [c.fixBase, c.result])).toEqual([[base, 'fail'], [base, null]]);
     expect(readState(ws).rounds[0]?.fixChecks?.[1]?.commit).toBe(fixed);
     expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: fixed\nround: 1\n');
+  }, 120_000);
+
+  it('does not count a fix test proof fail of a fix check when an earlier fix check failed the proof on the same fix base', async () => {
+    const ws = makeWorkspace();
+    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, { 1: reviewFile([medium('R1-1')]) }));
+    expect(resultOf((await wait(ws, ['tool', 'agent', 'merge'])).stdout)).toBe('fix');
+    const base = readState(ws).rounds[0]?.startCommit as string;
+    leadFix(ws, 'first');
+    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, {}));
+    const line = await proofFails(ws, readState(ws).rounds[0]?.fixChecks?.[0]?.job as string, base);
+    expect(await wait(ws, ['tool', 'agent', 'merge'])).toMatchObject({ code: 0, stdout: `result: check fail\nround: 1\ncode check fail: fix test proof\n  ${line}\n` });
+    // the code before the fix already behaved: no test of the fix fails on that base
+    leadFix(ws, 'second');
+    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, {}));
+    expect(readState(ws).rounds[0]?.fixChecks?.map((c) => c.fixBase)).toEqual([base, base]);
+    await proofFails(ws, readState(ws).rounds[0]?.fixChecks?.[1]?.job as string, base);
+    expect(await wait(ws, ['tool', 'agent', 'merge'])).toMatchObject({
+      code: 0,
+      stdout: `result: fixed\nround: 1\nfix test proof fail not counted: the proof on --fix-base ${base} failed in an earlier code check\n  ${line}\n`,
+    });
+  }, 120_000);
+
+  it('does not count a fix test proof fail of a --respec round when the fix check before it failed the proof on the same fix base', async () => {
+    const ws = makeWorkspace();
+    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, { 1: reviewFile([medium('R1-1'), finding('R1-2', 'yes')]) }));
+    expect(resultOf((await wait(ws, ['tool', 'agent', 'merge'])).stdout)).toBe('fix');
+    const base = readState(ws).rounds[0]?.startCommit as string;
+    leadFix(ws, 'fixed');
+    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, {}));
+    const line = await proofFails(ws, readState(ws).rounds[0]?.fixChecks?.[0]?.job as string, base);
+    expect(resultOf((await wait(ws, ['tool', 'agent', 'merge'])).stdout)).toBe('check fail');
+    changeDefinition(ws);
+    await next(ws, ['tool', 'agent', 'merge', '--respec', ...mergeDefinitions(ws)], reviewer(ws, { 2: reviewFile([], ['| R1-1 | fixed | ok |', '| R1-2 | fixed | spec changed |']) }));
+    expect(readState(ws).rounds[1]?.fixBase).toBe(base);
+    await proofFails(ws, readState(ws).rounds[1]?.codeCheckJob as string, base);
+    expect(await wait(ws, ['tool', 'agent', 'merge'])).toMatchObject({
+      code: 0,
+      stdout: `result: done\nround: 2\nfix test proof fail not counted: the proof on --fix-base ${base} failed in an earlier code check\n  ${line}\n`,
+    });
   }, 120_000);
 
   it('refuses a round or a fix check option while a fix check is not judged', async () => {

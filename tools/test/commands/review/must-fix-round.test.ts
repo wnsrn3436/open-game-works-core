@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
-import { agentsByCall, commitRange, coreSpec, finding, GOOD_FIX, reviewFile, spec } from './helpers.ts';
+import { agentsByCall, commitRange, coreSpec, finding, GOOD_FIX, reviewFile, spec, toolsChange } from './helpers.ts';
 import { inputSection, seedList } from './debt-fixture.ts';
 import { commitCore, readState, toolArgs } from './round-fixture.ts';
 import { next, reviewer, wait } from './review-fixture.ts';
@@ -67,6 +67,17 @@ describe('ogw review: the must-fix round', () => {
     expect(fake.calls()).toHaveLength(2);
     expect(await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env })).toMatchObject({ code: 0 });
     expect(fake.calls()).toHaveLength(2);
+  });
+
+  it('review run: the process that goes on after a harness tools change does not start the must-fix round of a review that ended in the run', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { routing: spec('routing', 'server') });
+    // round 1 adds a must-fix item and ends the review, and the harness tools change in that step
+    const fake = agentsByCall(ws, { 1: reviewFile([], [], ['- server/core/routing/a.ts:4: high an old crash']), 2: reviewFile([], [], [], [], [M1_FIXED]) }, GOOD_FIX, { 1: toolsChange(ws) });
+    const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env });
+    expect(run.stderr).toContain('the harness tools changed: ogw review run core routing goes on with the new code');
+    expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 1\nout of scope: round 1: server/core/routing/a.ts:4: high an old crash\nround 1: review must fix added: routing M1: server/core/routing/a.ts:4: high an old crash\n' });
+    expect(fake.calls()).toHaveLength(1);
   });
 
   it('takes no option that is not one of --respec, --full, --debt', async () => {
