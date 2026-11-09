@@ -97,91 +97,43 @@ describe('ogw core review-targets', () => {
     sh(ws.coreImpl, 'git', ['commit', '--quiet', '--no-verify', '--allow-empty', '-m', 'change']);
   }
 
-  it('reviews a module with a changed file, and its dependents only when its public face changed', async () => {
-    const ws = workspace();
-    commitFiles(ws, { 'server/core/storage/index.ts': 'a', 'server/core/storage/tx.ts': 'a', 'client/godot/core/user_state_core/user_state_core.gd': 'a', 'client/godot/core/user_state_core/cache.gd': 'a' });
-    const since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    // inside storage and UserStateCore only: no dependent is reviewed
-    commitFiles(ws, { 'server/core/storage/tx.ts': 'b', 'server/core/storage/tests/tx.test.ts': 'b', 'client/godot/core/user_state_core/cache.gd': 'b', 'tools/data-tool/src/a.ts': 'b' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: storage\nclient: UserStateCore\ntools: data-tool\n');
-    // the entry file of storage changed: its dependents are reviewed too
-    commitFiles(ws, { 'server/core/storage/index.ts': 'c' });
-    expect(JSON.parse((await ogw(ws, ['core', 'review-targets', '--since', since, '--json'])).stdout)).toEqual({
-      server: ['item-ledger', 'storage'],
-      client: ['BadgeCore', 'QACore', 'UserStateCore'],
-      tools: ['data-tool'],
-    });
-  });
-
-  it('counts the module class, DEV classes, events and the core-spec file as the public face', async () => {
-    const ws = workspace();
-    commitFiles(ws, {});
-    const since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws, { 'client/godot/core/user_state_core/events/changed.gd': 'x' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: \nclient: BadgeCore QACore UserStateCore\ntools: \n');
-    const ws2 = workspace();
-    commitFiles(ws2, {});
-    const since2 = sh(ws2.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws2, { 'core-spec/cheat.json': JSON.stringify({ name: 'cheat', side: 'server', dependencies: [], optionalDependencies: [], devDependencies: [], settings: [] }) });
-    expect((await ogw(ws2, ['core', 'review-targets', '--since', since2])).stdout).toBe('server: cheat routing\nclient: \ntools: \n');
-  });
-
-  it('counts each file of the public face alone: module class, DEV classes, server dev/index.ts', async () => {
-    const ws = workspace();
-    commitFiles(ws, {});
-    const client = 'server: \nclient: BadgeCore QACore UserStateCore\ntools: \n';
-    const cases: [string, string][] = [
-      ['client/godot/core/user_state_core/user_state_core.gd', client],
-      ['client/godot/core/user_state_core/dev/user_state_core.gd', client],
-      ['client/godot/core/user_state_core/dev/user_state_core_dev.gd', client],
-      ['server/core/storage/dev/index.ts', 'server: item-ledger storage\nclient: BadgeCore QACore UserStateCore\ntools: \n'],
-    ];
-    for (const [file, expected] of cases) {
-      const since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-      commitFiles(ws, { [file]: file });
-      expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe(expected);
-    }
-  });
-
-  it('counts the files that the server-core skill, a module spec or the engine implementation rules name as the public face', async () => {
+  it('lists the modules and tools with a changed file, and no module without one that depends on a changed module', async () => {
     const ws = workspace();
     appendFileSync(join(ws.harness, 'skills', 'server-core', 'modules', 'storage.md'), '\n- shared는 `storage/db/shared.ts`다\n');
-    appendFileSync(join(ws.harness, 'skills', 'client-core', 'engines', 'godot.md'), '\n- shared는 `core/user_state_core/internal/shared.gd`다\n');
-    commitFiles(ws, { 'server/core/storage/db/shared.ts': 'a', 'server/core/storage/db/other.ts': 'a', 'client/godot/core/user_state_core/internal/shared.gd': 'a' });
-    let since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws, { 'server/core/storage/db/other.ts': 'b' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: storage\nclient: \ntools: \n');
-    since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws, { 'server/core/storage/db/shared.ts': 'b' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: item-ledger storage\nclient: BadgeCore QACore UserStateCore\ntools: \n');
-    since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws, { 'client/godot/core/user_state_core/internal/shared.gd': 'b' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: \nclient: BadgeCore QACore UserStateCore\ntools: \n');
-  });
-
-  it('counts a named path relative to a module folder as that file of each module', async () => {
-    const ws = workspace();
-    appendFileSync(join(ws.harness, 'skills', 'server-core', 'SKILL.md'), '\n- fake adapter는 그 module의 `dev/adapters/fake.ts`다. game의 `server/main.ts`\n');
-    commitFiles(ws, { 'server/core/storage/dev/adapters/fake.ts': 'a', 'server/core/storage/dev/adapters/other.ts': 'a' });
-    let since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws, { 'server/core/storage/dev/adapters/other.ts': 'b' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: storage\nclient: \ntools: \n');
-    since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    commitFiles(ws, { 'server/core/storage/dev/adapters/fake.ts': 'b' });
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: item-ledger storage\nclient: BadgeCore QACore UserStateCore\ntools: \n');
+    commitFiles(ws, {});
+    const first = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+    // item-ledger, routing, UserStateCore, QACore and BadgeCore depend on the changed modules and have no changed file
+    const cases: [Record<string, string>, string][] = [
+      [{ 'server/core/storage/tx.ts': 'a', 'server/core/storage/tests/tx.test.ts': 'a', 'tools/data-tool/src/a.ts': 'a' }, 'server: storage\nclient: \ntools: data-tool\n'],
+      [{ 'server/core/storage/index.ts': 'a' }, 'server: storage\nclient: \ntools: \n'],
+      [{ 'server/core/storage/dev/index.ts': 'a' }, 'server: storage\nclient: \ntools: \n'],
+      [{ 'server/core/storage/db/shared.ts': 'a' }, 'server: storage\nclient: \ntools: \n'],
+      [{ 'core-spec/cheat.json': JSON.stringify({ name: 'cheat', side: 'server', dependencies: [], optionalDependencies: [], devDependencies: [], settings: [] }) }, 'server: cheat\nclient: \ntools: \n'],
+      [{ 'client/godot/core/user_state_core/user_state_core.gd': 'a' }, 'server: \nclient: UserStateCore\ntools: \n'],
+      [{ 'client/godot/core/user_state_core/dev/user_state_core_dev.gd': 'a' }, 'server: \nclient: UserStateCore\ntools: \n'],
+      [{ 'client/godot/core/user_state_core/events/changed.gd': 'a' }, 'server: \nclient: UserStateCore\ntools: \n'],
+      // files of no module or tool
+      [{ 'server/core/Dockerfile': 'a', 'server/core/gone/a.ts': 'a', 'client/godot/core/core_settings.gd': 'a', 'client/godot/core/gone_core/a.gd': 'a', 'tools/other-tool/a.ts': 'a' }, 'server: \nclient: \ntools: \n'],
+    ];
+    for (const [files, expected] of cases) {
+      const since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
+      commitFiles(ws, files);
+      expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout, Object.keys(files).join(' ')).toBe(expected);
+    }
+    expect(JSON.parse((await ogw(ws, ['core', 'review-targets', '--since', first, '--json'])).stdout)).toEqual({ server: ['cheat', 'storage'], client: ['UserStateCore'], tools: ['data-tool'] });
   });
 
   it('classifies both the old and the new path of a moved file', async () => {
     const ws = workspace();
     const text = 'the same text, so that git sees a rename\n'.repeat(5);
-    commitFiles(ws, { 'client/godot/core/user_state_core/events/changed.gd': text, 'server/core/storage/a.ts': text });
+    commitFiles(ws, { 'client/godot/core/user_state_core/cache.gd': text, 'server/core/storage/a.ts': text });
     const since = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    mkdirSync(join(ws.coreImpl, 'client/godot/core/user_state_core/internal'), { recursive: true });
+    mkdirSync(join(ws.coreImpl, 'client/godot/core/qa_core'), { recursive: true });
     mkdirSync(join(ws.coreImpl, 'server/core/cheat'), { recursive: true });
-    sh(ws.coreImpl, 'git', ['mv', 'client/godot/core/user_state_core/events/changed.gd', 'client/godot/core/user_state_core/internal/changed.gd']);
+    sh(ws.coreImpl, 'git', ['mv', 'client/godot/core/user_state_core/cache.gd', 'client/godot/core/qa_core/cache.gd']);
     sh(ws.coreImpl, 'git', ['mv', 'server/core/storage/a.ts', 'server/core/cheat/a.ts']);
     sh(ws.coreImpl, 'git', ['commit', '--quiet', '--no-verify', '-m', 'move']);
-    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: cheat storage\nclient: BadgeCore QACore UserStateCore\ntools: \n');
+    expect((await ogw(ws, ['core', 'review-targets', '--since', since])).stdout).toBe('server: cheat storage\nclient: QACore UserStateCore\ntools: \n');
   });
 
   it('fails without --since', async () => {

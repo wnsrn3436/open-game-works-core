@@ -270,7 +270,8 @@ describe('ogw core release', () => {
 
   it('refuses a review target of the changes since the release below without review state, and a missing tag of that release', async () => {
     const { ws, env } = await setup();
-    // the module class of LogCore is its public face: UICore, which depends on it, is a review target too
+    // UICore depends on LogCore and has no changed file: it is no review target
+    vi.mocked(lastReviewResults).mockResolvedValue(new Map());
     writeFiles(ws.coreImpl, { 'client/godot/core/log_core/log_core.gd': 'class_name LogCore\nvar x = 1\n', 'tools/data-tool/src/a.ts': 'export {};\n' });
     commitAll(ws.coreImpl, 'change');
     await recordAllPass(ws.coreImpl);
@@ -279,7 +280,7 @@ describe('ogw core release', () => {
       'review LogCore: changed since v1.1.0 and has no review state; run ogw review run core LogCore --since v1.1.0',
       'review data-tool: changed since v1.1.0 and has no review state; run ogw review run core data-tool --since v1.1.0',
     ]);
-    vi.mocked(lastReviewResults).mockResolvedValue(new Map([['UICore', 'done'], ['LogCore', 'done'], ['data-tool', 'done']]));
+    vi.mocked(lastReviewResults).mockResolvedValue(new Map([['LogCore', 'done'], ['data-tool', 'done']]));
     sh(ws.coreImpl, 'git', ['tag', '--delete', 'v1.1.0']);
     expect(await violations()).toEqual(['review targets since v1.1.0: tag v1.1.0 is not in open-game-works-core-impl/; fetch it, then run ogw review run core <target> --since v1.1.0 for each target of ogw core review-targets --since v1.1.0']);
     sh(ws.coreImpl, 'git', ['tag', 'v1.1.0', 'HEAD~1']);
