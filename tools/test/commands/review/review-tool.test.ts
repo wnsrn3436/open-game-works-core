@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { lastReviewResults } from '../../../src/commands/review/api.ts';
@@ -9,7 +9,7 @@ import { fakeAgentCli } from '../agent/helpers.ts';
 import { changeDefinition, finding, mergeDefinitions, next, reviewer, reviewFile, wait } from './review-fixture.ts';
 
 describe('ogw review: tool', () => {
-  it('keeps --since for round 1 after an invalid one, and --continue until a round it started is judged', async () => {
+  it('keeps --since for round 1 after an invalid one', async () => {
     const ws = makeWorkspace();
     const since = sh(ws.harness, 'git', ['rev-parse', 'HEAD']).trim();
     writeFileSync(join(ws.harness, 'skills', 'later.md'), 'x');
@@ -17,23 +17,12 @@ describe('ogw review: tool', () => {
     const defs = mergeDefinitions(ws).slice(2);
     await next(ws, ['tool', 'agent', 'merge', '--since', since, ...defs], reviewer(ws, {}));
     expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: invalid\nround: 1\n');
-    const open = (round: number): string => reviewFile([finding(`R${String(round)}-1`, 'no')]);
-    const env = reviewer(ws, { 1: open(1), 2: open(2), 3: open(3), 4: open(4), 5: open(5), 6: open(6) });
-    await next(ws, ['tool', 'agent', 'merge', ...defs], env);
+    await next(ws, ['tool', 'agent', 'merge', ...defs], reviewer(ws, { 1: reviewFile([]) }));
     const statePath = join(ws.harness, '.git', 'ogw-review', 'agent merge', 'state.json');
     const input = (JSON.parse(readFileSync(statePath, 'utf8')) as { rounds: { input: string }[] }).rounds[0]?.input as string;
     expect(readFileSync(input, 'utf8')).toContain(`## commit range\n\n${since}..${head}\n`);
-    await wait(ws, ['tool', 'agent', 'merge']);
-    for (let round = 2; round <= 6; round += 1) {
-      await next(ws, ['tool', 'agent', 'merge', ...defs], env);
-      await wait(ws, ['tool', 'agent', 'merge']);
-    }
-    // round 7 of --continue is dropped as invalid: the next round goes on with the kept --continue
-    await next(ws, ['tool', 'agent', 'merge', '--continue', ...defs], reviewer(ws, {}));
-    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: invalid\nround: 7\n');
-    expect((await next(ws, ['tool', 'agent', 'merge', ...defs], reviewer(ws, { 7: reviewFile([]) }))).stdout).toContain('round: 7');
-    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: done\nround: 7\n');
-  }, 180_000);
+    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: done\nround: 1\n');
+  });
 
   it('needs --since for round 1 of a tool target', async () => {
     const ws = makeWorkspace();
@@ -71,7 +60,7 @@ describe('ogw review: tool', () => {
     const refused = await next(ws, ['tool', 'review', 'wait'], reviewer(ws, { 1: reviewFile([]) }));
     expect(refused).toMatchObject({ code: 1 });
     expect(refused.stderr).toContain('give the documents that define review wait with --definition');
-    expect(refused.stderr).toContain('usage: ogw review next tool <target> --definition <file>... [--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]\n');
+    expect(refused.stderr).toContain('usage: ogw review next tool <target> --definition <file>... [--debt|[--since <commit>] [--respec]]\n');
     expect(existsSync(join(ws.harness, '.git', 'ogw-review', 'review wait', 'round-1-input.md'))).toBe(false);
   });
 
@@ -86,9 +75,6 @@ describe('ogw review: tool', () => {
     expect(refused.stderr).toContain('round 1 of agent merge has not been judged by ogw review wait');
     const state = JSON.parse(readFileSync(join(ws.harness, '.git', 'ogw-review', 'agent merge', 'state.json'), 'utf8')) as { rounds: { input: string }[] };
     expect(readFileSync(state.rounds[0]?.input as string, 'utf8')).toContain(`## definition\n\n- ${join(ws.root, 'def.md')}\n`);
-    await wait(ws, ['tool', 'agent', 'merge']);
-    appendFileSync(join(ws.root, 'def.md'), '\nchanged');
-    expect((await next(ws, ['tool', 'agent', 'merge', '--restart', ...mergeDefinitions(ws)], env)).stdout).toContain('round: 1');
     await wait(ws, ['tool', 'agent', 'merge']);
   });
 
@@ -157,29 +143,29 @@ describe('ogw review: tool', () => {
     expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toBe('result: done\nround: 1\n');
   });
 
-  it('removes the review files of the dropped rounds on --restart and on an invalid round, and refuses --restart while a round runs', async () => {
+  it('removes the review file of a round dropped as invalid, and refuses --respec while a round runs', async () => {
     const ws = makeWorkspace();
     const statePath = join(ws.harness, '.git', 'ogw-review', 'agent merge', 'state.json');
     const reviewFolder = async (): Promise<string> => {
       const state = JSON.parse(readFileSync(statePath, 'utf8')) as { rounds: { reviewJob: string }[] };
       return dirname((await readJob(state.rounds.at(-1)?.reviewJob as string, ws.env)).meta.output as string);
     };
-    const env = reviewer(ws, { 1: reviewFile([finding('R1-1', 'no')]) });
+    const env = reviewer(ws, { 1: reviewFile([finding('R1-1', 'yes')]) });
     await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], env);
     const first = await reviewFolder();
     expect(first).toMatch(/ogw-review-file-/);
-    const running = await next(ws, ['tool', 'agent', 'merge', '--restart', ...mergeDefinitions(ws)], env);
+    changeDefinition(ws);
+    const running = await next(ws, ['tool', 'agent', 'merge', '--respec', ...mergeDefinitions(ws)], env);
     expect(running).toMatchObject({ code: 1 });
     expect(running.stderr).toContain('round 1 of agent merge has not been judged by ogw review wait');
-    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toContain('result: fix');
+    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toContain('result: blocked');
     expect(existsSync(first)).toBe(true);
-    changeDefinition(ws);
-    await next(ws, ['tool', 'agent', 'merge', '--restart', ...mergeDefinitions(ws)], reviewer(ws, {}));
-    expect(existsSync(first)).toBe(false);
+    await next(ws, ['tool', 'agent', 'merge', '--respec', ...mergeDefinitions(ws)], reviewer(ws, {}));
     const second = await reviewFolder();
     expect(existsSync(second)).toBe(true);
-    expect(await wait(ws, ['tool', 'agent', 'merge'])).toMatchObject({ code: 1, stdout: 'result: invalid\nround: 1\n' });
+    expect(await wait(ws, ['tool', 'agent', 'merge'])).toMatchObject({ code: 1, stdout: 'result: invalid\nround: 2\n' });
     expect(existsSync(second)).toBe(false);
+    expect(existsSync(first)).toBe(true);
   });
 
   it('lists only folders with review state as targets, not a left lock folder', async () => {

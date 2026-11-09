@@ -276,7 +276,7 @@ export function gameLocation(location: string, games: string, checkout: string, 
   return !existsSync(join(checkout, file)) && under(resolve(root, file));
 }
 
-/** Whether a target's must-fix list has an item: `--reopen` then reviews the target to confirm the fix. */
+/** Whether a target's must-fix list has an item: after its review ended, the must-fix round checks the fix of each. */
 export async function hasMustFix(ctx: Context, side: Side, target: string): Promise<boolean> {
   return (await readList(await debtRepo(ctx, side), 'must fix', target)).items.length > 0;
 }

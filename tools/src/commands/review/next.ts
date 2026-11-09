@@ -12,16 +12,16 @@ export function sideAndTarget(args: CommandArgs, usage: string): { side: Side; t
 }
 
 /**
- * `--restart`, `--respec`, `--continue`, `--reopen`, `--full` and `--debt` of `review next` and `review run`: they
- * exclude each other, `--full` and `--debt` exclude `--since`, and `--full` takes a core target only.
+ * `--respec`, `--full` and `--debt` of `review next` and `review run`: they exclude each other, `--full` and `--debt`
+ * exclude `--since`, and `--full` takes a core target only.
  */
-export function restartOrContinue(args: CommandArgs, usage: string, side: Side): { restart: boolean; continue: boolean; respec: boolean; reopen: boolean; full: boolean; debt: boolean } {
-  const options = { restart: flag(args, 'restart'), continue: flag(args, 'continue'), respec: flag(args, 'respec'), reopen: flag(args, 'reopen'), full: flag(args, 'full'), debt: flag(args, 'debt') };
+export function reviewOptions(args: CommandArgs, usage: string, side: Side): { respec: boolean; full: boolean; debt: boolean } {
+  const options = { respec: flag(args, 'respec'), full: flag(args, 'full'), debt: flag(args, 'debt') };
   const given = Object.entries(options).flatMap(([name, on]) => (on ? [`--${name}`] : []));
   const refuse = (why: string): never => {
     throw new OgwError(`${why}\nusage: ${usage}`);
   };
-  if (given.length > 1) refuse(`${given.join(' and ')} exclude each other: give one of --restart, --respec, --continue, --reopen, --full, --debt`);
+  if (given.length > 1) refuse(`${given.join(' and ')} exclude each other: give one of --respec, --full, --debt`);
   if ((options.full || options.debt) && str(args, 'since') !== undefined) refuse(`--since and ${options.full ? '--full' : '--debt'} exclude each other`);
   if (options.full && side !== 'core') refuse('--full is for a core target');
   return options;
@@ -29,13 +29,13 @@ export function restartOrContinue(args: CommandArgs, usage: string, side: Side):
 
 export const next: CommandDef = {
   name: ['review', 'next'],
-  usage: `ogw review next core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]] | ${NEXT_TOOL_USAGE}`,
-  options: { restart: { type: 'boolean' }, respec: { type: 'boolean' }, continue: { type: 'boolean' }, reopen: { type: 'boolean' }, full: { type: 'boolean' }, debt: { type: 'boolean' }, since: { type: 'string' }, definition: { type: 'string', multiple: true } },
+  usage: `ogw review next core <target> [--full|--debt|[--since <commit>] [--respec]] | ${NEXT_TOOL_USAGE}`,
+  options: { respec: { type: 'boolean' }, full: { type: 'boolean' }, debt: { type: 'boolean' }, since: { type: 'string' }, definition: { type: 'string', multiple: true } },
   async run(ctx, args) {
     const { side, target } = sideAndTarget(args, this.usage);
     const since = str(args, 'since');
     return reviewNext(ctx, side, target, {
-      ...restartOrContinue(args, this.usage, side),
+      ...reviewOptions(args, this.usage, side),
       ...(since === undefined ? {} : { since }),
       definitions: list(args, 'definition'),
     });

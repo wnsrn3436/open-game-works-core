@@ -43,7 +43,7 @@ export function seedList(repo: string, kind: keyof typeof LIST_DIRS, file: strin
 }
 
 /** A section of a round's review agent input. */
-export function inputSection(repo: string, target: string, round: number, heading: 'debt' | 'must fix' | 'commit range'): string {
+export function inputSection(repo: string, target: string, round: number, heading: 'debt' | 'must fix' | 'commit range' | 'previous review'): string {
   const input = readFileSync(join(repo, '.git', 'ogw-review', target, `round-${String(round)}-input.md`), 'utf8');
   return new RegExp(`## ${heading}\\n\\n([\\s\\S]*?)\\n(?:\\n## |$)`).exec(input)?.[1] ?? '';
 }

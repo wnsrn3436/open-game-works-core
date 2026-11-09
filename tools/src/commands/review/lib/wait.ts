@@ -12,7 +12,7 @@ import type { Side } from './input.ts';
 import { changeLists, checkoutLine, coreDebtTarget, gameLocation, type ListChange } from './debt.ts';
 import { debtMismatch, outOfScopeItem, parseReviewFile, roundOfId, urgentOutOfScope, type ParseOptions, type ReviewFile } from './review-file.ts';
 import {
-  chainOf,
+  lastFixCheck,
   readState,
   removeToolReviewFiles,
   reviewRepo,
@@ -20,6 +20,7 @@ import {
   withTarget,
   writeState,
   type CheckItemState,
+  type FixCheckState,
   type OpenFinding,
   type ReviewResult,
   type ReviewState,
@@ -65,6 +66,9 @@ export async function targetFolders(ctx: Context, side: Side, target: string, co
 /** The checks whose failures in files outside the target do not count (`core` command.md `## review and code check`). */
 const TARGET_ONLY_CHECKS: readonly string[] = ['type check', 'lint'];
 
+/** The check of the code check that proves a fix's tests on the code before it (ogw.md `## review run`). */
+const PROOF = 'fix test proof';
+
 /** The file a failure line names first (`<file>:<line>[:<column>] ...`), or null when it names none. */
 export function failureFile(line: string): string | null {
   return /^([^\s:]+):\d+(?::\d+)?\s/.exec(line)?.[1] ?? null;
@@ -90,31 +94,55 @@ export function outsideTargetFailures(items: readonly CheckItemState[], folders:
     }));
 }
 
+/** What of a code check does not count for the result: the failure lines outside the target, and a proof failed before. */
+interface NotCounted {
+  outside: ReadonlySet<string>;
+  /** The `fix test proof` `fail` does not count (`proofFailedBefore`). */
+  proof: boolean;
+}
+
 /** The failure lines of an item that count, without those outside the target (`outsideTargetFailures`). */
 function countedFailures(item: CheckItemState, outside: ReadonlySet<string>): string[] {
   return TARGET_ONLY_CHECKS.includes(item.name) ? item.failures.filter((line) => !outside.has(line)) : item.failures;
 }
 
 /** Whether a code check item is a `fail` that counts for the result: a `fail` with a failure line that counts, or none. */
-function countsAsFail(item: CheckItemState, outside: ReadonlySet<string>): boolean {
-  return item.result === 'fail' && (item.failures.length === 0 || countedFailures(item, outside).length > 0);
+function countsAsFail(item: CheckItemState, not: NotCounted): boolean {
+  if (item.name === PROOF && not.proof) return false;
+  return item.result === 'fail' && (item.failures.length === 0 || countedFailures(item, not.outside).length > 0);
 }
 
-/** The code check items without the failure lines outside the target: an item failed only by them is a `pass`. */
-function countedItems(items: readonly CheckItemState[], outside: ReadonlySet<string>): CheckItemState[] {
+/** The code check items without what does not count (`NotCounted`): an item failed only by it is a `pass`. */
+function countedItems(items: readonly CheckItemState[], not: NotCounted): CheckItemState[] {
   return items.map((item) => {
-    const failures = countedFailures(item, outside);
-    return { ...item, failures, result: item.result === 'fail' && !countsAsFail(item, outside) ? 'pass' : item.result };
+    const failures = countedFailures(item, not.outside);
+    return { ...item, failures, result: item.result === 'fail' && !countsAsFail(item, not) ? 'pass' : item.result };
   });
 }
 
 /**
  * Whether the code check passes for the result: no item is a `fail` that counts. The job ends with exit code 1 when an
- * item fails, so a run whose only failures are outside the target passes; another exit code that is not 0 does not.
+ * item fails, so a run whose only failures do not count passes; another exit code that is not 0 does not.
  */
-function codeCheckPasses(check: WaitResult, items: readonly CheckItemState[], outside: ReadonlySet<string>): boolean {
+function codeCheckPasses(check: WaitResult, items: readonly CheckItemState[], not: NotCounted): boolean {
   const ended = check.job.exitCode === 0 || items.some((c) => c.result === 'fail');
-  return ended && items.every((c) => !countsAsFail(c, outside));
+  return ended && items.every((c) => !countsAsFail(c, not));
+}
+
+/** Whether a code check output has a `fix test proof` `fail`. */
+export function proofFailed(items: readonly CheckItemState[]): boolean {
+  return items.some((c) => c.name === PROOF && c.result === 'fail');
+}
+
+/**
+ * Whether a judged code check of the target (of a round or a fix check) with the `--fix-base` `base` had a
+ * `fix test proof` `fail`: a `fail` of a later proof on that base does not count (ogw.md `## review run`), since no
+ * test fails on a base whose code already behaved.
+ */
+export function proofFailedBefore(state: ReviewState, base: string | null | undefined): boolean {
+  if (typeof base !== 'string') return false;
+  return state.rounds.some((r) => (r.judged && r.fixBase === base && proofFailed(r.codeCheck))
+    || (r.fixChecks ?? []).some((c) => c.judged && c.fixBase === base && proofFailed(c.codeCheck)));
 }
 
 /** The review file the review agent job wrote: where it is after `ogw agent merge` (core), or its temp file (tool). */
@@ -146,30 +174,14 @@ async function openFindings(state: ReviewState, file: ReviewFile): Promise<OpenF
   return open;
 }
 
-/** What `decide` reads of a judged round and its chain. */
-export interface Decision {
-  open: readonly OpenFinding[];
-  codeCheckPass: boolean;
-  round: number;
-  chain: number;
-  /** The round before the chain's first round: 0 for chain 1, else the round whose `escalate` or `limit` began it. */
-  chainBase: number;
-  /** Rounds of the chain, this one included. */
-  chainRounds: number;
-  /** Harness settings `reviewRounds`. */
-  rounds: number;
-}
-
 /**
- * The result of a judged round (core command.md `## review and code check`). A chain did not converge when its rounds
- * reached `rounds`, or when a finding with `spec change` `no` is still `open` after two fixes in the chain.
+ * The result of a judged round (core command.md `## review and code check`): `done` with no `open` finding and a code
+ * check that passes, `blocked` when only findings with `spec change` `yes` are left and the code check passes, else
+ * `fix`.
  */
-export function decide(d: Decision): ReviewResult {
-  if (d.open.length === 0 && d.codeCheckPass) return 'done';
-  const fixable = d.open.filter((f) => f.specChange !== 'yes');
-  if (fixable.length === 0 && d.codeCheckPass) return 'blocked';
-  const stuck = fixable.some((f) => d.round - Math.max(roundOfId(f.id), d.chainBase) >= 2);
-  if (stuck || d.chainRounds >= d.rounds) return d.chain === 1 ? 'escalate' : 'limit';
+export function decide(open: readonly OpenFinding[], codeCheckPass: boolean): ReviewResult {
+  if (open.length === 0 && codeCheckPass) return 'done';
+  if (open.every((f) => f.specChange === 'yes') && codeCheckPass) return 'blocked';
   return 'fix';
 }
 
@@ -182,38 +194,36 @@ function fixInputText(target: string, reviewFile: string, codeCheckFile: string,
   return ['command: review fix', `- target: ${target}`, `- review file: ${reviewFile}`, `- code check result: ${codeCheckFile}`, ...open.map((f) => `- ${openFindingLine(f)}`), ''].join('\n');
 }
 
-/** The escalation input: the fix input with every round of the chain, its review file and the commit range of its fix. */
-function escalationInputText(target: string, reviewFile: string, codeCheckFile: string, open: readonly OpenFinding[], chain: readonly RoundState[]): string {
-  const lines = chain.map((r, i) => {
-    const next = chain[i + 1];
-    return `- round ${String(r.round)}: review file ${r.reviewFile ?? 'none'}${next === undefined ? '' : `, fix ${r.startCommit}..${next.startCommit}`}`;
-  });
-  return `${fixInputText(target, reviewFile, codeCheckFile, open)}\n## chain\n\n${lines.join('\n')}\n`;
+/** The `code check fail` lines of a code check, its `fix test proof` `fail` that does not count, and its failures outside the target. */
+function codeCheckLines(items: readonly CheckItemState[], outsideTarget: readonly string[], proofNotCounted: boolean, fixBase: string | null | undefined): string[] {
+  const not: NotCounted = { outside: new Set(outsideTarget), proof: proofNotCounted };
+  const lines: string[] = [];
+  for (const item of items.filter((c) => countsAsFail(c, not))) {
+    lines.push(`code check fail: ${item.name}`, ...countedFailures(item, not.outside).map((failure) => `  ${failure}`));
+  }
+  if (proofNotCounted && proofFailed(items)) {
+    lines.push(`fix test proof fail not counted: the proof on --fix-base ${String(fixBase)} failed in an earlier code check`);
+    lines.push(...items.filter((c) => c.name === PROOF).flatMap((c) => c.failures.map((failure) => `  ${failure}`)));
+  }
+  for (const line of outsideTarget) lines.push(`code check fail outside target: ${line}`);
+  return lines;
 }
 
-/** The rounds of a round's chain up to it, and the round before the chain's first round (`Decision.chainBase`). */
-export function chainRounds(state: ReviewState, round: RoundState): { rounds: RoundState[]; base: number } {
-  const chain = chainOf(round);
-  const rounds = state.rounds.filter((r) => chainOf(r) === chain && r.round <= round.round);
-  const before = state.rounds.filter((r) => chainOf(r) < chain).map((r) => r.round);
-  // a `--respec` chain after a round other than `fix` or `escalate` (`blocked`, `limit`) follows no fix (`fixBase`):
-  // its fixes count from its first round
-  const first = rounds[0];
-  const previous = state.rounds.find((r) => r.round === (first?.round ?? 0) - 1);
-  const afterFix = previous?.result === 'fix' || previous?.result === 'escalate';
-  if (first?.specChanges !== undefined && previous !== undefined && !afterFix) return { rounds, base: first.round };
-  return { rounds, base: before.length === 0 ? 0 : Math.max(...before) };
+/** The output of a judged fix check: `fixed`, or `check fail`, with the findings left to the human (`spec change` `yes`). */
+function fixCheckOutput(round: RoundState, check: FixCheckState): CommandResult {
+  const result = check.result === 'pass' ? 'fixed' : 'check fail';
+  const open = round.open.filter((f) => f.specChange === 'yes');
+  const lines = [`result: ${result}`, `round: ${String(round.round)}`, ...open.map(openFindingLine), ...codeCheckLines(check.codeCheck, check.outsideTarget, check.proofNotCounted, check.fixBase)];
+  return { text: lines.join('\n'), data: { result, round: round.round, open, codeCheck: check.codeCheck, outsideTarget: check.outsideTarget, fixCheckJob: check.job } };
 }
 
-/** The output of a judged round. */
+/** The output of a judged round, or of its judged last fix check. */
 export function judgedOutput(round: RoundState): CommandResult {
+  const check = lastFixCheck(round);
+  if (check?.judged === true) return fixCheckOutput(round, check);
   const lines = [`result: ${String(round.result)}`, `round: ${String(round.round)}`];
   for (const f of round.open) lines.push(openFindingLine(f));
-  const outside = new Set(round.outsideTarget ?? []);
-  for (const item of round.codeCheck.filter((c) => countsAsFail(c, outside))) {
-    lines.push(`code check fail: ${item.name}`, ...countedFailures(item, outside).map((failure) => `  ${failure}`));
-  }
-  for (const line of round.outsideTarget ?? []) lines.push(`code check fail outside target: ${line}`);
+  lines.push(...codeCheckLines(round.codeCheck, round.outsideTarget ?? [], round.proofNotCounted === true, round.fixBase));
   for (const line of (round.outOfScope ?? []).filter(urgentOutOfScope)) lines.push(`out of scope: ${line}`);
   for (const line of round.gameImpact ?? []) lines.push(`game impact: ${line}`);
   lines.push(...(round.debtLines ?? []));
@@ -249,9 +259,10 @@ async function judge(ctx: Context, dir: string, state: ReviewState, round: Round
   const notMerged = merge?.failed.map((f) => `review job not merged: ${f.reason}: ${f.detail}`) ?? [];
   const codeCheck = codeCheckItems(waited.check);
   const outsideTarget = outsideTargetFailures(codeCheck, await targetFolders(ctx, side, state.target, round.startCommit));
+  const not: NotCounted = { outside: new Set(outsideTarget), proof: proofFailedBefore(state, round.fixBase) };
   const codeCheckFile = join(dir, `round-${String(round.round)}-code-check.json`);
-  // the core agent's fix and escalation inputs give this file: only the failures that count
-  await writeJsonAtomic(codeCheckFile, { checks: countedItems(codeCheck, new Set(outsideTarget)) });
+  // the core agent's fix input gives this file: only the failures that count
+  await writeJsonAtomic(codeCheckFile, { checks: countedItems(codeCheck, not) });
   const reviewFile = await reviewFilePath(ctx, round);
   // a review job that was not merged left no review file of this round on main: an older file of the same name may be there
   const { file, invalid } = await roundReview(reviewFile, round, waited.review.job.status === 'done' && notMerged.length === 0);
@@ -286,45 +297,62 @@ async function judge(ctx: Context, dir: string, state: ReviewState, round: Round
   round.outOfScope = file.outOfScope;
   round.gameImpact = gameImpact;
   round.outsideTarget = outsideTarget;
-  const pass = codeCheckPasses(waited.check, codeCheck, new Set(round.outsideTarget));
-  const chain = chainRounds(state, round);
-  round.result = decide({
-    open: round.open,
-    codeCheckPass: pass,
-    round: round.round,
-    chain: chainOf(round),
-    chainBase: chain.base,
-    chainRounds: chain.rounds.length,
-    rounds: (await ctx.settings()).reviewRounds,
-  });
-  if (round.result === 'escalate' && reviewFile !== null) {
-    round.fixInput = join(dir, `round-${String(round.round)}-escalation.md`);
-    await writeFileAtomic(round.fixInput, escalationInputText(state.target, reviewFile, codeCheckFile, round.open, chain.rounds));
-  } else if (side === 'core' && round.result === 'fix' && reviewFile !== null) {
+  round.proofNotCounted = not.proof;
+  round.result = decide(round.open, codeCheckPasses(waited.check, codeCheck, not));
+  if (side === 'core' && round.result === 'fix' && reviewFile !== null) {
     round.fixInput = join(dir, `round-${String(round.round)}-fix.md`);
     await writeFileAtomic(round.fixInput, fixInputText(state.target, reviewFile, codeCheckFile, round.open));
   }
   round.judged = true;
-  // a round judged other than `invalid` used the `--continue`, `--respec`, `--reopen`, `--full` or `--debt` it was started with
-  delete state.continueAfter;
+  // a round judged other than `invalid` used the `--respec`, `--full` or `--debt` it was started with
   delete state.respecAfter;
-  delete state.reopenAfter;
   delete state.full;
   delete state.debtReview;
   await writeState(dir, state);
   return judgedOutput(round);
 }
 
-/** `ogw review wait <core|tool> <target>`. */
+/** Judges the last fix check of a `fix` round: the round is `fixed` when it has no `fail` that counts. */
+async function judgeFixCheck(ctx: Context, dir: string, state: ReviewState, round: RoundState, check: FixCheckState, waited: WaitResult): Promise<CommandResult> {
+  const items = codeCheckItems(waited);
+  check.outsideTarget = outsideTargetFailures(items, await targetFolders(ctx, state.side, state.target, check.commit));
+  check.proofNotCounted = proofFailedBefore(state, check.fixBase);
+  check.codeCheck = items;
+  check.result = codeCheckPasses(waited, items, { outside: new Set(check.outsideTarget), proof: check.proofNotCounted }) ? 'pass' : 'fail';
+  check.judged = true;
+  if (check.result === 'pass') round.result = 'fixed';
+  await writeState(dir, state);
+  return judgedOutput(round);
+}
+
+const RUNNING: CommandResult = { exitCode: EXIT_STILL_RUNNING, text: 'running', data: { result: 'running' } };
+
+/** Waits for the last fix check of round `roundNo` and judges it. */
+async function waitFixCheck(ctx: Context, dir: string, side: Side, target: string, roundNo: number, job: string, timeoutMs: number): Promise<CommandResult> {
+  const waited = await waitJob(job, timeoutMs, ctx.env);
+  if (!waited.finished) return RUNNING;
+  return withTarget(dir, async () => {
+    const state = await readState(dir, side, target);
+    const round = state.rounds.at(-1);
+    const check = round === undefined ? undefined : lastFixCheck(round);
+    if (round?.round !== roundNo || check?.job !== job) throw new OgwError(`review state of ${target} changed while waiting`);
+    if (check.judged) return judgedOutput(round);
+    return judgeFixCheck(ctx, dir, state, round, check, waited);
+  });
+}
+
+/** `ogw review wait <core|tool> <target>`: judges the last round, or its last fix check. */
 export async function reviewWait(ctx: Context, side: Side, target: string, timeoutMs: number): Promise<CommandResult> {
   const dir = await targetDir(ctx, side, target);
   const first = (await readState(dir, side, target)).rounds.at(-1);
   if (!first) throw new OgwError(`no review round of ${target}: run ogw review next first`);
+  const fixCheck = lastFixCheck(first);
+  if (first.judged && fixCheck?.judged === false) return waitFixCheck(ctx, dir, side, target, first.round, fixCheck.job, timeoutMs);
   if (first.judged) return judgedOutput(first);
   const deadline = Date.now() + timeoutMs;
   const review = await waitJob(first.reviewJob, timeoutMs, ctx.env);
   const check = review.finished ? await waitJob(first.codeCheckJob, Math.max(0, deadline - Date.now()), ctx.env) : null;
-  if (!check?.finished) return { exitCode: EXIT_STILL_RUNNING, text: 'running', data: { result: 'running' } };
+  if (!check?.finished) return RUNNING;
   return withTarget(dir, async () => {
     const state = await readState(dir, side, target);
     const round = state.rounds.at(-1);

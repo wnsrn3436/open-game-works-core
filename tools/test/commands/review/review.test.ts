@@ -2,16 +2,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { testAtHead } from '../../../src/commands/core/lib/main-checkout.ts';
-import { changedSinceDone, clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
-import { checkContinue, fixBase } from '../../../src/commands/review/lib/next.ts';
-import { decide, failureFile, outsideTargetFailures, targetFolders } from '../../../src/commands/review/lib/wait.ts';
-import type { RoundState } from '../../../src/commands/review/lib/state.ts';
+import { clearReviews, lastReviewResults } from '../../../src/commands/review/api.ts';
+import { fixBase, secondRoundDue } from '../../../src/commands/review/lib/next.ts';
+import { decide, failureFile, outsideTargetFailures, proofFailedBefore, targetFolders } from '../../../src/commands/review/lib/wait.ts';
+import type { ReviewState, RoundState } from '../../../src/commands/review/lib/state.ts';
 import { createContext } from '../../../src/lib/command.ts';
 import { readJob } from '../../../src/lib/jobs.ts';
 import { ogw, commitAll, makeWorkspace, sh, type TestWorkspace } from '../../helpers/workspace.ts';
 import { CORE_TEST_PASSED, fakeAgentCli } from '../agent/helpers.ts';
 import { changeDefinition, finding, mergeDefinitions, next, reviewer, reviewFile, wait } from './review-fixture.ts';
-import { commitCore } from './reopen-fixture.ts';
+import { commitCore } from './round-fixture.ts';
 
 describe('code check failures outside the target', () => {
   it('takes the type check and lint lines whose file is outside every target folder, and keeps lines of no file, of a folder holding a target folder and of other checks', () => {
@@ -51,37 +51,50 @@ describe('code check failures outside the target', () => {
 
 describe('decide', () => {
   const open = (id: string, specChange = 'no') => ({ id, aspect: 'correctness', severity: 'medium', location: 'a.ts:1', specChange });
-  const at = (round: number, chain: number, chainBase: number, chainRounds: number, ids: string[]) =>
-    decide({ open: ids.map((id) => open(id)), codeCheckPass: true, round, chain, chainBase, chainRounds, rounds: 3 });
 
-  it('counts the fixes of a finding in its chain only', () => {
-    // chain 1: R1-1 open in round 3 was fixed after rounds 1 and 2
-    expect(at(2, 1, 0, 2, ['R1-1'])).toBe('fix');
-    expect(at(3, 1, 0, 2, ['R1-1'])).toBe('escalate');
-    // chain 2 begins after round 3: R1-1 open in round 4 was fixed once in it (the escalation fix)
-    expect(at(4, 2, 3, 1, ['R1-1'])).toBe('fix');
-    expect(at(5, 2, 3, 2, ['R1-1'])).toBe('limit');
-    // a chain after --continue counts from its limit round
-    expect(at(7, 3, 6, 1, ['R1-1'])).toBe('fix');
-    expect(at(8, 3, 6, 2, ['R1-1'])).toBe('limit');
-  });
-
-  it('is blocked when only spec change findings are open, and done with none', () => {
-    expect(decide({ open: [open('R1-1', 'yes')], codeCheckPass: true, round: 3, chain: 1, chainBase: 0, chainRounds: 3, rounds: 3 })).toBe('blocked');
-    expect(decide({ open: [], codeCheckPass: true, round: 1, chain: 1, chainBase: 0, chainRounds: 1, rounds: 3 })).toBe('done');
-    expect(decide({ open: [], codeCheckPass: false, round: 1, chain: 1, chainBase: 0, chainRounds: 1, rounds: 3 })).toBe('fix');
+  it('is done with no open finding and a code check that passes, blocked when only spec change findings are open, and fix otherwise', () => {
+    expect(decide([], true)).toBe('done');
+    expect(decide([], false)).toBe('fix');
+    expect(decide([open('R1-1', 'yes')], true)).toBe('blocked');
+    expect(decide([open('R1-1', 'yes')], false)).toBe('fix');
+    expect(decide([open('R1-1'), open('R1-2', 'yes')], true)).toBe('fix');
   });
 });
 
-describe('checkContinue', () => {
-  const last = (judged: boolean, result: RoundState['result']): RoundState => ({ judged, result }) as unknown as RoundState;
+describe('secondRoundDue', () => {
+  const round = (severities: string[], options: { second?: boolean; specChange?: string; result?: string } = {}): RoundState =>
+    ({
+      result: options.result ?? 'fix',
+      ...(options.second === true ? { second: true } : {}),
+      open: severities.map((severity, i) => ({ id: `R1-${String(i + 1)}`, aspect: 'structure', severity, location: 'a.ts:1', specChange: options.specChange ?? 'no' })),
+    }) as unknown as RoundState;
 
-  it('takes --continue after limit and while the round it started is not judged (a run started again), and refuses it otherwise', () => {
-    expect(() => { checkContinue('t', last(true, 'limit'), true); }).not.toThrow();
-    expect(() => { checkContinue('t', last(false, null), true); }).not.toThrow();
-    expect(() => { checkContinue('t', last(true, 'done'), true); }).toThrow('--continue needs the last round of t to be limit');
-    expect(() => { checkContinue('t', undefined, true); }).toThrow('--continue needs the last round of t to be limit');
-    expect(() => { checkContinue('t', last(true, 'done'), false); }).not.toThrow();
+  it('is due after the fix of a critical or high finding of a round that is not a second round', () => {
+    expect(secondRoundDue(round(['medium', 'high']))).toBe(true);
+    expect(secondRoundDue(round(['critical']))).toBe(true);
+    expect(secondRoundDue(round(['medium', 'low']))).toBe(false);
+    // no round follows the fix of a second round
+    expect(secondRoundDue(round(['critical'], { second: true }))).toBe(false);
+    // a spec change finding is not fixed by the round's fix
+    expect(secondRoundDue(round(['high'], { specChange: 'yes' }))).toBe(false);
+    expect(secondRoundDue(round(['high'], { result: 'done' }))).toBe(false);
+  });
+});
+
+describe('proofFailedBefore', () => {
+  const proof = (result: string) => [{ name: 'fix test proof', result: result as 'fail', failures: [] }];
+  const state = (rounds: Partial<RoundState>[]): ReviewState => ({ side: 'core', target: 't', rounds: rounds as RoundState[] });
+  const check = (judged: boolean, result: string) => ({ job: 'j', commit: 'c2', fixBase: 'c0', judged, result: null, codeCheck: proof(result), outsideTarget: [], proofNotCounted: false });
+
+  it('is true when a judged code check of a round or a fix check with the same fix base failed the proof', () => {
+    expect(proofFailedBefore(state([{ judged: true, fixBase: 'c0', codeCheck: proof('fail') }]), 'c0')).toBe(true);
+    expect(proofFailedBefore(state([{ judged: true, fixBase: 'c0', codeCheck: proof('pass') }]), 'c0')).toBe(false);
+    expect(proofFailedBefore(state([{ judged: true, fixBase: 'c1', codeCheck: proof('fail') }]), 'c0')).toBe(false);
+    // the round being judged is not judged yet: its own proof does not count
+    expect(proofFailedBefore(state([{ judged: false, fixBase: 'c0', codeCheck: proof('fail') }]), 'c0')).toBe(false);
+    expect(proofFailedBefore(state([{ judged: true, fixBase: null, codeCheck: [], fixChecks: [check(true, 'fail')] }]), 'c0')).toBe(true);
+    expect(proofFailedBefore(state([{ judged: true, fixBase: null, codeCheck: [], fixChecks: [check(false, 'fail')] }]), 'c0')).toBe(false);
+    expect(proofFailedBefore(state([{ judged: true, fixBase: 'c0', codeCheck: proof('fail') }]), null)).toBe(false);
   });
 });
 
@@ -97,35 +110,28 @@ describe('fixBase', () => {
 
   it('proves the fix of a behavior finding, not of a finding that keeps the behavior', () => {
     expect(fixBase(round('fix', ['efficiency', 'correctness']))).toBe('c1');
-    expect(fixBase(round('escalate', ['spec']))).toBe('c1');
+    expect(fixBase(round('fix', ['spec']))).toBe('c1');
     // a test evidence fix adds tests to code that already behaves: no proof
     expect(fixBase(round('fix', ['test evidence']))).toBeNull();
-    // after `limit` a `--continue` round follows the fix the human chose; a `--respec` round follows no fix
-    expect(fixBase(round('limit', ['security']), [], true)).toBe('c1');
-    expect(fixBase(round('limit', ['security']))).toBeNull();
     expect(fixBase(round('fix', ['efficiency', 'structure']))).toBeNull();
     // a spec change finding is not fixed
     const specOnly = round('fix', ['correctness']);
     (specOnly.open[0] as { specChange: string }).specChange = 'yes';
     expect(fixBase(specOnly)).toBeNull();
+    // only the fix of a `fix` round is proved
     expect(fixBase(round('done', []))).toBeNull();
+    expect(fixBase(round('blocked', ['correctness']))).toBeNull();
     expect(fixBase(undefined)).toBeNull();
   });
 
-  it('proves again on the same base after a failed proof, until the fix\'s tests fail there', () => {
+  it('proves on the base of a proof that failed in the round, and a fix check after a fix check on that fix check\'s base', () => {
     expect(fixBase(round('fix', [], { result: 'fail', base: 'c0' }))).toBe('c0');
     expect(fixBase(round('fix', ['correctness'], { result: 'fail', base: 'c0' }))).toBe('c0');
     expect(fixBase(round('fix', [], { result: 'pass', base: 'c0' }))).toBeNull();
-    expect(fixBase(round('fix', [], { result: 'unknown', base: 'c0' }))).toBeNull();
-    // the round the failed proof proves: again only when it had a behavior finding
-    const proved = (aspects: string[]): RoundState => ({ ...round('fix', aspects), startCommit: 'c0' });
-    expect(fixBase(round('fix', [], { result: 'fail', base: 'c0' }), [proved(['test evidence', 'structure'])])).toBeNull();
-    expect(fixBase(round('fix', [], { result: 'fail', base: 'c0' }), [proved(['correctness'])])).toBe('c0');
-    // two rounds failed on that base: it is not asked again, since no test fails on code that already behaved
-    const failed = { ...round('fix', [], { result: 'fail', base: 'c0' }), startCommit: 'c2' };
-    const last = { ...round('fix', [], { result: 'fail', base: 'c0' }), startCommit: 'c3' };
-    expect(fixBase(last, [proved(['correctness']), failed, last])).toBeNull();
-    expect(fixBase({ ...last, open: proved(['correctness']).open }, [proved(['correctness']), failed, last])).toBe('c3');
+    expect(fixBase(round('fix', ['correctness'], { result: 'unknown', base: 'c0' }))).toBe('c1');
+    const checked = (base: string | null): RoundState => ({ ...round('fix', ['correctness']), fixChecks: [{ job: 'j', commit: 'c2', fixBase: base, judged: true, result: 'fail', codeCheck: [], outsideTarget: [], proofNotCounted: false }] });
+    expect(fixBase(checked('c0'))).toBe('c0');
+    expect(fixBase(checked(null))).toBeNull();
   });
 });
 
@@ -165,7 +171,10 @@ describe('ogw review: core', () => {
     const input2 = readFileSync(join(dir, 'round-2-input.md'), 'utf8');
     expect(input2).toContain(`## commit range\n\n${round1Start}..${mainAfterFix}\n`);
     expect(input2).toContain(`## core agent reports\n\n- ${report}\n`);
-    expect((JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { rounds: { fixJobs?: string[] }[] }).rounds[0]?.fixJobs).toEqual([job]);
+    // the high finding of round 1 makes round 2 the second round, which checks its fix
+    const rounds = (JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { rounds: { fixJobs?: string[]; second?: boolean }[] }).rounds;
+    expect(rounds.map((r) => [r.fixJobs, r.second])).toEqual([[[job], undefined], [undefined, true]]);
+    expect(input2).toContain(`## previous review\n\n${reviewPath}\n`);
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 2\n');
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     expect(await lastReviewResults(ctx, 'core')).toEqual(new Map([['routing', 'done']]));
@@ -174,21 +183,18 @@ describe('ogw review: core', () => {
     expect(existsSync(reviewPath)).toBe(true);
   });
 
-  it('gives running for a round not judged yet, and a done target whose folder changed since that round started', async () => {
+  it('gives running for a round not judged yet, and the result of the judged round; a later change of the target starts no round', async () => {
     const ws = makeWorkspace();
     const ctx = createContext({ cwd: ws.root, env: ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([]) }));
     expect(await lastReviewResults(ctx, 'core')).toEqual(new Map([['routing', 'running']]));
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 1\n');
     expect(await lastReviewResults(ctx, 'core')).toEqual(new Map([['routing', 'done']]));
-    expect(await changedSinceDone(ctx, 'core')).toEqual(new Map());
-    writeFileSync(join(ws.coreImpl, 'outside.txt'), 'x');
-    commitCore(ws, 'outside');
-    expect(await changedSinceDone(ctx, 'core')).toEqual(new Map());
     mkdirSync(join(ws.coreImpl, 'server', 'core', 'routing'), { recursive: true });
     writeFileSync(join(ws.coreImpl, 'server', 'core', 'routing', 'later.ts'), 'export {};\n');
     commitCore(ws, 'later');
-    expect(await changedSinceDone(ctx, 'core')).toEqual(new Map([['routing', 1]]));
+    expect((await next(ws, ['core', 'routing'], reviewer(ws, {}))).stdout).toBe('done\n');
+    expect(await lastReviewResults(ctx, 'core')).toEqual(new Map([['routing', 'done']]));
   });
 
   it('merges the review file without waiting for core test runs on the main checkout', async () => {
@@ -322,12 +328,12 @@ describe('ogw review: core', () => {
     await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([]) }));
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 1\n');
     expect(existsSync(join(ws.coreImpl, 'records/review/routing-1.md'))).toBe(true);
-    changeDefinition(ws);
-    await next(ws, ['core', 'routing', '--restart'], reviewer(ws, {}));
+    expect((await ogw(ws, ['review', 'clear', 'core'])).code).toBe(0);
+    await next(ws, ['core', 'routing'], reviewer(ws, {}));
     expect(await wait(ws, ['core', 'routing'])).toMatchObject({ code: 1, stdout: 'result: invalid\nround: 1\n' });
   });
 
-  it('goes on after a definition change with --respec: a round of a new chain whose input has the definition diff', async () => {
+  it('goes on after a definition change with --respec: a round whose input has the definition diff', async () => {
     const ws = makeWorkspace();
     await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([finding('R1-1', 'yes')]) }));
     expect((await wait(ws, ['core', 'routing'])).stdout).toContain('result: blocked\nround: 1\n');
@@ -340,9 +346,10 @@ describe('ogw review: core', () => {
     const input = readFileSync(join(dir, 'round-2-input.md'), 'utf8');
     expect(input).toContain(`## spec changes\n\n${join(dir, 'round-2-spec-changes.diff')}\n`);
     expect(readFileSync(join(dir, 'round-2-spec-changes.diff'), 'utf8')).toMatch(/^diff --git /);
-    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { rounds: { chain?: number; harnessCommit?: string; startCommit: string }[] };
-    expect(state.rounds.map((r) => r.chain)).toEqual([1, 2]);
+    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { rounds: { harnessCommit?: string; startCommit: string }[] };
     expect(typeof state.rounds[1]?.harnessCommit).toBe('string');
+    // the round that follows the definition change answers the findings of the round before it
+    expect(input).toContain(`## previous review\n\n${join(ws.coreImpl, 'records/review/routing-1.md')}\n`);
     // the range: the code changes since the last round started
     expect(input).toContain(`## commit range\n\n${state.rounds[0]?.startCommit as string}..${state.rounds[1]?.startCommit as string}\n`);
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 2\n');
@@ -360,7 +367,7 @@ describe('ogw review: core', () => {
     expect(readFileSync(fixInput, 'utf8')).toContain('\n- open finding: R1-1 correctness high src/a.ts:3 spec change: no\n');
   });
 
-  it('counts the fixes of a finding converted by --respec from the --respec round: fix, then limit only after a second fix', async () => {
+  it('follows the fix of a spec change finding that a --respec round counted as a code finding with the second round, then the fix check', async () => {
     const ws = makeWorkspace();
     const env = reviewer(ws, { 1: reviewFile([finding('R1-1', 'yes')]) });
     await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], env);
@@ -368,44 +375,14 @@ describe('ogw review: core', () => {
     changeDefinition(ws);
     const still = reviewFile([], ['| R1-1 | open | the code still differs |']);
     const results: string[] = [];
-    for (const [round, option] of [[2, ['--respec']], [3, []], [4, []]] as const) {
-      await next(ws, ['tool', 'agent', 'merge', ...option, ...mergeDefinitions(ws)], reviewer(ws, { [round]: still }));
-      results.push(/^result: (\w+)/.exec((await wait(ws, ['tool', 'agent', 'merge'])).stdout)?.[1] ?? '');
+    for (const [round, option] of [[2, ['--respec']], [3, []], [3, []]] as const) {
+      writeFileSync(join(ws.harness, `fix-${String(results.length)}.txt`), 'x');
+      commitAll(ws.harness, 'fix');
+      const started = await next(ws, ['tool', 'agent', 'merge', ...option, ...mergeDefinitions(ws)], reviewer(ws, { [round]: still }));
+      results.push(`${/^round: (\d+)/.exec(started.stdout)?.[1] ?? ''} ${/^result: ([\w ]+)/.exec((await wait(ws, ['tool', 'agent', 'merge'])).stdout)?.[1] ?? ''}`);
     }
-    expect(results).toEqual(['fix', 'fix', 'limit']);
-  });
-
-  it('counts no fix before a --respec round that follows a limit round', async () => {
-    const ws = makeWorkspace();
-    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, { 1: reviewFile([finding('R1-1', 'no'), finding('R1-2', 'yes')]) }));
-    await wait(ws, ['tool', 'agent', 'merge']);
-    const statePath = join(ws.harness, '.git', 'ogw-review', 'agent merge', 'state.json');
-    const limited = JSON.parse(readFileSync(statePath, 'utf8')) as { rounds: { result: string }[] };
-    (limited.rounds[0] as { result: string }).result = 'limit';
-    writeFileSync(statePath, JSON.stringify(limited));
-    changeDefinition(ws);
-    const still = reviewFile([], ['| R1-1 | open | not fixed |', '| R1-2 | open | not fixed |']);
-    const results: string[] = [];
-    for (const [round, option] of [[2, ['--respec']], [3, []], [4, []]] as const) {
-      await next(ws, ['tool', 'agent', 'merge', ...option, ...mergeDefinitions(ws)], reviewer(ws, { [round]: still }));
-      results.push(/^result: (\w+)/.exec((await wait(ws, ['tool', 'agent', 'merge'])).stdout)?.[1] ?? '');
-    }
-    expect(results).toEqual(['fix', 'fix', 'limit']);
-  });
-
-  it('counts the fix before a --respec round that follows a fix round', async () => {
-    const ws = makeWorkspace();
-    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], reviewer(ws, { 1: reviewFile([finding('R1-1', 'no'), finding('R1-2', 'yes')]) }));
-    expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toContain('result: fix\nround: 1\n');
-    changeDefinition(ws);
-    const still = reviewFile([], ['| R1-1 | open | not fixed |', '| R1-2 | fixed | spec changed |']);
-    const results: string[] = [];
-    for (const [round, option] of [[2, ['--respec']], [3, []]] as const) {
-      await next(ws, ['tool', 'agent', 'merge', ...option, ...mergeDefinitions(ws)], reviewer(ws, { [round]: still }));
-      results.push(/^result: (\w+)/.exec((await wait(ws, ['tool', 'agent', 'merge'])).stdout)?.[1] ?? '');
-    }
-    // R1-1 is still open after the fixes after rounds 1 and 2
-    expect(results).toEqual(['fix', 'limit']);
+    // the high finding fixed after the --respec round 2 gets the second round 3; its fix gets the fix check of round 3
+    expect(results).toEqual(['2 fix', '3 fix', '3 fixed']);
   });
 
   it('starts a --respec round again after it was judged invalid, without the option given again', async () => {
@@ -422,12 +399,12 @@ describe('ogw review: core', () => {
     expect(again.stdout).toMatch(/^round: 2\n/);
     expect(readFileSync(join(dir, 'round-2-input.md'), 'utf8')).toContain(`## spec changes\n\n${join(dir, 'round-2-spec-changes.diff')}\n`);
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 2\n');
-    const state = JSON.parse(readFileSync(statePath, 'utf8')) as { respecAfter?: number; rounds: { chain?: number }[] };
-    expect(state.rounds.map((r) => r.chain)).toEqual([1, 2]);
+    const state = JSON.parse(readFileSync(statePath, 'utf8')) as { respecAfter?: number; rounds: unknown[] };
+    expect(state.rounds).toHaveLength(2);
     expect(state.respecAfter).toBeUndefined();
   });
 
-  it('refuses --respec after a round that kept no harness commit, naming --restart', async () => {
+  it('refuses --respec after a round that kept no harness commit', async () => {
     const ws = makeWorkspace();
     await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([finding('R1-1', 'yes')]) }));
     await wait(ws, ['core', 'routing']);
@@ -438,7 +415,7 @@ describe('ogw review: core', () => {
     changeDefinition(ws);
     const refused = await next(ws, ['core', 'routing', '--respec'], reviewer(ws, {}));
     expect(refused).toMatchObject({ code: 1 });
-    expect(refused.stderr).toContain('--respec of routing: round 1 kept no harness commit; use --restart');
+    expect(refused.stderr).toContain('--respec of routing: round 1 kept no harness commit to diff the definitions from');
     expect((JSON.parse(readFileSync(statePath, 'utf8')) as { rounds: unknown[] }).rounds).toHaveLength(1);
   });
 
@@ -449,8 +426,8 @@ describe('ogw review: core', () => {
     // an earlier series left a review file of the same name on main
     await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([]) }));
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 1\n');
-    changeDefinition(ws);
-    await next(ws, ['core', 'routing', '--restart'], reviewer(ws, { 1: reviewFile([]) }));
+    expect((await ogw(ws, ['review', 'clear', 'core'])).code).toBe(0);
+    await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([]) }));
     writeFileSync(join(ws.coreImpl, 'tracked.txt'), 'changed\n');
     const invalid = await wait(ws, ['core', 'routing']);
     expect(invalid.code).toBe(1);

@@ -39,8 +39,8 @@ describe('ogw review: core lists', () => {
       'review must fix added: routing M1: src/x.ts:1: high an old crash', '',
     ].join('\n'));
     expect(ids(ws.coreImpl, 'must fix', 'routing.json')).toEqual(['M1']);
-    // a later round that answers the game finding open does not count it either
-    await next(ws, ['core', 'routing', '--reopen'], env);
+    // a later round (the must-fix round of M1) that answers the game finding open does not count it either
+    await next(ws, ['core', 'routing'], env);
     expect((await wait(ws, ['core', 'routing'])).stdout).toMatch(/^result: done\nround: 2\n/);
   });
 
@@ -69,11 +69,11 @@ describe('ogw review: core lists', () => {
     expect(inputSection(ws.coreImpl, 'routing', 2, 'commit range')).toBe('none');
     expect(inputSection(ws.coreImpl, 'routing', 2, 'debt')).toBe('- D1: src/b.ts:9: medium a slow loop');
     expect((await wait(ws, ['core', 'routing'])).stdout).toMatch(/^result: fix\nround: 2\nopen finding: R2-1 structure low src\/a.ts:3/);
-    // a round that is not done takes no --full
-    expect((await next(ws, ['core', 'routing', '--full'], env)).stderr).toContain('--full of routing needs no review state or a last round that is done');
-    const state = JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { rounds: { whole?: boolean; chain: number; fixBase: string | null; paysDebt?: boolean }[]; full?: boolean };
+    // a review that did not end takes no --full
+    expect((await next(ws, ['core', 'routing', '--full'], env)).stderr).toContain('--full of routing needs no review state or a review that ended (done or fixed)');
+    const state = JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { rounds: { whole?: boolean; fixBase: string | null; paysDebt?: boolean }[]; full?: boolean };
     // the option is used once its round is judged; the reviews of the whole target pay debt
-    expect(state.rounds.map((r) => [r.whole, r.chain, r.fixBase, r.paysDebt])).toEqual([[true, 1, null, true], [true, 2, null, true]]);
+    expect(state.rounds.map((r) => [r.whole, r.fixBase, r.paysDebt])).toEqual([[true, null, true], [true, null, true]]);
     expect(state.full).toBeUndefined();
   });
 
@@ -101,36 +101,45 @@ describe('ogw review: core lists', () => {
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 1\nreview debt removed: routing D1\n');
   });
 
-  it('lets an option given after an invalid --debt round decide the next round, and pays no debt in a --reopen round', async () => {
+  it('lets an option given after an invalid --debt round decide the next round, and pays no debt in the must-fix round', async () => {
     const ws = makeWorkspace();
     const env = reviewer(ws, {
-      1: reviewFile([], [], ['- src/b.ts:9: medium a slow loop']),
+      1: reviewFile([], [], ['- src/b.ts:9: medium a slow loop', '- src/c.ts:2: medium a missing check']),
       2: reviewFile([]),
-      3: reviewFile([], [], [], ['| D1 | open | R3-1 | x |']),
-      4: reviewFile([]),
+      3: reviewFile([], [], [], ['| D1 | fixed | none | gone |', '| D2 | open | R2-1 | x |']),
+      4: reviewFile([], [], [], ['| D1 | fixed | none | gone |', '| D2 | fixed | none | gone |']),
+      5: reviewFile([], [], [], [], ['| M1 | fixed | none | gone |']),
     });
     await next(ws, ['core', 'routing'], env);
     expect((await wait(ws, ['core', 'routing'])).stdout).toContain('review debt added: routing D1');
-    // a --debt round whose review file does not answer D1 is dropped as invalid
+    // a --debt round whose review file does not answer D1 and D2 is dropped as invalid
     await next(ws, ['core', 'routing', '--debt'], env);
     expect((await wait(ws, ['core', 'routing'])).stdout).toMatch(/^result: invalid\n/);
-    // --full given now decides: the whole target, which pays the debt
+    // --full given now decides: the whole target, which pays the debt; an open row without its finding is invalid too
     await next(ws, ['core', 'routing', '--full'], env);
     expect(inputSection(ws.coreImpl, 'routing', 2, 'commit range')).toBe('none');
-    expect(inputSection(ws.coreImpl, 'routing', 2, 'debt')).toBe('- D1: src/b.ts:9: medium a slow loop');
+    expect(inputSection(ws.coreImpl, 'routing', 2, 'debt')).toBe('- D1: src/b.ts:9: medium a slow loop\n- D2: src/c.ts:2: medium a missing check');
     expect((await wait(ws, ['core', 'routing'])).stdout).toMatch(/^result: invalid\n/);
-    // --reopen given now decides: the changes since the done round, with no debt
-    const round1 = (JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { rounds: { startCommit: string }[] }).rounds[0]?.startCommit as string;
+    // the kept --full starts the round again
+    await next(ws, ['core', 'routing'], env);
+    expect(inputSection(ws.coreImpl, 'routing', 2, 'commit range')).toBe('none');
+    expect((await wait(ws, ['core', 'routing'])).stdout).toMatch(/^result: done\nround: 2\n/);
+    // the must-fix round: the changes since the review ended, with no debt
+    const round2 = (JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { rounds: { startCommit: string }[] }).rounds[1]?.startCommit as string;
+    writeFileSync(join(ws.coreImpl, 'records', 'review-debt', 'routing.json'), JSON.stringify({ target: 'routing', nextId: 4, items: [{ ...d1, id: 'D3' }] }));
+    mkdirSync(join(ws.coreImpl, 'records', 'review-must-fix'), { recursive: true });
+    writeFileSync(join(ws.coreImpl, 'records', 'review-must-fix', 'routing.json'), JSON.stringify({ target: 'routing', nextId: 2, items: [{ id: 'M1', severity: 'high', location: 'src/d.ts:1', problem: 'a crash', foundBy: 'x round 1' }] }));
     mkdirSync(join(ws.coreImpl, 'server', 'core', 'routing'), { recursive: true });
     writeFileSync(join(ws.coreImpl, 'server', 'core', 'routing', 'index.ts'), 'export {};\n');
     // the review agent jobs put the ogw pre-commit hook in open-game-works-core-impl: the test commits without it
     sh(ws.coreImpl, 'git', ['add', '--all']);
     sh(ws.coreImpl, 'git', ['commit', '--quiet', '--no-verify', '-m', 'routing change']);
     const main = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();
-    await next(ws, ['core', 'routing', '--reopen'], env);
-    expect(inputSection(ws.coreImpl, 'routing', 2, 'commit range')).toBe(`${round1}..${main}`);
-    expect(inputSection(ws.coreImpl, 'routing', 2, 'debt')).toBe('none');
-    expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 2\n');
+    await next(ws, ['core', 'routing'], env);
+    expect(inputSection(ws.coreImpl, 'routing', 3, 'commit range')).toBe(`${round2}..${main}`);
+    expect(inputSection(ws.coreImpl, 'routing', 3, 'debt')).toBe('none');
+    expect(inputSection(ws.coreImpl, 'routing', 3, 'must fix')).toBe('- M1: src/d.ts:1: high a crash');
+    expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 3\nreview must fix removed: routing M1\n');
     const state = JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { full?: boolean; debtReview?: boolean; rounds: { paysDebt?: boolean }[] };
     expect([state.full, state.debtReview, state.rounds.at(-1)?.paysDebt]).toEqual([undefined, undefined, false]);
   });
@@ -165,16 +174,18 @@ describe('ogw review: core lists', () => {
     expect(/## spec changes\n\n(\S+)\n/.exec(input)?.[1]).toMatch(/round-2-spec-changes\.diff$/);
   });
 
-  it('takes --reopen after done with no change when the target has a must-fix item, and gives it to that round', async () => {
+  it('starts the must-fix round after done when the target has a must-fix item, and gives it to that round', async () => {
     const ws = makeWorkspace();
     const env = reviewer(ws, { 1: reviewFile([], [], ['- server/lib/x.ts:4: high an old crash']), 2: reviewFile([], [], [], [], ['| M1 | fixed | none | gone |']) });
     await next(ws, ['core', 'routing'], env);
     await wait(ws, ['core', 'routing']);
-    await next(ws, ['core', 'routing', '--reopen'], env);
+    await next(ws, ['core', 'routing'], env);
     expect(inputSection(ws.coreImpl, 'routing', 2, 'must fix')).toBe('- M1: server/lib/x.ts:4: high an old crash');
+    // it checks the fix of the item, not the round before it
+    expect(inputSection(ws.coreImpl, 'routing', 2, 'previous review')).toBe('none');
     expect((await wait(ws, ['core', 'routing'])).stdout).toBe('result: done\nround: 2\nreview must fix removed: routing M1\n');
-    // nothing left to confirm and nothing changed
-    expect((await next(ws, ['core', 'routing', '--reopen'], env)).stderr).toContain('--reopen of routing: nothing of routing changed since round 2');
+    // nothing left to confirm: no round
+    expect((await next(ws, ['core', 'routing'], env)).stdout).toBe('done\n');
   });
 
   it('keeps a location in the review agent\'s worktree or the checkout as a checkout path, in the list of the module that holds it', async () => {

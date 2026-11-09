@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { commitAll, type TestWorkspace } from '../../helpers/workspace.ts';
 import { CORE_TEST_PASSED, fakeAgentCli } from '../agent/helpers.ts';
 
-/** Changes `skills/core/command.md`, a definition document of every core target: `--restart` and `--respec` need it. */
+/** Changes `skills/core/command.md`, a definition document of every core target: `--respec` needs it. */
 export function changeDefinition(ws: TestWorkspace): void {
   appendFileSync(join(ws.harness, 'skills', 'core', 'command.md'), '\n- changed\n');
 }

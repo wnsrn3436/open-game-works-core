@@ -1,11 +1,10 @@
-// The round state, tool target options and core commits of the `ogw review --reopen` tests.
+// The round state, tool target options and core commits of the `ogw review` round tests.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sh, type TestWorkspace } from '../../helpers/workspace.ts';
 
 export interface State {
-  reopenAfter?: number;
-  rounds: { chain?: number; startCommit: string; codeCheckJob: string; input: string; reviewFile: string | null }[];
+  rounds: { startCommit: string; codeCheckJob: string; input: string; reviewFile: string | null; result: string | null }[];
 }
 
 /** `--since` and `--definition` of the tool target `agent merge`. */

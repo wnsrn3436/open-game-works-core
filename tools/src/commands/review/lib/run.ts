@@ -1,6 +1,6 @@
 /**
- * `ogw review run core <target>`: the rounds of a core review target until they stop (`core` command.md
- * `## review and code check`).
+ * `ogw review run core <target>`: the round of a core review target, its fix and the check of the fix, until they stop
+ * (`core` command.md `## review and code check`).
  */
 import { join } from 'node:path';
 import type { CommandResult, Context } from '../../../lib/command.ts';
@@ -23,13 +23,15 @@ import { enginesOf, readCoreSpecDir } from '../../core/lib/impl.ts';
 import { serverImplementedModules } from '../../core/lib/server-layout.ts';
 import { engineImplementedModules } from '../../core/lib/spec-dir-check.ts';
 import { TOOLS } from '../../core/lib/tools.ts';
+import { webSpecificChange } from '../../core/lib/web-specific.ts';
+import { hasMustFix } from './debt.ts';
 import { urgentOutOfScope } from './review-file.ts';
-import { changedSinceRound, checkContinue, continuesLimit, fixJobs, keepOpener, mergedFix as isMergedFix, keepReopen, opensLast, keepRespec, reopensLast, respecsLast, reviewNext, type NextOptions, type Opener } from './next.ts';
-import { readState, targetDir, type ReviewState, type RoundState } from './state.ts';
+import { definitionsChanged, fixJobs, keepOpener, keepRespec, mergedFix as isMergedFix, opensLast, respecsLast, reviewNext, type NextOptions, type Opener } from './next.ts';
+import { ended, readState, running, targetDir, type ReviewState, type RoundState } from './state.ts';
 import { judgedOutput, reviewWait } from './wait.ts';
 
 /** Why `ogw review run` stopped. */
-export type RunStop = 'done' | 'blocked' | 'limit' | 'invalid' | 'not merged' | 'test fail' | 'test unknown';
+export type RunStop = 'done' | 'fixed' | 'blocked' | 'invalid' | 'not merged' | 'test fail' | 'test unknown' | 'check fail';
 
 interface Stop {
   result: RunStop;
@@ -43,15 +45,8 @@ interface Drive {
   target: string;
   dir: string;
   slots: { dir: string; count: number };
-  /** `--restart`: the first `review next` of this run removes the review state. */
-  restart: boolean;
-  /** `--continue`: kept until a round it started is judged other than `invalid`, which drops that round. */
-  continuing: boolean;
-  /**
-   * `--respec` or `--reopen` of the run not kept in the review state yet: it follows the last round once that is judged
-   * (`keepPending`).
-   */
-  pending: { respec: boolean; reopen: boolean };
+  /** `--respec` of the run not kept in the review state yet: it follows the last round once that is judged (`keepPending`). */
+  pending: boolean;
   /** `--since`: the range of round 1, also of a round 1 started again after an `invalid` one. */
   since: string | undefined;
   /** `--full` or `--debt` of the run not kept in the review state yet (`keepOpener`). */
@@ -62,7 +57,7 @@ interface Drive {
   invalidLines: string[];
   /** Failed lines of other modules' core tests after a fix that failed also before the fix: reported, not stopping. */
   preexisting: string[];
-  /** The `fix` round whose merged fix passed its core tests in this run: its next round may start. */
+  /** The `fix` round whose merged fix passed its core tests in this run: the round or fix check after it may start. */
   tested: number | null;
 }
 
@@ -78,7 +73,7 @@ async function waitEnd(drive: Drive, id: string): Promise<WaitResult> {
   }
 }
 
-/** `ogw review wait core <target>` until the round is judged. */
+/** `ogw review wait core <target>` until the round or its fix check is judged. */
 async function judge(drive: Drive): Promise<CommandResult> {
   for (;;) {
     const result = await reviewWait(drive.ctx, 'core', drive.target, LIMITS.jobMs);
@@ -87,14 +82,15 @@ async function judge(drive: Drive): Promise<CommandResult> {
 }
 
 /**
- * Counts a judged round: an `invalid` one raises the count of `invalid` rounds in a row and keeps its reason lines, any
- * other resets it. Returns the stop at the second `invalid` in a row, or null.
+ * Counts a judged round or fix check: a fix check judged `check fail` stops the run; an `invalid` round raises the count
+ * of `invalid` rounds in a row and keeps its reason lines, any other result resets it. Returns the stop, at the second
+ * `invalid` in a row, or null.
  */
 function counted(drive: Drive, judged: CommandResult): Stop | null {
   const data = judged.data as { result: string; reviewFile?: string | null; notMerged?: string[] };
+  if (data.result === 'check fail') return { result: 'check fail', detail: [] };
   if (data.result !== 'invalid') {
     drive.invalid = 0;
-    drive.continuing = false;
     return null;
   }
   drive.invalid += 1;
@@ -103,20 +99,19 @@ function counted(drive: Drive, judged: CommandResult): Stop | null {
   return drive.invalid >= 2 ? { result: 'invalid', detail: drive.invalidLines } : null;
 }
 
-/** Starts a round (the first with `--restart` when asked) and judges it. Returns a stop, or null to go on. */
+/** Starts the next round or fix check (`ogw review next`) and judges it. Returns a stop, or null to go on. */
 async function round(drive: Drive): Promise<Stop | null> {
   // one span from the slot to the judgement, so that the review agent and code check jobs are in it (ogw.md `## time`)
   const judged = await span('review round', () => slot(drive, async () => {
-    // `--respec` and `--reopen` are kept in the review state once the last round is judged (`keepPending`)
-    const options: NextOptions = { restart: drive.restart, continue: drive.continuing, definitions: [], ...(drive.since === undefined ? {} : { since: drive.since }) };
+    // `--respec` is kept in the review state once the last round is judged (`keepPending`)
+    const options: NextOptions = { definitions: [], ...(drive.since === undefined ? {} : { since: drive.since }) };
     const started = await reviewNext(drive.ctx, 'core', drive.target, options);
-    drive.restart = false;
     const data = started.data as { result?: string };
-    // `review next` starts no round when the last result was done, blocked or limit
-    if (data.result === 'done' || data.result === 'blocked' || data.result === 'limit') return data.result;
+    // `review next` starts nothing when the review ended or is blocked
+    if (data.result === 'done' || data.result === 'fixed' || data.result === 'blocked') return data.result;
     return judge(drive);
   }));
-  if (typeof judged === 'string') return { result: judged, detail: [] };
+  if (typeof judged === 'string') return { result: judged as RunStop, detail: [] };
   return counted(drive, judged);
 }
 
@@ -203,8 +198,27 @@ async function fixOnlyRecords(drive: Drive, round: RoundState, fixInput: string)
   return files.length > 0 && files.every((f) => f.startsWith('records/'));
 }
 
-/** The `ogw core test` runs after a fix of the target (`ogw core dependents`, implemented modules only). */
-export async function testRuns(coreImpl: string, target: string): Promise<string[][]> {
+/**
+ * The engines whose browser run runs after the fix of the round (ogw.md `## review run`): those of which the merged fix
+ * changed a web-specific file, read from its merge commit against its first parent, or, when that commit is not found,
+ * from the changes from the round's start to main.
+ */
+async function webEngines(drive: Drive, round: RoundState): Promise<Set<string>> {
+  const coreImpl = (await drive.ctx.workspace()).coreImpl;
+  const merge = round.fixInput === null ? null : await fixMergeCommit(drive, round, round.fixInput);
+  const [from, to] = merge === null ? [round.startCommit, 'main'] : [`${merge}^1`, merge];
+  const engines = new Set<string>();
+  for (const engine of await enginesOf(coreImpl)) {
+    if (await webSpecificChange(coreImpl, engine, from, to, drive.ctx.env)) engines.add(engine);
+  }
+  return engines;
+}
+
+/**
+ * The `ogw core test` runs after a fix of the target (`ogw core dependents`, implemented modules only): the browser run
+ * of an engine only for the engines in `web`.
+ */
+export async function testRuns(coreImpl: string, target: string, web: ReadonlySet<string>): Promise<string[][]> {
   if ((TOOLS as readonly string[]).includes(target)) return [['tools']];
   const modules = await readCoreSpecDir(coreImpl, { required: true });
   const byName = new Map(modules.map((m) => [m.name, m]));
@@ -217,7 +231,8 @@ export async function testRuns(coreImpl: string, target: string): Promise<string
   const client = modules.filter((m) => found.has(m.name));
   for (const engine of await enginesOf(coreImpl)) {
     const names = await engineImplementedModules(coreImpl, engine, client);
-    if (names.length > 0) runs.push([engine, ...names], [engine, ...names, '--web']);
+    if (names.length > 0) runs.push([engine, ...names]);
+    if (names.length > 0 && web.has(engine)) runs.push([engine, ...names, '--web']);
   }
   return runs;
 }
@@ -305,10 +320,10 @@ function failedModules(waited: WaitResult): string[] | null {
   return Object.entries(data.modules ?? {}).filter(([, result]) => result === 'fail').map(([module]) => module);
 }
 
-/** Runs the core tests after the fix, each in a slot of its own and together. */
-async function testFix(drive: Drive): Promise<FixRun[]> {
+/** Runs the core tests after the fix of the round, each in a slot of its own and together. */
+async function testFix(drive: Drive, last: RoundState): Promise<FixRun[]> {
   const coreImpl = (await drive.ctx.workspace()).coreImpl;
-  const runs = await testRuns(coreImpl, drive.target);
+  const runs = await testRuns(coreImpl, drive.target, await webEngines(drive, last));
   const results = await Promise.all(runs.map((args) => slot(drive, async () => {
     const id = await startJob({
       argv: ['core', 'test', ...args, '--json'],
@@ -390,15 +405,15 @@ export async function sortFixRuns(
   return { stopping, preexisting };
 }
 
-/** The `fix` or `escalate` result of the last round: merge its fix, test it, then start the next round. */
+/** The `fix` result of the last round: merge its fix, test it, then start the round or fix check after it. */
 async function afterFix(drive: Drive, last: RoundState): Promise<Stop | null> {
   if (drive.tested !== last.round) {
-    if (last.fixInput === null) throw new OgwError(`round ${String(last.round)} of ${drive.target} is ${String(last.result)} with no fix input`);
+    if (last.fixInput === null) throw new OgwError(`round ${String(last.round)} of ${drive.target} is fix with no fix input`);
     const fixInput = last.fixInput;
     const notMerged = await span('fix', () => mergedFix(drive, last, fixInput));
     if (notMerged !== null) return notMerged;
     if (!(await fixOnlyRecords(drive, last, fixInput))) {
-      const runs = await span('fix core tests', () => testFix(drive));
+      const runs = await span('fix core tests', () => testFix(drive, last));
       const stop = await span('fix core test check', () => fixTestStop(drive, last, runs));
       if (stop !== null) return stop;
     }
@@ -407,51 +422,50 @@ async function afterFix(drive: Drive, last: RoundState): Promise<Stop | null> {
   return round(drive);
 }
 
-async function step(drive: Drive): Promise<Stop | null> {
+/**
+ * One step of the run. `first`: the first step of this run, which alone starts the must-fix round of a review that
+ * ended (core command.md `## review and code check`): a review that ends in this run stops it.
+ */
+async function step(drive: Drive, first: boolean): Promise<Stop | null> {
   const state = await readState(drive.dir, 'core', drive.target);
   const last = state.rounds.at(-1);
-  if (last !== undefined && !last.judged) return counted(drive, await span('review wait', () => slot(drive, () => judge(drive))));
-  if (drive.restart || last === undefined) return round(drive);
-  // the fix of a `fix` or `escalate` round is merged and tested before the next round, a `--respec` round too
-  if (last.result === 'fix' || last.result === 'escalate') return afterFix(drive, last);
-  if (opensLast(state, last) || respecsLast(state, last) || reopensLast(state, last) || continuesLimit(state, last, drive.continuing)) return round(drive);
-  if (last.result === 'done' || last.result === 'blocked' || last.result === 'limit') return { result: last.result, detail: [] };
+  if (last !== undefined && running(last)) return counted(drive, await span('review wait', () => slot(drive, () => judge(drive))));
+  if (last === undefined) return round(drive);
+  // the fix of a `fix` round is merged and tested before the round or fix check after it, a `--respec` round too
+  if (last.result === 'fix') return afterFix(drive, last);
+  if (opensLast(state, last) || respecsLast(state, last)) return round(drive);
+  if (ended(last) && first && (await hasMustFix(drive.ctx, 'core', drive.target))) return round(drive);
+  if (ended(last) || last.result === 'blocked') return { result: last.result as RunStop, detail: [] };
   return round(drive);
 }
 
 /**
- * Whether the pending option is used up by the unjudged round `last`: the kept option started it, and what the option
- * reviews did not change after it started.
+ * Whether the pending `--respec` is used up by the round or fix check `last` that is not judged: the kept option started
+ * it, and no definition document changed after it started.
  */
-async function usedUp(drive: Drive, state: ReviewState, last: RoundState, respec: boolean): Promise<boolean> {
-  const kept = respec ? state.respecAfter : state.reopenAfter;
-  const started = kept !== undefined && kept === state.rounds.at(-2)?.round;
-  return started && !(await changedSinceRound(drive.ctx, state, last, respec ? '--respec' : '--reopen'));
+async function usedUp(state: ReviewState, last: RoundState): Promise<boolean> {
+  const started = state.respecAfter !== undefined && state.respecAfter === state.rounds.at(-2)?.round;
+  return started && !(await definitionsChanged(last));
 }
 
 /**
- * Keeps the run's `--respec` or `--reopen` in the review state (`keepRespec`, `keepReopen`) once the last round is
- * judged: a round left unjudged (by a run that was ended) is judged first, and the option follows that judged round.
- * A round left unjudged that the option kept in the state started already follows it: the option is used up, unless
- * what the option reviews changed after that round started (`changedSinceRound`); then it follows that round too.
- * `--reopen` follows a round judged `done` only: after another result it is dropped.
+ * Keeps the run's `--respec` in the review state (`keepRespec`) once the last round is judged: a round left unjudged
+ * (by a run that was ended) is judged first, and the option follows that judged round. A round left unjudged that the
+ * option kept in the state started already follows it: the option is used up, unless a definition document changed
+ * after that round started (`definitionsChanged`); then it follows that round too.
  */
 async function keepPending(drive: Drive, afterStep: boolean): Promise<void> {
-  const { respec, reopen } = drive.pending;
-  if (!respec && !reopen) return;
+  if (!drive.pending) return;
   const state = await readState(drive.dir, 'core', drive.target);
   const last = state.rounds.at(-1);
-  if (last !== undefined && !last.judged) {
-    if (await usedUp(drive, state, last, respec)) drive.pending = { respec: false, reopen: false };
+  if (last !== undefined && running(last)) {
+    if (await usedUp(state, last)) drive.pending = false;
     return;
   }
-  drive.pending = { respec: false, reopen: false };
+  drive.pending = false;
   // the step dropped its round 1 as `invalid`: the next round 1 reviews the whole target against the definitions now
   if (last === undefined && afterStep) return;
-  if (respec) await keepRespec(drive.ctx, 'core', drive.target);
-  // a round the step judged other than `done` goes on with its result: the next round of its chain reviews the changes
-  // since it started, so `--reopen`, which goes on only from `done`, is dropped
-  if (reopen && !(afterStep && last?.result !== 'done')) await keepReopen(drive.ctx, 'core', drive.target);
+  await keepRespec(drive.ctx, 'core', drive.target);
 }
 
 async function stopOutput(drive: Drive, stop: Stop): Promise<CommandResult> {
@@ -459,17 +473,19 @@ async function stopOutput(drive: Drive, stop: Stop): Promise<CommandResult> {
   const last = judgedRounds.at(-1);
   // an `invalid` stop carries its reason lines alone: the findings of an earlier round are not its result
   const judged = last === undefined || stop.result === 'invalid' ? [] : judgedOutput(last).text?.split('\n') ?? [];
+  const kept = ['open finding: ', 'code check fail: ', 'code check fail outside target: ', 'fix test proof fail not counted: ', '  '];
   const lines = [
     `result: ${stop.result}`,
     `round: ${String(last?.round ?? 0)}`,
-    ...judged.filter((line) => line.startsWith('open finding: ') || line.startsWith('code check fail: ') || line.startsWith('code check fail outside target: ') || line.startsWith('  ')),
+    ...judged.filter((line) => kept.some((start) => line.startsWith(start))),
     ...stop.detail,
     ...drive.preexisting.map((line) => `pre-existing test fail: ${line}`),
     ...judgedRounds.flatMap((r) => (r.outOfScope ?? []).filter(urgentOutOfScope).map((line) => `out of scope: round ${String(r.round)}: ${line}`)),
     ...judgedRounds.flatMap((r) => (r.gameImpact ?? []).map((line) => `game impact: round ${String(r.round)}: ${line}`)),
     ...judgedRounds.flatMap((r) => (r.debtLines ?? []).map((line) => `round ${String(r.round)}: ${line}`)),
   ];
-  return { exitCode: stop.result === 'done' ? 0 : 1, text: lines.join('\n'), data: { result: stop.result, round: last?.round ?? 0, detail: stop.detail } };
+  const passed = stop.result === 'done' || stop.result === 'fixed';
+  return { exitCode: passed ? 0 : 1, text: lines.join('\n'), data: { result: stop.result, round: last?.round ?? 0, detail: stop.detail } };
 }
 
 /** The folder of the slots that every `ogw review run` job of this host shares. */
@@ -486,11 +502,14 @@ type Carry = Pick<Drive, 'invalid' | 'invalidLines' | 'preexisting' | 'tested'>;
 /** The environment variable that hands the `Carry` of a run to the process that goes on with it, as JSON. */
 const CARRY_ENV = 'OGW_REVIEW_RUN_CARRY';
 
-/** The `Carry` handed to this process, removed from the environment so that no job it starts inherits it. */
-function takeCarry(env: NodeJS.ProcessEnv): Carry {
+/**
+ * The `Carry` handed to this process, removed from the environment so that no job it starts inherits it; null when this
+ * process starts the run.
+ */
+function takeCarry(env: NodeJS.ProcessEnv): Carry | null {
   const text = env[CARRY_ENV];
   delete env.OGW_REVIEW_RUN_CARRY;
-  if (text === undefined) return { invalid: 0, invalidLines: [], preexisting: [], tested: null };
+  if (text === undefined) return null;
   const carry = JSON.parse(text) as Partial<Carry>;
   const lines = (value: unknown): value is string[] => Array.isArray(value) && value.every((line) => typeof line === 'string');
   if (typeof carry.invalid !== 'number' || !lines(carry.invalidLines) || !lines(carry.preexisting) || (carry.tested !== null && typeof carry.tested !== 'number')) {
@@ -499,22 +518,22 @@ function takeCarry(env: NodeJS.ProcessEnv): Carry {
   return { invalid: carry.invalid, invalidLines: carry.invalidLines, preexisting: carry.preexisting, tested: carry.tested };
 }
 
-/** `ogw review run core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]`. */
+/** `ogw review run core <target> [--full|--debt|[--since <commit>] [--respec]]`. */
 export async function reviewRun(ctx: Context, target: string, first: Omit<NextOptions, 'definitions'>): Promise<CommandResult> {
   const dir = await targetDir(ctx, 'core', target);
+  const carry = takeCarry(ctx.env);
   const drive: Drive = {
     ctx,
     target,
     dir,
     slots: { dir: await runSlotsDir(ctx.env), count: (await ctx.settings()).reviewRunConcurrency },
-    restart: first.restart,
-    continuing: first.continue === true,
-    pending: { respec: first.respec === true, reopen: first.reopen === true },
+    pending: first.respec === true,
     since: first.since,
     opener: first.full === true ? 'full' : first.debt === true ? 'debt' : null,
-    ...takeCarry(ctx.env),
+    ...(carry ?? { invalid: 0, invalidLines: [], preexisting: [], tested: null }),
   };
-  checkContinue(target, (await readState(dir, 'core', target)).rounds.at(-1), first.continue === true);
+  // a process that goes on with a run of the changed harness code does not take the first step of that run
+  const goesOn = carry !== null;
   const tools = await harnessToolsTree(ctx);
   let entered = false;
   // one run per target: a second one fails at once
@@ -524,9 +543,9 @@ export async function reviewRun(ctx: Context, target: string, first: Omit<NextOp
       await keepOpener(ctx, target, drive.opener);
       drive.opener = null;
     }
-    for (;;) {
+    for (let steps = 0; ; steps += 1) {
       await keepPending(drive, false);
-      const stop = await step(drive);
+      const stop = await step(drive, steps === 0 && !goesOn);
       if (stop !== null) return stopOutput(drive, stop);
       // a step ends with the last round judged: the option is kept before the run can go on in another process
       await keepPending(drive, true);
@@ -541,8 +560,8 @@ export async function reviewRun(ctx: Context, target: string, first: Omit<NextOp
   });
   if (result !== RUN_AGAIN) return result;
   ctx.log(`the harness tools changed: ogw review run core ${target} goes on with the new code`);
-  const carry: Carry = { invalid: drive.invalid, invalidLines: drive.invalidLines, preexisting: drive.preexisting, tested: drive.tested };
-  const env = { ...ctx.env, [CARRY_ENV]: JSON.stringify(carry) };
+  const handed: Carry = { invalid: drive.invalid, invalidLines: drive.invalidLines, preexisting: drive.preexisting, tested: drive.tested };
+  const env = { ...ctx.env, [CARRY_ENV]: JSON.stringify(handed) };
   const again = await run(process.execPath, [...process.execArgv, cliEntry(), 'review', 'run', 'core', target], { cwd: ctx.cwd, env, timeoutMs: RUN_TIME_LIMIT_MS });
   if (again.stderr.trim() !== '') ctx.log(again.stderr.trimEnd());
   return { exitCode: again.timedOut ? 1 : again.code ?? 1, text: again.stdout.trimEnd() };
@@ -550,7 +569,7 @@ export async function reviewRun(ctx: Context, target: string, first: Omit<NextOp
 
 const RUN_AGAIN = Symbol('run again with the changed harness code');
 
-/** The time limit of a `ogw review run` job: it goes through the rounds of its target and waits for free slots between them, longer than one job. */
+/** The time limit of a `ogw review run` job: it goes through the steps of its target and waits for free slots between them, longer than one job. */
 export const RUN_TIME_LIMIT_MS = 4 * LIMITS.jobMs;
 
 /** The tree of the harness `tools/` at HEAD; a git failure fails the job. */

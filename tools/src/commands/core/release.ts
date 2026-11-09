@@ -12,7 +12,7 @@ import { leftLines } from '../review/lib/left.ts';
 import { remoteReleaseVersions } from './api.ts';
 import { buildAssets } from './lib/assets.ts';
 import { assetUrl, createRelease, releaseExists } from './lib/github.ts';
-import { releaseViolations, reviewDebtCounts } from './lib/release-conditions.ts';
+import { releaseBrowserRuns, releaseViolations } from './lib/release-conditions.ts';
 import { withCoreMain } from './lib/main-checkout.ts';
 import { releaseTag, requireVersion } from './lib/version.ts';
 import { byteCompare } from '../../lib/order.ts';
@@ -174,7 +174,7 @@ export const releaseCommand: CommandDef = {
     const settings = await ctx.settings();
     const implDir = (await ctx.workspace()).coreImpl;
     const tag = releaseTag(version);
-    const { harness, previousHead, debt } = await span('release checks', async () => {
+    const { harness, previousHead } = await span('release checks', async () => {
       await requireCleanMain(implDir);
       if (await tagExists(implDir, tag, { env: ctx.env })) throw new OgwError(`tag ${tag} already exists in open-game-works-core-impl/`);
       const checkedHarness = await harnessForTag(ctx, version);
@@ -182,12 +182,14 @@ export const releaseCommand: CommandDef = {
         throw new OgwError(`release ${tag} already exists in ${settings.coreReleaseRepository}`);
       }
       await requireRemoteMainContained(ctx, implDir, releaseRemote(settings));
+      // the browser run of the release records its results before the conditions read them (ogw.md `## core release`)
+      const stopped = await span('browser runs', () => releaseBrowserRuns(ctx, implDir));
       const checkedHead = await head(implDir, { env: ctx.env });
-      const violations = await releaseViolations(ctx, implDir, checkedHead, version, await remoteReleaseVersions(ctx));
+      const violations = [...stopped, ...(await releaseViolations(ctx, implDir, checkedHead, version, await remoteReleaseVersions(ctx)))];
       if (violations.length > 0) {
         throw new OgwError(`release condition not met; ${version} is not released:\n${violations.join('\n')}`, 1, { violations });
       }
-      return { harness: checkedHarness, previousHead: checkedHead, debt: await reviewDebtCounts(implDir) };
+      return { harness: checkedHarness, previousHead: checkedHead };
     });
     const out = await newPrivateTempFolder('ogw-core-release-', ctx.env);
     try {
@@ -208,8 +210,8 @@ export const releaseCommand: CommandDef = {
       const left = await span('clear reviews', () => clearReviews(ctx, 'core'));
       const harnessLine = `harness tag ${harnessCoreTag(version)} at ${harness.head}`;
       return {
-        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...debt, ...leftLines(left)].join('\n'),
-        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), debt, ...left },
+        text: [`released ${version}: tag ${tag} at ${commit}`, harnessLine, ...leftLines(left)].join('\n'),
+        data: { version, tag, commit, harnessTag: harnessCoreTag(version), harnessCommit: harness.head, assets: Object.keys(built.manifest.assets).concat('manifest.json'), ...left },
       };
     } finally {
       await rm(out, { recursive: true, force: true });

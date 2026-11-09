@@ -1,9 +1,9 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { failedLines, sortFixRuns, testRuns, unknownLines } from '../../../src/commands/review/lib/run.ts';
 import { readJob, type JobRecord, type WaitResult } from '../../../src/lib/jobs.ts';
-import { ogw, commitAll, makeWorkspace } from '../../helpers/workspace.ts';
+import { ogw, commitAll, makeWorkspace, sh } from '../../helpers/workspace.ts';
 import { agents, coreSpec, finding, GOOD_FIX, reviewFile, spec, UNTESTED_FIX } from './helpers.ts';
 
 describe('ogw review run', () => {
@@ -18,6 +18,28 @@ describe('ogw review run', () => {
     expect(status.stdout).toBe('routing round 2 done spec change: none job: none\n');
     // a done target starts no round
     expect(await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env })).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
+  });
+
+  it('proves the fix of a round without a critical or high finding with the fix check alone, and stops at fixed', async () => {
+    const ws = makeWorkspace();
+    coreSpec(ws, { routing: spec('routing', 'server') });
+    const medium = '| R1-1 | `correctness` | medium | src/a.ts:3 | run x | check y | no | 90 |';
+    const fake = agents(ws, { 1: reviewFile([medium]), 2: reviewFile([]) }, GOOD_FIX);
+    const run = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env });
+    expect(run).toMatchObject({ code: 0, stdout: 'result: fixed\nround: 1\n' });
+    // one review agent and one core agent: no review round checks the fix
+    expect(fake.calls().filter((call) => call.prompt.includes('round-1-fix.md'))).toHaveLength(1);
+    expect(fake.calls().filter((call) => call.prompt.includes('-input.md'))).toHaveLength(1);
+    const state = JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { rounds: { startCommit: string; result: string; fixChecks: { job: string; commit: string; fixBase: string }[] }[] };
+    const round = state.rounds[0];
+    expect(state.rounds).toHaveLength(1);
+    expect(round?.result).toBe('fixed');
+    const check = round?.fixChecks[0];
+    expect(check?.commit).toBe(sh(ws.coreImpl, 'git', ['rev-parse', 'main']).trim());
+    expect((await readJob(check?.job as string, ws.env)).argv).toEqual(['code', 'check', 'core', '--commit', check?.commit, '--fix-base', round?.startCommit, '--target', 'routing', '--json']);
+    expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 1 fixed spec change: none job: none\n');
+    // a review that ended starts no round
+    expect(await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env })).toMatchObject({ code: 0, stdout: 'result: fixed\nround: 1\n' });
   });
 
   it('gives the code check failures outside the target in its stop output', async () => {
@@ -98,10 +120,12 @@ describe('testRuns', () => {
     mkdirSync(join(ws.coreImpl, 'client', 'godot', 'core', 'ui_core'), { recursive: true });
     writeFileSync(join(ws.coreImpl, 'client', 'godot', 'engine.json'), '{}');
     writeFileSync(join(ws.coreImpl, 'client', 'godot', 'core', 'ui_core', 'ui_core.gd'), '');
-    expect(await testRuns(ws.coreImpl, 'storage')).toEqual([['server', 'routing', 'storage'], ['godot', 'UICore'], ['godot', 'UICore', '--web']]);
-    expect(await testRuns(ws.coreImpl, 'ranking')).toEqual([]);
-    expect(await testRuns(ws.coreImpl, 'data-tool')).toEqual([['tools']]);
-    await expect(testRuns(ws.coreImpl, 'nothing')).rejects.toThrow('not in core-spec: nothing');
+    // the browser run only for an engine whose web-specific file the fix changed
+    expect(await testRuns(ws.coreImpl, 'storage', new Set())).toEqual([['server', 'routing', 'storage'], ['godot', 'UICore']]);
+    expect(await testRuns(ws.coreImpl, 'storage', new Set(['godot']))).toEqual([['server', 'routing', 'storage'], ['godot', 'UICore'], ['godot', 'UICore', '--web']]);
+    expect(await testRuns(ws.coreImpl, 'ranking', new Set(['godot']))).toEqual([]);
+    expect(await testRuns(ws.coreImpl, 'data-tool', new Set(['godot']))).toEqual([['tools']]);
+    await expect(testRuns(ws.coreImpl, 'nothing', new Set())).rejects.toThrow('not in core-spec: nothing');
   });
 });
 
