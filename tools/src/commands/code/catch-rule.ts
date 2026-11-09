@@ -79,11 +79,15 @@ function importOf(def: Scope.Definition & { type: 'ImportBinding' }): Definition
   return { kind: 'import', imported, source: typeof source === 'string' ? source : '' };
 }
 
-/** The definition of `name` as seen from `scope`. */
+/**
+ * The definition of `name` as seen from `scope`: that of the nearest scope whose variable of that name has a value. A
+ * variable that only a type alias, an interface or a namespace makes gives the name no value, so the value comes from
+ * an upper scope.
+ */
 function definitionOf(scope: Scope.Scope, name: string): Definition {
   for (let s: Scope.Scope | null = scope; s !== null; s = s.upper) {
     const variable = s.set.get(name);
-    if (variable !== undefined) return classify(variable);
+    if (variable !== undefined && !variable.defs.every((def) => NO_VALUE.has(def.type as string))) return classify(variable);
   }
   return { kind: 'none' };
 }

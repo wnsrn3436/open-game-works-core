@@ -70,6 +70,9 @@ tester.run('ogw/no-swallowed-error', noSwallowedError, {
     'const h = (e: unknown) => { throw e; }; interface h { a: number } read().catch(h);',
     "const stop = (): never => { throw new Error('x'); }; type stop = number; try { read(); } catch { stop(); }",
     "function stop(): never { throw new Error('x'); } namespace stop { export const a = 1; } try { read(); } catch { stop(); }",
+    // a type or an interface of the name in an inner scope: the value that runs is that of the upper scope
+    'const h = (e: unknown) => { throw e; }; function f() { type h = number; read().catch(h); }',
+    "const stop = (): never => { throw new Error('x'); }; function f() { interface stop { a: number } try { read(); } catch { stop(); } }",
   ],
   invalid: [
     { code: 'try { read(); } catch { return null; }', errors: swallowed },
@@ -124,5 +127,6 @@ tester.run('ogw/no-swallowed-error', noSwallowedError, {
     { code: "let stop = (): never => { throw new Error('x'); }; stop = () => {}; try { read(); } catch { stop(); }", errors: swallowed },
     // a return of a call that can return is an end other than by a throw
     { code: 'function quiet(): null { return null; } try { read(); } catch { return quiet(); }', errors: swallowed },
+    { code: 'const ignoreCleanupError = () => null; function f() { type ignoreCleanupError = number; read().catch(ignoreCleanupError); }', errors: swallowed },
   ],
 });
