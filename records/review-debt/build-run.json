@@ -1,12 +1,5 @@
 {
   "target": "build run",
   "nextId": 2,
-  "items": [
-    {
-      "id": "D1",
-      "location": "tools/ogw.md:988",
-      "problem": "The same line gives the reason that the checks that run the game \"judge times on the modelled device (harness settings `webSmokeBootTimeoutMs`)\" and so start after all other work, but starts `web smoke` together with `device performance`, whose step 3 makes the apk check export on this host (tools/ogw.md:1231) with `gradle_build/use_gradle_build=true` (tools/ogw.md:1154), a Gradle build. Both checks start at once (tools/src/commands/build/run.ts:100-101), so the throttled page of `web smoke` can boot while that Gradle build loads the CPU, and then its boot is no time on the modelled device as schemas/harness-settings.schema.json:249 and :259 define it; a boot past the limit fails no blocker and full flow, and fails an STG build. This overlap is unchanged since b9c6d9b (`Promise.all([devicePerformance(input), webChecks(input)])`), so it is not caused by this range",
-      "foundBy": "build run round 2"
-    }
-  ]
+  "items": []
 }
