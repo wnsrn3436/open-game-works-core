@@ -1,4 +1,4 @@
-import { expectPositionals, flag, nonNegativeInt, positional, str, type CommandDef } from '../../lib/command.ts';
+import { expectPositionals, nonNegativeInt, positional, str, type CommandDef } from '../../lib/command.ts';
 import { OgwError } from '../../lib/errors.ts';
 import { LIMITS } from '../../lib/limits.ts';
 import { startInstance } from './api.ts';
@@ -7,16 +7,13 @@ import { START_LIMIT_MS } from './lib/supervisor.ts';
 
 export const start: CommandDef = {
   name: ['instance', 'start'],
-  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--network-delay <ms>] [--feedback-off] [--reward-presentation-off] [--random-base <n>]',
+  usage: 'ogw instance start <game> [--commit <sha>] [--platform <platform>] [--fixture <file>] [--db postgresql] [--input-latency <ms>] [--random-base <n>]',
   options: {
     commit: { type: 'string' },
     platform: { type: 'string' },
     fixture: { type: 'string' },
     db: { type: 'string' },
     'input-latency': { type: 'string' },
-    'network-delay': { type: 'string' },
-    'feedback-off': { type: 'boolean' },
-    'reward-presentation-off': { type: 'boolean' },
     'random-base': { type: 'string' },
   },
   background: {
@@ -28,7 +25,6 @@ export const start: CommandDef = {
     const db = str(args, 'db');
     if (db !== undefined && db !== 'postgresql') throw new OgwError(`invalid --db: ${db}`);
     const inputLatencyMs = nonNegativeInt(args, 'input-latency');
-    const networkDelayMs = nonNegativeInt(args, 'network-delay');
     const randomBase = str(args, 'random-base');
     const info = await startInstance(ctx, {
       game: positional(args, 0, 'game'),
@@ -37,9 +33,6 @@ export const start: CommandDef = {
       fixture: str(args, 'fixture'),
       db,
       ...(inputLatencyMs === undefined ? {} : { inputLatencyMs }),
-      ...(networkDelayMs === undefined ? {} : { networkDelayMs }),
-      ...(flag(args, 'feedback-off') ? { feedbackOff: true } : {}),
-      ...(flag(args, 'reward-presentation-off') ? { rewardPresentationOff: true } : {}),
       ...(randomBase === undefined ? {} : { randomBase: parseRandomBase(randomBase) }),
     });
     return {

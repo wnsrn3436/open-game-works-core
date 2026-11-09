@@ -375,13 +375,8 @@
       "additionalProperties": false,
       "required": [
         "nullPairs",
-        "orderPairs",
         "orderRuns",
-        "retestPairs",
-        "degradedPairs",
-        "degradeLatencyMs",
-        "degradeNetworkDelayMs",
-        "minDecisions"
+        "degradeLatencyMs"
       ],
       "properties": {
         "nullPairs": {
@@ -389,38 +384,13 @@
           "type": "integer",
           "minimum": 1
         },
-        "orderPairs": {
-          "description": "The largest number of order pairs",
-          "type": "integer",
-          "minimum": 0
-        },
         "orderRuns": {
-          "description": "The number of judges of an order pair per side assignment",
+          "description": "The number of judges of the order pair per side assignment",
           "type": "integer",
           "minimum": 1
-        },
-        "retestPairs": {
-          "description": "The largest number of retest pairs",
-          "type": "integer",
-          "minimum": 0
-        },
-        "degradedPairs": {
-          "description": "The number of degraded pairs per degradation",
-          "type": "integer",
-          "minimum": 0
         },
         "degradeLatencyMs": {
-          "description": "The input latency (ms) of the baseline instances of the degraded pairs of the degradation `latency`",
-          "type": "integer",
-          "minimum": 1
-        },
-        "degradeNetworkDelayMs": {
-          "description": "The network delay (ms) of the baseline instances of the degraded pairs of the degradation `network`. Below `NetworkCore.requestTimeoutMs` of the core settings of the game, so that the delayed requests do not time out",
-          "type": "integer",
-          "minimum": 1
-        },
-        "minDecisions": {
-          "description": "The smallest total of a value of a rate that counts",
+          "description": "The input latency (ms) of the baseline instances of the degraded pair",
           "type": "integer",
           "minimum": 1
         }

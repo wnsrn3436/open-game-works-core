@@ -81,12 +81,6 @@ export interface InstanceOptions {
   ignoreConcurrencyLimit?: boolean;
   /** `--input-latency`: the supervisor delays each input command to the client `main` by this many ms. */
   inputLatencyMs?: number;
-  /** `--network-delay`: the client `main` takes each server response as received this many ms after it arrived. */
-  networkDelayMs?: number;
-  /** `--feedback-off`: the client `main` runs with feedback off of `QACore` from each boot. */
-  feedbackOff?: boolean;
-  /** `--reward-presentation-off`: the client `main` runs with reward presentation off of `QACore` from each boot. */
-  rewardPresentationOff?: boolean;
   /**
    * `--random-base` (an int64): every client gets it as the launch value `OGW_RANDOM_BASE`, and the server process is
    * `start_local_server` of `testing` with it (ogw.md `## runner`). Absent: the secure random of the server.
@@ -395,9 +389,6 @@ async function start(ctx: Context, options: InstanceOptions, hooks: StartHooks):
         ...(options.played === true ? { played: true } : {}),
         ...(options.movie === undefined ? {} : { movie: { file: options.movie.file, resolution: baseResolution(gameSettings) } }),
         ...(options.inputLatencyMs === undefined || options.inputLatencyMs <= 0 ? {} : { inputLatencyMs: options.inputLatencyMs }),
-        ...(options.networkDelayMs === undefined || options.networkDelayMs <= 0 ? {} : { networkDelayMs: options.networkDelayMs }),
-        ...(options.feedbackOff === true ? { feedbackOff: true as const } : {}),
-        ...(options.rewardPresentationOff === true ? { rewardPresentationOff: true as const } : {}),
         ...(randomBase === undefined ? {} : { randomBase }),
       };
     }, ctx.env);

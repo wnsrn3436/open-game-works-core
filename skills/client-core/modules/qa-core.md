@@ -233,7 +233,7 @@ The play record that the judge agent and performance check read. Times (`started
 
 ### feedback switch
 
-The two switches make the presentation of a run worse without changing the game code. The degraded pairs of judge calibration start their degraded instances with them. Both are off at `init`.
+The two switches make the presentation of a run worse without changing the game code. Both are off at `init`.
 
 - feedback off: on from `set_feedback_off`(`on`) until `set_feedback_off`(`off`)
 - reward presentation off: on from `set_reward_presentation_off`(`on`) until `set_reward_presentation_off`(`off`). While it is on, each reward moment opens the reward window. `set_reward_presentation_off`(`off`) closes the reward window

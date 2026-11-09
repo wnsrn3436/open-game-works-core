@@ -66,20 +66,6 @@ function restartCommand(body: Record<string, unknown>): { command: string; args:
   return { command, args };
 }
 
-/**
- * The commands the supervisor sends the client `main` on each connection of its automation channel (ogw.md
- * `## runner`), in sending order: the feedback switches of `--feedback-off` and `--reward-presentation-off` before
- * any other command, then `set_network_delay` of `--network-delay`.
- */
-export function connectionCommands(plan: Pick<InstancePlan, 'feedbackOff' | 'rewardPresentationOff' | 'networkDelayMs'>): { command: string; args: string[] }[] {
-  const commands: { command: string; args: string[] }[] = [];
-  if (plan.feedbackOff === true) commands.push({ command: 'set_feedback_off', args: ['on'] });
-  if (plan.rewardPresentationOff === true) commands.push({ command: 'set_reward_presentation_off', args: ['on'] });
-  const delayMs = plan.networkDelayMs ?? 0;
-  if (delayMs > 0) commands.push({ command: 'set_network_delay', args: [String(delayMs)] });
-  return commands;
-}
-
 /** The long-lived process of one instance: it owns the server process, the clients, the automation channels and the bot loops. */
 export class Supervisor {
   private readonly id: string;
@@ -97,8 +83,6 @@ export class Supervisor {
   private stopping = false;
   /** `--input-latency` of the client `main`; null without it. */
   private latency: InputLatency | null = null;
-  /** Why the first of the connection commands sent at the first connection of the client `main` failed, or null; null before they were sent. */
-  private firstConnection: Promise<string | null> | null = null;
   private stopped!: Promise<void>;
   private markStopped!: () => void;
   /** The first failure to write the runner log; null while none failed. */
@@ -473,7 +457,6 @@ export class Supervisor {
     const clients = plannedClients(this.plan);
     for (const client of clients) {
       const channel = new ClientChannel(client.name);
-      if (client.name === 'main') this.watchConnection(channel);
       await channel.listen();
       this.channels.set(client.name, channel);
       const values: LaunchValues = {
@@ -500,36 +483,6 @@ export class Supervisor {
         throw new OgwError(`${client.name}: ${(error as Error).message}`);
       }
     }));
-    const failure = await this.firstConnection;
-    if (failure !== null) throw new OgwError(`main: ${failure}`);
-  }
-
-  /**
-   * `--feedback-off`, `--reward-presentation-off`, `--network-delay` and the test screen (ogw.md `## runner`): sends their commands to
-   * the client `main` each time its automation channel connects, before any other command of that connection. The
-   * start checks the answers at the first connection; a later answer that is not `ok` goes to the log.
-   */
-  private watchConnection(channel: ClientChannel): void {
-    const commands = connectionCommands(this.plan);
-    if (commands.length === 0) return;
-    const timeoutMs = this.plan.commandTimeoutMs + LIMITS.shortMs;
-    channel.onConnect = () => {
-      const failures = commands.map(({ command, args }) =>
-        channel.requestNow(command, args, timeoutMs).then(
-          (response) => (response.ok ? null : `${command} failed: ${JSON.stringify(response.result)}`),
-          (error: unknown) => `${command} failed: ${(error as Error).message}`,
-        ),
-      );
-      if (this.firstConnection === null) {
-        this.firstConnection = Promise.all(failures).then((whys) => whys.find((why) => why !== null) ?? null);
-        return;
-      }
-      for (const failure of failures) {
-        void failure.then((why) => {
-          if (why !== null) this.log(`main: ${why}`);
-        });
-      }
-    };
   }
 
   /** Waits until the client reached `boot_stage` `Done`, or with `done` false until its automation channel connected. */

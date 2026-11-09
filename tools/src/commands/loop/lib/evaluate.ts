@@ -121,14 +121,8 @@ export interface JudgePair {
   /** This commit. */
   commit: string;
   baseline: string | null;
-  /** `--input-latency` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); 0 for none. */
+  /** `--input-latency` of the instances of the baseline commit (the degraded pair of `ogw judge calibrate`); 0 for none. */
   baselineLatencyMs: number;
-  /** `--network-delay` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent or 0 for none. */
-  baselineNetworkDelayMs?: number;
-  /** `--feedback-off` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent for not. */
-  baselineFeedbackOff?: boolean;
-  /** `--reward-presentation-off` of the instances of the baseline commit (a degraded pair of `ogw judge calibrate`); absent for not. */
-  baselineRewardPresentationOff?: boolean;
 }
 
 /** Where the judging puts its files: the run of `ogw loop evaluate`, or the calibration folders of `ogw judge calibrate`. */
@@ -208,12 +202,6 @@ interface Spec {
   headless?: boolean;
   /** `--input-latency` of the instance; absent or 0 for none. */
   inputLatencyMs?: number;
-  /** `--network-delay` of the instance; absent or 0 for none. */
-  networkDelayMs?: number;
-  /** `--feedback-off` of the instance; absent for not. */
-  feedbackOff?: boolean;
-  /** `--reward-presentation-off` of the instance; absent for not. */
-  rewardPresentationOff?: boolean;
   /** The id the instance gets: one a judge input named before the start. */
   id?: string;
   /** `--random-base` of the instance: the k-th bot run of a commit of the shared telemetry has k; absent for none. */
@@ -566,17 +554,12 @@ function startFailureReason(error: unknown): StartFailure['reason'] | null {
   return error instanceof OgwError ? ((error.data as Partial<StartFailure> | undefined)?.reason ?? null) : null;
 }
 
-/** The degradation flags of an instance: `--input-latency`, `--network-delay`, `--feedback-off`, `--reward-presentation-off`. */
-type Degrade = Pick<Spec, 'inputLatencyMs' | 'networkDelayMs' | 'feedbackOff' | 'rewardPresentationOff'>;
+/** The degradation of an instance: its `--input-latency`. */
+type Degrade = Pick<Spec, 'inputLatencyMs'>;
 
-/** The `startInstance` options of the degradation flags of an instance. */
-function degradeOptions(degrade: Degrade): Pick<InstanceOptions, 'inputLatencyMs' | 'networkDelayMs' | 'feedbackOff' | 'rewardPresentationOff'> {
-  return {
-    ...(degrade.inputLatencyMs !== undefined && degrade.inputLatencyMs > 0 ? { inputLatencyMs: degrade.inputLatencyMs } : {}),
-    ...(degrade.networkDelayMs !== undefined && degrade.networkDelayMs > 0 ? { networkDelayMs: degrade.networkDelayMs } : {}),
-    ...(degrade.feedbackOff === true ? { feedbackOff: true } : {}),
-    ...(degrade.rewardPresentationOff === true ? { rewardPresentationOff: true } : {}),
-  };
+/** The `startInstance` options of the degradation of an instance. */
+function degradeOptions(degrade: Degrade): Pick<InstanceOptions, 'inputLatencyMs'> {
+  return degrade.inputLatencyMs !== undefined && degrade.inputLatencyMs > 0 ? { inputLatencyMs: degrade.inputLatencyMs } : {};
 }
 
 /** The values of every promise once all settled; the first rejection once all settled, so that no work of it still runs. */
@@ -724,18 +707,12 @@ function sides(slot: JudgeSlot): { A: string; B: string | null } {
   return slot.side === 'A' ? { A: commit, B: baseline } : { A: baseline, B: commit };
 }
 
-/** The degradation flags of the instances of the baseline commit of a pair. */
+/** The degradation of the instances of the baseline commit of a pair. */
 function baselineDegrade(pair: JudgePair): Degrade {
-  const delay = pair.baselineNetworkDelayMs ?? 0;
-  return {
-    ...(pair.baselineLatencyMs > 0 ? { inputLatencyMs: pair.baselineLatencyMs } : {}),
-    ...(delay > 0 ? { networkDelayMs: delay } : {}),
-    ...(pair.baselineFeedbackOff === true ? { feedbackOff: true } : {}),
-    ...(pair.baselineRewardPresentationOff === true ? { rewardPresentationOff: true } : {}),
-  };
+  return pair.baselineLatencyMs > 0 ? { inputLatencyMs: pair.baselineLatencyMs } : {};
 }
 
-/** The degradation flags of the instances of side `side` of the judge: those of the baseline commit on its side. */
+/** The degradation of the instances of side `side` of the judge: that of the baseline commit on its side. */
 function sideDegrade(slot: JudgeSlot, side: 'A' | 'B'): Degrade {
   return side !== slot.side ? baselineDegrade(slot.pair) : {};
 }

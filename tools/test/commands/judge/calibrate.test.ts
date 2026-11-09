@@ -9,43 +9,27 @@ interface FakeInstance {
   id: string;
   commit: string;
   latency: number;
-  delay: number;
-  feedbackOff: boolean;
-  rewardOff: boolean;
   client: string;
   played: boolean;
 }
-
-/** The degradation flags of a fake instance: those `ogw judge calibrate` started it with. */
-type FakeDegrade = Pick<FakeInstance, 'latency' | 'delay' | 'feedbackOff' | 'rewardOff'>;
 
 interface FakeAgent {
   id: string;
   input: { A: { instance: string } | null; B: { instance: string } | null; elements: string[]; telemetry: string | null; reference: unknown; fixtures: unknown[] };
   output: string;
   calibration: { output: string; evidence: string } | undefined;
-  agent: { cli: string; model: string; effort: string } | undefined;
 }
 
 const fake = vi.hoisted(() => {
   /** The winner per element the judge writes for its input; null for a failed judge. */
-  const respond: (agent: FakeAgent, n: number) => Record<string, string> | null = () => ({});
-  return { instances: [] as FakeInstance[], agents: [] as FakeAgent[], bots: [] as ({ commit: string } & FakeDegrade)[], respond };
+  const respond: (agent: FakeAgent) => Record<string, string> | null = () => ({});
+  return { instances: [] as FakeInstance[], agents: [] as FakeAgent[], bots: [] as { commit: string; latency: number }[], respond };
 });
 
 vi.mock('../../../src/commands/instance/api.ts', () => ({
   startInstance: vi.fn((_ctx: unknown, opts: Record<string, unknown>, hooks: { onReserved?: (id: string) => void } = {}) => {
     const id = `i${String(fake.instances.length + 1)}`;
-    fake.instances.push({
-      id,
-      commit: opts.commit as string,
-      latency: (opts.inputLatencyMs as number | undefined) ?? 0,
-      delay: (opts.networkDelayMs as number | undefined) ?? 0,
-      feedbackOff: opts.feedbackOff === true,
-      rewardOff: opts.rewardPresentationOff === true,
-      client: opts.client as string,
-      played: opts.played === true,
-    });
+    fake.instances.push({ id, commit: opts.commit as string, latency: (opts.inputLatencyMs as number | undefined) ?? 0, client: opts.client as string, played: opts.played === true });
     hooks.onReserved?.(id);
     return Promise.resolve({ id, commit: opts.commit, root: '/nowhere', game: 'g', serverUrl: '', adminSecret: '' });
   }),
@@ -57,15 +41,15 @@ vi.mock('../../../src/commands/agent/api.ts', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
   return {
-    startAgentJob: vi.fn((_ctx: unknown, options: { input: string; calibration?: FakeAgent['calibration']; agent?: FakeAgent['agent'] }) => {
+    startAgentJob: vi.fn((_ctx: unknown, options: { input: string; calibration?: FakeAgent['calibration'] }) => {
       const id = `a${String(fake.agents.length + 1)}`;
       const input = JSON.parse(fs.readFileSync(options.input, 'utf8')) as FakeAgent['input'];
-      fake.agents.push({ id, input, output: options.calibration?.output ?? '', calibration: options.calibration, agent: options.agent });
+      fake.agents.push({ id, input, output: options.calibration?.output ?? '', calibration: options.calibration });
       return Promise.resolve(id);
     }),
     agentOutcome: vi.fn((_ctx: unknown, id: string) => {
       const agent = fake.agents.find((a) => a.id === id) as FakeAgent;
-      const winners = fake.respond(agent, fake.agents.indexOf(agent) + 1);
+      const winners = fake.respond(agent);
       if (winners === null) return Promise.resolve({ status: 'failed', output: null });
       const rows = agent.input.elements.map((e) => `| ${e} | ${winners[e] ?? 'indistinguishable'} | clear | r | e |`);
       fs.mkdirSync(path.dirname(agent.output), { recursive: true });
@@ -85,7 +69,7 @@ vi.mock('../../../src/commands/loop/lib/shared-telemetry.ts', async (importOrigi
   ...(await importOriginal<typeof import('../../../src/commands/loop/lib/shared-telemetry.ts')>()),
   botRun: vi.fn((_ctx: unknown, instance: { id: string }) => {
     const started = fake.instances.find((i) => i.id === instance.id) as FakeInstance;
-    fake.bots.push({ commit: started.commit, latency: started.latency, delay: started.delay, feedbackOff: started.feedbackOff, rewardOff: started.rewardOff });
+    fake.bots.push({ commit: started.commit, latency: started.latency });
     const telemetry = { started_at: 0, inputs: [], rewards: [], marks: [], idle_spans: [], goal_intervals: [], scene_loads: [], dropped: 0 };
     return Promise.resolve({ telemetry, guide: null });
   }),
@@ -100,54 +84,30 @@ function sideOf(agent: FakeAgent, side: 'A' | 'B'): FakeInstance {
   return fake.instances.find((i) => i.id === id) as FakeInstance;
 }
 
-/**
- * Makes main hold the commits base, better and best and the judged iteration records of better against base, best
- * against better, and again better against base, the most recent; returns the commits.
- */
-function history(g: TestGame): { base: string; better: string; best: string } {
+/** Makes main hold a baseline commit, an instance commit and a judged iteration record of the two; returns them. */
+function history(g: TestGame): { base: string; better: string } {
   // as the .gitignore of `ogw game init`: the calibration evidence goes to builds/
   write(g.root, '.gitignore', '/builds/\n');
   write(g.root, 'client/a.txt', 'base');
   const base = commit(g.root, 'base');
   write(g.root, 'client/a.txt', 'better');
   const better = commit(g.root, 'better');
-  write(g.root, 'client/a.txt', 'best');
-  const best = commit(g.root, 'best');
   write(g.root, 'records/loops/update-1/iteration-1.md', RECORD(better, base));
-  commit(g.root, 'record 1');
-  write(g.root, 'records/loops/update-1/iteration-2.md', RECORD(best, better));
-  commit(g.root, 'record 2');
-  write(g.root, 'records/loops/update-1/iteration-3.md', RECORD(better, base));
-  commit(g.root, 'record 3');
-  return { base, better, best };
+  commit(g.root, 'record');
+  return { base, better };
 }
 
-/** How much an instance is degraded: 0 for none. */
-function degradeOf(i: FakeDegrade): number {
-  return i.latency + i.delay + (i.feedbackOff ? 1 : 0) + (i.rewardOff ? 1 : 0);
-}
-
-/** A judge that sees the commit `better` as better than any other, and the side without a degradation as better, at every element. */
+/** A judge that sees the commit `better`, and the side without input latency, as better at every element. */
 function sensible(better: string) {
   return (agent: FakeAgent): Record<string, string> => {
     const a = sideOf(agent, 'A');
     const b = sideOf(agent, 'B');
-    const degradeA = degradeOf(a);
-    const degradeB = degradeOf(b);
-    let winner = 'indistinguishable';
-    if (degradeA !== degradeB) winner = degradeA < degradeB ? 'A' : 'B';
-    else if (a.commit === better && b.commit !== better) winner = 'A';
-    else if (b.commit === better && a.commit !== better) winner = 'B';
+    const winner = a.latency !== b.latency ? (a.latency < b.latency ? 'A' : 'B') : a.commit === b.commit ? 'indistinguishable' : a.commit === better ? 'A' : 'B';
     return Object.fromEntries(agent.input.elements.map((e) => [e, winner]));
   };
 }
 
-const CALIBRATION = { nullPairs: 2, orderPairs: 3, orderRuns: 1, retestPairs: 1, degradedPairs: 2, degradeLatencyMs: 150, degradeNetworkDelayMs: 3000, minDecisions: 2 };
-const PANEL = [
-  { cli: 'claude-code', model: 'm1', effort: 'high' },
-  { cli: 'claude-code', model: 'm2', effort: 'low' },
-];
-const SETTINGS = { calibration: CALIBRATION, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1 }, backgroundRetryLimit: 1 };
+const SETTINGS = { calibration: { nullPairs: 2, orderRuns: 1, degradeLatencyMs: 150 }, loop: { funIterations: 3, judgeVotes: 2, judgePanel: [], variants: 1 }, backgroundRetryLimit: 1 };
 
 beforeEach(() => {
   fake.instances = [];
@@ -159,14 +119,13 @@ beforeEach(() => {
 });
 
 describe('ogw judge calibrate', () => {
-  it('judges the null, order, retest, degraded and labeled pairs as judges of a fun iteration and commits the report on main', async () => {
+  it('judges the null, order, degraded and labeled pairs as judges of a fun iteration and commits the report on main', async () => {
     const g = setupGame(SETTINGS);
-    const { base, better, best } = history(g);
+    const { base, better } = history(g);
     const missing = 'f'.repeat(40);
     const labels = [
       { A: base, B: better, answers: { 'game feel': 'B', 'tension and release': 'A', 'no friction': 'same', progression: 'B' }, note: '', at: 1 },
       { A: missing, B: better, answers: { 'game feel': 'A' }, note: '', at: 2 },
-      { A: better, B: base, answers: { 'game feel': 'A', 'tension and release': 'B', 'no friction': 'A' }, note: '', at: 3 },
     ];
     write(g.root, 'records/calibration/labels.json', labels);
     write(g.root, 'client/dev/bot/scenario.json', { steps: [{ kind: 'setup', command: 'f.cheat', timeoutMs: 1000 }], goal: { path: 'telemetry.goal_intervals', op: 'count_gte', value: 1 } });
@@ -185,142 +144,63 @@ describe('ogw judge calibrate', () => {
         '## rates',
         '',
         '- false win rate: 0.00 (0 of 6)',
-        // order-1 is better against base (this wins), order-2 best against better (baseline wins): Cohen kappa 1 per element
-        '- order consistency: all 1.00 (6 of 6) kappa 1.00, game feel 1.00 (2 of 2) kappa 1.00, tension and release 1.00 (2 of 2) kappa 1.00, no friction 1.00 (2 of 2) kappa 1.00',
-        // one retest pair: every decision `this` in both judgings
-        '- retest agreement: all 1.00 (3 of 3) kappa undefined, game feel none (1 of 2) kappa none, tension and release none (1 of 2) kappa none, no friction none (1 of 2) kappa none',
-        '- sensitivity: all 1.00 (8 of 8), latency (game feel) 1.00 (2 of 2), network (no friction) 1.00 (2 of 2), feedback (game feel) 1.00 (2 of 2), reward (tension and release) 1.00 (2 of 2)',
-        '- human agreement: game feel 1.00 (2 of 2), tension and release 0.00 (0 of 2), no friction 0.50 (1 of 2)',
-        '- labels: 3',
+        '- order consistency: 1.00 (3 of 3)',
+        '- sensitivity: yes',
+        '- human agreement: game feel 1.00 (1 of 1), tension and release 0.00 (0 of 1), no friction 0.00 (0 of 1)',
+        '- labels: 2',
         '',
         '## recommendations',
         '',
-        '- set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (human agreement tension and release 0.00 (0 of 2), human agreement no friction 0.50 (1 of 2))',
+        'none',
       ].join('\n'),
     );
     expect(report).toContain(`| null-1 | ${main} | ${main} | counted | indistinguishable (0/0) | indistinguishable (0/0) | indistinguishable (0/0) |`);
-    // the judged pairs with different commits, most recent first: the first record of better against base is not used again
-    expect(report).toContain(`| order-1 | ${better} | ${base} | counted | this (2/0) | this (2/0) | this (2/0) |`);
-    expect(report).toContain(`| order-2 | ${best} | ${better} | counted | baseline (0/2) | baseline (0/2) | baseline (0/2) |`);
-    expect(report).not.toContain('| order-3 |');
-    expect(report).toContain(`| retest-1 | ${better} | ${base} | counted | this (2/0); this (2/0) | this (2/0); this (2/0) | this (2/0); this (2/0) |`);
-    expect(report).not.toContain('| retest-2 |');
-    expect(report).toContain(`| degraded-latency-1 | ${main} | ${main} | counted | this (2/0) |`);
-    expect(report).toContain(`| degraded-network-2 | ${main} | ${main} | counted | this (2/0) |`);
-    expect(report).toContain(`| degraded-feedback-1 | ${main} | ${main} | counted | this (2/0) |`);
-    expect(report).toContain(`| degraded-reward-2 | ${main} | ${main} | counted | this (2/0) |`);
-    expect(report).not.toContain('| degraded-reward-3 |');
+    expect(report).toContain(`| order | ${better} | ${base} | counted | this (2/0) | this (2/0) | this (2/0) |`);
+    expect(report).toContain(`| degraded | ${main} | ${main} | counted | this (2/0) |`);
     expect(report).toContain(`| label-1 | ${base} | ${better} | counted | baseline (0/2) |`);
     expect(report).toContain(`| label-2 | ${missing} | ${better} | not judged (${missing} missing) |`);
-    expect(report).toContain('| order-1 | 1 | A | done | claude-code ');
-    expect(report).toContain('| order-1 | 2 | B | done | claude-code ');
-    expect(report).toContain('| retest-1 | 4 | B | done | claude-code ');
-    // 2 null pairs, 2 order pairs, 2 judgings of the retest pair, 2 degraded pairs of each of 4 degradations and 2 labeled pairs: 2 judges each
-    expect(fake.agents).toHaveLength(32);
+    expect(report).toContain('| order | 1 | A | done | claude-code ');
+    expect(report).toContain('| order | 2 | B | done | claude-code ');
+    // 2 null pairs, the order pair, the degraded pair and one labeled pair: 2 judges each
+    expect(fake.agents).toHaveLength(10);
     for (const agent of fake.agents) {
       expect(agent.input).toMatchObject({ elements: ['game feel', 'tension and release', 'no friction'], fixtures: [], reference: null });
-      expect(agent.calibration?.output).toMatch(new RegExp(`^${g.root}/records/calibration/5000/judge-[a-z0-9-]+-[1-4]\\.md$`));
+      expect(agent.calibration?.output).toMatch(new RegExp(`^${g.root}/records/calibration/5000/judge-[a-z0-9-]+-[12]\\.md$`));
       expect(agent.calibration?.evidence).toMatch(new RegExp(`^${g.root}/builds/calibration/5000/judge-`));
       expect(agent.input.telemetry).toMatch(new RegExp(`^${g.root}/builds/calibration/5000/telemetry-`));
     }
-    // the degraded pairs: the baseline instances, and the bot runs of the baseline, have the degradation and only it
-    const none: FakeDegrade = { latency: 0, delay: 0, feedbackOff: false, rewardOff: false };
-    const same = (i: FakeDegrade, d: FakeDegrade): boolean => i.latency === d.latency && i.delay === d.delay && i.feedbackOff === d.feedbackOff && i.rewardOff === d.rewardOff;
-    const degradedOf = (d: FakeDegrade): string[] => fake.instances.filter((i) => same(i, d)).map((i) => `${i.commit} ${i.client}`).sort();
-    const expected = [...Array.from({ length: 6 }, () => `${main} headless`), ...Array.from({ length: 4 }, () => `${main} window`)].sort();
-    const degrades: FakeDegrade[] = [
-      { ...none, latency: 150 },
-      { ...none, delay: 3000 },
-      { ...none, feedbackOff: true },
-      { ...none, rewardOff: true },
-    ];
-    for (const d of degrades) {
-      expect(degradedOf(d)).toEqual(expected);
-      expect(fake.bots.filter((b) => same(b, d))).toHaveLength(6);
+    // the degraded pair: the baseline instances, and the bot run of the baseline, have the input latency
+    const latent = fake.instances.filter((i) => i.latency > 0);
+    expect(latent.map((i) => `${i.commit} ${String(i.latency)} ${i.client}`).sort()).toEqual([
+      `${main} 150 headless`,
+      `${main} 150 headless`,
+      `${main} 150 headless`,
+      `${main} 150 window`,
+      `${main} 150 window`,
+    ]);
+    // a judge of the degraded pair gets the latent instance on the side opposite this commit
+    for (const agent of fake.agents.filter((a) => a.output.includes('/judge-degraded-'))) {
+      expect(sideOf(agent, 'A').latency + sideOf(agent, 'B').latency).toBe(150);
     }
-    expect(fake.instances.filter((i) => degradeOf(i) > 0 && !degrades.some((d) => same(i, d)))).toEqual([]);
-    // a judge of a degraded pair gets the degraded instance on the side opposite this commit
-    for (const agent of fake.agents.filter((a) => a.output.includes('/judge-degraded-network-'))) {
-      expect(sideOf(agent, 'A').delay + sideOf(agent, 'B').delay).toBe(3000);
-    }
-    for (const [degradation, flag] of [['feedback', 'feedbackOff'], ['reward', 'rewardOff']] as const) {
-      const judges = fake.agents.filter((a) => a.output.includes(`/judge-degraded-${degradation}-`));
-      expect(judges).toHaveLength(4);
-      for (const agent of judges) expect([sideOf(agent, 'A')[flag], sideOf(agent, 'B')[flag]].sort()).toEqual([false, true]);
-    }
+    expect(fake.bots.filter((b) => b.latency > 0)).toHaveLength(3);
     const committed = sh(g.root, 'git', ['show', '--name-only', '--format=%s', 'main']).trim().split('\n');
     expect(committed[0]).toBe('judge calibration 5000');
     expect(committed).toContain('records/calibration/5000.md');
-    expect(committed).toContain('records/calibration/5000/judge-order-1-1.md');
-    expect(committed).toContain('records/calibration/5000/judge-retest-1-4.md');
-    expect(committed).toContain('records/calibration/5000/judge-degraded-network-2-2.md');
+    expect(committed).toContain('records/calibration/5000/judge-order-1.md');
     expect(sh(g.root, 'git', ['status', '--porcelain']).trim()).toBe('');
   });
 
-  it('counts the sensitivity of each degradation by its target element: feedback by game feel, reward by tension and release', async () => {
-    const g = setupGame({ ...SETTINGS, calibration: { ...CALIBRATION, nullPairs: 0, orderPairs: 0, retestPairs: 0 } });
-    history(g);
-    // a judge that sees each degradation only at the element it makes worse
-    const worseAt = (i: FakeInstance, element: string): boolean =>
-      (element === 'game feel' && (i.latency > 0 || i.feedbackOff)) || (element === 'no friction' && i.delay > 0) || (element === 'tension and release' && i.rewardOff);
-    fake.respond = (agent) => {
-      const [a, b] = [sideOf(agent, 'A'), sideOf(agent, 'B')];
-      return Object.fromEntries(agent.input.elements.map((e) => [e, worseAt(a, e) === worseAt(b, e) ? 'indistinguishable' : worseAt(a, e) ? 'B' : 'A']));
-    };
-    expect((await ogw(g.ws, ['judge', 'calibrate', 'g'])).code).toBe(0);
-    const report = readFileSync(join(g.root, 'records/calibration/5000.md'), 'utf8');
-    expect(report).toContain(
-      '- sensitivity: all 1.00 (8 of 8), latency (game feel) 1.00 (2 of 2), network (no friction) 1.00 (2 of 2), feedback (game feel) 1.00 (2 of 2), reward (tension and release) 1.00 (2 of 2)',
-    );
-    for (const n of [1, 2]) {
-      expect(report).toMatch(new RegExp(`\\| degraded-feedback-${String(n)} \\| \\w+ \\| \\w+ \\| counted \\| this \\(2/0\\) \\| indistinguishable \\(0/0\\) \\| indistinguishable \\(0/0\\) \\|`));
-      expect(report).toMatch(new RegExp(`\\| degraded-reward-${String(n)} \\| \\w+ \\| \\w+ \\| counted \\| indistinguishable \\(0/0\\) \\| this \\(2/0\\) \\| indistinguishable \\(0/0\\) \\|`));
-    }
-  });
-
-  it('runs the second judging of a retest pair with the agents of the first', async () => {
-    const g = setupGame({ ...SETTINGS, calibration: { ...CALIBRATION, nullPairs: 1, orderPairs: 0, degradedPairs: 0 }, loop: { ...SETTINGS.loop, judgeVotes: 4, judgePanel: PANEL } });
-    history(g);
-    fake.respond = () => ({});
-    expect((await ogw(g.ws, ['judge', 'calibrate', 'g'])).code).toBe(0);
-    const models = (pair: string): string[] =>
-      fake.agents
-        .filter((a) => a.output.includes(`/judge-${pair}-`))
-        .sort((x, y) => x.output.localeCompare(y.output))
-        .map((a) => a.agent?.model ?? '');
-    expect(models('null-1')).toEqual(['m1', 'm1', 'm2', 'm2']);
-    expect(models('retest-1')).toEqual(['m1', 'm1', 'm2', 'm2', 'm1', 'm1', 'm2', 'm2']);
-    const report = readFileSync(join(g.root, 'records/calibration/5000.md'), 'utf8');
-    // nothing is decided in either judging: they agree, but every rating is in one category
-    expect(report).toContain('- retest agreement: all 1.00 (3 of 3) kappa undefined,');
-    expect(report).toContain(
-      '- sensitivity: all none (0 of 2), latency (game feel) none (0 of 2), network (no friction) none (0 of 2), feedback (game feel) none (0 of 2), reward (tension and release) none (0 of 2)',
-    );
-  });
-
   it('recommends more votes after a false win and a judge panel after an order effect, and does not count a pair whose judge failed', async () => {
-    const g = setupGame({ ...SETTINGS, calibration: { ...CALIBRATION, orderPairs: 1, retestPairs: 0, degradedPairs: 1 } });
+    const g = setupGame(SETTINGS);
     history(g);
-    // every judge prefers side A; the second judge of the degraded pair of `network` fails every time
-    fake.respond = (agent) => (agent.output.endsWith('/judge-degraded-network-1-2.md') ? null : Object.fromEntries(agent.input.elements.map((e) => [e, 'A'])));
+    // every judge prefers side A; the second judge of the degraded pair fails every time
+    fake.respond = (agent) => (agent.output.endsWith('/judge-degraded-2.md') ? null : Object.fromEntries(agent.input.elements.map((e) => [e, 'A'])));
     const run = await ogw(g.ws, ['judge', 'calibrate', 'g']);
     expect(run.code).toBe(0);
     const report = readFileSync(join(g.root, 'records/calibration/5000.md'), 'utf8');
-    expect(report).toContain(
-      [
-        '- false win rate: 0.00 (0 of 6)',
-        '- order consistency: all 0.00 (0 of 3) kappa 0.00, game feel none (1 of 2) kappa none, tension and release none (1 of 2) kappa none, no friction none (1 of 2) kappa none',
-        '- retest agreement: all none (0 of 2) kappa none, game feel none (0 of 2) kappa none, tension and release none (0 of 2) kappa none, no friction none (0 of 2) kappa none',
-        // a judge that always votes for side A decides nothing: the counted degraded pairs of latency, feedback and reward are not detected
-        '- sensitivity: all 0.00 (0 of 3), latency (game feel) none (1 of 2), network (no friction) none (0 of 2), feedback (game feel) none (1 of 2), reward (tension and release) none (1 of 2)',
-        '- human agreement: none',
-        '- labels: 0',
-      ].join('\n'),
-    );
-    expect(report).toContain(
-      '- set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (order consistency all 0.00 (0 of 3), order consistency all kappa 0.00, sensitivity all 0.00 (0 of 3))',
-    );
-    expect(report).toContain('| degraded-network-1 | ');
+    expect(report).toContain('- false win rate: 0.00 (0 of 6)\n- order consistency: 0.00 (0 of 3)\n- sensitivity: none\n- human agreement: none\n- labels: 0');
+    expect(report).toContain('- set loop.judgePanel to judges that mix models and efforts of the agent CLIs that are logged in (order consistency 0.00 (0 of 3))');
+    expect(report).toContain('| degraded | ');
     expect(report).toContain(' | not counted |  |  |  |');
     // a judge that always votes for this commit wins the null pairs: decisions need votes from both side assignments
     fake.agents = [];

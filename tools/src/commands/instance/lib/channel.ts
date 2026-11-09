@@ -60,11 +60,6 @@ export class ClientChannel {
   port = 0;
   /** Number of accepted connections; a restart makes it grow. */
   generation = 0;
-  /**
-   * Called with the new generation each time a connection is accepted, before the waiters for a connection wake: the
-   * requests it sends with `requestNow` go before every other request of that connection.
-   */
-  onConnect: ((generation: number) => void) | null = null;
   private server: WebSocketServer | null = null;
   private socket: WebSocket | null = null;
   private nextId = 1;
@@ -123,7 +118,6 @@ export class ClientChannel {
       this.failPending(old, 'automation channel reconnected');
       old.terminate();
     }
-    this.onConnect?.(this.generation);
     const waiters = this.connectWaiters;
     this.connectWaiters = [];
     for (const wake of waiters) wake();
@@ -191,16 +185,7 @@ export class ClientChannel {
   async request(command: string, args: readonly string[], timeoutMs: number, onFrame: FrameHandler | null = null): Promise<ChannelResponse> {
     const deadline = Date.now() + timeoutMs;
     await this.waitConnected(timeoutMs);
-    return this.send(this.socket as WebSocket, command, args, timeoutMs, deadline, onFrame);
-  }
-
-  /** Sends one request on the current connection before this call returns; fails when there is none or no response comes within `timeoutMs`. */
-  requestNow(command: string, args: readonly string[], timeoutMs: number): Promise<ChannelResponse> {
-    if (!this.socket) return Promise.reject(new OgwError(`${this.name}: no automation channel connection for ${command}`));
-    return this.send(this.socket, command, args, timeoutMs, Date.now() + timeoutMs, null);
-  }
-
-  private send(socket: WebSocket, command: string, args: readonly string[], timeoutMs: number, deadline: number, onFrame: FrameHandler | null): Promise<ChannelResponse> {
+    const socket = this.socket as WebSocket;
     const id = this.nextId++;
     return new Promise((resolvePromise, reject) => {
       const timer = setTimeout(() => {

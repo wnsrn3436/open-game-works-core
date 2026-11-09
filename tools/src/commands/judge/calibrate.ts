@@ -21,10 +21,9 @@ import {
 } from '../loop/lib/evaluate.ts';
 import { countVotes } from '../loop/lib/votes.ts';
 import { missingLoginToken } from '../secret/lib/login-token.ts';
-import { DEGRADATIONS } from './lib/degradations.ts';
 import { commitOnMain, prepareMain } from './lib/guard.ts';
-import { CALIBRATION_DIR, distinctPairs, hasCommit, judgedPairs, readLabels } from './lib/pairs.ts';
-import { judgeCount, kInJudging, rateLines, rates, recommendations, renderReport, type CalibrationPair, type PairOutcome } from './lib/report.ts';
+import { CALIBRATION_DIR, hasCommit, judgedPairs, readLabels } from './lib/pairs.ts';
+import { rateLines, rates, recommendations, renderReport, type CalibrationPair, type PairOutcome } from './lib/report.ts';
 
 const USAGE = 'ogw judge calibrate <game>';
 
@@ -34,41 +33,23 @@ const ELEMENTS = elementsOf('fun');
 /** The pairs of judge calibration, in report order (ogw.md `## judge calibrate`). */
 async function calibrationPairs(ctx: Context, game: GameRepo, main: string, settings: HarnessSettings): Promise<CalibrationPair[]> {
   const votes = settings.loop.judgeVotes;
-  const c = settings.calibration;
   const pair = (name: string, kind: CalibrationPair['kind'], commit: string, baseline: string, rest: Partial<CalibrationPair> = {}): CalibrationPair => ({
     name,
     kind,
     commit,
     baseline,
     baselineLatencyMs: 0,
-    baselineNetworkDelayMs: 0,
-    baselineFeedbackOff: false,
-    baselineRewardPresentationOff: false,
-    judgings: [votes],
+    judges: votes,
     first: drawSide(),
-    degradation: null,
     label: null,
     missing: null,
     ...rest,
   });
   const pairs: CalibrationPair[] = [];
-  for (let n = 1; n <= c.nullPairs; n++) pairs.push(pair(`null-${String(n)}`, 'null', main, main));
-  const judged = distinctPairs(await judgedPairs(game.root, ctx.env));
-  judged.slice(0, c.orderPairs).forEach((j, i) => pairs.push(pair(`order-${String(i + 1)}`, 'order', j.commit, j.baseline, { judgings: [2 * c.orderRuns], first: 'A' })));
-  judged.slice(0, c.retestPairs).forEach((j, i) => pairs.push(pair(`retest-${String(i + 1)}`, 'retest', j.commit, j.baseline, { judgings: [votes, votes] })));
-  for (const degradation of DEGRADATIONS) {
-    const { latencyMs, networkDelayMs, feedbackOff, rewardPresentationOff } = degradation.baseline(c);
-    for (let n = 1; n <= c.degradedPairs; n++) {
-      const rest = {
-        baselineLatencyMs: latencyMs,
-        baselineNetworkDelayMs: networkDelayMs,
-        baselineFeedbackOff: feedbackOff,
-        baselineRewardPresentationOff: rewardPresentationOff,
-        degradation: { name: degradation.name, element: degradation.element },
-      };
-      pairs.push(pair(`degraded-${degradation.name}-${String(n)}`, 'degraded', main, main, rest));
-    }
-  }
+  for (let n = 1; n <= settings.calibration.nullPairs; n++) pairs.push(pair(`null-${String(n)}`, 'null', main, main));
+  const order = (await judgedPairs(game.root, ctx.env))[0];
+  if (order !== undefined) pairs.push(pair('order', 'order', order.commit, order.baseline, { judges: 2 * settings.calibration.orderRuns, first: 'A' }));
+  pairs.push(pair('degraded', 'degraded', main, main, { baselineLatencyMs: settings.calibration.degradeLatencyMs }));
   const labels = await readLabels(game.root);
   labels.forEach((label, i) => pairs.push(pair(`label-${String(i + 1)}`, 'label', label.A, label.B, { label })));
   for (const p of pairs) {
@@ -94,44 +75,26 @@ function groupsOf(plan: JudgingPlan, pairs: readonly CalibrationPair[]): { group
   const groups: Group[] = [];
   const judgePairs = new Map<JudgePair, CalibrationPair>();
   for (const p of pairs.filter((x) => x.missing === null)) {
-    const judgePair: JudgePair = {
-      name: p.name,
-      commit: p.commit,
-      baseline: p.baseline,
-      baselineLatencyMs: p.baselineLatencyMs,
-      baselineNetworkDelayMs: p.baselineNetworkDelayMs,
-      baselineFeedbackOff: p.baselineFeedbackOff,
-      baselineRewardPresentationOff: p.baselineRewardPresentationOff,
-    };
+    const judgePair: JudgePair = { name: p.name, commit: p.commit, baseline: p.baseline, baselineLatencyMs: p.baselineLatencyMs };
     judgePairs.set(judgePair, p);
-    const judges = judgeCount(p);
-    for (let k = 1; k <= judges; k++) {
-      groups.push(judgeGroup(plan, judgePair, 'main', k, alternateSide(p.first, k), judgeAgent(plan.settings, kInJudging(p.judgings, k)), judges));
-    }
+    for (let k = 1; k <= p.judges; k++) groups.push(judgeGroup(plan, judgePair, 'main', k, alternateSide(p.first, k), judgeAgent(plan.settings, k), p.judges));
   }
   return { groups, judgePairs };
 }
 
-/** The outcome of each pair: counted when every judge is `done`, with the element decisions of each judging over its judges. */
+/** The outcome of each pair: counted when every judge is `done`, with its element decisions over its judges. */
 function outcomesOf(pairs: readonly CalibrationPair[], judged: Map<CalibrationPair, { k: number; entry: JudgeEntry }[]>): PairOutcome[] {
   return pairs.map((pair) => {
-    if (pair.missing !== null) return { pair, judges: [], status: 'not judged', judgings: null };
+    if (pair.missing !== null) return { pair, judges: [], status: 'not judged', votes: null };
     const judges = (judged.get(pair) ?? []).sort((a, b) => a.k - b.k);
-    const done = judges.length === judgeCount(pair) && judges.every((j) => j.entry.status === 'done');
-    if (!done) return { pair, judges, status: 'not counted', judgings: null };
-    let from = 0;
-    const judgings = pair.judgings.map((size) => {
-      const entries = judges.slice(from, from + size).map((j) => j.entry);
-      from += size;
-      return countVotes(entries, ELEMENTS, size);
-    });
-    return { pair, judges, status: 'counted', judgings };
+    const done = judges.length === pair.judges && judges.every((j) => j.entry.status === 'done');
+    return { pair, judges, status: done ? 'counted' : 'not counted', votes: done ? countVotes(judges.map((j) => j.entry), ELEMENTS, pair.judges) : null };
   });
 }
 
 /**
- * `ogw judge calibrate <game>` (ogw.md `## judge calibrate`): judges the null pairs, the order pairs, the retest pairs,
- * the degraded pairs and the labeled pairs with the judges of a fun iteration, and writes and commits the report on main.
+ * `ogw judge calibrate <game>` (ogw.md `## judge calibrate`): judges the null pairs, the order pair, the degraded
+ * pair and the labeled pairs with the judges of a fun iteration, and writes and commits the report on main.
  */
 export const judgeCalibrate: CommandDef = {
   name: ['judge', 'calibrate'],
@@ -159,7 +122,7 @@ export const judgeCalibrate: CommandDef = {
       judged.set(pair, [...(judged.get(pair) ?? []), { k: slot.k, entry: slot.entry }]);
     }
     const outcomes = outcomesOf(pairs, judged);
-    const result = rates(outcomes, ELEMENTS, DEGRADATIONS, pairs.filter((p) => p.kind === 'label').length, settings.calibration.minDecisions);
+    const result = rates(outcomes, ELEMENTS, pairs.filter((p) => p.kind === 'label').length);
     const report = `${CALIBRATION_DIR}/${ms}.md`;
     await span('report', async () => {
       await writeFileAtomic(join(game.root, report), renderReport(outcomes, ELEMENTS, result, settings.loop.judgeVotes));
@@ -167,6 +130,6 @@ export const judgeCalibrate: CommandDef = {
       await commitOnMain(ctx, game, [report, ...results], `judge calibration ${ms}`);
     });
     const lines = [report, ...rateLines(result), ...recommendations(result, settings.loop.judgeVotes).map((r) => `recommendation: ${r}`)];
-    return { text: lines.join('\n'), data: { report, outcomes: outcomes.map((o) => ({ pair: o.pair.name, status: o.status, judgings: o.judgings })), rates: result } };
+    return { text: lines.join('\n'), data: { report, outcomes: outcomes.map((o) => ({ pair: o.pair.name, status: o.status, votes: o.votes })), rates: result } };
   },
 };
