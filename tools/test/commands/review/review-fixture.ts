@@ -10,7 +10,7 @@ export function mergeDefinitions(ws: TestWorkspace): string[] {
   return [...since, ...['tools/ogw.md', 'skills/game-loop/SKILL.md', 'skills/core/command.md'].flatMap((path) => ['--definition', join(ws.harness, path)])];
 }
 
-/** Changes `skills/core/command.md`, a definition document of every core target and of `mergeDefinitions`: `--restart` needs it. */
+/** Changes `skills/core/command.md`, a definition document of every core target and of `mergeDefinitions`: `--respec` needs it. */
 export function changeDefinition(ws: TestWorkspace): void {
   appendFileSync(join(ws.harness, 'skills', 'core', 'command.md'), '\n- changed\n');
 }

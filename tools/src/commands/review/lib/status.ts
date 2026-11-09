@@ -5,12 +5,12 @@ import { listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { sideAndTarget } from '../next.ts';
 import { run } from '../run.ts';
 import type { Side } from './input.ts';
-import { listTargets, readState, reviewRoot } from './state.ts';
+import { listTargets, readState, reviewRoot, running } from './state.ts';
 
 export interface TargetStatus {
   target: string;
   round: number;
-  /** The result of the last round, `running` before it is judged, or null with no round. */
+  /** The result of the last round, `running` before it or its last fix check is judged, or null with no round. */
   result: string | null;
   /** Ids of the `open` findings of the last judged round whose `spec change` is `yes`. */
   specChange: string[];
@@ -43,7 +43,7 @@ export async function reviewStatus(ctx: Context, side: Side): Promise<CommandRes
     targets.push({
       target,
       round: last?.round ?? 0,
-      result: last === undefined ? null : last.judged ? last.result : 'running',
+      result: last === undefined ? null : running(last) ? 'running' : last.result,
       specChange: (judged?.open ?? []).filter((f) => f.specChange === 'yes').map((f) => f.id),
       job: runs.find((job) => runTarget(job) === target)?.id ?? null,
     });

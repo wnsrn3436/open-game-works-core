@@ -4,10 +4,13 @@ import { join } from 'node:path';
 import type { Context } from '../../../lib/command.ts';
 import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJsonIfExists } from '../../../lib/fsx.ts';
-import { revParse } from '../../../lib/git.ts';
+import { head, revParse } from '../../../lib/git.ts';
+import { LIMITS } from '../../../lib/limits.ts';
 import { byteCompare } from '../../../lib/order.ts';
+import { cliEntry } from '../../../lib/paths.ts';
+import { run, type RunResult } from '../../../lib/proc.ts';
 import { runCodeCheck } from '../../code/api.ts';
-import { changedSinceDone, lastReviewResults } from '../../review/api.ts';
+import { lastReviewResults } from '../../review/api.ts';
 import { readAllLists } from '../../review/lib/debt.ts';
 import { reviewTargetsSince } from '../dependents.ts';
 import { buildCoreSpec } from '../spec-api.ts';
@@ -74,6 +77,52 @@ export async function testRecordViolations(implDir: string, commit: string, modu
   return violations;
 }
 
+/**
+ * Why a browser run of the release stopped before it reported its modules (its `--json` output has an `error`, or is
+ * not a core test output), or null when it reported them: their records are what the core test condition reads.
+ */
+function browserRunStop(result: RunResult): string | null {
+  if (result.timedOut) return 'timed out';
+  let data: unknown = null;
+  try {
+    data = JSON.parse(result.stdout);
+  } catch (error) {
+    // not JSON: the command failed before it tested
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  const output = typeof data === 'object' && data !== null ? (data as { modules?: unknown; error?: unknown }) : {};
+  if (typeof output.error === 'string') return output.error;
+  if (typeof output.modules === 'object' && output.modules !== null) return null;
+  return `exit code ${String(result.code)}: ${(result.stderr || result.stdout).trim().split('\n')[0] ?? ''}`;
+}
+
+/** Runs `ogw <argv>` in `cwd` as a process of its own. */
+export type OgwRunner = (argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<RunResult>;
+
+const ogwProcess: OgwRunner = (argv, cwd, env) => run(process.execPath, [...process.execArgv, cliEntry(), ...argv], { cwd, env, timeoutMs: LIMITS.jobMs });
+
+/**
+ * The browser runs of the release (ogw.md `## core release`): for each engine whose browser run has a module that is
+ * not `pass` at the main HEAD commit, `ogw core test <engine> <module>... --web` in the main checkout, which records
+ * the results that the core test condition reads. Returns a line for each run that stopped before it reported its
+ * modules.
+ */
+export async function releaseBrowserRuns(ctx: Context, implDir: string, runOgw: OgwRunner = ogwProcess): Promise<string[]> {
+  const commit = await head(implDir, { env: ctx.env });
+  const merged = await mergedRecords(implDir, commit);
+  const stopped: string[] = [];
+  for (const [target, names] of await requiredTargets(implDir, await readCoreSpecDir(implDir, { skipInvalid: true }))) {
+    if (!target.endsWith(' --web')) continue;
+    const left = names.filter((name) => !passes(merged.get(target)?.get(name) ?? outcomeOf(undefined)));
+    if (left.length === 0) continue;
+    const engine = target.slice(0, -' --web'.length);
+    const result = await runOgw(['core', 'test', engine, ...left, '--web', '--json'], implDir, ctx.env);
+    const stop = browserRunStop(result);
+    if (stop !== null) stopped.push(`core test ${target}: ${stop}`);
+  }
+  return stopped;
+}
+
 export async function coreSpecViolations(ctx: Context, implDir: string): Promise<string[]> {
   const build = await buildCoreSpec(ctx);
   const violations = build.errors.map((error) => `core spec: ${error}`);
@@ -103,16 +152,24 @@ function lowerRelease(version: string, released: readonly string[]): string | un
   return released.filter((v) => compareVersions(v, version) < 0).sort(compareVersions).at(-1);
 }
 
-/** The `ogw review run` command that goes on from the last result of a target (`core` command.md `## review and code check`). */
+/**
+ * The `ogw review run` command that goes on from the last result of a target (`core` command.md `## review and code
+ * check`): `--respec` after `blocked`, which the human's spec edit lets go on; after a review that ended, the run starts
+ * the must-fix round.
+ */
 function reviewRunCommand(target: string, result: string | null): string {
-  const options: Record<string, string> = { limit: ' --continue', blocked: ' --respec', done: ' --reopen' };
-  return `ogw review run core ${target}${options[result ?? ''] ?? ''}`;
+  return `ogw review run core ${target}${result === 'blocked' ? ' --respec' : ''}`;
+}
+
+/** Whether a last result ends the review (`core` command.md `## review and code check`). */
+function reviewEnded(result: string | null): boolean {
+  return result === 'done' || result === 'fixed';
 }
 
 /**
- * The review conditions (ogw.md `## core release`): each target with review state has a judged
- * `done` last round and did not change since it started, and each review target of the changes since the tag of the
- * highest release below `version` (`ogw core review-targets`) has review state.
+ * The review conditions (ogw.md `## core release`): the review of each target with review state ended (`done` or
+ * `fixed`), and each review target of the changes since the tag of the highest release below `version`
+ * (`ogw core review-targets`) has review state.
  */
 export async function reviewViolations(
   ctx: Context,
@@ -125,10 +182,7 @@ export async function reviewViolations(
   const violations: string[] = [];
   const results = await lastReviewResults(ctx, 'core');
   for (const [target, result] of results) {
-    if (result !== 'done') violations.push(`review ${target}: last round result is ${result ?? 'none'}; run ${reviewRunCommand(target, result)}`);
-  }
-  for (const [target, round] of await changedSinceDone(ctx, 'core')) {
-    violations.push(`review ${target}: changed since its done round ${String(round)}; run ogw review run core ${target} --reopen`);
+    if (!reviewEnded(result)) violations.push(`review ${target}: last round result is ${result ?? 'none'}; run ${reviewRunCommand(target, result)}`);
   }
   const lower = lowerRelease(version, released);
   if (lower === undefined) return violations;
@@ -156,11 +210,6 @@ export async function reviewDebtViolations(ctx: Context, implDir: string): Promi
   const results = await lastReviewResults(ctx, 'core');
   return (await readAllLists(implDir, 'must fix')).flatMap((list) => list.items
     .map((item) => `review must fix ${list.target}: ${item.id} ${item.severity ?? 'high'} ${item.location}: ${item.problem}; fix it, then run ${mustFixCommand(list.target, results)}`));
-}
-
-/** The release output line of each debt list of `implDir` with items: `review debt <target>: <n>`. */
-export async function reviewDebtCounts(implDir: string): Promise<string[]> {
-  return (await readAllLists(implDir, 'debt')).filter((list) => list.items.length > 0).map((list) => `review debt ${list.target}: ${String(list.items.length)}`);
 }
 
 /** `ogw code check core` on `implDir`, the checkout the release is made from, wherever the command runs. */

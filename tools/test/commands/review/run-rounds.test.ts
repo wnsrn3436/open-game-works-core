@@ -96,8 +96,8 @@ describe('ogw review run', () => {
     expect(fake.calls()).toHaveLength(3);
     const dir = join(ws.coreImpl, '.git', 'ogw-review', 'routing');
     expect(readFileSync(join(dir, 'round-2-input.md'), 'utf8')).toContain(`## spec changes\n\n${join(dir, 'round-2-spec-changes.diff')}\n`);
-    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { respecAfter?: number; rounds: { chain?: number }[] };
-    expect(state.rounds.map((r) => r.chain)).toEqual([1, 2]);
+    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { respecAfter?: number; rounds: { result: string }[] };
+    expect(state.rounds.map((r) => r.result)).toEqual(['blocked', 'done']);
     expect(state.respecAfter).toBeUndefined();
   });
 
@@ -111,8 +111,8 @@ describe('ogw review run', () => {
     const run = await ogw(ws, ['review', 'run', 'core', 'routing', '--respec'], { env: fake.env });
     expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 2\n' });
     const dir = join(ws.coreImpl, '.git', 'ogw-review', 'routing');
-    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { respecAfter?: number; rounds: { chain?: number; result: string }[] };
-    expect(state.rounds.map((r) => [r.chain, r.result])).toEqual([[1, 'blocked'], [2, 'done']]);
+    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { respecAfter?: number; rounds: { result: string }[] };
+    expect(state.rounds.map((r) => r.result)).toEqual(['blocked', 'done']);
     expect(state.respecAfter).toBeUndefined();
     expect(readFileSync(join(dir, 'round-2-input.md'), 'utf8')).toContain(`## spec changes\n\n${join(dir, 'round-2-spec-changes.diff')}\n`);
   });
@@ -130,8 +130,8 @@ describe('ogw review run', () => {
     const run = await ogw(ws, ['review', 'run', 'core', 'routing', '--respec'], { env: fake.env });
     expect(run).toMatchObject({ code: 0, stdout: 'result: done\nround: 3\n' });
     const dir = join(ws.coreImpl, '.git', 'ogw-review', 'routing');
-    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { rounds: { chain?: number; result: string }[] };
-    expect(state.rounds.map((r) => [r.chain, r.result])).toEqual([[1, 'blocked'], [2, 'done'], [3, 'done']]);
+    const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) as { rounds: { result: string }[] };
+    expect(state.rounds.map((r) => r.result)).toEqual(['blocked', 'done', 'done']);
     expect(readFileSync(join(dir, 'round-3-spec-changes.diff'), 'utf8')).toContain('changed again');
   });
 
@@ -235,18 +235,18 @@ describe('ogw review run', () => {
     coreSpec(ws, { routing: spec('routing', 'server') });
     const blocked = agents(ws, { 1: reviewFile([finding('R1-1', 'yes')]) }, GOOD_FIX);
     await ogw(ws, ['review', 'run', 'core', 'routing'], { env: blocked.env });
-    const slow = agents(ws, { 1: reviewFile([]) }, GOOD_FIX);
+    const slow = agents(ws, { 2: reviewFile([], ['| R1-1 | fixed | spec changed |']), 3: reviewFile([]) }, GOOD_FIX);
     const slowEnv = { ...slow.env };
     writeFileSync(join(ws.root, 'fake-bin', 'fake.mjs'), readFileSync(join(ws.root, 'fake-bin', 'fake.mjs'), 'utf8').replace("const prompt =", "execFileSync('sleep', ['3']); const prompt ="));
     expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 1 blocked spec change: R1-1 job: none\n');
     // a blocked target starts no round until the human changed the spec
     expect((await ogw(ws, ['review', 'next', 'core', 'routing'], { env: slowEnv })).stdout).toBe('blocked\n');
     changeDefinition(ws);
-    await ogw(ws, ['review', 'next', 'core', 'routing', '--restart'], { env: slowEnv });
-    expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 1 running spec change: none job: none\n');
+    await ogw(ws, ['review', 'next', 'core', 'routing', '--respec'], { env: slowEnv });
+    expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 2 running spec change: R1-1 job: none\n');
     await ogw(ws, ['review', 'wait', 'core', 'routing', '--timeout', '120000']);
     changeDefinition(ws);
-    const job = (await ogw(ws, ['review', 'run', '--restart', 'core', 'routing', '--background'], { env: slowEnv })).stdout.trim();
+    const job = (await ogw(ws, ['review', 'run', '--respec', 'core', 'routing', '--background'], { env: slowEnv })).stdout.trim();
     let shown = '';
     for (let i = 0; i < 50 && !shown.includes(`job: ${job}`); i += 1) {
       shown = (await ogw(ws, ['review', 'status', 'core'])).stdout;
@@ -263,12 +263,12 @@ describe('ogw review run', () => {
   it('refuses options that exclude each other before it starts a job, naming them', async () => {
     const ws = makeWorkspace();
     coreSpec(ws, { routing: spec('routing', 'server') });
-    const usage = 'usage: ogw review run core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]\n';
+    const usage = 'usage: ogw review run core <target> [--full|--debt|[--since <commit>] [--respec]]\n';
     const jobs = (await listJobs(ws.env)).length;
     expect(await ogw(ws, ['review', 'run', 'core', 'routing', '--debt', '--respec', '--background'])).toEqual({
       code: 1,
       stdout: '',
-      stderr: `--respec and --debt exclude each other: give one of --restart, --respec, --continue, --reopen, --full, --debt\n${usage}`,
+      stderr: `--respec and --debt exclude each other: give one of --respec, --full, --debt\n${usage}`,
     });
     expect((await ogw(ws, ['review', 'run', 'core', 'routing', '--full', '--since', 'HEAD', '--background'])).stderr).toBe(`--since and --full exclude each other\n${usage}`);
     expect((await listJobs(ws.env)).length).toBe(jobs);
@@ -282,13 +282,13 @@ describe('ogw review run', () => {
     const refused = await ogw(ws, ['review', 'run', 'core', 'routing']);
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain('an ogw review run job of routing is running');
-    expect((await ogw(ws, ['review', 'run', 'tool', 'agent', 'merge'])).stderr).toContain('usage: ogw review run core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]');
+    expect((await ogw(ws, ['review', 'run', 'tool', 'agent', 'merge'])).stderr).toContain('usage: ogw review run core <target> [--full|--debt|[--since <commit>] [--respec]]');
     expect((await ogw(ws, ['review', 'status', 'x'])).stderr).toContain('usage: ogw review status <core|tool>');
     rmSync(lock, { recursive: true, force: true });
     coreSpec(ws, { routing: spec('routing', 'server') });
     expect((await ogw(ws, ['review', 'run', 'core', 'routing'], { env: agents(ws, { 1: reviewFile([]) }, GOOD_FIX).env })).stdout).toBe('result: done\nround: 1\n');
-    const notLimit = await ogw(ws, ['review', 'run', 'core', 'routing', '--continue']);
-    expect(notLimit).toMatchObject({ code: 1 });
-    expect(notLimit.stderr).toContain('--continue needs the last round of routing to be limit');
+    const unchanged = await ogw(ws, ['review', 'run', 'core', 'routing', '--respec']);
+    expect(unchanged).toMatchObject({ code: 1 });
+    expect(unchanged.stderr).toContain('--respec of routing: no definition document changed since round 1 started');
   });
 });

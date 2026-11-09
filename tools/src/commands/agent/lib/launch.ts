@@ -108,7 +108,7 @@ async function makePlace(id: string, ctx: Context, meta: AgentMeta): Promise<Age
     await ensurePreCommitHook(place.coreImpl, ctx.env);
     worktree = join(place.worktrees, '_core', `agent-${id}`);
     await worktreeAdd(place.coreImpl, worktree, place.baseCommit, `agent/${id}`, { env: ctx.env });
-    // A review file of the same name from an earlier review (`--restart`, a later `update core`) is on main: remove it
+    // A review file of the same name from an earlier review (one before `ogw review clear core`, a later `update core`) is on main: remove it
     // so that only a file this agent writes counts as its result.
     if (meta.role === 'review' && meta.outputRel !== null) await rm(join(worktree, meta.outputRel), { force: true });
   }

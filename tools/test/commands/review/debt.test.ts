@@ -123,7 +123,8 @@ describe('ogw review: tool lists', () => {
     expect(moved.stdout).toContain('review debt removed: agent merge D1\nreview must fix added: agent merge M1: src/b.ts:9: high a slow loop that hangs (was D1)\n');
     expect(ids(ws.harness, 'debt', 'agent-merge.json')).toEqual([]);
     commitAll(ws.harness, 'change');
-    await next(ws, ['tool', 'agent', 'merge', '--reopen', ...mergeDefinitions(ws)], env);
+    // the must-fix round of M1
+    await next(ws, ['tool', 'agent', 'merge', ...mergeDefinitions(ws)], env);
     expect((await wait(ws, ['tool', 'agent', 'merge'])).stdout).toContain('review must fix raised: agent merge M1 critical\n');
     expect(readList(ws.harness, 'must fix', 'agent-merge.json')?.items.map((item) => [item.id, item.severity])).toEqual([['M1', 'critical']]);
   });
@@ -156,7 +157,7 @@ describe('ogw review: tool lists', () => {
   it('takes no --full for a tool target', async () => {
     const ws = makeWorkspace();
     const refused = await next(ws, ['tool', 'agent', 'merge', '--full', '--definition', join(ws.harness, 'tools', 'ogw.md')], ws.env);
-    expect(refused.stderr).toContain('--full is for a core target\nusage: ogw review next core <target> [--full|--debt|[--since <commit>] [--restart|--respec|--continue|--reopen]]');
+    expect(refused.stderr).toContain('--full is for a core target\nusage: ogw review next core <target> [--full|--debt|[--since <commit>] [--respec]]');
   });
 });
 

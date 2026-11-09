@@ -134,7 +134,6 @@ export interface HarnessSettings {
     judgeTimeLimitMs: number;
   };
   calibration: { nullPairs: number; orderRuns: number; degradeLatencyMs: number };
-  reviewRounds: number;
   codeCheck: { maxComplexity: number };
   rigCheck: { iouMin: number; colorDiffMax: number };
   /** The criteria of the flags of `ogw time` (ogw.md `## time`). */

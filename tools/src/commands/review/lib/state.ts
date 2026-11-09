@@ -8,7 +8,11 @@ import { JobNotFound, readJob } from '../../../lib/jobs.ts';
 import { withLock } from '../../../lib/lock.ts';
 import type { Side } from './input.ts';
 
-export type ReviewResult = 'done' | 'fix' | 'escalate' | 'blocked' | 'limit' | 'invalid';
+/**
+ * The result of a judged round (core command.md `## review and code check`): `fixed` is a `fix` round whose fix check has
+ * no counted `fail`. An `invalid` round is dropped from the state.
+ */
+export type ReviewResult = 'done' | 'fix' | 'fixed' | 'blocked' | 'invalid';
 
 export interface CheckItemState {
   name: string;
@@ -24,6 +28,24 @@ export interface OpenFinding {
   specChange: string;
 }
 
+/** The fix check of a `fix` round: the code check after its fix, with `fix test proof` when it has a fix base. */
+export interface FixCheckState {
+  /** The `ogw code check` job. */
+  job: string;
+  /** The commit it reads: main of `open-game-works-core-impl/` (core) or the harness HEAD (tool) at its start. */
+  commit: string;
+  /** Its `--fix-base`, or null without `fix test proof`. */
+  fixBase: string | null;
+  judged: boolean;
+  /** `pass` when it has no `fail` that counts; null before it is judged. */
+  result: 'pass' | 'fail' | null;
+  codeCheck: CheckItemState[];
+  /** core: the type check and lint failure lines in files outside the target, which do not count. */
+  outsideTarget: string[];
+  /** Whether its `fix test proof` `fail` does not count: an earlier code check of the target failed the proof on its base. */
+  proofNotCounted: boolean;
+}
+
 export interface RoundState {
   round: number;
   startCommit: string;
@@ -36,12 +58,9 @@ export interface RoundState {
   open: OpenFinding[];
   codeCheck: CheckItemState[];
   codeCheckFile: string | null;
-  /**
-   * The chain of the round (core command.md `## review and code check`): 1 from round 1, one more after each `escalate`,
-   * `--continue`, `--respec` or `--reopen`. Absent in a state written before chains: 1.
-   */
-  chain?: number;
-  /** SHA-256 of each definition document when the round started: `--restart` and `--respec` need one of them changed. */
+  /** Whether the round is the second round after the fix of a round: no round follows its fix. Absent: it is not. */
+  second?: boolean;
+  /** SHA-256 of each definition document when the round started: `--respec` needs one of them changed. */
   definitionHashes?: Record<string, string>;
   /** The harness repo HEAD when the round started: a `--respec` round reviews the definition changes since it. */
   harnessCommit?: string;
@@ -49,6 +68,8 @@ export interface RoundState {
   specChanges?: string;
   /** The `--fix-base` of the round's code check, or null when it had no `fix test proof`. Absent before proofs: null. */
   fixBase?: string | null;
+  /** Whether the `fix test proof` `fail` of the round's code check does not count (`FixCheckState.proofNotCounted`). */
+  proofNotCounted?: boolean;
   /** core: the type check and lint failure lines of the code check in files outside the target, which do not count. */
   outsideTarget?: string[];
   /** The `## out of scope` lines of the review file, game impacts left out. */
@@ -67,20 +88,21 @@ export interface RoundState {
    */
   paysDebt?: boolean;
   /**
-   * The `nextId` of the target's debt list when the round's review began (round 1, or a round started by `--reopen`,
-   * `--full` or `--debt`): in a review that pays debt, its items below it are the round's scope (`scopeDebt`).
+   * The `nextId` of the target's debt list when the round's review began (round 1, the must-fix round, or a round
+   * started by `--full` or `--debt`): in a review that pays debt, its items below it are the round's scope (`scopeDebt`).
    */
   debtFloor?: number;
   /** The lines of what the judged round changed in the review lists (`changeLists`). */
   debtLines?: string[];
-  /** core: the core agent input for a `fix` result; both sides: the escalation input for an `escalate` result. */
+  /** core: the core agent input for a `fix` result. */
   fixInput: string | null;
   /**
-   * core: ids of the core agent jobs started with `fixInput` (a retry of one counts) and merged with `ogw agent merge`,
-   * or, for a `limit` round, the core agent jobs of the target merged before `--continue`; written by the next
-   * `review next` when it checks them. Absent until then.
+   * core: ids of the core agent jobs started with `fixInput` (a retry of one counts) and merged with `ogw agent merge`;
+   * written by the next `review next` when it checks them. Absent until then.
    */
   fixJobs?: string[];
+  /** The fix checks of a `fix` round, oldest first: another one follows a fix check judged `fail`. Absent: none. */
+  fixChecks?: FixCheckState[];
 }
 
 export interface ReviewState {
@@ -89,15 +111,11 @@ export interface ReviewState {
   rounds: RoundState[];
   /** `--since` of round 1, resolved: also the range of a round 1 started again after an `invalid` one. */
   since?: string;
-  /** The `limit` round a `--continue` follows, until a round it started is judged other than `invalid`. */
-  continueAfter?: number;
   /**
    * The judged round a `--respec` follows, from when the option is given until a round it started is judged other than
    * `invalid`: the round whose harness commit and definition hashes the definition diff starts from.
    */
   respecAfter?: number;
-  /** The `done` round a `--reopen` follows, from when the option is given until a round it started is judged other than `invalid`. */
-  reopenAfter?: number;
   /**
    * `--full`: the next round reviews the whole target, from when the option is given until a round it started is judged
    * other than `invalid`.
@@ -110,10 +128,26 @@ export interface ReviewState {
   debtReview?: boolean;
 }
 
-/** The chain of a round (`RoundState.chain`). */
-export function chainOf(round: Pick<RoundState, 'chain'>): number {
-  return round.chain ?? 1;
+/** The last fix check of a round, or undefined. */
+export function lastFixCheck(round: Pick<RoundState, 'fixChecks'>): FixCheckState | undefined {
+  return round.fixChecks?.at(-1);
 }
+
+/** Whether the round or its last fix check is not judged yet. */
+export function running(round: RoundState): boolean {
+  return !round.judged || lastFixCheck(round)?.judged === false;
+}
+
+/** Whether the review whose last round is `round` ended: that round is `done` or `fixed` (core command.md `## review and code check`). */
+export function ended(round: RoundState | undefined): boolean {
+  return round?.judged === true && (round.result === 'done' || round.result === 'fixed');
+}
+
+/** The commit the review ended at: the start of a `done` round, the commit of the passing fix check of a `fixed` round. */
+export function endCommit(round: RoundState): string {
+  return round.result === 'fixed' ? (lastFixCheck(round)?.commit ?? round.startCommit) : round.startCommit;
+}
+
 
 /** The repo whose git common dir holds the review state: `open-game-works-core-impl/` or the harness repo. */
 export async function reviewRepo(ctx: Context, side: Side): Promise<string> {

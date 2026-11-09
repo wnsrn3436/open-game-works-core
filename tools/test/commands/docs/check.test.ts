@@ -37,11 +37,11 @@ describe('misc items', () => {
     const ws = workspace();
     expect(await checkSchema(ws.harness)).toEqual([]);
     const settings = JSON.parse(readFileSync(join(ws.harness, 'settings.json'), 'utf8')) as Record<string, unknown>;
-    writeFileSync(join(ws.harness, 'settings.json'), JSON.stringify({ ...settings, reviewRounds: 'many' }));
+    writeFileSync(join(ws.harness, 'settings.json'), JSON.stringify({ ...settings, resultFixRounds: 'many' }));
     const failures = await checkSchema(ws.harness);
     expect(failures.length).toBeGreaterThan(0);
     expect(failures[0]).toMatchObject({ item: 'schema', where: 'settings.json' });
-    expect(failures.map((f) => f.reason).join('\n')).toContain('/reviewRounds');
+    expect(failures.map((f) => f.reason).join('\n')).toContain('/resultFixRounds');
     writeFileSync(join(ws.harness, 'settings.json'), '{');
     expect((await checkSchema(ws.harness))[0]?.reason).toContain('invalid JSON');
   });

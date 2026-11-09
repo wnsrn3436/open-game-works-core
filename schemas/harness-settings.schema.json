@@ -22,7 +22,6 @@
     "loopStop",
     "loop",
     "calibration",
-    "reviewRounds",
     "codeCheck",
     "rigCheck",
     "time",
@@ -383,11 +382,6 @@
           "minimum": 1
         }
       }
-    },
-    "reviewRounds": {
-      "description": "The maximum number of review rounds for one target in code review. [core command](../skills/core/command.md) and `## update harness tool` of [ogw](../tools/ogw.md) define the round",
-      "type": "integer",
-      "minimum": 1
     },
     "codeCheck": {
       "description": "Criterion values of `ogw code check` and static check `lint`",
