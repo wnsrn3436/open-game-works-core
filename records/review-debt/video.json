@@ -1,0 +1,12 @@
+{
+  "target": "video",
+  "nextId": 2,
+  "items": [
+    {
+      "id": "D1",
+      "location": "schemas/game-settings.schema.json:202",
+      "problem": "the `pixelRatio` description of `uiCheckScreens` still says \"The UI quality check measures text, buttons, panels and flashing areas in window pixels ÷ this value\", while commit cea92f2 removed the flash check from `## UI quality` of tools/ogw.md and from AGENTS.md completeness UI quality; the commit message says the schema descriptions no longer name the check, but only the `targetFps` description was changed",
+      "foundBy": "video round 1"
+    }
+  ]
+}
