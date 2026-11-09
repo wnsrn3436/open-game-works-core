@@ -298,6 +298,22 @@ describe('ogw review: core', () => {
     expect(fixInputTypeCheck(waited)).toMatchObject({ result: 'pass', failures: [] });
   });
 
+  it('does not count a type check failure outside the target in the fix check, and gives it as a code check fail outside target line', async () => {
+    const ws = makeWorkspace();
+    storageFails(ws, 'export const r = 1;\n');
+    const structure = '| R1-1 | `structure` | medium | server/core/routing/index.ts:1 | reaches into x | use y | no | 90 |';
+    await next(ws, ['core', 'routing'], reviewer(ws, { 1: reviewFile([structure]) }));
+    expect((await wait(ws, ['core', 'routing'])).stdout).toMatch(/^result: fix\n/);
+    const fixInput = join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'round-1-fix.md');
+    const coreAgent = fakeAgentCli(ws, "fs.writeFileSync('fixed.txt', 'y'); execFileSync('git', ['add', '-A']); execFileSync('git', ['commit', '-qm', 'fix', '--no-verify']); fs.writeFileSync(output, 'report'); " + CORE_TEST_PASSED);
+    const job = (await ogw(ws, ['agent', 'core', '--input', fixInput, '--background'], { env: coreAgent.env })).stdout.trim();
+    await ogw(ws, ['agent', 'wait', job, '--timeout', '60000']);
+    expect((await ogw(ws, ['agent', 'merge', job])).code).toBe(0);
+    expect((await next(ws, ['core', 'routing'], reviewer(ws, {}))).stdout).toMatch(/^round: 1\nfix check job: /);
+    const line = "server/core/storage/index.ts:1:14 TS2322 Type 'string' is not assignable to type 'number'.";
+    expect(await wait(ws, ['core', 'routing'])).toMatchObject({ code: 0, stdout: `result: fixed\nround: 1\ncode check fail outside target: ${line}\n` });
+  }, 120_000);
+
   it('starts a core round at main whatever the checkout holds, and runs the code check on that commit', async () => {
     const ws = makeWorkspace();
     const older = sh(ws.coreImpl, 'git', ['rev-parse', 'HEAD']).trim();

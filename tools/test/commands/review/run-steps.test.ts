@@ -71,12 +71,14 @@ describe('ogw review run', () => {
     const failed = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env });
     expect(failed.code).toBe(1);
     expect(failed.stdout).toMatch(/^result: check fail\nround: 1\ncode check fail: type check\n {2}server\/core\/routing\/helper\.ts:1:14 TS2322 /);
-    expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 1 fix spec change: none job: none\n');
+    // the round stays fix; status gives the result of its judged fix check, as the run does
+    expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 1 check fail spec change: none job: none\n');
     // the lead's fix of the failure; the next run calls no core agent and no review agent
     writeFileSync(join(ws.coreImpl, 'server', 'core', 'routing', 'helper.ts'), 'export const r = 2;\n');
     commitCore(ws, 'the fix of the type check');
     const again = await ogw(ws, ['review', 'run', 'core', 'routing'], { env: fake.env });
     expect(again).toMatchObject({ code: 0, stdout: 'result: fixed\nround: 1\n' });
+    expect((await ogw(ws, ['review', 'status', 'core'])).stdout).toBe('routing round 1 fixed spec change: none job: none\n');
     expect(fixCalls(fake.calls())).toEqual(['1 fix']);
     const state = JSON.parse(readFileSync(join(ws.coreImpl, '.git', 'ogw-review', 'routing', 'state.json'), 'utf8')) as { rounds: { fixChecks: { result: string }[] }[] };
     expect(state.rounds[0]?.fixChecks.map((c) => c.result)).toEqual(['fail', 'pass']);

@@ -5,12 +5,12 @@ import { listJobs, type JobRecord } from '../../../lib/jobs.ts';
 import { sideAndTarget } from '../next.ts';
 import { run } from '../run.ts';
 import type { Side } from './input.ts';
-import { listTargets, readState, reviewRoot, running } from './state.ts';
+import { lastFixCheck, listTargets, readState, reviewRoot, running, type RoundState } from './state.ts';
 
 export interface TargetStatus {
   target: string;
   round: number;
-  /** The result of the last round, `running` before it or its last fix check is judged, or null with no round. */
+  /** The result of the last round (`statusResult`), or null with no round. */
   result: string | null;
   /** Ids of the `open` findings of the last judged round whose `spec change` is `yes`. */
   specChange: string[];
@@ -29,6 +29,16 @@ function runTarget(job: JobRecord): string | null {
   }
 }
 
+/**
+ * The result of the last round (core command.md `## review and code check`): `running` before it or its last fix check
+ * is judged, `check fail` when that fix check was judged with a `fail` (as `ogw review wait` gives it), else the round's
+ * result.
+ */
+function statusResult(last: RoundState): string | null {
+  if (running(last)) return 'running';
+  return lastFixCheck(last)?.result === 'fail' ? 'check fail' : last.result;
+}
+
 /** `ogw review status <core|tool>`. */
 export async function reviewStatus(ctx: Context, side: Side): Promise<CommandResult> {
   const root = await reviewRoot(ctx, side);
@@ -43,7 +53,7 @@ export async function reviewStatus(ctx: Context, side: Side): Promise<CommandRes
     targets.push({
       target,
       round: last?.round ?? 0,
-      result: last === undefined ? null : running(last) ? 'running' : last.result,
+      result: last === undefined ? null : statusResult(last),
       specChange: (judged?.open ?? []).filter((f) => f.specChange === 'yes').map((f) => f.id),
       job: runs.find((job) => runTarget(job) === target)?.id ?? null,
     });
