@@ -11,7 +11,7 @@ let workspaceEnv: NodeJS.ProcessEnv | undefined;
 /** A workspace env, so the private temp folders of processSound stay out of the real harness repo. */
 const testEnv = (): NodeJS.ProcessEnv => (workspaceEnv ??= makeWorkspace().env);
 
-const SFX: SoundTarget = { shape: { kind: 'once', trim: true, maxMs: null }, momentary: true, loudnessLufs: -18, peakMaxDbtp: -1.5, ogg: false, minLengthMs: null };
+const SFX: SoundTarget = { shape: { kind: 'once', trim: true, maxMs: null }, momentary: true, loudnessLufs: -18, peakMaxDbtp: -1.5, ogg: false };
 
 /** Channel count, sample rate and length in ms of PCM WAV bytes, from their `fmt ` and `data` chunks. */
 function wavFormat(bytes: Buffer): { channels: number; rate: number; lengthMs: number } {

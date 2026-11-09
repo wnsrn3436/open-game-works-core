@@ -333,32 +333,15 @@ describe('ogw resource finalize', () => {
     expect(snapshot(f)).toBe(before);
   });
 
-  it('fails without a change an sfx played once that is shorter than half the length it was made for', async () => {
-    const moss = { ...(measuredMethods().find((m) => (m as { name: string }).name === 'moss-sfx') as object), measured: [{ durationMs: 1000, result: 'ok' }] };
-    const f = setup(
-      [
-        { key: 'sfx/a', spec: 'length=200', status: 'requested' },
-        { key: 'sfx/b', spec: 'length=3000', status: 'requested' },
-      ],
-      {},
-      { resourceGeneration: [...measuredMethods().filter((m) => (m as { name: string }).name !== 'moss-sfx'), moss] },
-    );
+  it('finalizes an sfx played once that is much shorter than the length it was made for', async () => {
+    const f = setup([{ key: 'sfx/a', spec: 'length=200', status: 'requested' }]);
     await sync(f);
-    const before = snapshot(f);
     // 60 ms of a tone, and the ring of the DC filter after it
     const short = work(f, 'short.wav');
     writeFileSync(short, pcmWav([[...sine(60, 500, 0.3), ...silence(500)]]));
-    const bad = await finalize(f, ['sfx/a', '--method', 'moss-sfx', '--file', short, '--bus', 'Sfx']);
-    expect(bad.code).toBe(1);
-    expect(bad.stderr).toMatch(/short\.wav: the sound is (6|7|8|9)[0-9]\.[0-9] ms after the cuts, shorter than half of the 200\.0 ms it was made for/);
-    expect(snapshot(f)).toBe(before);
-    const half = work(f, 'half.wav');
-    writeFileSync(half, pcmWav([[...sine(110, 500, 0.3), ...silence(500)]]));
-    expect((await finalize(f, ['sfx/a', '--method', 'moss-sfx', '--file', half, '--bus', 'Sfx'])).stderr).toBe('');
-    // made with the fallback stage of 1000 ms for its 3000 ms: half of 1000 ms is enough
-    const fallback = work(f, 'fallback.wav');
-    writeFileSync(fallback, pcmWav([[...sine(600, 500, 0.3), ...silence(500)]]));
-    expect((await finalize(f, ['sfx/b', '--method', 'moss-sfx', '--file', fallback, '--bus', 'Sfx'])).stderr).toBe('');
+    const run = await finalize(f, ['sfx/a', '--method', 'moss-sfx', '--file', short, '--bus', 'Sfx']);
+    expect(run.stderr).toBe('');
+    expect(rowOf(f.game, 'sfx/a').status).toBe('final');
   });
 
   it('removes a DC offset before it measures', async () => {

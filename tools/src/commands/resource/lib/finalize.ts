@@ -5,7 +5,7 @@ import { OgwError } from '../../../lib/errors.ts';
 import { exists, readJson } from '../../../lib/fsx.ts';
 import type { GameRepo } from '../../../lib/game.ts';
 import { mergedCoreSettings } from '../../generate/api.ts';
-import { catalogEntries, generationMethods, LOGO_PREFIX, type Stage } from '../../generation/api.ts';
+import { catalogEntries, generationMethods, LOGO_PREFIX } from '../../generation/api.ts';
 import { processSound, type SoundShape } from './audio.ts';
 import { FileChanges } from './files.ts';
 import { modelProblems } from './glb.ts';
@@ -74,8 +74,6 @@ interface Job {
    * until it is replaced, and a text voice whose line changed goes back to placeholder.
    */
   requestedAgain: boolean;
-  /** The stage of `--method` that `ogw generation methods` gives, null for a method measured without stages. */
-  stage: Stage | null;
 }
 
 const IMAGE_POST = ['image', 'icon', 'background', 'texture', 'app_icon', 'splash'];
@@ -273,15 +271,6 @@ function soundBus(job: Job): string {
 /** Gain over the bus loudness per `sfx` `level` (`production.md` `## finalize`). */
 const LEVEL_OFFSET_DB: Record<SfxLevel, number> = { quiet: -8, normal: 0, loud: 4 };
 
-/**
- * Half the length an `sfx` played once was made for: `length` of `spec`, or the `durationMs` of the stage of `--method`
- * when that is shorter; null for any other sound.
- */
-function minLengthMs(job: Job): number | null {
-  if (job.parsed.type !== 'sfx' || job.spec.loop) return null;
-  const made = Math.min(requireLength(job.row.key, job.spec), job.stage?.durationMs ?? Infinity);
-  return made / 2;
-}
 /** Longest seam of a looped `sfx`: the crossfade is this or a quarter of the `spec` length. */
 const SFX_SEAM_MS = 500;
 
@@ -321,7 +310,6 @@ async function soundPlan(job: Job, plan: Plan): Promise<void> {
       loudnessLufs: target.lufs + LEVEL_OFFSET_DB[job.spec.level],
       peakMaxDbtp: target.peak,
       ogg: ext === '.ogg',
-      minLengthMs: minLengthMs(job),
     }, job.ctx.env);
     const path = keyPath(job.row.key, ext, variants ? i + 1 : null);
     plan.changes.write(path, result.bytes);
@@ -482,7 +470,7 @@ async function prepare(ctx: Context, game: GameRepo, options: FinalizeOptions, t
   const choices = await generationMethods(ctx, game, options.key);
   const choice = choices.find((m) => m.name === options.method);
   const spec = parseSpec(row.key, parsed.type, row.spec);
-  const job: Job = { ctx, game, options, parsed, spec, row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final', requestedAgain, stage: choice?.stage ?? null };
+  const job: Job = { ctx, game, options, parsed, spec, row, rows, engine: engineOf(settings), tools, skeleton: null, split: null, status: 'final', requestedAgain };
   const methods = choices.map((m) => m.name);
   if (choice?.temporary === true) job.status = 'temporary';
   const problems = [...rowProblems(job, methods), ...optionProblems(job)];

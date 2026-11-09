@@ -75,8 +75,6 @@ export interface SoundTarget {
   loudnessLufs: number;
   peakMaxDbtp: number;
   ogg: boolean;
-  /** The shortest a shaped sound may be (half the length it was made for); null for no check. */
-  minLengthMs: number | null;
 }
 
 export interface SoundResult {
@@ -361,16 +359,6 @@ function leveled(pcm: Pcm, target: SoundTarget, ceilingDbtp: number, measured: {
   throw new OgwError(`${file}: the limiter does not bring the loudness to ${fixed(target.loudnessLufs)} LUFS under the true peak limit ${fixed(ceilingDbtp)} dBTP`);
 }
 
-/** The checks of the shaped sound that fail before it is encoded. */
-function shapedProblems(pcm: Pcm, target: SoundTarget, file: string): string | null {
-  if (!pcm.samples.some((v) => v !== 0)) return `${file}: no loudness to measure; the sound is silent`;
-  const ms = lengthMs(pcm);
-  if (target.minLengthMs !== null && ms < target.minLengthMs) {
-    return `${file}: the sound is ${fixed(ms)} ms after the cuts, shorter than half of the ${fixed(target.minLengthMs * 2)} ms it was made for`;
-  }
-  return null;
-}
-
 /**
  * Removes the DC offset and shapes (`SoundShape`), brings the loudness (`soundLoudness`) to the target through the
  * true peak limiter, encodes, and measures the written file. The encode can leave the written file over the true peak
@@ -380,8 +368,7 @@ function shapedProblems(pcm: Pcm, target: SoundTarget, file: string): string | n
 export async function processSound(program: string, file: string, target: SoundTarget, env: NodeJS.ProcessEnv): Promise<SoundResult> {
   return withTemp(env, async (dir) => {
     const shaped = shapeSound(removeDc(await decode(program, file, dir, 'decoded.wav')), target.shape, file);
-    const problem = shapedProblems(shaped, target, file);
-    if (problem !== null) throw new OgwError(problem);
+    if (!shaped.samples.some((v) => v !== 0)) throw new OgwError(`${file}: no loudness to measure; the sound is silent`);
     const loudness = soundLoudness(shaped, target);
     const peak = truePeak(shaped);
     if (loudness === null || peak === null) throw new OgwError(`${file}: no loudness to measure; the sound is silent`);
