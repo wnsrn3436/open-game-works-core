@@ -678,7 +678,7 @@ describe('ogw env propose', () => {
     expect(out.notices.filter((n) => n.id === 'agent-login-token')).toEqual([
       {
         id: 'agent-login-token',
-        detail: `harness secret claude-code-oauth-token is not in the host secret store (missing): ${store}. Without it ogw loop start and ogw build start do not start`,
+        detail: `harness secret claude-code-oauth-token is not in the host secret store (missing): ${store}. Without it ogw loop start and ogw judge calibrate do not start`,
       },
     ]);
     const tokenNotices = async (agentLoginToken: unknown): Promise<Out['notices']> => {

@@ -739,7 +739,7 @@ function loginTokenNotice(check: NonNullable<Inputs['check']>): Notice[] {
       ? `harness secret ${AGENT_LOGIN_TOKEN_SECRET} is ${output} (invalid). ${STORE_LOGIN_TOKEN}`
       : `Claude Code failed to authenticate with harness secret ${AGENT_LOGIN_TOKEN_SECRET} in the ${role} agent sandbox (invalid): ${output}. ${STORE_LOGIN_TOKEN}`;
   const detail = {
-    missing: `harness secret ${AGENT_LOGIN_TOKEN_SECRET} is not in the host secret store (missing): ${STORE_LOGIN_TOKEN}. Without it ogw loop start and ogw build start do not start`,
+    missing: `harness secret ${AGENT_LOGIN_TOKEN_SECRET} is not in the host secret store (missing): ${STORE_LOGIN_TOKEN}. Without it ogw loop start and ogw judge calibrate do not start`,
     invalid,
     unverified: `the Claude Code run with harness secret ${AGENT_LOGIN_TOKEN_SECRET} in the ${role} agent sandbox failed without an authentication failure (unverified): ${output}. Check this error`,
   }[state];
