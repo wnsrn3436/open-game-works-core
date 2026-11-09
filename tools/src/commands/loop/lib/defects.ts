@@ -170,16 +170,6 @@ export function proofExemption(defect: Pick<Defect, 'owner' | 'source'>, note: s
   return null;
 }
 
-/** The answers of the play agents of a record about one defect to confirm (play feedback `## defects`). */
-export interface DefectAnswers {
-  /** A play agent answered `reproduced`. */
-  reproduced: boolean;
-  /** A play agent answered `absent`. */
-  absent: boolean;
-  /** What the `reproduced` answers add to `evidence`: the feedback line of each row and its capture. */
-  evidence: string[];
-}
-
 export interface RecordInput {
   /** Defects before this record. */
   base: readonly Defect[];
@@ -190,8 +180,6 @@ export interface RecordInput {
   report: ReadonlyMap<string, ReportRow> | null;
   /** The fix test proof `result` of each `fixed` row of the report by defect id; a row without one has no `pass`. */
   proofs?: ReadonlyMap<string, string>;
-  /** The play agents' answers by defect id. */
-  answers?: ReadonlyMap<string, DefectAnswers>;
 }
 
 function confirm(defect: Defect, found: boolean): void {
@@ -205,12 +193,12 @@ function confirm(defect: Defect, found: boolean): void {
 }
 
 /**
- * An `awaiting confirmation` defect whose confirmation gave a result is `open` when this record has a finding of its id
- * or a play agent answered `reproduced`, else `fixed`; a `fixed` defect with a finding is `reopened`.
+ * An `awaiting confirmation` defect whose confirmation gave a result is `open` when this record has a finding of its id,
+ * else `fixed`; a `fixed` defect with a finding is `reopened`.
  */
-function changeByFinding(defect: Defect, found: boolean, reproduced: boolean, confirmed: boolean): void {
+function changeByFinding(defect: Defect, found: boolean, confirmed: boolean): void {
   if (defect.status === 'awaiting confirmation') {
-    if (confirmed) confirm(defect, found || reproduced);
+    if (confirmed) confirm(defect, found);
   } else if (defect.status === 'fixed' && found) {
     defect.status = 'reopened';
     defect.oscillation++;
@@ -228,16 +216,6 @@ function changeByReport(defect: Defect, row: ReportRow | undefined, proof: strin
   }
 }
 
-/**
- * The defect after the status change by its row of the content agent report (ogw.md `## loop record`), before the
- * confirmation; `proof` is the fix test proof `result` of a `fixed` row.
- */
-export function afterReport(defect: Defect, row: ReportRow | undefined, proof: string | undefined): Defect {
-  const changed = structuredClone(defect);
-  changeByReport(changed, row, proof);
-  return changed;
-}
-
 /** The defect list after this record, in defect list order. */
 export function recordDefects(input: RecordInput): Defect[] {
   const groups = groupFindings(input.findings);
@@ -248,8 +226,7 @@ export function recordDefects(input: RecordInput): Defect[] {
     const defect: Defect = structuredClone(previous);
     const group = groups.get(defect.id);
     if (input.report) changeByReport(defect, input.report.get(defect.id), input.proofs?.get(defect.id));
-    const answers = input.answers?.get(defect.id);
-    changeByFinding(defect, group !== undefined, answers?.reproduced === true, input.confirmed(defect, group !== undefined));
+    changeByFinding(defect, group !== undefined, input.confirmed(defect, group !== undefined));
     if (group) {
       Object.assign(defect, group);
       groups.delete(defect.id);
@@ -257,7 +234,6 @@ export function recordDefects(input: RecordInput): Defect[] {
     } else {
       rest.push(defect);
     }
-    for (const e of answers?.evidence ?? []) if (!defect.evidence.includes(e)) defect.evidence.push(e);
   }
   for (const group of groups.values()) {
     found.push({ ...group, status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 });

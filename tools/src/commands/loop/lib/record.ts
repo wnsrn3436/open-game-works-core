@@ -15,7 +15,6 @@ import {
   recordDefects,
   type Defect,
   type DefectsFile,
-  type DefectAnswers,
   type FindingsFile,
   type RecordInput,
   type ReportRow,
@@ -27,7 +26,6 @@ import { hardeningRecords, latestHardeningFindings } from './findings.ts';
 import { iterationRecords, renderIterationRecord, type IterationRecordData, type RecordJudge, type RecordPlay, type RecordVariant, type RecordVotes } from './iteration-record.ts';
 import { cell, column, parseTable, section } from './markdown.ts';
 import { judgeSectionText, observations } from './results.ts';
-import { playAnswersOf } from './confirm.ts';
 import { abs, confirmOf, iterationKind, iterationResults, readGameText, readRunJson, runRel, type IterationResults } from './run.ts';
 import type { VariantsFile } from './variants.ts';
 import { harnessHead, harnessLine } from './harness-pin.ts';
@@ -89,12 +87,10 @@ async function labelOf(game: GameRepo, run: RunState, hardening: boolean): Promi
 }
 
 /** Results of this record that a confirmation of ogw.md `## loop record` reads. */
-export interface Confirmations {
+interface Confirmations {
   check: CheckFile | null;
   measure: MeasureFile | null;
   evaluate: EvaluateFile | null;
-  /** The answers of the done plays of `evaluate` about the defects to confirm, by defect id. */
-  answers: ReadonlyMap<string, DefectAnswers>;
 }
 
 /** A check defect: a check or metric of its evidence gave a result. */
@@ -107,17 +103,27 @@ function checkConfirmed(results: Confirmations, defect: Defect): boolean {
 }
 
 /**
- * True when this record's confirmation of the defect gave a result (ogw.md `## loop record`). A play or judge defect is
- * confirmed by a finding of its id in this record (`found`) or by a play agent that answered `reproduced` or `absent`:
- * `not reached` is no result, and the judges are not shown defects.
+ * True when this record's confirmation of the defect gave a result (ogw.md `## loop record`). A confirmation iteration
+ * (`confirming`) takes only blocker play findings, so for another play defect it gives a result only when this record
+ * has a finding of its id (`found`), and like any play confirmation only with a done play. A judge defect is confirmed
+ * only by a completeness iteration: a fun judge sees three elements, no reference and no moments.
  */
-export function confirmedBy(results: Confirmations, hardening: boolean, defect: Defect, found = false): boolean {
+export function confirmedBy(results: Confirmations, hardening: boolean, defect: Defect, confirming = false, found = false): boolean {
   if (hardening || defect.source === 'hardening') return hardening && defect.source === 'hardening';
+  if (confirming && defect.source === 'play' && defect.severity !== 'blocker' && !found) return false;
   if (defect.source === 'check') return checkConfirmed(results, defect);
-  const answers = results.answers.get(defect.id);
-  return found || answers?.reproduced === true || answers?.absent === true;
+  return defect.source === 'play' ? playConfirmed(results) : judgeConfirmed(results);
 }
 
+function playConfirmed(results: Confirmations): boolean {
+  return results.evaluate?.plays.some((p) => p.status === 'done') ?? false;
+}
+
+/** A judge defect: a done judge of a completeness iteration. */
+function judgeConfirmed(results: Confirmations): boolean {
+  const evaluate = results.evaluate;
+  return evaluate !== null && evaluate.kind !== 'fun' && evaluate.judges.some((j) => j.status === 'done');
+}
 
 async function judgesOf(game: GameRepo, evaluate: EvaluateFile): Promise<RecordJudge[]> {
   const out: RecordJudge[] = [];
@@ -164,10 +170,10 @@ function kindOf(run: RunState, evaluate: EvaluateFile | null): IterationKind {
   return evaluate?.kind ?? iterationKind(run, run.iteration);
 }
 
-/** `## votes`: the `vs baseline` of the iteration, the step 4 judges together and the confirmation pair; null without a baseline game or an evaluate file. */
+/** `## votes`: the step 4 judges together; null without a baseline game or an evaluate file. */
 function votesOf(evaluate: EvaluateFile | null): RecordVotes | null {
   if (evaluate === null || evaluate.baseline === null) return null;
-  return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [], ...(evaluate.confirmation === undefined ? {} : { confirmation: evaluate.confirmation }) };
+  return { vsBaseline: evaluate.vsBaseline, vsReference: evaluate.vsReference, elements: evaluate.votes ?? [] };
 }
 
 /** `## variants`: the variants of `variants-<n>.json`; null without that file. */
@@ -233,20 +239,20 @@ async function baseDefects(game: GameRepo, defectsRel: string, label: string): P
 
 /**
  * What this record decides the status changes by (ogw.md `## loop record`): the content agent report with the fix test
- * proofs of the check file, and the confirmations with the answers of the done plays. A hardening record has neither
- * report nor iteration results.
+ * proofs of the check file, and the confirmations by the iteration results. A hardening record has neither report nor
+ * iteration results.
  */
 async function recordInputOf(game: GameRepo, run: RunState, hardening: boolean): Promise<{ results: IterationResults; input: Omit<RecordInput, 'base' | 'findings'> }> {
   if (hardening) {
-    const none: Confirmations = { check: null, evaluate: null, measure: null, answers: new Map() };
-    return { results: { checkRel: '', check: null, evaluate: null, measure: null }, input: { report: null, confirmed: (defect, found) => confirmedBy(none, true, defect, found) } };
+    const none: IterationResults = { checkRel: '', check: null, evaluate: null, measure: null };
+    return { results: none, input: { report: null, confirmed: (defect) => confirmedBy(none, true, defect) } };
   }
   const report = reportRows((await readGameText(game, runRel(run, `content-${String(run.iteration)}.md`))) ?? '');
   const results = await iterationResults(game, run, run.iteration);
-  const answers = await playAnswersOf(game, results.evaluate);
-  const confirmations: Confirmations = { ...results, answers };
+  // in a confirmation iteration a finding of the defect's id is a result also for a play defect that is not a blocker
+  const confirming = confirmOf(run, run.iteration) !== null;
   const proofs = new Map((results.check?.fixTestProof ?? []).map((p) => [p.id, p.result]));
-  return { results, input: { report, proofs, answers, confirmed: (defect, found) => confirmedBy(confirmations, false, defect, found) } };
+  return { results, input: { report, proofs, confirmed: (defect, found) => confirmedBy(results, false, defect, confirming, found) } };
 }
 
 /**

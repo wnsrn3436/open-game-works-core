@@ -181,15 +181,15 @@ describe('harness pin', () => {
     expect(pinHarness(run, 'c', first, 0)).toEqual({ commit: null, units: [] });
     expect(pinnedRunSettings(run)).toEqual(first);
     expect(pinHarness(run, 'c', structuredClone(first), 2)).toBeNull();
-    const second = { agents: { content: { model: 'b', effort: 'high' } }, loop: { funIterations: 3, judgePanel: [{ model: 'm', effort: 'e' }], confirmJudge: { model: 'x', effort: 'y' } } };
+    const second = { agents: { content: { model: 'b', effort: 'high' }, judge: { model: 'x', effort: 'y' } }, loop: { funIterations: 3, judgePanel: [{ model: 'm', effort: 'e' }] } };
     const repin = pinHarness(run, 'c', second, 2);
-    expect(repin).toEqual({ commit: null, units: ['agents.content.model', 'loop.judgePanel', 'loop.confirmJudge.model', 'loop.confirmJudge.effort'] });
-    expect(repinLines(repin, ', counts for iteration 2')).toEqual(['run settings: agents.content.model, loop.judgePanel, loop.confirmJudge.model, loop.confirmJudge.effort (repinned), counts for iteration 2']);
+    expect(repin).toEqual({ commit: null, units: ['agents.content.model', 'agents.judge.model', 'agents.judge.effort', 'loop.judgePanel'] });
+    expect(repinLines(repin, ', counts for iteration 2')).toEqual(['run settings: agents.content.model, agents.judge.model, agents.judge.effort, loop.judgePanel (repinned), counts for iteration 2']);
     expect(pinnedRunSettings(run)).toEqual(second);
     // the harness commit of the iteration did not change
     expect(harnessLine(run, 2, 'head')).toBe('c');
-    const third = pinHarness(run, 'd', { agents: second.agents, loop: { funIterations: 3, judgePanel: second.loop.judgePanel } }, 3);
-    expect(repinLines(third)).toEqual(['harness: d (repinned from c)', 'run settings: loop.confirmJudge.model, loop.confirmJudge.effort (repinned)']);
+    const third = pinHarness(run, 'd', { agents: { content: second.agents.content }, loop: second.loop }, 3);
+    expect(repinLines(third)).toEqual(['harness: d (repinned from c)', 'run settings: agents.judge.model, agents.judge.effort (repinned)']);
     expect(changedRunUnits({ a: [1] }, { a: [1, 2], b: 1 })).toEqual([['a'], ['b']]);
     expect(changedRunUnits(null, { a: { b: 1 } })).toEqual([['a', 'b']]);
   });

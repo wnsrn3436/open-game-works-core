@@ -162,53 +162,6 @@ describe('iteration record', () => {
     expect(confirming.confirms).toBe(3);
   });
 
-  it('writes the judges of the confirmation pair, the fallback and the confirmation, and parses the vs baseline of the iteration', () => {
-    const codex = { cli: 'codex' as const, model: 'gpt-6.1-sol', effort: 'high' };
-    const sonnet = { cli: 'claude-code' as const, model: 'claude-sonnet-5-5', effort: 'high' };
-    const text = renderIterationRecord({
-      ...DATA,
-      kind: 'fun',
-      judges: [
-        { ...judgeEntry({ vsReference: null }), moments: '', loserBetter: '' },
-        { ...judgeEntry({ kind: 'confirm', result: 'records/loops/r/judge-1-3.md', agent: codex, vsReference: null }), moments: '', loserBetter: '' },
-        { ...judgeEntry({ kind: 'confirm', result: 'records/loops/r/judge-1-4.md', agent: sonnet, fallback: 'usage limit', vsReference: null }), moments: '', loserBetter: '' },
-      ],
-      votes: {
-        vsBaseline: 'indistinguishable',
-        vsReference: null,
-        elements: [
-          { element: 'game feel', this: 2, baseline: 0, decision: 'this' },
-          { element: 'no friction', this: 0, baseline: 0, decision: 'indistinguishable' },
-        ],
-        confirmation: {
-          outcome: 'overturned',
-          fallback: true,
-          votes: [
-            { element: 'game feel', this: 1, baseline: 1, decision: 'uncertain' },
-            { element: 'no friction', this: 0, baseline: 0, decision: 'indistinguishable' },
-          ],
-        },
-      },
-    });
-    expect(text).toContain('### records/loops/r/judge-1-3.md\n\n- kind: confirm\n- status: done\n- agent: codex gpt-6.1-sol high\n');
-    expect(text).toContain('### records/loops/r/judge-1-4.md\n\n- kind: confirm\n- status: done\n- agent: claude-code claude-sonnet-5-5 high (fallback: usage limit)\n');
-    expect(text).toContain(
-      '## votes\n\n- vs baseline: indistinguishable\n- vs reference: none\n- confirmation: overturned (fallback: usage limit)\n\n' +
-        '| element | this | baseline | decision | confirm this | confirm baseline | confirm decision |\n|---|---|---|---|---|---|---|\n' +
-        '| game feel | 2 | 0 | this | 1 | 1 | uncertain |\n| no friction | 0 | 0 | indistinguishable | 0 | 0 | indistinguishable |\n',
-    );
-    const parsed = parseIterationRecord(text, 2, 'p2');
-    expect(parsed).toMatchObject({ kind: 'fun', vsBaseline: 'indistinguishable', vsReference: null });
-    expect(parsed.judges?.map((j) => j.kind)).toEqual(['main', 'confirm', 'confirm']);
-    expect(mainJudges(parsed)).toHaveLength(1);
-    // the overturned better does not advance the baseline game
-    const run = newRunState({ name: 'update-1', kind: 'loop', command: 'update', branch: 'loop/update-1', baseCommit: 'b0', iteration: 3 });
-    expect(baselineFrom(run, [parsed])).toBe('b0');
-    const confirmed = renderIterationRecord({ ...DATA, kind: 'fun', votes: { vsBaseline: 'better', vsReference: null, elements: [], confirmation: { outcome: 'confirmed', fallback: false, votes: [] } } });
-    expect(confirmed).toContain('- vs baseline: better\n- vs reference: none\n- confirmation: confirmed\n');
-    expect(baselineFrom(run, [parseIterationRecord(confirmed, 2, 'p2')])).toBe('c1');
-  });
-
   it('writes none for steps that did not run', () => {
     const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [], cost: [] });
     expect(text).toBe(

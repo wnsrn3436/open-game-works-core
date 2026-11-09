@@ -132,8 +132,7 @@ const REALISTIC_LOCAL = {
   },
   agents: { content: { effort: 'high' } },
   loop: {
-    confirmJudge: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
-    confirmFallback: { cli: 'claude-code', model: 'claude-sonnet-5-5', effort: 'high' },
+    judgePanel: [{ cli: 'codex', model: 'gpt-6.1-sol', effort: 'high' }],
   },
 };
 
@@ -157,7 +156,7 @@ describe('host items', () => {
     expect(settings.reviewRunConcurrency).toBe(8);
     expect(settings.imageMethod).toBe('sprite-gen-codex');
     expect(settings.humanLanguage).toBe('ko');
-    expect(settings.loop.confirmJudge).toEqual({ cli: 'codex', model: 'gpt-6.1-sol', effort: 'high' });
+    expect(settings.loop.judgePanel).toEqual([{ cli: 'codex', model: 'gpt-6.1-sol', effort: 'high' }]);
     expect(settings.resourceGeneration.find((m) => m.name === 'flux2-klein')?.measured).toEqual(FLAT_LOCAL.measured['flux2-klein']);
     expect('hosts' in settings).toBe(false);
     expect(await settingsCmd('get', 'harness', 'maxConcurrentInstances')).toEqual({ code: 0, stdout: '8\nsource: local harness settings\n', stderr: '' });

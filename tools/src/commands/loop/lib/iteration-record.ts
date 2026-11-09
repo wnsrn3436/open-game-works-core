@@ -6,14 +6,14 @@ import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { renderCost, type CostRow } from './cost.ts';
 import { DEFECT_COLUMNS, defectRow, type Defect } from './defects.ts';
-import { GATE_CHECKS, type Confirmation, type ElementVotes, type FixTestProof, type IterationKind, type JudgeAgent, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
+import { GATE_CHECKS, type ElementVotes, type FixTestProof, type IterationKind, type JudgeAgent, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
 import { cell, column, document, parseTable, renderTable, section } from './markdown.ts';
 import { abs, runRel } from './run.ts';
 import { combinedVsReference } from './votes.ts';
 
 /** Loop iteration record `records/loops/<run>/iteration-<n>.md` (ogw.md `## loop record`). */
 
-export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'A' | 'B' | 'vsReference' | 'omittedMoments' | 'status' | 'fallback'> {
+export interface RecordJudge extends Pick<JudgeEntry, 'kind' | 'result' | 'A' | 'B' | 'vsReference' | 'omittedMoments' | 'status'> {
   /** null when the evaluate file has no agent of the judge. */
   agent: JudgeAgent | null;
   moments: string;
@@ -72,17 +72,12 @@ function variantsBlock(variants: readonly RecordVariant[] | null): string {
   );
 }
 
-/** `## votes`: the `vs baseline` of the iteration, the step 4 judges together and the confirmation pair. */
+/** `## votes`: the step 4 judges together. */
 export interface RecordVotes {
   vsBaseline: VsBaseline | null;
   vsReference: VsReference | null;
   elements: ElementVotes[];
-  /** Absent when the confirmation pair was not called. */
-  confirmation?: Confirmation;
 }
-
-/** The text after `- agent: ` and after `- confirmation: <outcome>` of a judge or a pair that ran with `loop.confirmFallback`. */
-const FALLBACK_SUFFIX = ' (fallback: usage limit)';
 
 function judgeBlock(judge: RecordJudge): string {
   return [
@@ -90,7 +85,7 @@ function judgeBlock(judge: RecordJudge): string {
     '',
     `- kind: ${judge.kind}`,
     `- status: ${judge.status}`,
-    `- agent: ${judge.agent === null ? 'unknown' : `${judge.agent.cli} ${judge.agent.model} ${judge.agent.effort}`}${judge.fallback === undefined ? '' : FALLBACK_SUFFIX}`,
+    `- agent: ${judge.agent === null ? 'unknown' : `${judge.agent.cli} ${judge.agent.model} ${judge.agent.effort}`}`,
     `- A: ${judge.A}`,
     `- B: ${judge.B ?? 'none'}`,
     `- vs reference: ${judge.vsReference ?? 'none'}`,
@@ -108,17 +103,10 @@ function judgeBlock(judge: RecordJudge): string {
 
 function votesBlock(votes: RecordVotes | null): string {
   if (votes === null) return 'none';
-  const { confirmation } = votes;
-  const confirmLine = confirmation === undefined ? '' : `\n- confirmation: ${confirmation.outcome}${confirmation.fallback ? FALLBACK_SUFFIX : ''}`;
-  const lines = `- vs baseline: ${votes.vsBaseline ?? 'none'}\n- vs reference: ${votes.vsReference ?? 'none'}${confirmLine}`;
+  const lines = `- vs baseline: ${votes.vsBaseline ?? 'none'}\n- vs reference: ${votes.vsReference ?? 'none'}`;
   if (votes.elements.length === 0) return lines;
-  const header = ['element', 'this', 'baseline', 'decision', ...(confirmation === undefined ? [] : ['confirm this', 'confirm baseline', 'confirm decision'])];
-  const rows = votes.elements.map((v) => {
-    const pair = confirmation?.votes.find((c) => c.element === v.element);
-    const confirmCells = confirmation === undefined ? [] : [String(pair?.this ?? 0), String(pair?.baseline ?? 0), pair?.decision ?? 'indistinguishable'];
-    return [v.element, String(v.this), String(v.baseline), v.decision, ...confirmCells];
-  });
-  return `${lines}\n\n${renderTable(header, rows)}`;
+  const table = renderTable(['element', 'this', 'baseline', 'decision'], votes.elements.map((v) => [v.element, String(v.this), String(v.baseline), v.decision]));
+  return `${lines}\n\n${table}`;
 }
 
 export function renderIterationRecord(data: IterationRecordData): string {

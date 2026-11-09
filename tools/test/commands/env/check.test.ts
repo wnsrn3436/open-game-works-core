@@ -505,7 +505,7 @@ describe('ogw env check', () => {
     expect(codex.stdout).not.toContain('agent login token');
   });
 
-  it('runs the token check with the judge panel items, loop.confirmJudge, then loop.confirmFallback when play and judge do not use Claude Code', async () => {
+  it('runs the token check with the first judge panel item that uses Claude Code when play and judge do not', async () => {
     const { ws, env } = setup();
     const settingsFile = join(ws.harness, 'settings.json');
     const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { agents: Record<string, object>; loop: Record<string, unknown> };
@@ -514,8 +514,6 @@ describe('ogw env check', () => {
     settings.agents.judge = codex;
     const baseLoop = settings.loop;
     writeFileSync(join(ws.root, 'secrets.json'), JSON.stringify({ 'ogw/harness/claude-code-oauth-token': 'token' }));
-    const confirmJudge = { cli: 'claude-code', model: 'confirm-model', effort: 'low' };
-    const confirmFallback = { cli: 'claude-code', model: 'fallback-model', effort: 'medium' };
     const tokenCheck = async (loopJudges: Record<string, unknown>): Promise<EnvCheckResult['agentLoginToken']> => {
       settings.loop = { ...baseLoop, ...loopJudges };
       writeFileSync(settingsFile, JSON.stringify(settings));
@@ -531,31 +529,27 @@ describe('ogw env check', () => {
         run: { role: 'judge', ok: true, authFailed: false, exitCode: 0, output: `sandboxed ok tmp own-tmp [${args} --no-session-persistence --output-format stream-json --verbose] Reply with the single word ok.` },
       };
     };
-    // only loop.confirmJudge uses Claude Code
-    expect(await tokenCheck({ judgePanel: [codex], confirmJudge, confirmFallback: codex })).toEqual(runWith('confirm-model', 'low'));
-    // loop.confirmJudge comes before loop.confirmFallback
-    expect(await tokenCheck({ confirmJudge, confirmFallback })).toEqual(runWith('confirm-model', 'low'));
-    // a judge panel item comes before loop.confirmJudge
-    expect(await tokenCheck({ judgePanel: [codex, { cli: 'claude-code', model: 'panel-model', effort: 'high' }], confirmJudge })).toEqual(runWith('panel-model', 'high'));
+    // the first panel item on Claude Code, after one on Codex
+    const panel = [codex, { cli: 'claude-code', model: 'panel-model', effort: 'high' }, { cli: 'claude-code', model: 'later-model', effort: 'low' }];
+    expect(await tokenCheck({ judgePanel: panel })).toEqual(runWith('panel-model', 'high'));
+    // no judge on Claude Code: no token is needed
+    expect((await tokenCheck({ judgePanel: [codex] }))?.needed).toBe(false);
   });
 
   it('prompt-runs the agent CLI of each judge setting as the judge, in its agent sandbox, and names the setting', async () => {
     const { ws, env } = setup();
     const settingsFile = join(ws.harness, 'settings.json');
     const settings = JSON.parse(readFileSync(settingsFile, 'utf8')) as { loop: Record<string, unknown> };
-    // the panel item has the model and effort of play and judge; the two confirm judges have their own
-    settings.loop = { ...settings.loop, judgePanel: [{ cli: 'claude-code', model: 'm', effort: 'high' }], confirmJudge: { cli: 'codex', model: 'cm', effort: 'high' }, confirmFallback: { cli: 'claude-code', model: 'fb', effort: 'medium' } };
+    // the first panel item has the model and effort of play and judge; the second has its own
+    settings.loop = { ...settings.loop, judgePanel: [{ cli: 'claude-code', model: 'm', effort: 'high' }, { cli: 'claude-code', model: 'pm', effort: 'medium' }] };
     writeFileSync(settingsFile, JSON.stringify(settings));
     const result = JSON.parse((await ogw(ws, ['env', 'check', '--json'], { env })).stdout) as EnvCheckResult;
     const groups = result.agentClis.map((c) => [c.roles, c.cli, c.model, c.sandboxed]);
     expect(groups).toContainEqual([['play', 'judge', 'loop.judgePanel[0]'], 'claude-code', 'm', true]);
-    expect(groups).toContainEqual([['loop.confirmJudge'], 'codex', 'cm', true]);
-    expect(groups).toContainEqual([['loop.confirmFallback'], 'claude-code', 'fb', true]);
-    const fallback = result.agentClis.find((c) => c.roles[0] === 'loop.confirmFallback');
-    expect(fallback?.run?.output).toContain('sandboxed ');
-    expect(fallback?.run?.output).toContain(agentCliCommand({ model: 'fb', effort: 'medium' }).args.join(' ').replace(' --output-format json', ''));
-    const confirm = result.agentClis.find((c) => c.roles[0] === 'loop.confirmJudge');
-    expect(confirm?.run?.output).toContain('cm');
+    expect(groups).toContainEqual([['loop.judgePanel[1]'], 'claude-code', 'pm', true]);
+    const second = result.agentClis.find((c) => c.roles[0] === 'loop.judgePanel[1]');
+    expect(second?.run?.output).toContain('sandboxed ');
+    expect(second?.run?.output).toContain(agentCliCommand({ model: 'pm', effort: 'medium' }).args.join(' ').replace(' --output-format json', ''));
   });
 
   it('with --for, only checks the tools items of that core command', async () => {

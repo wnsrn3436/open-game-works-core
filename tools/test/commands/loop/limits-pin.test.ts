@@ -145,26 +145,26 @@ describe('run settings', () => {
     const run = await start(g);
     expect((await ogw(g.ws, ['loop', 'next', 'g'])).code).toBe(0);
     await recordEmpty(g, run, 1, ['regression test', 'static check', 'no blocker', 'full flow']);
-    // a change of local harness settings after the start does not reach the run, and a run path the pin does not hold has no value
+    // a change of local harness settings after the start does not reach the run
     const judge = { cli: 'codex', model: 'gpt', effort: 'high' };
-    writeLocal(g, { loop: { variants: 3, funIterations: 1, confirmJudge: judge } });
+    writeLocal(g, { loop: { variants: 3, funIterations: 1, judgePanel: [judge] } });
     expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 2\nkind: fun\nvariants: 1\n');
     const ctx = createContext({ cwd: g.ws.root, env: g.ws.env, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const inRun = await runHarnessSettings(ctx, g.repo);
     expect(inRun.loop.variants).toBe(1);
     expect(inRun.loop.funIterations).toBe(3);
-    expect(inRun.loop.confirmJudge).toBeUndefined();
-    expect((await ctx.settings()).loop).toMatchObject({ variants: 3, confirmJudge: judge });
+    expect(inRun.loop.judgePanel).toEqual([]);
+    expect((await ctx.settings()).loop).toMatchObject({ variants: 3, judgePanel: [judge] });
     await recordEmpty(g, run, 2);
     // the iteration kind follows the funIterations of the pin: a second fun iteration in a row
     expect((await ogw(g.ws, ['loop', 'next', 'g'])).stdout).toBe('iteration 3\nkind: fun\nvariants: 1\n');
     await recordEmpty(g, run, 3);
     // with --repin the iteration it starts reads them: one fun iteration in a row is the most
     const repinned = await ogw(g.ws, ['loop', 'next', 'g', '--repin']);
-    expect(repinned).toMatchObject({ code: 0, stdout: 'iteration 4\nkind: completeness\nrun settings: loop.funIterations, loop.confirmJudge.cli, loop.confirmJudge.model, loop.confirmJudge.effort, loop.variants (repinned)\n' });
+    expect(repinned).toMatchObject({ code: 0, stdout: 'iteration 4\nkind: completeness\nrun settings: loop.funIterations, loop.judgePanel, loop.variants (repinned)\n' });
     const pins = (await currentRun(g)).data[HARNESS_PINS_KEY] as { iteration: number; runSettings: { loop: { variants: number } } }[];
     expect(pins.map((p) => [p.iteration, p.runSettings.loop.variants])).toEqual([[0, 1], [4, 3]]);
-    expect((await runHarnessSettings(ctx, g.repo)).loop).toMatchObject({ variants: 3, confirmJudge: judge });
+    expect((await runHarnessSettings(ctx, g.repo)).loop).toMatchObject({ variants: 3, judgePanel: [judge] });
     // the harness commit did not change: the iteration record names no repin
     expect(await recordEmpty(g, run, 4)).toContain(`- harness: ${git(g.ws.harness, 'rev-parse', 'HEAD')}\n\n## variants`);
     // the loop end record lists the run settings of each pin that changed them
@@ -174,7 +174,7 @@ describe('run settings', () => {
     const section = end.slice(end.indexOf('## run settings'), end.indexOf('\n## time\n'));
     expect(section).toContain('\n- iteration 0:\n  - agents.content.cli: "claude-code"\n');
     expect(section).toContain('\n  - loop.variants: 1\n');
-    expect(section).toMatch(/\n- iteration 4:\n {2}- loop\.funIterations: 1\n {2}- loop\.confirmJudge\.cli: "codex"\n {2}- loop\.confirmJudge\.model: "gpt"\n {2}- loop\.confirmJudge\.effort: "high"\n {2}- loop\.variants: 3\n$/);
+    expect(section).toMatch(/\n- iteration 4:\n {2}- loop\.funIterations: 1\n {2}- loop\.judgePanel: \[\{"cli":"codex","model":"gpt","effort":"high"\}\]\n {2}- loop\.variants: 3\n$/);
   });
 
   it('reads harness settings in a build run and once the run is closed', async () => {
