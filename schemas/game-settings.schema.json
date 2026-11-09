@@ -227,7 +227,7 @@
           "description": "The smallest `font_size` of a text element, in CSS pixels (`pixelRatio` of `uiCheckScreens`)",
           "type": "number",
           "exclusiveMinimum": 0,
-          "default": 18
+          "default": 12
         },
         "minContrast": {
           "description": "The smallest contrast ratio, with the pixels of its rectangle, of a text element that is not large text (`## UI quality` of `tools/ogw.md`)",

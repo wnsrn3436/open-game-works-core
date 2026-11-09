@@ -50,7 +50,7 @@ describe('ogw settings get', () => {
   });
 
   it('gives the UI quality defaults of text size, contrast by size and touch target, and the pixel ratio a screen holds', async () => {
-    expect((await get('game', 'mygame', 'uiQuality.minFontSize')).stdout).toBe('18\nsource: schema default\n');
+    expect((await get('game', 'mygame', 'uiQuality.minFontSize')).stdout).toBe('12\nsource: schema default\n');
     expect((await get('game', 'mygame', 'uiQuality.minContrast')).stdout).toBe('4.5\nsource: schema default\n');
     expect((await get('game', 'mygame', 'uiQuality.minLargeContrast')).stdout).toBe('3\nsource: schema default\n');
     expect((await get('game', 'mygame', 'uiQuality.minTouchTarget')).stdout).toBe('48\nsource: schema default\n');
