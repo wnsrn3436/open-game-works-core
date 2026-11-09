@@ -148,6 +148,25 @@ describe('ogw settings commit', () => {
     expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['?? .gitignore', '?? records/']);
   });
 
+  it('puts back the settings.json that the lead staged when the commit fails', async () => {
+    writeSettings({ engine: 'godot', coreVersion: '1.0.0', supportedLanguages: ['en', 'ko'], gamepadSupported: false });
+    sh(root, 'git', ['add', 'settings.json']);
+    const staged = sh(root, 'git', ['show', ':settings.json']);
+    writeSettings({ engine: 'godot', coreVersion: '1.0.0', supportedLanguages: ['en', 'ko', 'ja'], gamepadSupported: false });
+    const written = readFileSync(join(root, 'settings.json'), 'utf8');
+    const before = head();
+    sh(root, 'git', ['config', 'commit.gpgsign', 'true']);
+    sh(root, 'git', ['config', 'gpg.program', 'false']);
+    const run = await ogw(ws, ['settings', 'commit', 'game', 'g']);
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('gpg failed to sign the data');
+    expect(head()).toBe(before);
+    expect(sh(root, 'git', ['show', ':settings.json'])).toBe(staged);
+    expect(readFileSync(join(root, 'settings.json'), 'utf8')).toBe(written);
+    expect(sh(root, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual(['MM settings.json']);
+    expect(staticCheckDetail).not.toHaveBeenCalled();
+  });
+
   it('refuses a role that ogw agent started, and a scope other than game', async () => {
     writeSettings({ engine: 'godot', coreVersion: '1.0.0', supportedLanguages: ['en', 'ko'], gamepadSupported: false });
     const before = head();

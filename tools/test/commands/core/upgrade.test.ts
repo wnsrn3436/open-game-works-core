@@ -509,6 +509,45 @@ describe('ogw core upgrade', () => {
     expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0', engine: 'godot' });
   });
 
+  it('puts back the index entries that the lead staged for meta files when the commit fails after the sync changed them', async () => {
+    const ws = makeWorkspace();
+    const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'new proto', {}) });
+    const dir = makeGame(ws, 'g', {
+      'settings.json': { coreVersion: '1.0.0', engine: 'godot' },
+      'client/generated/contract/core_contract.gd': 'old proto',
+      'client/generated/contract/core_contract.gd.uid': 'uid',
+      'client/features/play/play.gd': 'class_name Play\n',
+      'client/features/play/play.gd.uid': 'uid://play',
+      'generated.txt': 'generated 1.0.0',
+    });
+    // the lead agent staged a script with its meta file and then changed the meta file without staging it: the sync
+    // stages the working tree of lead.gd.uid; and it staged a meta file without its source: the sync puts it back to HEAD
+    writeFiles(dir, { 'client/features/lead/lead.gd': 'class_name Lead\n', 'client/features/lead/lead.gd.uid': 'uid://lead' });
+    writeFileSync(join(dir, 'client/features/play/play.gd.uid'), 'uid://staged');
+    sh(dir, 'git', ['add', 'client/features/lead', 'client/features/play/play.gd.uid']);
+    writeFileSync(join(dir, 'client/features/lead/lead.gd.uid'), 'uid://lead2');
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([
+      'A  client/features/lead/lead.gd',
+      'AM client/features/lead/lead.gd.uid',
+      'M  client/features/play/play.gd.uid',
+    ]);
+    sh(dir, 'git', ['config', 'commit.gpgsign', 'true']);
+    sh(dir, 'git', ['config', 'gpg.program', 'false']);
+    const run = await ogw(ws, ['core', 'upgrade', 'g', '--version', '1.1.0'], { env: { ...gh.env, FAKE_TOOL_LOG: join(ws.root, 'tool-log.jsonl') } });
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('gpg failed to sign the data');
+    expect(sh(dir, 'git', ['show', ':client/features/lead/lead.gd.uid'])).toBe('uid://lead');
+    expect(sh(dir, 'git', ['show', ':client/features/play/play.gd.uid'])).toBe('uid://staged');
+    expect(readFileSync(join(dir, 'client/features/lead/lead.gd.uid'), 'utf8')).toBe('uid://lead2');
+    // the sync put the working tree of play.gd.uid back to HEAD
+    expect(sh(dir, 'git', ['status', '--porcelain']).trimEnd().split('\n')).toEqual([
+      'A  client/features/lead/lead.gd',
+      'AM client/features/lead/lead.gd.uid',
+      'MM client/features/play/play.gd.uid',
+    ]);
+    expect(readJsonFile(join(dir, 'settings.json'))).toEqual({ coreVersion: '1.0.0', engine: 'godot' });
+  });
+
   it('on a failure puts back only coreVersion, and keeps a game settings value written while the upgrade ran', async () => {
     const ws = makeWorkspace();
     const gh = fakeGh(ws, { 'v1.1.0': await release(ws, '1.1.0', 'b', {}) });
