@@ -1,12 +1,18 @@
 {
   "target": "resource finalize",
-  "nextId": 2,
+  "nextId": 3,
   "items": [
     {
       "id": "D1",
       "location": "tools/src/commands/resource/lib/glb.ts:155",
       "problem": "A `TEXCOORD_0` float that is NaN or ±Infinity makes `exactUv` call `BigInt` on a non-integer, which throws a `RangeError` instead of an `OgwError` naming the file and the triangle: `modelProblems(glbOf([{ uv: floatUv([0, 0, 1, 0, NaN, 1]) }]), 'm')` throws `RangeError: The number NaN cannot be converted to a BigInt because it is not an integer`, so `ogw resource finalize` of such a GLB ends in an internal error rather than a problem line. The code is from 2e36db1, before the range",
       "foundBy": "resource finalize round 3"
+    },
+    {
+      "id": "D2",
+      "location": "tools/src/commands/resource/lib/glb.ts:335",
+      "problem": "An island of long thin triangles laid at an angle to the axes still makes the check n²: the boxes of such triangles all meet one another, and each pair goes through `overlaps` with bigint arithmetic. Measured on this host with a clean nx × ny unwrap of [0, 1]² rotated about (0.5, 0.5), every result `null`: 1000 × 1 at 30° (2000 triangles) 563 ms, 2000 × 1 at 30° (4000) 2163 ms, 4000 × 1 at 30° (8000) 8966 ms, 1 × 4000 at 45° (8000) 11887 ms, while 1000 × 1 unrotated takes 6 ms and 300 × 300 at 30° takes 538 ms. The side of a cylinder of many radial segments and one height segment, packed with a rotation that is not a multiple of 90°, is such an island. The same layouts take the same time on the code of 42c4439 (623 ms, 2393 ms, 11495 ms), so the bounding-box broad phase has had it since before the range; avoiding it needs a broad phase that follows the triangle rather than its box (e.g. a sweep line over the triangle edges)",
+      "foundBy": "resource finalize round 4"
     }
   ]
 }
