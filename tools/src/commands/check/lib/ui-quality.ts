@@ -11,6 +11,16 @@ import { checkResult, failure, writeEvidence, type Evidence } from './evidence.t
 import { onInstance, withInstance } from './instances.ts';
 import { shareUnits, UnitQueue } from './units.ts';
 
+const MOBILE = ['android', 'ios'];
+const DESKTOP = ['windows', 'macos', 'linux', 'web'];
+
+/** The platform profiles (ogw.md `## UI quality`): the first mobile and the first other platform of `buildPlatforms`. */
+export function platformProfiles(buildPlatforms: readonly string[]): string[] {
+  const mobile = buildPlatforms.find((p) => MOBILE.includes(p));
+  const desktop = buildPlatforms.find((p) => DESKTOP.includes(p));
+  return [mobile, desktop].filter((p): p is string => p !== undefined);
+}
+
 /** Game settings `uiCheckScreens` item. */
 export interface UiCheckScreen {
   name: string;

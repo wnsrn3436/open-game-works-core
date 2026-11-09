@@ -6,7 +6,6 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { check, coreTryChecks, timing } from '../../../src/commands/check/check.ts';
 import { botPlaytest } from '../../../src/commands/check/lib/bot-playtest.ts';
 import { instanceProcesses, instanceServerLog } from '../../../src/commands/check/lib/instance-probe.ts';
-import { fpsSampling } from '../../../src/commands/check/lib/performance.ts';
 import { staticCheck } from '../../../src/commands/check/static-api.ts';
 import { coreReleaseOfGame, extractedAsset } from '../../../src/commands/core/api.ts';
 import { runData } from '../../../src/commands/data/api.ts';
@@ -49,13 +48,9 @@ vi.mock('../../../src/commands/core/lib/postgres.ts', () => ({
 }));
 
 const saved = { ...timing };
-const savedSampling = { ...fpsSampling };
 timing.pollMs = 1;
-timing.sampleMs = 20;
-fpsSampling.intervalMs = 0;
 afterAll(() => {
   Object.assign(timing, saved);
-  Object.assign(fpsSampling, savedSampling);
 });
 
 const SETTINGS = {
@@ -110,12 +105,8 @@ function setupGame(ws: TestWorkspace, files: Record<string, string | object> = {
   });
 }
 
-/** get_stats calls of an instance after which its tap ends (the fps sampler of the performance check reads them). */
-const TICKS = 6;
-
 function serveClient(): string[] {
   const calls: string[] = [];
-  const stats = new Map<string, number>();
   const answer = fakeAutomation((command, args) => {
     calls.push([command, ...args].join(' '));
     switch (command) {
@@ -123,9 +114,6 @@ function serveClient(): string[] {
         return ok(doneState());
       case 'get_telemetry':
         return ok({ started_at: 0, goal_intervals: [{}], scene_loads: [{ scene_key: 'lobby', duration_ms: 10 }] });
-      case 'get_stats':
-        // 5 s of frames on time at 60 fps
-        return ok({ fps: 60, frame_intervals_ms: Array<number>(300).fill(16.67) });
       case 'list_commands':
         return ok([{ name: 'shop.open_main' }]);
       case 'capture_screen':
@@ -137,13 +125,7 @@ function serveClient(): string[] {
         return ok(null);
     }
   });
-  vi.mocked(automationRequest).mockImplementation(async (c, id, command, args) => {
-    if (command === 'get_stats') stats.set(id, (stats.get(id) ?? 0) + 1);
-    // a tap of the performance check ends after the sampler read enough ticks; another instance reads none
-    const until = Date.now() + 500;
-    while (command === 'tap' && (stats.get(id) ?? 0) < TICKS && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 1));
-    return answer(c, id, command, args);
-  });
+  vi.mocked(automationRequest).mockImplementation((c, id, command, args) => answer(c, id, command, args));
   return calls;
 }
 
@@ -383,17 +365,15 @@ describe('ogw check run log summary', () => {
     expect(await checkSummary({ regression: true })).toEqual({ checks: [{ name: 'regression test', result: 'fail' }] });
     await openRun(1);
     serveClient();
-    // performance and UI quality have one item per platform profile (ios, web) and one summary entry each
+    // UI quality has one item per platform profile (ios, web) and one summary entry
     expect(await checkSummary({ loop: true })).toEqual({
       checks: [
         { name: 'regression test', result: 'fail' },
         { name: 'static check', result: 'pass' },
         { name: 'no blocker', result: 'pass' },
         { name: 'full flow', result: 'pass' },
-        { name: 'performance', result: 'pass' },
         { name: 'UI quality', result: 'pass' },
         { name: 'no placeholder', result: 'fail' },
-        { name: 'row simulation', result: 'pass' },
       ],
     });
   });
@@ -420,33 +400,27 @@ describe('ogw check --loop', () => {
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     expect(run.stdout.split('\n').slice(-3)).toEqual(['result file: records/loops/create-1/check-1.json', 'gate: pass', '']);
-    const file = JSON.parse(readFileSync(join(root, 'records/loops/create-1/check-1.json'), 'utf8')) as { commit: string; checks: { name: string; platform: string | null; result: string; hostLoad?: unknown }[]; gate: string };
+    const file = JSON.parse(readFileSync(join(root, 'records/loops/create-1/check-1.json'), 'utf8')) as { commit: string; checks: { name: string; platform: string | null; result: string }[]; gate: string };
     expect(file.commit).toBe(before);
     expect(await git(root, ['rev-parse', 'HEAD^'])).toBe(`${before}\n`);
     expect(await git(root, ['log', '-1', '--format=%s'])).toBe('loop create-1: check 1\n');
     expect(await git(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])).toBe('records/loops/create-1/check-1.json\n');
     expect(await git(root, ['status', '--porcelain', '--', 'records/loops/create-1/check-1.json'])).toBe('');
     expect(file.gate).toBe('pass');
-    expect(Object.keys(file)).toEqual(['commit', 'checks', 'gate', 'fixTestProof']);
-    // no content agent report: no fix test proof
-    expect((file as unknown as { fixTestProof: unknown }).fixTestProof).toEqual([]);
+    expect(Object.keys(file)).toEqual(['commit', 'checks', 'gate']);
     expect(file.checks.map((c) => [c.name, c.platform, c.result])).toEqual([
       ['regression test', null, 'pass'],
       ['static check', null, 'pass'],
       ['no blocker', null, 'pass'],
       ['full flow', null, 'pass'],
-      ['performance', 'ios', 'pass'],
-      ['performance', 'web', 'pass'],
       ['UI quality', 'ios', 'pass'],
       ['UI quality', 'web', 'pass'],
       ['no placeholder', null, 'pass'],
-      ['row simulation', null, 'pass'],
     ]);
-    expect(file.checks[4]?.hostLoad).toEqual({ cpuMaxPercent: expect.any(Number) as number, memoryMaxPercent: expect.any(Number) as number, instancesMax: 0 });
     expect(existsSync(join(root, 'records/loops/create-1/evidence/check-1/old'))).toBe(false);
     expect(existsSync(join(root, 'records/loops/create-1/evidence/check-1/regression/client-result.json'))).toBe(true);
-    // the bot playtest, the row simulation, and per platform profile the performance and the captures
-    expect(startInstance).toHaveBeenCalledTimes(6);
+    // the bot playtest, and per platform profile the captures
+    expect(startInstance).toHaveBeenCalledTimes(3);
     expect(vi.mocked(startInstance).mock.calls.map((c) => c[1])).toEqual(
       expect.arrayContaining([
         { game: 'g', client: 'headless', db: 'postgresql', randomBase: 1n },
@@ -455,177 +429,13 @@ describe('ogw check --loop', () => {
       ]),
     );
     // every instance of the check has random base 1
-    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual(Array<bigint>(6).fill(1n));
+    expect(vi.mocked(startInstance).mock.calls.map((c) => c[1].randomBase)).toEqual(Array<bigint>(3).fill(1n));
     // no instance of the check records with the movie maker
     expect(vi.mocked(startInstance).mock.calls.filter((c) => c[1].movie !== undefined)).toEqual([]);
-    expect(stopInstance).toHaveBeenCalledTimes(6);
-    expect(calls).toContain('set_quality_level High');
+    expect(stopInstance).toHaveBeenCalledTimes(3);
     expect(calls).toContain('set_text_scale 1300');
     // the loop imported client/ before the checks: the static type check does not import again
     expect(staticCheck).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ name: 'g' }), { db: 'postgresql', imported: true });
-  });
-
-  it('runs the tests that the report names for a fixed defect on the fix base, with the changed test files laid over it, and writes the fix test proof', async () => {
-    const R = 'records/loops/create-1';
-    const defect = (id: string, owner: string, source = 'play'): object => ({ id, severity: 'major', owner, where: 'w', what: 'x', why: 'y', evidence: [], source, status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
-    const root = setupGame(ws, {
-      'client/tests/b/test_b.gd': 'func test_b():\n',
-      'client/tests/c/test_c.gd': 'func test_c():\n',
-      'server/limit.json': { max: 3 },
-      [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n',
-      [`${R}/defects.json`]: {
-        defects: ['crash', 'slow', 'old', 'load', 'flat'].map((id) => defect(id, 'client content')).concat([defect('bal', 'data'), defect('ui', 'client content', 'check')]),
-        previous: null,
-        recordedBy: 'iteration-0',
-      },
-    });
-    const base = await openRun(1);
-    // the iteration: the fix of server/limit.json with its test, changed client tests, a client test that does not load on the fix base
-    writeFileSync(join(root, 'client/tests/a/test_a.gd'), 'func test_a():\n\tpass\n');
-    // the iteration has more than one commit: the fix base is not the parent of the checked commit
-    commitAll(root, 'content agent: first fix');
-    writeFileSync(join(root, 'server/limit.json'), JSON.stringify({ max: 5 }));
-    mkdirSync(join(root, 'client/tests/d'), { recursive: true });
-    mkdirSync(join(root, 'server/tests'), { recursive: true });
-    writeFileSync(join(root, 'client/tests/b/test_b.gd'), 'func test_b():\n\tpass\n');
-    writeFileSync(join(root, 'client/tests/d/test_d.gd'), 'func test_d():\n');
-    writeFileSync(join(root, 'server/tests/b.test.ts'), "import { readFileSync } from 'node:fs';\nit('limit', () => { expect(JSON.parse(readFileSync(new URL('../limit.json', import.meta.url), 'utf8')).max).toBe(5); });\n");
-    const rows = [
-      '| crash | fixed | `client/tests/a/test_a.gd::test_a`, `server/tests/b.test.ts::limit` |',
-      '| slow | fixed | `client/tests/b/test_b.gd::test_b` |',
-      '| old | fixed | `client/tests/c/test_c.gd::test_c` |',
-      '| load | fixed | `client/tests/d/test_d.gd::test_d` |',
-      '| flat | fixed | presentation |',
-      '| bal | fixed | |',
-      '| ui | fixed | |',
-      '| gone | fixed | |',
-      '| kept | not done | later |',
-    ];
-    writeFileSync(join(root, `${R}/content-1.md`), ['## defects', '', '| id | result | note |', '|---|---|---|', ...rows, ''].join('\n'));
-    commitAll(root, 'content agent');
-    // the client tests on the fix base: test_a fails there, test_b passes, test_d does not load; on the checked commit all pass
-    const godotDir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
-    const godot = join(godotDir, 'godot');
-    writeFileSync(
-      godot,
-      `#!/usr/bin/env node
-const fs = require('node:fs');
-const args = process.argv.slice(2);
-const project = args[args.indexOf('--path') + 1];
-if (args.includes('--import')) {
-  fs.mkdirSync(require('node:path').join(project, '.godot'), { recursive: true });
-  process.exit(0);
-}
-const config = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('-gconfig=')).slice(9), 'utf8'));
-const target = (args.find((a) => a.startsWith('-gtest=')) || '').slice(7);
-const onBase = project.includes('/proof-');
-fs.appendFileSync(${JSON.stringify(join(godotDir, 'runs'))}, (onBase ? 'base ' : 'head ') + (target || 'all') + '\\n');
-const put = (path, body) => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
-const results = onBase
-  ? [{ name: 'res://tests/a/test_a.gd::test_a', status: 'fail', message: 'x' }, { name: 'res://tests/b/test_b.gd::test_b', status: 'pass', message: '' }]
-  : [{ name: 'res://tests/a/test_a.gd::test_a', status: 'pass', message: '' }];
-put('/started', { run_id: config.ogw_run_id })
-  .then(() => (onBase && target.endsWith('test_d.gd') ? process.exit(1) : put('/result', { run_id: config.ogw_run_id, kind: 'regression', results, run_failures: [] })))
-  .then(() => process.exit(0));
-`,
-    );
-    chmodSync(godot, 0o755);
-    vi.mocked(requireEngine).mockResolvedValue(godot);
-    serveClient();
-    const run = await ogw(ws, ['check', 'g', '--loop']);
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-    const file = JSON.parse(readFileSync(join(root, `${R}/check-1.json`), 'utf8')) as { gate: string; fixTestProof: unknown };
-    expect(file.gate).toBe('pass');
-    const test = (name: string, result: string, reason: string | null = null): object => ({ name, result, reason });
-    expect(file.fixTestProof).toEqual([
-      { id: 'crash', result: 'pass', reason: null, tests: [test('client/tests/a/test_a.gd::test_a', 'fail'), test('server/tests/b.test.ts::limit', 'fail')] },
-      { id: 'slow', result: 'fail', reason: `the named tests pass on ${base.slice(0, 12)}, the code before the fix`, tests: [test('client/tests/b/test_b.gd::test_b', 'pass')] },
-      { id: 'old', result: 'fail', reason: 'no named test in a test file that the commits of the iteration added or changed', tests: [] },
-      { id: 'load', result: 'pass', reason: null, tests: [test('client/tests/d/test_d.gd::test_d', 'fail', 'the run does not report it: the run sent no result (exit code 1)')] },
-      { id: 'flat', result: 'unknown', reason: 'presentation', tests: [] },
-      { id: 'bal', result: 'unknown', reason: 'owner data', tests: [] },
-      { id: 'ui', result: 'unknown', reason: 'source check', tests: [] },
-      { id: 'gone', result: 'unknown', reason: 'not a defect of defects.json', tests: [] },
-    ]);
-    // each named client test file ran alone on the fix base, and the worktree of the fix base is gone
-    const runs = readFileSync(join(godotDir, 'runs'), 'utf8').split('\n').filter((line) => line.startsWith('base '));
-    expect(runs.sort()).toEqual(['base res://tests/a/test_a.gd', 'base res://tests/b/test_b.gd', 'base res://tests/d/test_d.gd']);
-    expect(readdirSync(join(ws.worktrees, 'g')).filter((name) => name.startsWith('proof-'))).toEqual([]);
-  });
-
-  it('writes a fix test proof that could not be decided as unknown with its reason, not as no proof', async () => {
-    const R = 'records/loops/create-1';
-    const root = setupGame(ws, {
-      [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n',
-      [`${R}/content-1.md`]: '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `client/tests/a/test_a.gd::test_a` |\n',
-      [`${R}/defects.json`]: '{"defects": [',
-    });
-    await openRun(1);
-    serveClient();
-    const run = await ogw(ws, ['check', 'g', '--loop']);
-    expect(run.stderr).toBe('');
-    const file = JSON.parse(readFileSync(join(root, `${R}/check-1.json`), 'utf8')) as { fixTestProof: { id: string; result: string; reason: string | null }[] };
-    expect(file.fixTestProof).toEqual([{ id: 'crash', result: 'unknown', reason: expect.stringMatching(/^records\/loops\/create-1\/defects\.json could not be read: invalid JSON/) as unknown, tests: [] }]);
-  });
-
-  it('fails before any check starts when the content agent report cannot be read', async () => {
-    const R = 'records/loops/create-1';
-    const root = setupGame(ws, { [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n', [`${R}/content-1.md/x`]: 'a folder, not a report' });
-    await openRun(1);
-    serveClient();
-    const run = await ogw(ws, ['check', 'g', '--loop']);
-    expect(run.code).not.toBe(0);
-    expect(run.stderr).toContain('EISDIR');
-    expect(startInstance).not.toHaveBeenCalled();
-    expect(existsSync(join(root, `${R}/check-1.json`))).toBe(false);
-  });
-
-  it('starts the fix test proof in its worktree without waiting for the import of the checkout', async () => {
-    const R = 'records/loops/create-1';
-    const defect = { id: 'crash', severity: 'major', owner: 'client content', where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 };
-    const root = setupGame(ws, { [`${R}/content-input-1.md`]: '## kind\n\ncompleteness\n', [`${R}/defects.json`]: { defects: [defect], previous: null, recordedBy: 'iteration-0' } });
-    await openRun(1);
-    writeFileSync(join(root, 'client/tests/a/test_a.gd'), 'func test_a():\n\tpass\n');
-    writeFileSync(join(root, `${R}/content-1.md`), '## defects\n\n| id | result | note |\n|---|---|---|\n| crash | fixed | `client/tests/a/test_a.gd::test_a` |\n');
-    commitAll(root, 'content agent');
-    // the import of the checkout takes 3 s; the run of the proof on the fix base logs when it starts
-    const godotDir = mkdtempSync(join(tmpdir(), 'ogw-godot-'));
-    const godot = join(godotDir, 'godot');
-    const log = join(godotDir, 'log');
-    writeFileSync(
-      godot,
-      `#!/usr/bin/env node
-const fs = require('node:fs');
-const args = process.argv.slice(2);
-const project = args[args.indexOf('--path') + 1];
-const onBase = project.includes('/proof-');
-if (args.includes('--import')) {
-  setTimeout(() => {
-    fs.mkdirSync(require('node:path').join(project, '.godot'), { recursive: true });
-    if (!onBase) fs.appendFileSync(${JSON.stringify(log)}, 'import end ' + Date.now() + '\\n');
-    process.exit(0);
-  }, onBase ? 0 : 3000);
-} else {
-  if (onBase) fs.appendFileSync(${JSON.stringify(log)}, 'base run ' + Date.now() + '\\n');
-  const config = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('-gconfig=')).slice(9), 'utf8'));
-  const put = (path, body) => fetch(config.ogw_test_host + path, { method: 'PUT', body: JSON.stringify(body) });
-  const status = onBase ? 'fail' : 'pass';
-  put('/started', { run_id: config.ogw_run_id })
-    .then(() => put('/result', { run_id: config.ogw_run_id, kind: 'regression', results: [{ name: 'res://tests/a/test_a.gd::test_a', status, message: '' }], run_failures: [] }))
-    .then(() => process.exit(0));
-}
-`,
-    );
-    chmodSync(godot, 0o755);
-    vi.mocked(requireEngine).mockResolvedValue(godot);
-    serveClient();
-    const run = await ogw(ws, ['check', 'g', '--loop']);
-    expect(run.stderr).toBe('');
-    const file = JSON.parse(readFileSync(join(root, `${R}/check-1.json`), 'utf8')) as { fixTestProof: { id: string; result: string }[] };
-    expect(file.fixTestProof.map((p) => [p.id, p.result])).toEqual([['crash', 'pass']]);
-    const at = (prefix: string): number => Number(readFileSync(log, 'utf8').split('\n').find((line) => line.startsWith(prefix))?.slice(prefix.length));
-    expect(at('base run ')).toBeLessThan(at('import end '));
   });
 
   it('runs only the regression test, the static check and the bot playtest in a fun iteration', async () => {
@@ -735,7 +545,7 @@ if (args.includes('--import')) {
     expect(text.stdout.trimEnd().split('\n').at(-1)).toBe('gate: fail');
   });
 
-  it('makes the shared telemetry runs of this commit and the baseline game beside the checks, and measures performance with no other instance of the check running', async () => {
+  it('makes the shared telemetry runs of this commit and the baseline game beside the checks', async () => {
     const root = setupGame(ws, { 'server/tests/a.test.ts': "it('a', () => { expect(1).toBe(1); });\n" });
     // an update run: its baseline game at iteration 1 is the commit the work branch was made from
     const base = await openRun(1, {}, 'update');
@@ -743,26 +553,11 @@ if (args.includes('--import')) {
     commitAll(root, 'content');
     const commit = (await head(root)).trim();
     serveClient();
-    const answer = vi.mocked(automationRequest).getMockImplementation() as typeof automationRequest;
-    const measured = new Set<string>();
-    vi.mocked(automationRequest).mockImplementation((c, id, command, args, ...rest) => {
-      if (command === 'set_quality_level') measured.add(id);
-      return answer(c, id, command, args, ...rest);
-    });
-    // starts and stops in order; each instance has a checkout with a play guide
-    const events: [string, string][] = [];
+    // each instance has a checkout with a play guide
     const checkout = mkdtempSync(join(tmpdir(), 'ogw-instance-'));
     writeFileSync(join(checkout, 'play-guide.md'), '## controls\n\ntap\n');
     let n = 0;
-    vi.mocked(startInstance).mockImplementation(() => {
-      const id = `i${String(++n)}`;
-      events.push(['start', id]);
-      return Promise.resolve({ id, root: checkout } as Awaited<ReturnType<typeof startInstance>>);
-    });
-    vi.mocked(stopInstance).mockImplementation((_c, id) => {
-      events.push(['stop', id]);
-      return Promise.resolve();
-    });
+    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `i${String(++n)}`, root: checkout } as Awaited<ReturnType<typeof startInstance>>));
     const run = await ogw(ws, ['check', 'g', '--loop']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
@@ -781,20 +576,7 @@ if (args.includes('--import')) {
     }
     // the runs are not a check
     const file = JSON.parse(readFileSync(join(root, 'records/loops/update-1/check-1.json'), 'utf8')) as { checks: { name: string }[] };
-    expect([...new Set(file.checks.map((c) => c.name))]).toEqual(['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder', 'row simulation']);
-    // each performance measurement (one per platform profile) starts when no other instance of the check runs, and
-    // no instance starts or stops until it stops
-    expect(measured.size).toBe(2);
-    for (const id of measured) {
-      const at = events.findIndex(([kind, i]) => kind === 'start' && i === id);
-      const running = new Set<string>();
-      for (const [kind, i] of events.slice(0, at)) {
-        if (kind === 'start') running.add(i);
-        else running.delete(i);
-      }
-      expect([...running]).toEqual([]);
-      expect(events[at + 1]).toEqual(['stop', id]);
-    }
+    expect([...new Set(file.checks.map((c) => c.name))]).toEqual(['regression test', 'static check', 'no blocker', 'full flow', 'UI quality', 'no placeholder']);
   });
 
   it('runs only in an iteration of an open run, with maxConcurrentInstances set', async () => {

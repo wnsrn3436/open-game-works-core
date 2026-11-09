@@ -1,32 +1,22 @@
+/**
+ * The performance judgement (ogw.md `## performance`) of check `device performance`, whose fps condition
+ * `ogw instance measure` uses.
+ */
 import type { Context } from '../../../lib/command.ts';
 import { hostRefreshHz } from '../../../lib/display.ts';
 import { OgwError } from '../../../lib/errors.ts';
-import { span } from '../../../lib/spans.ts';
-import { withWriterWithin, type RwLock, type WriterWait } from '../../../lib/rwlock.ts';
 import { automationRequest } from '../../instance/automation.ts';
-import type { CheckFailure, CheckResult, HostLoad } from '../api.ts';
-import { SCENARIO_WHERE, type InstanceCheckOptions } from './bot-playtest.ts';
-import { checkResult, failure, writeEvidence } from './evidence.ts';
-import { HostLoadSampler, type HostProbe } from './host-load.ts';
-import { withInstance } from './instances.ts';
+import type { CheckFailure, CheckResult } from '../api.ts';
+import { SCENARIO_WHERE } from './bot-playtest.ts';
+import { checkResult, failure } from './evidence.ts';
 import { instanceCoreSettings, runScenario, type Scenario, type ScenarioOutcome } from './scenario.ts';
-
-const MOBILE = ['android', 'ios'];
-const DESKTOP = ['windows', 'macos', 'linux', 'web'];
-
-/** `performance` `## platform profile`: the first mobile and the first other platform of `buildPlatforms`. */
-export function platformProfiles(buildPlatforms: readonly string[]): string[] {
-  const mobile = buildPlatforms.find((p) => MOBILE.includes(p));
-  const desktop = buildPlatforms.find((p) => DESKTOP.includes(p));
-  return [mobile, desktop].filter((p): p is string => p !== undefined);
-}
 
 /** `where` of a performance failure of a scene: the scene key, or the scenario file when the client gave none. */
 function sceneWhere(key: unknown): string {
   return typeof key === 'string' && key !== '' ? key : SCENARIO_WHERE;
 }
 
-/** Interval of the fps sampler that runs alongside the scenario (`performance` `## performance`; a test makes it short). */
+/** Interval of the fps sampler that runs alongside the scenario (ogw.md `## performance`; a test makes it short). */
 export const fpsSampling = { intervalMs: 1000 };
 
 /** Kept samples a scene needs to be judged; a scene with fewer kept samples, and at least one, is unknown. */
@@ -276,17 +266,6 @@ class FpsSampler {
   }
 }
 
-export interface PerformanceOptions extends InstanceCheckOptions {
-  targetFps: number;
-  loadingTimeLimitMs: number;
-  /** `QualityCore` is in the module list. */
-  quality: boolean;
-  probe: HostProbe;
-  sampleMs: number;
-  /** The performance lease, with harness settings `performanceLeaseWaitTimeoutMs` as its wait (ogw.md `### performance lease`). */
-  lease: RwLock;
-}
-
 interface SceneLoad {
   scene_key?: unknown;
   duration_ms?: unknown;
@@ -304,21 +283,6 @@ function loadFailures(loads: readonly SceneLoad[], limit: number, evidence: (str
     .map((load) =>
       failure(sceneWhere(load.scene_key), `scene load ${String(load.duration_ms)} ms is over loadingTimeLimitMs ${String(limit)}`, evidence),
     );
-}
-
-function withLoad(result: CheckResult, hostLoad: HostLoad): CheckResult {
-  return { ...result, hostLoad };
-}
-
-/** The host load at or above which a `fail` of a measurement is `unknown` (ogw.md `### host load`): fixed values of the check. */
-const BUSY_HOST = { memoryPercent: 95, cpuPercent: 90 };
-
-/** One failure per value of `BUSY_HOST` that the host load of a measurement reached, memory first. */
-function busyHost(hostLoad: HostLoad, evidence: (string | null)[]): CheckFailure[] {
-  return [
-    ...(hostLoad.memoryMaxPercent >= BUSY_HOST.memoryPercent ? [failure(SCENARIO_WHERE, `host memory ${String(hostLoad.memoryMaxPercent)}%`, evidence)] : []),
-    ...(hostLoad.cpuMaxPercent >= BUSY_HOST.cpuPercent ? [failure(SCENARIO_WHERE, `host CPU ${String(hostLoad.cpuMaxPercent)}%`, evidence)] : []),
-  ];
 }
 
 /**
@@ -352,7 +316,7 @@ export interface MeasureOptions {
 }
 
 /**
- * `performance` `## performance` measurement on the client `main` of an instance: `set_quality_level` `High`
+ * ogw.md `## performance` measurement on the client `main` of an instance: `set_quality_level` `High`
  * when asked, the scenario with the fps sampler alongside it, and the telemetry `scene_loads` after it.
  */
 export async function measureScenario(ctx: Context, id: string, scenario: Scenario, options: MeasureOptions): Promise<ScenarioMeasure> {
@@ -431,73 +395,4 @@ export function performanceVerdict(
   if (failures.length > 0) return checkResult('performance', platform, failures);
   const missing = unmeasured(measured, frames.unknown, evidence);
   return checkResult('performance', platform, missing, missing.length > 0);
-}
-
-async function measure(ctx: Context, id: string, platform: string, scenario: Scenario, options: PerformanceOptions, sampler: HostLoadSampler): Promise<CheckResult> {
-  const measured = await measureScenario(ctx, id, scenario, { quality: options.quality, pollMs: options.pollMs, targetFps: options.targetFps, onHost: true });
-  const hostLoad = await sampler.stop();
-  if (measured.kind === 'quality') return withLoad(checkResult('performance', platform, [failure(SCENARIO_WHERE, measured.message)], true), hostLoad);
-  const record = { samples: Object.fromEntries(measured.samples), frameIntervals: Object.fromEntries(measured.frames), scene_loads: measured.sceneLoads, hostLoad };
-  const evidence = [await writeEvidence(options.evidence, `performance-${platform}/samples.json`, `${JSON.stringify(record, null, 2)}\n`)];
-  const verdict = performanceVerdict(measured, platform, options, evidence);
-  const busy = verdict.result === 'fail' ? busyHost(hostLoad, evidence) : [];
-  return withLoad(busy.length > 0 ? checkResult('performance', platform, busy, true) : verdict, hostLoad);
-}
-
-/** performance of one platform profile: the bot playtest scenario again in an instance that draws the screen. */
-export async function performanceCheck(ctx: Context, game: string, platform: string, scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult> {
-  const started: { sampler?: HostLoadSampler } = {};
-  try {
-    if (typeof scenario === 'string') throw new Error(scenario);
-    return await withInstance(ctx, options.slots, { game, platform, client: 'window', db: options.db }, async (instance) => {
-      started.sampler = new HostLoadSampler(options.probe, options.sampleMs, instance.id);
-      return measure(ctx, instance.id, platform, scenario, options, started.sampler);
-    }, options.evidence);
-  } catch (error) {
-    return didNotRun(platform, error, started.sampler ?? new HostLoadSampler(options.probe, options.sampleMs));
-  }
-}
-
-/**
- * The `unknown` item of a profile that `error` kept from being measured, with the readings that `sampler` took; a host
- * reading that failed apart from `error` is given too.
- */
-async function didNotRun(platform: string, error: unknown, sampler: HostLoadSampler): Promise<CheckResult> {
-  const { hostLoad, error: reading } = await sampler.settle();
-  const errors = reading === null || reading.value === error ? [error] : [error, reading.value];
-  return withLoad(checkResult('performance', platform, errors.map((e) => failure(SCENARIO_WHERE, `performance did not run: ${(e as Error).message}`)), true), hostLoad);
-}
-
-/** The message of the `unknown` items of a measurement that did not get the performance lease, by what it waited for. */
-const LEASE_BUSY: Record<WriterWait, string> = {
-  writer: 'host busy: performance measurement',
-  readers: 'host busy: local generation',
-};
-
-/**
- * performance of every platform profile, one profile at a time so that no other instance of the check runs beside the
- * measured one (ogw.md `## performance`), holding the performance lease exclusively across all of them (ogw.md
- * `### performance lease`). When the lease does not come within its wait, nothing is measured and each item is
- * `unknown`, with the host load read during the wait.
- */
-export async function performanceChecks(ctx: Context, game: string, platforms: readonly string[], scenario: Scenario | string, options: PerformanceOptions): Promise<CheckResult[]> {
-  const each = async (): Promise<CheckResult[]> => {
-    const results: CheckResult[] = [];
-    for (const p of platforms) results.push(await span(`performance ${p}`, () => performanceCheck(ctx, game, p, scenario, options)));
-    return results;
-  };
-  // nothing to measure: the items say why without waiting for the lease
-  if (platforms.length === 0 || typeof scenario === 'string') return each();
-  const waiting = new HostLoadSampler(options.probe, options.sampleMs);
-  try {
-    const leased = await withWriterWithin(options.lease, async () => {
-      await waiting.stop();
-      return each();
-    });
-    if (leased.ran) return leased.value;
-    const hostLoad = await waiting.stop();
-    return platforms.map((p) => withLoad(checkResult('performance', p, [failure(SCENARIO_WHERE, LEASE_BUSY[leased.waited])], true), hostLoad));
-  } catch (error) {
-    return Promise.all(platforms.map((p) => didNotRun(p, error, waiting)));
-  }
 }

@@ -67,13 +67,6 @@ export function recordBase(file: DefectsFile | null, label: string): DefectsFile
 export interface ReportRow {
   result: string;
   note: string;
-  /** The test names in backticks in the `note` cell (ogw.md `### fix test proof`). */
-  tests?: string[];
-}
-
-/** The test names in backticks in the raw text of a `note` cell. */
-export function namedTests(raw: string): string[] {
-  return [...raw.matchAll(/`([^`]+)`/g)].map((m) => (m[1] as string).trim()).filter((name) => name !== '');
 }
 
 export function isSeverity(value: unknown): value is Severity {
@@ -153,23 +146,6 @@ export function groupFindings(findings: readonly Finding[]): Map<string, Omit<De
   return groups;
 }
 
-/** The owners whose fix a regression test can show (ogw.md `### fix test proof`). */
-export const CODE_OWNERS: readonly string[] = ['client content', 'server content', 'contract'];
-
-/** The `note` of a `fixed` row of a defect that is only in what the screen shows, which no regression test can show. */
-export const PRESENTATION_NOTE = 'presentation';
-
-/**
- * Why a `fixed` row of the content agent report needs no fix test proof (ogw.md `### fix test proof`): `owner <owner>`,
- * `source check` or `presentation`; null when it needs one.
- */
-export function proofExemption(defect: Pick<Defect, 'owner' | 'source'>, note: string): string | null {
-  if (!CODE_OWNERS.includes(defect.owner)) return `owner ${defect.owner}`;
-  if (defect.source === 'check') return 'source check';
-  if (note.trim() === PRESENTATION_NOTE) return PRESENTATION_NOTE;
-  return null;
-}
-
 export interface RecordInput {
   /** Defects before this record. */
   base: readonly Defect[];
@@ -178,8 +154,6 @@ export interface RecordInput {
   confirmed: (defect: Defect, found: boolean) => boolean;
   /** The content agent report `## defects` rows by id; null for a hardening record. */
   report: ReadonlyMap<string, ReportRow> | null;
-  /** The fix test proof `result` of each `fixed` row of the report by defect id; a row without one has no `pass`. */
-  proofs?: ReadonlyMap<string, string>;
 }
 
 function confirm(defect: Defect, found: boolean): void {
@@ -205,10 +179,10 @@ function changeByFinding(defect: Defect, found: boolean, confirmed: boolean): vo
   }
 }
 
-/** `fixed` waits for confirmation only when the row needs no fix test proof or its proof is `pass`. */
-function changeByReport(defect: Defect, row: ReportRow | undefined, proof: string | undefined): void {
+/** `fixed` and `not reproduced` wait for confirmation; `refused` keeps its reason. */
+function changeByReport(defect: Defect, row: ReportRow | undefined): void {
   if (!row) return;
-  if (row.result === 'not reproduced' || (row.result === 'fixed' && (proofExemption(defect, row.note) !== null || proof === 'pass'))) {
+  if (row.result === 'not reproduced' || row.result === 'fixed') {
     defect.status = 'awaiting confirmation';
   } else if (row.result === 'refused') {
     defect.status = 'refused';
@@ -225,7 +199,7 @@ export function recordDefects(input: RecordInput): Defect[] {
   for (const previous of input.base) {
     const defect: Defect = structuredClone(previous);
     const group = groups.get(defect.id);
-    if (input.report) changeByReport(defect, input.report.get(defect.id), input.proofs?.get(defect.id));
+    if (input.report) changeByReport(defect, input.report.get(defect.id));
     changeByFinding(defect, group !== undefined, input.confirmed(defect, group !== undefined));
     if (group) {
       Object.assign(defect, group);

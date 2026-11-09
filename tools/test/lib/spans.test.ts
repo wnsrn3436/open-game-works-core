@@ -179,7 +179,7 @@ describe('waits', () => {
 
   it('records the waits of readers and writers on the base of the reader/writer lock', async () => {
     const dir = tempDir();
-    const lock = { base: join(dir, 'lease'), waitMs: 60_000 };
+    const lock = { base: join(dir, 'rw'), waitMs: 60_000 };
     // a reader waits for a writer that holds the lock
     const file = join(dir, 'w4.spans.jsonl');
     const writer = holdFor(400, (whileHeld) => withWriter(lock, whileHeld));
@@ -196,7 +196,7 @@ describe('waits', () => {
     await reader.done;
     expect(endedWaits(second).map((w) => w.wait)).toEqual([lock.base]);
     expect(endedWaits(second)[0]?.ms).toBeGreaterThanOrEqual(800);
-    // the performance measurement takes the lease with withWriterWithin
+    // a writer that waits at most the wait of the lock (withWriterWithin) records its wait too
     const third = join(dir, 'w6.spans.jsonl');
     const again = holdFor(1200, (whileHeld) => withReader(lock, whileHeld));
     await again.held;

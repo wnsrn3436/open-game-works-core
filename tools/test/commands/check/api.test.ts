@@ -100,25 +100,24 @@ describe('placeholderFailures', () => {
 describe('platform items of a check', () => {
   const item = (name: string, platform: string | null, result: CheckResult['result']): CheckResult => ({ name, platform, result, failures: [], warnings: [] });
   it('any fail is fail, all pass is pass, else unknown', () => {
-    expect(mergedResult([item('performance', 'ios', 'pass'), item('performance', 'web', 'fail')])).toBe('fail');
-    expect(mergedResult([item('performance', 'ios', 'unknown'), item('performance', 'web', 'fail')])).toBe('fail');
-    expect(mergedResult([item('performance', 'ios', 'pass'), item('performance', 'web', 'pass')])).toBe('pass');
-    expect(mergedResult([item('performance', 'ios', 'pass'), item('performance', 'web', 'unknown')])).toBe('unknown');
+    expect(mergedResult([item('UI quality', 'ios', 'pass'), item('UI quality', 'web', 'fail')])).toBe('fail');
+    expect(mergedResult([item('UI quality', 'ios', 'unknown'), item('UI quality', 'web', 'fail')])).toBe('fail');
+    expect(mergedResult([item('UI quality', 'ios', 'pass'), item('UI quality', 'web', 'pass')])).toBe('pass');
+    expect(mergedResult([item('UI quality', 'ios', 'pass'), item('UI quality', 'web', 'unknown')])).toBe('unknown');
     expect(mergedResult([])).toBe('unknown');
   });
   it('gives one result per check name in first-seen order', () => {
     expect(
       mergedChecks([
         item('static check', null, 'pass'),
-        item('performance', 'ios', 'pass'),
-        item('performance', 'web', 'unknown'),
         item('UI quality', 'ios', 'fail'),
         item('UI quality', 'web', 'pass'),
+        item('no placeholder', null, 'unknown'),
       ]),
     ).toEqual([
       { name: 'static check', result: 'pass' },
-      { name: 'performance', result: 'unknown' },
       { name: 'UI quality', result: 'fail' },
+      { name: 'no placeholder', result: 'unknown' },
     ]);
   });
 });

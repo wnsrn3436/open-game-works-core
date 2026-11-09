@@ -7,7 +7,7 @@ import { blockingDefects, verdict, type VerdictInput } from '../../../../src/com
 import { parseTokens } from '../../../../src/lib/command.ts';
 import { newRunState, type RunState } from '../../../../src/lib/runstate.ts';
 
-const CHECKS = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder'];
+const CHECKS = ['regression test', 'static check', 'no blocker', 'full flow', 'UI quality', 'no placeholder'];
 
 /** The record of a candidate iteration: every check passes, its step 4 judge and its success judge pass. */
 function candidate(iteration: number, fields: Partial<ParsedRecord> = {}): ParsedRecord {

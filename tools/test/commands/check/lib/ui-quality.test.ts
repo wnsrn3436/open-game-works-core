@@ -9,6 +9,7 @@ import {
   keyboardProblem,
   layoutProblems,
   panelBodies,
+  platformProfiles,
   presentationProblems,
   rectContrast,
   screensOfOrientation,
@@ -57,6 +58,15 @@ function canvas(width: number, height: number, color: [number, number, number], 
 }
 
 const LIMITS = { settleLimitMs: 0, maxFontSizes: 2, minFontSize: 18, minContrast: 4.5, minLargeContrast: 3, maxEmptyShare: 0.6, minTouchTarget: 48 };
+
+describe('platformProfiles', () => {
+  it('takes the first mobile and the first other platform', () => {
+    expect(platformProfiles(['web', 'ios', 'android', 'macos'])).toEqual(['ios', 'web']);
+    expect(platformProfiles(['linux'])).toEqual(['linux']);
+    expect(platformProfiles(['android'])).toEqual(['android']);
+    expect(platformProfiles([])).toEqual([]);
+  });
+});
 
 describe('UI quality presentation conditions', () => {
   it('counts text sizes, finds small text and low contrast', () => {

@@ -102,7 +102,7 @@
       "default": 3
     },
     "targetFps": {
-      "description": "Target frame rate in frames per second. The frame limit of each `QualityCore` quality level and the fps bound and the frame budget of the performance check are made from it",
+      "description": "Target frame rate in frames per second. The frame limit of each `QualityCore` quality level and the fps bound and the frame budget of the performance judgement (`## performance` of [ogw](../tools/ogw.md)) are made from it",
       "type": "integer",
       "minimum": 1,
       "default": 60

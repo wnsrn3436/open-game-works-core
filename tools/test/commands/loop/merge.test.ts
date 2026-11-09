@@ -98,7 +98,7 @@ describe('ogw loop prepare-merge', () => {
 
   it('merges a passed confirmation iteration, else the latest candidate iteration, without the work synced after it', async () => {
     const full = (sha: string, confirms: number | null, blockers: number): string => {
-      const checks = ['regression test', 'static check', 'no blocker', 'performance', 'UI quality', 'no placeholder', 'full flow']
+      const checks = ['regression test', 'static check', 'no blocker', 'UI quality', 'no placeholder', 'full flow']
         .map((n) => `| ${n} | ${n === 'no placeholder' ? 'fail' : 'pass'} | p |`).join('\n');
       const judges = ['main', 'success', 'success'].map((kind, i) => `### j${String(i)}\n\n- kind: ${kind}\n- vs baseline: better\n- vs reference: pass`).join('\n\n');
       const play = `| feedback | blocker | major | minor | none |\n|---|---|---|---|---|\n| p | ${String(blockers)} | 0 | 0 | 0 |`;

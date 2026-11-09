@@ -19,10 +19,6 @@ function finding(fields: Partial<Finding> & Pick<Finding, 'source' | 'where' | '
   return { severity: null, owner: null, why: null, id: null, drop: null, ...fields };
 }
 
-function rowSimulationOwner(message: string): string {
-  return message.trim().split(/\s+/)[0] === 'error' ? 'client content' : 'data';
-}
-
 /** The kinds of UI quality problems (`check/lib/ui-quality.ts`), as their messages start. */
 const UI_KINDS: readonly [RegExp, string][] = [
   [/^low contrast /, 'low contrast'],
@@ -59,7 +55,6 @@ export function checkFindings(check: CheckFile, checkPath: string): Finding[] {
     for (const f of c.failures) {
       out.push(finding({
         source: 'check',
-        owner: c.name === 'row simulation' ? rowSimulationOwner(f.message) : null,
         where: f.where,
         what: f.message,
         evidence: [`${checkPath}#${c.name}`, ...f.evidence],

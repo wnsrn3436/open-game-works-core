@@ -1,14 +1,9 @@
-import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { freemem, tmpdir, totalmem } from 'node:os';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
-import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import { instanceProcesses, instanceServerLog } from '../../../../src/commands/check/lib/instance-probe.ts';
-import { HostLoadSampler, hostMemoryPercent, hostProbe, type HostProbe, type ProcessCpu } from '../../../../src/commands/check/lib/host-load.ts';
-import { Slots } from '../../../../src/commands/check/lib/instances.ts';
 import { hostRefreshHz } from '../../../../src/lib/display.ts';
 import { OgwError } from '../../../../src/lib/errors.ts';
 import { readRecord, type InstanceRecord } from '../../../../src/commands/instance/lib/records.ts';
@@ -22,18 +17,13 @@ import {
   judgeFrames,
   keptFrames,
   keptSamples,
+  measureScenario,
   percentile5Sample,
-  performanceCheck,
-  performanceChecks,
-  platformProfiles,
+  performanceVerdict,
   type FpsTick,
   type FrameTick,
-  type PerformanceOptions,
+  type ScenarioMeasure,
 } from '../../../../src/commands/check/lib/performance.ts';
-import { performanceLeaseBase, withGenerationLease } from '../../../../src/commands/generation/lib/lease.ts';
-import type { Context } from '../../../../src/lib/command.ts';
-import { hostBootId, pidNamespace } from '../../../../src/lib/proc.ts';
-import { withWriter, type RwLock } from '../../../../src/lib/rwlock.ts';
 import type { CheckResult } from '../../../../src/commands/check/api.ts';
 import type { Scenario } from '../../../../src/commands/check/lib/scenario.ts';
 import { doneState, fakeContext, notOk, ok } from '../helpers.ts';
@@ -42,7 +32,6 @@ vi.mock('../../../../src/commands/instance/automation.ts', () => ({
   automationRequest: vi.fn(),
   restartClient: async (...args: Parameters<typeof import('../helpers.ts').fakeRestartClient>) => (await import('../helpers.ts')).fakeRestartClient(...args),
 }));
-vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
 vi.mock('../../../../src/commands/check/lib/instance-probe.ts', () => ({ instanceProcesses: vi.fn(), instanceServerLog: vi.fn() }));
 vi.mock('../../../../src/lib/display.ts', () => ({ hostRefreshHz: vi.fn() }));
 vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
@@ -52,15 +41,6 @@ vi.mock('../../../../src/commands/instance/lib/records.ts', async (orig) => ({
 }));
 
 const ctx = fakeContext();
-
-describe('platformProfiles', () => {
-  it('takes the first mobile and the first other platform', () => {
-    expect(platformProfiles(['web', 'ios', 'android', 'macos'])).toEqual(['ios', 'web']);
-    expect(platformProfiles(['linux'])).toEqual(['linux']);
-    expect(platformProfiles(['android'])).toEqual(['android']);
-    expect(platformProfiles([])).toEqual([]);
-  });
-});
 
 /** A settled tick of `scene` with `fps` and bound 59, whose load key is `key`. */
 function tick(scene: string, fps: number | null, key = scene, settled = true): FpsTick {
@@ -241,144 +221,6 @@ describe('frame intervals', () => {
   });
 });
 
-/**
- * A probe whose readings are the items of each list in order, the last one repeating. `processes` are the process
- * readings and `supervisor` the supervisor pid of instance `p1`, the instance that the mocked `startInstance` starts.
- */
-function fixedProbe(
-  cpu: { idle: number; total: number }[],
-  memory: number[],
-  instances: number[],
-  processes: ProcessCpu[][] = [],
-  supervisor: number | null = null,
-): HostProbe {
-  let c = 0;
-  let m = 0;
-  let n = 0;
-  let p = 0;
-  return {
-    cpuTimes: () => cpu[Math.min(c++, cpu.length - 1)] ?? { idle: 0, total: 0 },
-    processes: () => Promise.resolve(processes[Math.min(p++, processes.length - 1)] ?? null),
-    supervisorPid: (id) => Promise.resolve(id === 'p1' ? supervisor : null),
-    memoryPercent: () => memory[Math.min(m++, memory.length - 1)] ?? 0,
-    instances: () => Promise.resolve(instances[Math.min(n++, instances.length - 1)] ?? 0),
-  };
-}
-
-/** Process `pid` with parent `ppid` that has used `cpuMs` of CPU time. */
-function proc(pid: number, ppid: number, cpuMs: number): ProcessCpu {
-  return { pid, ppid, start: 'Sat Nov 7 03:00:00 2026', cpuMs };
-}
-
-/** A first process reading: instance supervisor 100 with client 101, whose worker process is 102; 200 is another process. */
-const TREE_BEFORE = [proc(100, 1, 0), proc(101, 100, 0), proc(102, 101, 0), proc(200, 1, 0)];
-
-describe('HostLoadSampler', () => {
-  it('keeps the maxima of CPU, memory and instance readings', async () => {
-    const probe = fixedProbe(
-      [{ idle: 0, total: 0 }, { idle: 50, total: 100 }, { idle: 60, total: 200 }, { idle: 60, total: 200 }],
-      [40.04, 72.36, 50],
-      [2, 5, 3],
-    );
-    const sampler = new HostLoadSampler(probe, 5);
-    await new Promise((resolve) => setTimeout(resolve, 18));
-    expect(await sampler.stop()).toEqual({ cpuMaxPercent: 90, memoryMaxPercent: 72.4, instancesMax: 5 });
-  });
-
-  it('a failing instance count or supervisor pid stops the readings, and stop throws it', async () => {
-    const probe = { ...fixedProbe([{ idle: 0, total: 0 }], [10], []), instances: () => Promise.reject(new Error('instances unreadable')) };
-    await expect(new HostLoadSampler(probe, 1000).stop()).rejects.toThrow('instances unreadable');
-    const supervisor = { ...fixedProbe([{ idle: 0, total: 0 }], [10], [1]), supervisorPid: () => Promise.reject(new Error('instance not found: p1')) };
-    await expect(new HostLoadSampler(supervisor, 1000, 'p1').stop()).rejects.toThrow('instance not found: p1');
-  });
-
-  it('reads a failed reading of the processes as no process reading, and stops on another error', async () => {
-    const all = [proc(100, 1, 10), proc(101, 100, 690), proc(102, 101, 300), proc(200, 1, 0)];
-    const base = (): HostProbe => fixedProbe([{ idle: 0, total: 0 }, { idle: 0, total: 1000 }], [40], [1], [TREE_BEFORE, all], 100);
-    // the readings themselves: the host is at 100% CPU, all of it by the instance
-    expect((await new HostLoadSampler(base(), 60_000, 'p1').stop()).cpuMaxPercent).toBe(0);
-    // a program that cannot run (OgwError) or a system error: the instance share is 0, so the host use is all outside it
-    for (const error of [new OgwError('cannot run ps: spawn ps ENOENT'), Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })]) {
-      const failed = { ...base(), processes: () => Promise.reject(error) };
-      expect((await new HostLoadSampler(failed, 60_000, 'p1').stop()).cpuMaxPercent).toBe(100);
-    }
-    const broken = { ...base(), processes: () => Promise.reject(new TypeError('not a reading')) };
-    await expect(new HostLoadSampler(broken, 60_000, 'p1').stop()).rejects.toThrow('not a reading');
-  });
-
-  it('does not count the CPU time of the instance supervisor and its descendants', async () => {
-    // the host is at 100% CPU, all of it by the instance: the supervisor, its client and the worker of the client
-    const all = [proc(100, 1, 10), proc(101, 100, 690), proc(102, 101, 300), proc(200, 1, 0)];
-    const busy = fixedProbe([{ idle: 0, total: 0 }, { idle: 0, total: 1000 }], [40], [1], [TREE_BEFORE, all], 100);
-    expect(await new HostLoadSampler(busy, 60_000, 'p1').stop()).toEqual({ cpuMaxPercent: 0, memoryMaxPercent: 40, instancesMax: 1 });
-    // without the instance the same readings are the whole host
-    const host = fixedProbe([{ idle: 0, total: 0 }, { idle: 0, total: 1000 }], [40], [1], [TREE_BEFORE, all], 100);
-    expect((await new HostLoadSampler(host, 60_000).stop()).cpuMaxPercent).toBe(100);
-  });
-
-  it('counts the CPU time of a process outside the instance', async () => {
-    const other = [proc(100, 1, 10), proc(101, 100, 10), proc(102, 101, 0), proc(200, 1, 960)];
-    const probe = fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 1000 }], [40], [1], [TREE_BEFORE, other], 100);
-    expect((await new HostLoadSampler(probe, 60_000, 'p1').stop()).cpuMaxPercent).toBe(96);
-    // a platform whose processes cannot be read: the instance share is 0
-    const unread = fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 1000 }], [40], [1], [], 100);
-    expect((await new HostLoadSampler(unread, 60_000, 'p1').stop()).cpuMaxPercent).toBe(98);
-  });
-
-  it('counts a descendant that started during the measurement from its second reading', async () => {
-    const readings = [
-      [proc(100, 1, 0), proc(200, 1, 0)],
-      // client 101 started in this second: its 500 ms are not counted yet
-      [proc(100, 1, 0), proc(101, 100, 500), proc(200, 1, 0)],
-      [proc(100, 1, 0), proc(101, 100, 1500), proc(200, 1, 0)],
-    ];
-    const base = fixedProbe([{ idle: 0, total: 0 }, { idle: 500, total: 1000 }, { idle: 500, total: 2000 }], [40], [1], readings, 100);
-    let reads = 0;
-    const probe: HostProbe = {
-      ...base,
-      processes: () => {
-        reads += 1;
-        return base.processes();
-      },
-    };
-    const sampler = new HostLoadSampler(probe, 5, 'p1');
-    await until(() => reads >= 3);
-    // 50% in the second the client started, 0% in the next: 100% if the client were not counted there
-    expect((await sampler.stop()).cpuMaxPercent).toBe(50);
-  });
-
-  it('hostProbe reads this host and the runner', async () => {
-    vi.mocked(listInstances).mockResolvedValue([{}, {}] as Awaited<ReturnType<typeof listInstances>>);
-    const probe = hostProbe(ctx);
-    const times = probe.cpuTimes();
-    expect(times.total).toBeGreaterThan(0);
-    expect(times.idle).toBeLessThanOrEqual(times.total);
-    const memory = await probe.memoryPercent();
-    expect(memory).toBeGreaterThan(0);
-    expect(memory).toBeLessThanOrEqual(100);
-    expect(await probe.instances()).toBe(2);
-  });
-
-  it.runIf(process.platform === 'darwin')('reads the memory use of macOS as 100 minus kern.memorystatus_level, not as the share of the free pages', async () => {
-    const level = Number(spawnSync('sysctl', ['-n', 'kern.memorystatus_level'], { encoding: 'utf8' }).stdout.trim());
-    const freePages = (1 - freemem() / totalmem()) * 100;
-    const memory = await hostProbe(ctx).memoryPercent();
-    // the level moves a little between the two readings
-    expect(Math.abs(memory - (100 - level))).toBeLessThanOrEqual(3);
-    // the check needs a host whose reclaimable memory makes the two differ, as on this one (free pages 2 GiB of 24, level 60)
-    if (freePages - (100 - level) > 10) expect(memory).toBeLessThan(freePages - 5);
-  });
-
-  it.runIf(process.platform === 'darwin')('reads the share of the free pages when kern.memorystatus_level cannot be read', async () => {
-    const freePages = (1 - freemem() / totalmem()) * 100;
-    expect(await hostMemoryPercent(ctx.env, () => Promise.resolve('62\n'))).toBe(38);
-    for (const text of [null, 'x', '101', '-1']) {
-      const memory = await hostMemoryPercent(ctx.env, () => Promise.resolve(text));
-      expect(Math.abs(memory - freePages)).toBeLessThanOrEqual(5);
-    }
-  });
-});
-
 const scenario: Scenario = {
   steps: [
     { kind: 'input', command: 'tap', args: ['1', '1'], until: null, timeoutMs: 2000 },
@@ -433,62 +275,57 @@ function fakeGame(fps: Record<string, number>, loads: unknown, overrides: Record
   return calls;
 }
 
-function options(root: string, extra: Partial<PerformanceOptions> = {}): PerformanceOptions {
-  return {
-    evidence: { root, dir: 'ev', relative: true },
-    slots: new Slots(1),
-    pollMs: 1,
-    targetFps: 60,
-    loadingTimeLimitMs: 3000,
-    quality: true,
-    probe: fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 100 }], [33], [1]),
-    sampleMs: 1000,
-    lease: { base: join(root, 'lease'), waitMs: 60_000 },
-    ...extra,
-  };
+/** The evidence that the judgements of these tests give their failures. */
+const ev = ['ev/samples.json'];
+
+/** The measurement of the scenario on the client of instance `p1` drawing on this host, with game settings `targetFps` 60. */
+function measure(quality = true): Promise<ScenarioMeasure> {
+  return measureScenario(ctx, 'p1', scenario, { quality, pollMs: 1, targetFps: 60, onHost: true });
+}
+
+/** The measurement of a run that set its quality level, and its judgement with `loadingTimeLimitMs` 3000. */
+async function judged(quality = true): Promise<{ measured: Extract<ScenarioMeasure, { kind: 'done' }>; result: CheckResult }> {
+  const measured = await measure(quality);
+  if (measured.kind !== 'done') throw new Error(measured.message);
+  return { measured, result: performanceVerdict(measured, 'web', { loadingTimeLimitMs: 3000 }, ev) };
+}
+
+async function verdict(quality = true): Promise<CheckResult> {
+  return (await judged(quality)).result;
 }
 
 beforeEach(() => {
   fpsSampling.intervalMs = 0;
   vi.mocked(hostRefreshHz).mockReset().mockResolvedValue(null);
-  vi.mocked(startInstance).mockReset().mockResolvedValue({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
-  vi.mocked(stopInstance).mockReset().mockResolvedValue();
-  vi.mocked(listInstances).mockResolvedValue([]);
   vi.mocked(instanceProcesses).mockResolvedValue({ server: true, clients: [{ client: 'main', alive: true }] });
   vi.mocked(instanceServerLog).mockResolvedValue('');
 });
 
-describe('performanceCheck', () => {
-  it('samples fps per scene alongside the scenario, drops the ticks of scene loads, judges p5 and scene loads, and writes hostLoad', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+describe('performance judgement of a measurement', () => {
+  it('samples fps per scene alongside the scenario, drops the ticks of scene loads, and judges p5 and scene loads', async () => {
     const calls = fakeGame({ lobby: 59, battle: 58 }, [
       { at: 1, scene_key: 'lobby', duration_ms: 3000 },
       { at: 2, scene_key: 'battle', duration_ms: 3001 },
     ]);
-    const result = await performanceCheck(ctx, 'g', 'android', scenario, options(root));
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'android', client: 'window', db: undefined, randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
-    expect(stopInstance).toHaveBeenCalledWith(ctx, 'p1');
+    const { measured, result } = await judged();
     expect(calls[0]).toBe('set_quality_level High');
-    const ev = ['ev/performance-android/samples.json'];
     expect(result).toEqual({
       name: 'performance',
-      platform: 'android',
+      platform: 'web',
       result: 'fail',
       failures: [
         { where: 'battle', message: expect.stringMatching(/^fps 5 percentile 58 is below the fps bound 59 \(\d+ samples\)$/) as unknown, evidence: ev },
         { where: 'battle', message: 'scene load 3001 ms is over loadingTimeLimitMs 3000', evidence: ev },
       ],
       warnings: [],
-      hostLoad: { cpuMaxPercent: 80, memoryMaxPercent: 33, instancesMax: 1 },
     });
-    const record = JSON.parse(readFileSync(join(root, 'ev/performance-android/samples.json'), 'utf8')) as { samples: Record<string, { fps: number; boundFps: number }[]> };
-    expect(new Set(record.samples.lobby?.map((v) => `${String(v.fps)}/${String(v.boundFps)}`))).toEqual(new Set(['59/59']));
-    expect(record.samples.lobby?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
-    expect(new Set(record.samples.battle?.map((v) => v.fps))).toEqual(new Set([58]));
+    const lobby = measured.samples.get('lobby');
+    expect(new Set(lobby?.map((v) => `${String(v.fps)}/${String(v.boundFps)}`))).toEqual(new Set(['59/59']));
+    expect(lobby?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
+    expect(new Set(measured.samples.get('battle')?.map((v) => v.fps))).toEqual(new Set([58]));
   });
 
-  it('reads a get_stats that gets no answer as a tick without one, and does not run on another error of a reading or of the core settings', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+  it('reads a get_stats that gets no answer as a tick without one, and fails on another error of a reading or of the core settings', async () => {
     const failingStats = (error: Error): void => {
       fakeGame({ lobby: 59, battle: 59 }, []);
       const game = vi.mocked(automationRequest).getMockImplementation();
@@ -500,48 +337,36 @@ describe('performanceCheck', () => {
       });
     };
     failingStats(new OgwError('instance control /request timed out after 100 ms'));
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).result).toBe('pass');
+    expect((await verdict()).result).toBe('pass');
     failingStats(new TypeError('stats unreadable'));
-    expect(await performanceCheck(ctx, 'g', 'web', scenario, options(root))).toMatchObject({
-      result: 'unknown',
-      failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'performance did not run: stats unreadable' }],
-    });
+    await expect(measure()).rejects.toThrow('stats unreadable');
     // merged core settings that cannot be read for QualityCore.levels (a folder where the file is; the first record read
     // is that of the levels, the scenario reads the default record after it): not read as a game without levels
     const checkout = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     mkdirSync(join(checkout, 'client', 'generated', 'core_settings.json'), { recursive: true });
     vi.mocked(readRecord).mockResolvedValueOnce({ id: 'p1', root: checkout, pids: {}, startedAt: 0 } as unknown as InstanceRecord);
     fakeGame({ lobby: 59, battle: 59 }, []);
-    expect(await performanceCheck(ctx, 'g', 'web', scenario, options(root))).toMatchObject({
-      result: 'unknown',
-      failures: [{ message: expect.stringMatching(/^performance did not run: EISDIR/) as unknown }],
-    });
+    await expect(measure()).rejects.toThrow(/^EISDIR/);
   });
 
   it('passes without QualityCore at the fps bound', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     const calls = fakeGame({ lobby: 59, battle: 61 }, []);
-    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { quality: false, db: 'postgresql' }));
-    expect(result.result).toBe('pass');
+    expect((await verdict(false)).result).toBe('pass');
     expect(calls).not.toContain('set_quality_level High');
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', platform: 'web', client: 'window', db: 'postgresql', randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
   });
 
   it('bounds the fps by the refresh rate of the host display', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     vi.mocked(hostRefreshHz).mockResolvedValue(50);
     fakeGame({ lobby: 49, battle: 49 }, []);
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).result).toBe('pass');
+    expect((await verdict()).result).toBe('pass');
     fakeGame({ lobby: 49, battle: 48 }, []);
-    const slow = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const slow = await verdict();
     expect(slow.failures.map((f) => f.message)).toEqual([expect.stringMatching(/^fps 5 percentile 48 is below the fps bound 49 /) as unknown]);
   });
 
   it('is unknown when telemetry scene_loads, an fps sample of the run or of a scene is missing', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const ev = ['ev/performance-web/samples.json'];
     const run = async (): Promise<Pick<CheckResult, 'result' | 'failures'>> => {
-      const { result, failures } = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+      const { result, failures } = await verdict();
       return { result, failures };
     };
     fakeGame({ lobby: 60, battle: 60 }, 'not a list');
@@ -563,56 +388,30 @@ describe('performanceCheck', () => {
     expect(await run()).toEqual({ result: 'fail', failures: [{ where: 'lobby', message: expect.stringMatching(/^fps 5 percentile 30 is below the fps bound 59 /) as unknown, evidence: ev }] });
   });
 
-  it('is unknown when set_quality_level fails or the scenario stops', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    fakeGame({}, [], { set_quality_level: notOk('no QualityCore') });
-    const quality = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
-    expect(quality.result).toBe('unknown');
-    expect(quality.failures).toEqual([{ where: 'client/dev/bot/scenario.json:1', message: 'set_quality_level High failed: "no QualityCore"', evidence: [] }]);
-    expect(quality.hostLoad).toEqual({ cpuMaxPercent: 80, memoryMaxPercent: 33, instancesMax: 1 });
+  it('does not run the scenario when set_quality_level fails, and is unknown when the scenario stops', async () => {
+    const calls = fakeGame({}, [], { set_quality_level: notOk('no QualityCore') });
+    expect(await measure()).toEqual({ kind: 'quality', message: 'set_quality_level High failed: "no QualityCore"' });
+    expect(calls).toEqual(['set_quality_level High']);
     fakeGame({}, [], { go_to_scene: notOk('no scene') });
-    const stopped = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const stopped = await verdict();
     expect(stopped.result).toBe('unknown');
-    expect(stopped.failures).toEqual([
-      { where: 'step 2', message: 'scenario stopped: go_to_scene returned ok false: "no scene"', evidence: ['ev/performance-web/samples.json'] },
-    ]);
-    expect(stopped.hostLoad).toBeDefined();
+    expect(stopped.failures).toEqual([{ where: 'step 2', message: 'scenario stopped: go_to_scene returned ok false: "no scene"', evidence: ev }]);
   });
 
   it('fails a stopped run on a scene load over the limit, without judging its partial fps', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     fakeGame({ lobby: 10 }, [{ scene_key: 'lobby', duration_ms: 9000 }, { scene_key: 'battle', duration_ms: 100 }], { go_to_scene: notOk('no scene') });
-    const stopped = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const stopped = await verdict();
     expect(stopped.result).toBe('fail');
-    expect(stopped.failures).toEqual([
-      { where: 'lobby', message: 'scene load 9000 ms is over loadingTimeLimitMs 3000', evidence: ['ev/performance-web/samples.json'] },
-    ]);
+    expect(stopped.failures).toEqual([{ where: 'lobby', message: 'scene load 9000 ms is over loadingTimeLimitMs 3000', evidence: ev }]);
   });
 
   it('puts fps samples and scene loads without a scene key at the scenario file', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     fakeGame({ lobby: 10, battle: 10 }, [{ duration_ms: 9000 }], { get_state: ok(doneState({ scene_key: null })) });
-    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const result = await verdict();
     expect(result.failures.map((f) => `${f.where} | ${f.message}`)).toEqual([
       expect.stringMatching(/^client\/dev\/bot\/scenario\.json:1 \| fps 5 percentile 10 is below the fps bound 59 \(\d+ samples\)$/),
       'client/dev/bot/scenario.json:1 | scene load 9000 ms is over loadingTimeLimitMs 3000',
     ]);
-  });
-
-  it('is unknown with a host reading when there is no scenario or no instance', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const noScenario = await performanceCheck(ctx, 'g', 'web', 'client/dev/bot/scenario.json does not exist', options(root));
-    expect(noScenario).toEqual({
-      name: 'performance',
-      platform: 'web',
-      result: 'unknown',
-      failures: [{ where: 'client/dev/bot/scenario.json:1', message: 'performance did not run: client/dev/bot/scenario.json does not exist', evidence: [] }],
-      warnings: [],
-      hostLoad: { cpuMaxPercent: 80, memoryMaxPercent: 33, instancesMax: 1 },
-    });
-    expect(startInstance).not.toHaveBeenCalled();
-    vi.mocked(startInstance).mockRejectedValue(new Error('instanceWaitTimeoutMs'));
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).failures[0]?.message).toBe('performance did not run: instanceWaitTimeoutMs');
   });
 });
 
@@ -621,354 +420,69 @@ const HITCHY = [...fill(10, 90), ...fill(246, 16.67)];
 /** 5 s at 60 fps with 2 frames of 46.67 ms: 2 × 30 ms of hitch time, 12 ms/s. */
 const LIGHT_HITCHES = [...fill(2, 46.67), ...fill(294, 16.67)];
 
-describe('performanceCheck: frame intervals', () => {
-  const ev = ['ev/performance-web/samples.json'];
-  const read = (root: string): { frameIntervals: Record<string, FrameTick[]> } => JSON.parse(readFileSync(join(root, 'ev/performance-web/samples.json'), 'utf8')) as { frameIntervals: Record<string, FrameTick[]> };
-
-  it('fails on the hitch ratio at the scene with the largest hitch time, and samples.json holds the kept intervals by scene', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
+describe('performance judgement of a measurement: frame intervals', () => {
+  it('fails on the hitch ratio at the scene with the largest hitch time, and keeps the intervals by scene', async () => {
     fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? HITCHY : LIGHT_HITCHES));
-    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
-    expect(result).toMatchObject({ result: 'fail', hostLoad: { cpuMaxPercent: 80, memoryMaxPercent: 33, instancesMax: 1 } });
+    const { measured, result } = await judged();
+    expect(result.result).toBe('fail');
     expect(result.failures).toEqual([
       { where: 'battle', message: expect.stringMatching(/^hitch ratio \d+\.\d ms\/s is at least 10 ms\/s over \d+\.\d s of kept frames \(\d+\.\d ms of hitch time in this scene\)$/) as unknown, evidence: ev },
     ]);
-    const { frameIntervals } = read(root);
-    expect(Object.keys(frameIntervals)).toEqual(['lobby', 'battle']);
-    const kept = (scene: string): Set<string> => new Set(frameIntervals[scene]?.map((t) => JSON.stringify(t)));
+    expect([...measured.frames.keys()]).toEqual(['lobby', 'battle']);
+    const kept = (scene: string): Set<string> => new Set(measured.frames.get(scene)?.map((t: FrameTick) => JSON.stringify(t)));
     expect(kept('lobby')).toEqual(new Set([JSON.stringify({ budgetMs: 1000 / 60, intervalsMs: LIGHT_HITCHES })]));
     expect(kept('battle')).toEqual(new Set([JSON.stringify({ budgetMs: 1000 / 60, intervalsMs: HITCHY })]));
-    expect(frameIntervals.battle?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
+    expect(measured.frames.get('battle')?.length).toBeGreaterThanOrEqual(TICKS_PER_SCENE - 2);
   });
 
   it('fails on a frame longer than 100 ms at its scene, with the budget from the refresh rate of the host display', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     vi.mocked(hostRefreshHz).mockResolvedValue(50);
     fakeGame({ lobby: 49, battle: 49 }, [], {}, (scene) => (scene === 'battle' ? [130.25, ...fill(244, 20)] : fill(250, 20)));
-    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const { measured, result } = await judged();
     expect(result.result).toBe('fail');
     expect(result.failures.filter((f) => f.message.startsWith('frame interval'))).toEqual([
       { where: 'battle', message: expect.stringMatching(/^frame interval 130\.25 ms is longer than 100 ms \(\d+ of \d+ kept intervals of this scene\)$/) as unknown, evidence: ev },
     ]);
-    const budgets = Object.values(read(root).frameIntervals).flat().map((t) => t.budgetMs);
+    const budgets = [...measured.frames.values()].flat().map((t) => t.budgetMs);
     expect(new Set(budgets)).toEqual(new Set([20]));
   });
 
   it('does not count the intervals of the ticks dropped for a scene load', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     // the first tick has no tick before and the second follows it: both are dropped
     fakeGame({ lobby: 60, battle: 60 }, [], {}, (_scene, call) => (call <= 2 ? [500, ...STEADY] : STEADY));
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root))).result).toBe('pass');
-    expect(Object.values(read(root).frameIntervals).flat().flatMap((t) => t.intervalsMs).filter((ms) => ms > 100)).toEqual([]);
+    const { measured, result } = await judged();
+    expect(result.result).toBe('pass');
+    expect([...measured.frames.values()].flat().flatMap((t) => t.intervalsMs).filter((ms) => ms > 100)).toEqual([]);
   });
 
   it('is unknown when a kept tick has no frame_intervals_ms array of numbers', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     const missing = (where: string): object => ({ where, message: 'get_stats of a kept tick has no frame_intervals_ms array of numbers', evidence: ev });
     fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'lobby' ? ['16.67'] : STEADY));
-    const some = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const some = await verdict();
     expect({ result: some.result, failures: some.failures }).toEqual({ result: 'unknown', failures: [missing('lobby')] });
     // a client whose get_stats has no frame_intervals_ms
     fakeGame({ lobby: 60, battle: 60 }, [], {}, () => undefined);
-    const none = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const none = await verdict();
     expect({ result: none.result, failures: none.failures }).toEqual({
       result: 'unknown',
       failures: [missing('lobby'), missing('battle'), { where: 'client/dev/bot/scenario.json:1', message: 'kept frame intervals add up to 0 s, less than 10 s', evidence: ev }],
     });
     // an fps failure is a failure while the frames are unknown
     fakeGame({ lobby: 30, battle: 60 }, [], {}, () => undefined);
-    const slow = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const slow = await verdict();
     expect(slow.result).toBe('fail');
     expect(slow.failures.map((f) => f.where)).toEqual(['lobby']);
   });
 
   it('is unknown when the kept intervals add up to less than 10 s, and fails on a long frame there', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
     // 10 ms per tick: far less than 10 s over the run
     fakeGame({ lobby: 60, battle: 60 }, [], {}, () => [10]);
-    const result = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const result = await verdict();
     expect(result.result).toBe('unknown');
     expect(result.failures).toEqual([{ where: 'client/dev/bot/scenario.json:1', message: expect.stringMatching(/^kept frame intervals add up to \d+(\.\d+)? s, less than 10 s$/) as unknown, evidence: ev }]);
     fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? [130] : [10]));
-    const long = await performanceCheck(ctx, 'g', 'web', scenario, options(root));
+    const long = await verdict();
     expect(long.result).toBe('fail');
     expect(long.failures).toEqual([{ where: 'battle', message: expect.stringMatching(/^frame interval 130 ms is longer than 100 ms \(\d+ of \d+ kept intervals of this scene\)$/) as unknown, evidence: ev }]);
-  });
-});
-
-describe('host load of a measurement', () => {
-  /** A probe whose CPU reading is `100 − idle` % and whose memory reading is `memory` %. */
-  const busyProbe = (idle: number, memory: number): HostProbe => fixedProbe([{ idle: 0, total: 0 }, { idle, total: 100 }], [memory], [1]);
-  const where = 'client/dev/bot/scenario.json:1';
-
-  it('makes a fail measured on a busy host unknown, with one failure per value it reached, memory first', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const ev = ['ev/performance-web/samples.json'];
-    const slowGame = (): string[] => fakeGame({ lobby: 30, battle: 60 }, [{ scene_key: 'lobby', duration_ms: 9000 }]);
-    slowGame();
-    expect(await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(20, 97.3) }))).toEqual({
-      name: 'performance',
-      platform: 'web',
-      result: 'unknown',
-      failures: [{ where, message: 'host memory 97.3%', evidence: ev }],
-      warnings: [],
-      hostLoad: { cpuMaxPercent: 80, memoryMaxPercent: 97.3, instancesMax: 1 },
-    });
-    slowGame();
-    const both = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(10, 95) }));
-    expect(both.result).toBe('unknown');
-    expect(both.failures.map((f) => f.message)).toEqual(['host memory 95%', 'host CPU 90%']);
-    slowGame();
-    const cpu = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(5, 40) }));
-    expect(cpu.failures).toEqual([{ where, message: 'host CPU 95%', evidence: ev }]);
-    // below both values the fail stays a fail with its own failures
-    slowGame();
-    const below = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(11, 94.9) }));
-    expect(below.result).toBe('fail');
-    expect(below.failures.map((f) => f.where)).toEqual(['lobby', 'lobby']);
-  });
-
-  it('makes a frame failure measured on a busy host unknown', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const hitchyGame = (): string[] => fakeGame({ lobby: 60, battle: 60 }, [], {}, (scene) => (scene === 'battle' ? [120, ...HITCHY] : STEADY));
-    hitchyGame();
-    const busy = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(5, 40) }));
-    expect({ result: busy.result, failures: busy.failures }).toEqual({ result: 'unknown', failures: [{ where, message: 'host CPU 95%', evidence: ['ev/performance-web/samples.json'] }] });
-    hitchyGame();
-    const below = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(11, 94.9) }));
-    expect(below.result).toBe('fail');
-    expect(below.failures.map((f) => `${f.where} ${f.message.split(' ').slice(0, 2).join(' ')}`)).toEqual(['battle hitch ratio', 'battle frame interval']);
-  });
-
-  it('keeps a fail measured on a host busy only with the instance, and makes one on a host busy with another process unknown', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const slowGame = (): string[] => fakeGame({ lobby: 30, battle: 60 }, [{ scene_key: 'lobby', duration_ms: 9000 }]);
-    const host = [{ idle: 0, total: 0 }, { idle: 0, total: 1000 }];
-    slowGame();
-    const game = fixedProbe(host, [40], [1], [TREE_BEFORE, [proc(100, 1, 20), proc(101, 100, 680), proc(102, 101, 300), proc(200, 1, 0)]], 100);
-    const own = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: game }));
-    expect({ result: own.result, wheres: own.failures.map((f) => f.where), hostLoad: own.hostLoad }).toEqual({
-      result: 'fail',
-      wheres: ['lobby', 'lobby'],
-      hostLoad: { cpuMaxPercent: 0, memoryMaxPercent: 40, instancesMax: 1 },
-    });
-    slowGame();
-    const other = fixedProbe(host, [40], [1], [TREE_BEFORE, [proc(100, 1, 20), proc(101, 100, 30), proc(102, 101, 0), proc(200, 1, 950)]], 100);
-    const busy = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: other }));
-    expect(busy).toMatchObject({ result: 'unknown', failures: [{ where, message: 'host CPU 95%' }], hostLoad: { cpuMaxPercent: 95 } });
-  });
-
-  it('keeps a pass and an unknown measured on a busy host', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(0, 99) }))).result).toBe('pass');
-    fakeGame({ lobby: 60 }, []);
-    const unknown = await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: busyProbe(0, 99) }));
-    expect(unknown).toMatchObject({ result: 'unknown', failures: [{ where: 'battle', message: 'no get_stats fps sample in this scene' }] });
-  });
-});
-
-/** An owner file of `pid` as the locks of `ogw` write it. */
-function ownerOf(pid: number): string {
-  return `${String(pid)}\n${pidNamespace() ?? ''}\n${hostBootId() ?? ''}\n${String(Math.random())}\n`;
-}
-
-/** Leaves the lock or entry folder `folder` with the owner file `owner`, as a process that took it does. */
-function leave(folder: string, owner: string): void {
-  mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, 'pid'), owner);
-}
-
-async function until(condition: () => boolean): Promise<void> {
-  while (!condition()) await sleep(10);
-}
-
-describe('performanceChecks: the performance lease', () => {
-  const busy = (platform: string, message: string): CheckResult => ({
-    name: 'performance',
-    platform,
-    result: 'unknown',
-    failures: [{ where: 'client/dev/bot/scenario.json:1', message, evidence: [] }],
-    warnings: [],
-    hostLoad: { cpuMaxPercent: 80, memoryMaxPercent: 33, instancesMax: 1 },
-  });
-
-  /** A context whose workspace root is `root`, for the lease that `generation run` holds. */
-  function leaseContext(root: string): Context {
-    return { ...ctx, workspace: () => Promise.resolve({ root }) } as unknown as Context;
-  }
-
-  async function leaseOf(root: string, waitMs = 60_000): Promise<RwLock> {
-    return { base: await performanceLeaseBase(leaseContext(root)), waitMs };
-  }
-
-  /** A generation run that holds the lease shared until `end` is called. */
-  function generation(root: string, order: string[]): { done: Promise<void>; end: () => void } {
-    let resolveRun: () => void = () => undefined;
-    const done = withGenerationLease(leaseContext(root), () => new Promise<void>((resolve) => {
-      order.push('generation');
-      resolveRun = resolve;
-    }));
-    return {
-      done,
-      end: () => {
-        resolveRun();
-      },
-    };
-  }
-
-  /** Records instance starts and stops in `order`; a stop takes `stopMs`. */
-  function trackInstances(order: string[], stopMs = 0): void {
-    vi.mocked(startInstance).mockImplementation(() => {
-      order.push('start');
-      return Promise.resolve({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
-    });
-    vi.mocked(stopInstance).mockImplementation(async () => {
-      await sleep(stopMs);
-      order.push('stop');
-    });
-  }
-
-  it('measures every platform profile under one hold after the running generation ends', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const gen = generation(root, order);
-    await until(() => order.includes('generation'));
-    const checks = performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root) }));
-    await sleep(600);
-    expect(order).toEqual(['generation']);
-    order.push('generation ended');
-    gen.end();
-    await gen.done;
-    const results = await checks;
-    expect(results.map((r) => r.platform)).toEqual(['android', 'web']);
-    expect(results.flatMap((r) => r.failures).filter((f) => f.message.startsWith('host busy'))).toEqual([]);
-    expect(order.slice(0, 2)).toEqual(['generation', 'generation ended']);
-    expect(order.slice(2).sort()).toEqual(['start', 'start', 'stop', 'stop']);
-  });
-
-  it('measures the platform profiles one at a time, so that no other instance runs beside the measured one', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    // slots for both: the measurements themselves keep apart
-    const results = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root), slots: new Slots(2) }));
-    expect(results.map((r) => r.platform)).toEqual(['android', 'web']);
-    expect(order).toEqual(['start', 'stop', 'start', 'stop']);
-  });
-
-  it('keeps a generation that starts while it measures out until the measurement ends', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order, 500);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const checks = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease: await leaseOf(root) }));
-    await until(() => order.includes('start'));
-    const gen = withGenerationLease(leaseContext(root), () => Promise.resolve(order.push('generation')));
-    const [results] = await Promise.all([checks, gen]);
-    expect(results.map((r) => r.result)).toEqual(['pass']);
-    expect(order).toEqual(['start', 'stop', 'generation']);
-  });
-
-  it('goes before a generation that starts while it waits for the generation of another process', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const lease = await leaseOf(root);
-    const other = spawn('sleep', ['30'], { stdio: 'ignore' });
-    try {
-      const entry = join(`${lease.base}-readers`, 'other');
-      leave(entry, ownerOf(other.pid as number));
-      const checks = performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }));
-      await sleep(300);
-      const gen = withGenerationLease(leaseContext(root), () => Promise.resolve(order.push('generation')));
-      await sleep(600);
-      expect(order).toEqual([]);
-      // the generation of the other process ends
-      rmSync(entry, { recursive: true });
-      await Promise.all([checks, gen]);
-      expect(order).toEqual(['start', 'stop', 'generation']);
-    } finally {
-      other.kill('SIGKILL');
-    }
-  });
-
-  it('is unknown without measuring when a generation holds the lease past the wait, with the host load of the wait', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    const gen = generation(root, order);
-    await until(() => order.includes('generation'));
-    const results = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root, 300) }));
-    expect(results).toEqual([busy('android', 'host busy: local generation'), busy('web', 'host busy: local generation')]);
-    expect(startInstance).not.toHaveBeenCalled();
-    // without a scenario nothing is measured, so nothing waits for the lease
-    const noScenario = await performanceChecks(ctx, 'g', ['web'], 'client/dev/bot/scenario.json does not exist', options(root, { lease: await leaseOf(root) }));
-    expect(noScenario[0]?.failures[0]?.message).toBe('performance did not run: client/dev/bot/scenario.json does not exist');
-    gen.end();
-    await gen.done;
-  });
-
-  it('is unknown without measuring when the measurement of another check holds the lease past the wait', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    trackInstances([]);
-    const lease = await leaseOf(root, 300);
-    const other = withWriter({ ...lease, waitMs: 60_000 }, () => sleep(1500));
-    await sleep(100);
-    expect(await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }))).toEqual([busy('web', 'host busy: performance measurement')]);
-    expect(startInstance).not.toHaveBeenCalled();
-    await other;
-  });
-
-  it('makes a host reading that fails the unknown item of its platform profile and keeps the items measured before it', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const platforms: string[] = [];
-    vi.mocked(startInstance).mockImplementation((_ctx, options) => {
-      platforms.push(options.platform ?? '');
-      return Promise.resolve({ id: 'p1' } as Awaited<ReturnType<typeof startInstance>>);
-    });
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const unreadable = new OgwError('invalid JSON in x.json');
-    // the instance count fails once the instance of the second profile has started
-    const fixed = fixedProbe([{ idle: 0, total: 0 }, { idle: 20, total: 100 }], [33], [1]);
-    const second: HostProbe = { ...fixed, instances: () => (platforms.includes('web') ? Promise.reject(unreadable) : fixed.instances()) };
-    const results = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root), probe: second }));
-    expect(results.map((r) => [r.platform, r.result])).toEqual([['android', 'pass'], ['web', 'unknown']]);
-    expect(results[1]?.failures).toEqual([{ where: 'client/dev/bot/scenario.json:1', message: 'performance did not run: invalid JSON in x.json', evidence: [] }]);
-    // the readings of the wait for the lease fail: nothing is measured, and every item says why
-    const always = { ...fixedProbe([{ idle: 0, total: 0 }], [33], [1]), instances: () => Promise.reject(unreadable) };
-    const waited = await performanceChecks(ctx, 'g', ['android', 'web'], scenario, options(root, { lease: await leaseOf(root), probe: always }));
-    expect(waited.map((r) => [r.platform, r.result, r.failures.map((f) => f.message)])).toEqual([
-      ['android', 'unknown', ['performance did not run: invalid JSON in x.json']],
-      ['web', 'unknown', ['performance did not run: invalid JSON in x.json']],
-    ]);
-    expect(waited[0]?.hostLoad).toEqual({ cpuMaxPercent: 0, memoryMaxPercent: 33, instancesMax: 0 });
-    // one profile alone, and a failed instance start whose host reading fails too: both errors are given
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: always }))).failures.map((f) => f.message)).toEqual(['performance did not run: invalid JSON in x.json']);
-    vi.mocked(startInstance).mockRejectedValueOnce(new Error('no port'));
-    expect((await performanceCheck(ctx, 'g', 'web', scenario, options(root, { probe: always }))).failures.map((f) => f.message)).toEqual([
-      'performance did not run: no port',
-      'performance did not run: invalid JSON in x.json',
-    ]);
-  });
-
-  it('does not wait for holders left by a process that is gone, nor does a generation', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ogw-perf-'));
-    const order: string[] = [];
-    trackInstances(order);
-    fakeGame({ lobby: 60, battle: 60 }, []);
-    const lease = await leaseOf(root, 3000);
-    const gone = (): string => ownerOf(Number(spawnSync('sh', ['-c', 'echo $$'], { encoding: 'utf8' }).stdout.trim()));
-    for (const folder of [join(`${lease.base}-readers`, 'r'), join(`${lease.base}-writers`, 'w'), lease.base]) leave(folder, gone());
-    expect((await performanceChecks(ctx, 'g', ['web'], scenario, options(root, { lease }))).map((r) => r.result)).toEqual(['pass']);
-    for (const folder of [join(`${lease.base}-writers`, 'w'), lease.base]) leave(folder, gone());
-    const started = Date.now();
-    await withGenerationLease(leaseContext(root), () => Promise.resolve(order.push('generation')));
-    expect(Date.now() - started).toBeLessThan(3000);
-    expect(order).toEqual(['start', 'stop', 'generation']);
   });
 });

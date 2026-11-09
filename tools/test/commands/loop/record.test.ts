@@ -23,20 +23,18 @@ function checkFile(commitSha: string): object {
       { name: 'static check', platform: null, result: 'fail', failures: [{ where: 'data/tables/a.csv:3', message: 'id_name bad', evidence: ['log.txt'] }], warnings: [] },
       { name: 'no blocker', platform: null, result: 'pass', failures: [], warnings: [] },
       { name: 'full flow', platform: null, result: 'pass', failures: [], warnings: [] },
-      { name: 'performance', platform: 'web', result: 'fail', failures: [], warnings: [], hostLoad: { cpuMaxPercent: 95 } },
-      { name: 'performance', platform: 'android', result: 'pass', failures: [], warnings: [], hostLoad: { cpuMaxPercent: 20 } },
-      { name: 'no placeholder', platform: null, result: 'fail', failures: [{ where: 'x', message: 'placeholder icon/a', evidence: [] }], warnings: [] },
       {
-        name: 'row simulation',
-        platform: null,
+        name: 'UI quality',
+        platform: 'web',
         result: 'fail',
         failures: [
-          { where: 'data/tables/s.csv:2', message: 'error [s1] crashed', evidence: [] },
-          { where: 'data/tables/s.csv:3', message: 'out [s2] too slow', evidence: [] },
+          { where: 'scene/menu/menu', message: 'menu.open failed: crashed', evidence: [] },
+          { where: 'scene/shop/shop', message: 'shop.open failed: timed out', evidence: [] },
           { where: '', message: 'no where', evidence: [] },
         ],
         warnings: [],
       },
+      { name: 'no placeholder', platform: null, result: 'fail', failures: [{ where: 'x', message: 'placeholder icon/a', evidence: [] }], warnings: [] },
     ],
   };
 }
@@ -142,8 +140,8 @@ describe('ogw loop findings', () => {
     const base = { id: null, drop: null };
     expect(file.findings).toEqual([
       { ...base, source: 'check', severity: null, owner: null, where: 'data/tables/a.csv:3', what: 'id_name bad', why: null, evidence: [`${R}/check-1.json#static check`, 'log.txt'] },
-      { ...base, source: 'check', severity: null, owner: 'client content', where: 'data/tables/s.csv:2', what: 'error [s1] crashed', why: null, evidence: [`${R}/check-1.json#row simulation`] },
-      { ...base, source: 'check', severity: null, owner: 'data', where: 'data/tables/s.csv:3', what: 'out [s2] too slow', why: null, evidence: [`${R}/check-1.json#row simulation`] },
+      { ...base, source: 'check', severity: null, owner: null, where: 'scene/menu/menu', what: 'menu.open failed: crashed', why: null, evidence: [`${R}/check-1.json#UI quality`] },
+      { ...base, source: 'check', severity: null, owner: null, where: 'scene/shop/shop', what: 'shop.open failed: timed out', why: null, evidence: [`${R}/check-1.json#UI quality`] },
       { ...base, source: 'check', severity: null, owner: 'design', where: 'fps', what: 'value 20 out of 30..60', why: null, evidence: [`${R}/measure-1.json#fps`] },
       { ...base, source: 'check', severity: null, owner: 'data', where: 'gold_rate', what: 'value 9 out of 1..5', why: null, evidence: [`${R}/measure-1.json#gold_rate`] },
       { ...base, source: 'play', severity: 'blocker', owner: null, where: 'lobby', what: 'tap start → nothing happens', why: 'stuck', evidence: ['cap/1.png', `${R}/play-1-1.md:7`] },
@@ -335,7 +333,7 @@ describe('ogw loop record', () => {
     write(g.root, `${R}/measure-1.json`, measure);
     await ogw(g.ws, ['loop', 'findings', 'g']);
     const file = readJsonFile(g.root, `${R}/findings-1.json`) as FindingsFile;
-    const ids = ['static-bad', 'sim-crash', 'sim-slow', 'low-fps', 'gold', 'start-stuck', 'dash', 'boss'];
+    const ids = ['static-bad', 'menu-crash', 'shop-timeout', 'low-fps', 'gold', 'start-stuck', 'dash', 'boss'];
     write(g.root, `${R}/content-1.md`, '## defects\n\n| id | result | note |\n|---|---|---|\n| static-bad | fixed | |\n');
     write(g.root, `${R}/defects.json`, {
       defects: [
@@ -359,8 +357,8 @@ describe('ogw loop record', () => {
       ['start-stuck', 'blocker', 'open'],
       ['boss', 'major', 'open'],
       ['static-bad', 'minor', 'open'],
-      ['sim-crash', 'minor', 'open'],
-      ['sim-slow', 'minor', 'open'],
+      ['menu-crash', 'minor', 'open'],
+      ['shop-timeout', 'minor', 'open'],
       ['low-fps', 'minor', 'open'],
       ['gold', 'minor', 'open'],
       ['old', 'major', 'fixed'],
@@ -368,7 +366,7 @@ describe('ogw loop record', () => {
     const record = read(g.root, `${R}/iteration-1.md`);
     expect(record).toContain(`## commit\n\n- instance: ${sha}\n- baseline: base0\n- confirms: none\n- kind: completeness\n`);
     expect(record).toContain('| static check | fail | records/loops/update-1/check-1.json |');
-    expect(record).toContain('| performance | fail | records/loops/update-1/check-1.json |');
+    expect(record).toContain('| UI quality | fail | records/loops/update-1/check-1.json |');
     expect(record).toContain(
       `### ${R}/judge-1-1.md\n\n- kind: main\n- status: done\n- agent: claude-code claude-opus-5-5 high\n- A: base0\n- B: ${sha}\n- vs reference: fail\n- omitted moments: boss\n\n#### moments\n\n\`B\` is better at core action. reason: faster\n\n#### loser better\n\nA had music`,
     );
@@ -381,7 +379,6 @@ describe('ogw loop record', () => {
     expect(record).toContain('| start-stuck | blocker | design | lobby |');
     expect(record).toContain('| fps | 20 | 30..60 | out |');
     expect(record).toContain('| content.gold | 9007199254740994 | 9007199254740993..9007199254740995 | in |');
-    expect(record).toContain('## load\n\n| platform | result | hostLoad |\n|---|---|---|\n| web | fail | {"cpuMaxPercent":95} |\n| android | pass | {"cpuMaxPercent":20} |');
     expect(git(g.root, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual([`${R}/defects.json`, `${R}/findings-1.json`, `${R}/iteration-1.md`]);
     expect(git(g.root, 'status', '--porcelain')).toBe('');
   });
@@ -462,40 +459,6 @@ describe('ogw loop record', () => {
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects.find((d) => d.id === 'slow')).toMatchObject({ status: 'awaiting confirmation', repeatedDefect: 0 });
   });
 
-  it('lets a fixed row wait for confirmation only with the fix test proof of check-<n>.json when it needs one, and writes ## fix test proof', async () => {
-    const { g, sha } = await iterationOne();
-    const open = (id: string, owner: string): object => ({ id, severity: 'major', owner, where: 'w', what: 'x', why: 'y', evidence: [], source: 'play', status: 'open', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
-    write(g.root, `${R}/defects.json`, { defects: [open('crash', 'client content'), open('flat', 'client content'), open('balance', 'data'), open('nope', 'client content'), open('lost', 'server content')], previous: null, recordedBy: 'iteration-0' });
-    write(g.root, `${R}/content-1.md`, [
-      '## defects', '', '| id | result | note |', '|---|---|---|',
-      '| crash | fixed | `client/tests/a.gd::test_a` |', '| flat | fixed | presentation |', '| balance | fixed | |', '| nope | fixed | `client/tests/b.gd::test_b` |', '| lost | fixed | `server/tests/c.test.ts::c > d` |', '',
-    ].join('\n'));
-    const test = (name: string, result: string): object => ({ name, result, reason: null });
-    write(g.root, `${R}/check-1.json`, {
-      ...checkFile(sha),
-      gate: 'pass',
-      fixTestProof: [
-        { id: 'crash', result: 'pass', reason: null, tests: [test('client/tests/a.gd::test_a', 'fail')] },
-        { id: 'flat', result: 'unknown', reason: 'presentation', tests: [] },
-        { id: 'balance', result: 'unknown', reason: 'owner data', tests: [] },
-        { id: 'nope', result: 'fail', reason: 'the named tests pass on the fix base', tests: [test('client/tests/b.gd::test_b', 'pass')] },
-      ],
-    });
-    write(g.root, `${R}/findings-1.json`, { findings: [], discarded: [] });
-    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
-    const defects = (readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects;
-    // `lost` has no proof in the check file: no pass. The rows that wait for confirmation are then confirmed by the done
-    // play of the iteration, which has no finding of their ids
-    expect(defects.map((d) => [d.id, d.status])).toEqual([['crash', 'fixed'], ['flat', 'fixed'], ['balance', 'fixed'], ['nope', 'open'], ['lost', 'open']]);
-    expect(read(g.root, `${R}/iteration-1.md`)).toContain(
-      [
-        '## fix test proof', '', '| id | result | reason | tests |', '|---|---|---|---|',
-        '| crash | pass | none | client/tests/a.gd::test_a: fail |', '| flat | unknown | presentation | none |', '| balance | unknown | owner data | none |',
-        '| nope | fail | the named tests pass on the fix base | client/tests/b.gd::test_b: pass |', '', '## measurements',
-      ].join('\n'),
-    );
-  });
-
   it('confirms a defect only by its own source, and refuses a dropped finding with an id', async () => {
     const { g } = await iterationOne();
     const ui = { id: 'ui', severity: 'major', owner: 'data', where: 'w', what: 'x', why: 'y', evidence: [`${R}/check-1.json#no such check`], source: 'check', status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 };
@@ -529,13 +492,13 @@ describe('ogw loop record', () => {
     const g = setupGame();
     await openLoopRun(g, { iteration: 2 });
     const d = (id: string, source: string, evidence: string[]): object => ({ id, severity: 'minor', owner: 'data', where: 'w', what: 'x', why: 'y', evidence, source, status: 'awaiting confirmation', refusedReason: null, repeatedDefect: 0, oscillation: 0 });
-    const perf = `${R}/check-1.json#performance`;
+    const ui = `${R}/check-1.json#UI quality`;
     const fps = `${R}/measure-1.json#fps`;
     write(g.root, `${R}/defects.json`, {
       defects: [
-        d('chk-pass', 'check', [perf]),
+        d('chk-pass', 'check', [ui]),
         d('chk-unknown', 'check', [`${R}/check-1.json#static check`]),
-        d('chk-found', 'check', [perf]),
+        d('chk-found', 'check', [ui]),
         d('msr-in', 'check', [fps]),
         d('msr-found', 'check', [fps]),
         d('msr-unknown', 'check', [`${R}/measure-1.json#load`]),
@@ -552,8 +515,8 @@ describe('ogw loop record', () => {
       gate: 'pass',
       checks: [
         { name: 'static check', platform: null, result: 'unknown', failures: [], warnings: [] },
-        { name: 'performance', platform: 'web', result: 'pass', failures: [], warnings: [] },
-        { name: 'performance', platform: 'android', result: 'unknown', failures: [], warnings: [] },
+        { name: 'UI quality', platform: 'web', result: 'pass', failures: [], warnings: [] },
+        { name: 'UI quality', platform: 'android', result: 'unknown', failures: [], warnings: [] },
       ],
     });
     write(g.root, `${R}/measure-2.json`, {
@@ -592,34 +555,7 @@ describe('ogw loop record', () => {
     ]);
   });
 
-  it('writes the load of an unknown performance check with the reason of each unknown item, and makes no defect of it', async () => {
-    const g = setupGame();
-    await openLoopRun(g, { iteration: 2 });
-    const busy = { where: 'client/dev/bot/scenario.json:1', message: 'host busy: local generation', evidence: [] };
-    const memory = { where: 'client/dev/bot/scenario.json:1', message: 'host memory 97.3%', evidence: ['ev/performance-web/samples.json'] };
-    const load = { cpuMaxPercent: 40, memoryMaxPercent: 97.3, instancesMax: 2 };
-    write(g.root, `${R}/check-2.json`, {
-      commit: 'c',
-      gate: 'pass',
-      checks: [
-        { name: 'performance', platform: 'android', result: 'unknown', failures: [busy], warnings: [], hostLoad: load },
-        { name: 'performance', platform: 'web', result: 'unknown', failures: [memory], warnings: [], hostLoad: load },
-      ],
-    });
-    expect((await ogw(g.ws, ['loop', 'findings', 'g'])).code).toBe(0);
-    expect((readJsonFile(g.root, `${R}/findings-2.json`) as FindingsFile).findings).toEqual([]);
-    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
-    const record = read(g.root, `${R}/iteration-2.md`);
-    expect(record).toContain('| performance | unknown | records/loops/update-1/check-2.json |');
-    expect(record).toContain(
-      '## load\n\n| platform | result | hostLoad |\n|---|---|---|\n' +
-        '| android | unknown (host busy: local generation) | {"cpuMaxPercent":40,"memoryMaxPercent":97.3,"instancesMax":2} |\n' +
-        '| web | unknown (host memory 97.3%) | {"cpuMaxPercent":40,"memoryMaxPercent":97.3,"instancesMax":2} |',
-    );
-    expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).defects).toEqual([]);
-  });
-
-  it('writes empty judge, play, measurement and load sections without an evaluate file', async () => {
+  it('writes empty judge, play and measurement sections without an evaluate file', async () => {
     const g = setupGame();
     await openLoopRun(g, { iteration: 2 });
     write(g.root, `${R}/check-2.json`, { commit: 'c', checks: [] });
@@ -627,28 +563,11 @@ describe('ogw loop record', () => {
     expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
     const record = read(g.root, `${R}/iteration-2.md`);
     expect(record).toContain('## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n');
-    expect(record).toContain('## measurements\n\nnone\n\n## load\n\nnone\n');
+    expect(record).toContain('## measurements\n\nnone\n\n## temporary resources\n');
     expect((readJsonFile(g.root, `${R}/defects.json`) as DefectsFile).previous).toBeNull();
     expect(record).toContain('## temporary resources\n\nnone\n\n## cost\n\nnone\n');
     // no ogw agent job of the iteration: no window of it
     expect(record).toContain('## time\n\nnone: iteration 2 of run update-1 has no ogw agent job\n');
-  });
-
-  it('writes no load table when every performance item passed', async () => {
-    const g = setupGame();
-    await openLoopRun(g, { iteration: 2 });
-    const hostLoad = { cpuMaxPercent: 40, memoryMaxPercent: 60, instancesMax: 2 };
-    write(g.root, `${R}/check-2.json`, {
-      commit: 'c',
-      gate: 'pass',
-      checks: [
-        { name: 'performance', platform: 'web', result: 'pass', failures: [], warnings: [], hostLoad },
-        { name: 'performance', platform: 'macos', result: 'pass', failures: [], warnings: [], hostLoad },
-      ],
-    });
-    write(g.root, `${R}/findings-2.json`, { findings: [], discarded: [] });
-    expect((await ogw(g.ws, ['loop', 'record', 'g'])).code).toBe(0);
-    expect(read(g.root, `${R}/iteration-2.md`)).toContain('## load\n\nnone\n');
   });
 
   it('writes the cost of the agent jobs of the run and iteration per role', async () => {
@@ -814,7 +733,7 @@ describe('ogw loop baseline and verdict', () => {
   it('gives confirm while a resource or translation job of the run is unhandled', async () => {
     const g = setupGame();
     await openLoopRun(g, { iteration: 2 });
-    const checks = ['regression test', 'static check', 'no blocker', 'performance', 'UI quality', 'no placeholder', 'full flow']
+    const checks = ['regression test', 'static check', 'no blocker', 'UI quality', 'no placeholder', 'full flow']
       .map((n) => `| ${n} | ${n === 'no placeholder' ? 'fail' : 'pass'} | p |`).join('\n');
     const judges = ['main', 'success', 'success'].map((kind, i) => `### j${String(i)}\n\n- kind: ${kind}\n- vs baseline: better\n- vs reference: pass`).join('\n\n');
     write(g.root, `${R}/iteration-2.md`, `## commit\n\n- instance: c2\n- baseline: none\n\n## checks\n\n| check | result | file |\n|---|---|---|\n${checks}\n\n## judge\n\n${judges}\n`);
@@ -839,7 +758,7 @@ describe('ogw loop baseline and verdict', () => {
     const instance = commit(g.root, 'instance');
     write(g.root, 'c.txt', 'c');
     const after = commit(g.root, 'merged after');
-    const checks = ['regression test', 'static check', 'no blocker', 'performance', 'UI quality', 'no placeholder', 'full flow']
+    const checks = ['regression test', 'static check', 'no blocker', 'UI quality', 'no placeholder', 'full flow']
       .map((n) => `| ${n} | pass | p |`).join('\n');
     const judges = ['main', 'success', 'success'].map((kind, i) => `### j${String(i)}\n\n- kind: ${kind}\n- vs baseline: better\n- vs reference: pass`).join('\n\n');
     write(g.root, `${R}/iteration-2.md`, `## commit\n\n- instance: ${instance}\n- baseline: none\n\n## checks\n\n| check | result | file |\n|---|---|---|\n${checks}\n\n## judge\n\n${judges}\n`);
@@ -878,7 +797,7 @@ describe('ogw loop baseline and verdict', () => {
   it('gives success from the loop iteration record, not from a newer evaluate file', async () => {
     const g = setupGame({ loopStop: { repeatedDefect: 3, oscillation: 2, plateau: 3, successJudges: 1 } });
     await openLoopRun(g, { iteration: 1 });
-    const checks = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder'];
+    const checks = ['regression test', 'static check', 'no blocker', 'full flow', 'UI quality', 'no placeholder'];
     const judge = (path: string, kind: string, reference: string): string => `### ${path}\n\n- kind: ${kind}\n- status: done\n- A: a\n- B: b\n- vs baseline: better\n- vs reference: ${reference}\n`;
     const recordText = (reference: string): string => [
       '## checks', '', '| check | result | file |', '|---|---|---|', ...checks.map((c) => `| ${c} | pass | ${R}/check-1.json |`), '',
@@ -1004,7 +923,7 @@ describe('ogw loop end-record', () => {
       [
         '## reason', '', 'plateau', '', '- 1', '- 2', '',
         '## result', '', `- merge commit: ${sha}`, '- vs baseline: better', `- last judge result: ${R}/judge-1-1.md`,
-        `- completeness check of iteration 1 (${sha})`, '- no blocker: pass', '- performance: unknown', '- no placeholder: unknown', '- full flow: unknown', '- UI quality: unknown', '',
+        `- completeness check of iteration 1 (${sha})`, '- no blocker: pass', '- no placeholder: unknown', '- full flow: unknown', '- UI quality: unknown', '',
         '## failures', '', '- placeholder icon/z', `- open defect open-one (found on ${sha}): broken`, '- not given again /r/1.md: boom', '',
         '## human', '', '- needs human: speed (decision: d)', '- core proposal: records/core-proposals/9-x.md', '- license unknown: icon/a',
         '- skipped core version: 1.3.0', '- banned word list missing: ko', '- judge calibration: never run (ogw judge calibrate g; labels: 0, added with ogw judge label g)', '- check the shop on STG', '- look at the icon', '- ## not a heading', '',
@@ -1064,10 +983,10 @@ describe('ogw loop end-record', () => {
     });
     expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
     const text = read(g.root, `${R}/end.md`);
-    const merged = ['no blocker: fail', 'performance: unknown', 'no placeholder: unknown', 'full flow: unknown', 'UI quality: unknown'].map((l) => `- merged iteration ${l}\n`).join('');
+    const merged = ['no blocker: fail', 'no placeholder: unknown', 'full flow: unknown', 'UI quality: unknown'].map((l) => `- merged iteration ${l}\n`).join('');
     expect(text).toContain(
       `## result\n\n- merge commit: ${c2}\n- vs baseline: same\n- last judge result: ${R}/judge-10-1.md\n- completeness check of iteration 10 (${c10})\n- no blocker: pass\n`
-      + `- performance: unknown\n- no placeholder: unknown\n- full flow: unknown\n- UI quality: unknown\n- merged iteration: 2 (${R}/iteration-2.md)\n${merged}\n`,
+      + `- no placeholder: unknown\n- full flow: unknown\n- UI quality: unknown\n- merged iteration: 2 (${R}/iteration-2.md)\n${merged}\n`,
     );
     expect(text).toContain(`## failures\n\n- defects at the merge commit: the defect table of ${R}/iteration-2.md\n- not given again /r/2.md: boom\n- not merged jobx: merge of job jobx failed: no worktree\n\n`);
     expect(text).toContain(`## human\n\n- core proposal: records/core-proposals/2-new.md\n- banned word list missing: ja\n${NEVER}\n`);
@@ -1077,7 +996,7 @@ describe('ogw loop end-record', () => {
     });
     expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
     const synced = read(g.root, `${R}/end.md`);
-    expect(synced).toContain(`- merged iteration: 2 (${R}/iteration-2.md)\n- merged iteration no blocker: fail\n- merged iteration performance: unknown\n- merged iteration full flow: unknown\n`);
+    expect(synced).toContain(`- merged iteration: 2 (${R}/iteration-2.md)\n- merged iteration no blocker: fail\n- merged iteration full flow: unknown\n`);
     expect(synced).toContain('- merged iteration UI quality: unknown\n- merged tree not checked as a whole\n\n## failures');
     // the same when the commit to merge is the commit of the last check file
     await setRun(g, (run) => {
@@ -1085,7 +1004,7 @@ describe('ogw loop end-record', () => {
     });
     expect((await ogw(g.ws, ['loop', 'end-record', 'g'])).code).toBe(0);
     const syncedLast = read(g.root, `${R}/end.md`);
-    expect(syncedLast).toContain(`- completeness check of iteration 10 (${c10})\n- no blocker: pass\n- performance: unknown\n- full flow: unknown\n- UI quality: unknown\n- merged tree not checked as a whole\n\n## failures`);
+    expect(syncedLast).toContain(`- completeness check of iteration 10 (${c10})\n- no blocker: pass\n- full flow: unknown\n- UI quality: unknown\n- merged tree not checked as a whole\n\n## failures`);
     expect(syncedLast).not.toContain('merged iteration:');
   });
 

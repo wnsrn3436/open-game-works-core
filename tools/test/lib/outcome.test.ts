@@ -80,7 +80,7 @@ describe('no gate maps unknown to pass', () => {
     const passing = ['regression test', 'static check', 'no blocker', 'full flow'].map((name) => check(name, 'pass'));
     expect(gateOf(passing)).toBe('pass');
     expect(gateOf([...passing.slice(1), check('regression test', 'unknown')])).toBe('fail');
-    expect(mergedResult([check('performance', 'pass'), check('performance', 'unknown')])).toBe('unknown');
+    expect(mergedResult([check('UI quality', 'pass'), check('UI quality', 'unknown')])).toBe('unknown');
     expect(mergedResult([])).toBe('unknown');
   });
 

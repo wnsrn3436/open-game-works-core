@@ -110,7 +110,6 @@ export interface HarnessSettings {
   maxConcurrentInstances: number | null;
   instanceMeasureLimit: number;
   instanceWaitTimeoutMs: number;
-  performanceLeaseWaitTimeoutMs: number;
   jobWaitTimeoutMs: number;
   testDevices?: TestDevice[];
   playInstances: number;

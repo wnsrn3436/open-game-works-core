@@ -85,15 +85,13 @@ describe('setup records', () => {
 describe('finding sources', () => {
   it('skips passing checks, unknown checks and no placeholder', () => {
     const failure = { where: 'w', message: 'm', evidence: [] };
-    const busy = (message: string): { where: string; message: string; evidence: string[] } => ({ where: 'client/dev/bot/scenario.json:1', message, evidence: [] });
     const out = checkFindings({
       commit: 'c',
       gate: 'fail',
       checks: [
         { name: 'static check', platform: null, result: 'pass', failures: [failure], warnings: [] },
-        // a performance item of a busy host is unknown: no finding, so no fps defect
-        { name: 'performance', platform: 'android', result: 'unknown', failures: [busy('host busy: local generation')], warnings: [] },
-        { name: 'performance', platform: 'web', result: 'unknown', failures: [busy('host memory 97%'), busy('host CPU 92%')], warnings: [] },
+        // an unknown item gives no finding
+        { name: 'UI quality', platform: 'android', result: 'unknown', failures: [{ where: 'settings.json:1', message: 'uiCheckScreens.0.pixelRatio: missing', evidence: [] }], warnings: [] },
         { name: 'no placeholder', platform: null, result: 'fail', failures: [failure], warnings: [] },
         { name: 'UI quality', platform: 'web', result: 'fail', failures: [failure], warnings: [] },
       ],
@@ -134,7 +132,7 @@ describe('finding sources', () => {
           ],
           warnings: [],
         },
-        { name: 'performance', platform: 'macos', result: 'fail', failures: [ui('low contrast X: 1.0:1 in prefab/a/b (ko, s, t, text scale 1000)')], warnings: [] },
+        { name: 'full flow', platform: null, result: 'fail', failures: [ui('low contrast X: 1.0:1 in prefab/a/b (ko, s, t, text scale 1000)')], warnings: [] },
       ],
     }, 'c.json');
     expect(out.map((f) => [f.id, f.severity, f.owner])).toEqual([

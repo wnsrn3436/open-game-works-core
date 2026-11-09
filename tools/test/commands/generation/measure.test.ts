@@ -2,7 +2,6 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readList } from '../../../src/commands/resource/lib/list.ts';
 import { rigFixtureProblem } from '../../../src/commands/generation/lib/rig-fixture.ts';
@@ -15,7 +14,6 @@ import { installFolder, installFolderOf, writeInstall, type MethodLike } from '.
 import { closeRun, openPinnedRun, writeLocalSettings } from './pinned-run.ts';
 import type { GenerationMethod, HarnessSettings } from '../../../src/lib/settings.ts';
 import { LIMITS } from '../../../src/lib/limits.ts';
-import { withWriterWithin } from '../../../src/lib/rwlock.ts';
 import { ogw, makeGame, makeWorkspace, type TestWorkspace } from '../../helpers/workspace.ts';
 
 // readList as it is, counted: `generation run` reads the resource list once
@@ -546,35 +544,6 @@ describe.runIf(process.platform === 'darwin')('ogw generation run', () => {
     const second = ogw(ws, ['generation', 'run', 'audio', '--game', 'g', '--key', 'sfx/a', '--prompt', prompt, '--out', join(ws.root, 'o2')], { env });
     expect((await Promise.all([first, second])).map((r) => r.code)).toEqual([0, 0]);
     expect(readFileSync(join(ws.root, 'o2', 'r.txt'), 'utf8')).toBe('after\n');
-  });
-
-  it('holds the performance lease shared while its call runs: a measurement waits for the call, and the call waits for a measurement', async () => {
-    const { ws, env } = workspace(methods);
-    makeGame(ws, 'g', { 'resource/resources.csv': resources });
-    setJob('flux2-klein', { stages: [], prompt: '', image: false, call: (input) => Promise.resolve({ cmd: '/bin/sh', args: ['-c', 'touch "$1/started"; sleep 1; touch "$1/ended"', 'sh', input.out] }) });
-    expect((await ogw(ws, ['generation', 'install', 'flux2-klein'], { env })).code).toBe(0);
-    const prompt = join(ws.root, 'prompt.txt');
-    writeFileSync(prompt, 'p');
-    const lease = { base: join(ws.root, '.ogw', 'generation', 'performance-lease'), waitMs: 60_000 };
-    const run = (out: string): ReturnType<typeof ogw> => ogw(ws, ['generation', 'run', 'flux2-klein', '--game', 'g', '--key', 'image/hero', '--prompt', prompt, '--out', out], { env });
-    const out1 = join(ws.root, 'o1');
-    const first = run(out1);
-    while (!existsSync(join(out1, 'started'))) await sleep(20);
-    // the measurement starts only once the running call has ended
-    expect(await withWriterWithin(lease, () => Promise.resolve(existsSync(join(out1, 'ended'))))).toEqual({ ran: true, value: true });
-    expect((await first).code).toBe(0);
-    const out2 = join(ws.root, 'o2');
-    let second: ReturnType<typeof ogw> | null = null;
-    const measured = await withWriterWithin(lease, async () => {
-      second = run(out2);
-      // the run holds the one-run lock and waits for the lease
-      while (!existsSync(join(ws.root, '.ogw', 'generation', 'run.lock'))) await sleep(20);
-      await sleep(1500);
-      return existsSync(join(out2, 'started'));
-    });
-    expect(measured).toEqual({ ran: true, value: false });
-    expect((await (second as unknown as ReturnType<typeof ogw>)).code).toBe(0);
-    expect(existsSync(join(out2, 'ended'))).toBe(true);
   });
 });
 

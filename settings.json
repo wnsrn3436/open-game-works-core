@@ -532,6 +532,5 @@
     }
   },
   "webSmokeBootTimeoutMs": 120000,
-  "performanceLeaseWaitTimeoutMs": 1800000,
   "resultFixRounds": 1
 }

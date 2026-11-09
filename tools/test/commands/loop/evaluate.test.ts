@@ -263,7 +263,7 @@ function judgeText(winner: string, side: string, reference: string): string {
   ].join('\n');
 }
 
-const PASS_ALL = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder'];
+const PASS_ALL = ['regression test', 'static check', 'no blocker', 'full flow', 'UI quality', 'no placeholder'];
 
 async function loop(settings: Record<string, unknown> = {}, checks = PASS_ALL, files: Record<string, string> = {}): Promise<{ g: TestGame; head: string; base: string }> {
   const g = setupGame({ playInstances: 2, backgroundRetryLimit: 1, loopStop: { repeatedDefect: 3, oscillation: 2, plateau: 3, successJudges: 2 }, ...settings });

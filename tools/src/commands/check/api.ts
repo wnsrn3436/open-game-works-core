@@ -13,19 +13,12 @@ export interface CheckFailure {
   evidence: string[];
 }
 
-export interface HostLoad {
-  cpuMaxPercent: number;
-  memoryMaxPercent: number;
-  instancesMax: number;
-}
-
 export interface CheckResult {
   name: string;
   platform: string | null;
   result: 'pass' | 'fail' | 'unknown';
   failures: CheckFailure[];
   warnings: CheckFailure[];
-  hostLoad?: HostLoad;
 }
 
 /** Check names in the order of `check-<iteration>.json`. */
@@ -34,10 +27,8 @@ export const CHECK_ORDER: readonly string[] = [
   'static check',
   'no blocker',
   'full flow',
-  'performance',
   'UI quality',
   'no placeholder',
-  'row simulation',
 ];
 
 /** The four checks whose `result` decides `gate`. */
@@ -144,8 +135,8 @@ export async function placeholderFailures(ctx: Context, game: GameRepo): Promise
   return failures;
 }
 
-/** Row simulation calculation shared with `ogw simulate` (runner group). */
-export { rowSimulationFailures, simulateRows, type RowResult, type RowSimulation, type SimulateOptions, type Verdict } from './lib/row-simulation.ts';
+/** Row simulation calculation of `ogw simulate` (runner group). */
+export { simulateRows, type RowResult, type RowSimulation, type SimulateOptions, type Verdict } from './lib/row-simulation.ts';
 /** `UnitTestCore` test host, shareable with `ogw core test`. */
 export { startTestHost, type TestHost, type TestInput } from './lib/test-host.ts';
 export { coreTryChecks } from './check.ts';

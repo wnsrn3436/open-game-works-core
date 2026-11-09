@@ -278,7 +278,7 @@ Each table used as `level_id` in the `play-session` request `StartPlaySession` (
   - `unsolvable`: `solve_permille` is 0
   - `out`: a value is less than `sim_<metric>_min` or more than `sim_<metric>_max`
   - `in`: otherwise
-- `row simulation` of `ogw check <game> --loop` uses game settings `rowSimulationSeeds` as the random seed count, and is `pass` when every row is `in`, otherwise `fail`. A table that has `sim_` target columns but no command is also `fail`
+- `ogw simulate <game>` uses game settings `rowSimulationSeeds` as the random seed count, and fails when a row is not `in` or when a table that has `sim_` target columns has no command
 
 ## regression test
 

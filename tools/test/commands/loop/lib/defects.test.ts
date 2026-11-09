@@ -217,36 +217,17 @@ describe('recordDefects', () => {
     expect(noReport.map((x) => x.status)).toEqual(['open']);
   });
 
-  it('lets a fixed row of a code owner defect that a check did not find wait for confirmation only with a passing fix test proof', () => {
-    const ids = ['pass', 'fail', 'unknown', 'none', 'shown', 'data', 'design', 'resource', 'check', 'server', 'contract', 'hardening'];
-    const defects = ids.map((id) =>
-      d({
-        id,
-        status: 'open',
-        source: id === 'check' ? 'check' : id === 'hardening' ? 'hardening' : 'play',
-        owner: ['data', 'design', 'resource'].includes(id) ? id : id === 'server' ? 'server content' : id === 'contract' ? 'contract' : 'client content',
-      }),
-    );
-    const report = new Map(ids.map((id) => [id, { result: 'fixed', note: id === 'shown' ? 'presentation' : '`client/tests/t.gd::test_a`' }]));
-    const proofs = new Map([['pass', 'pass'], ['fail', 'fail'], ['unknown', 'unknown'], ['server', 'pass']]);
-    const out = recordDefects({ base: defects, findings: [], confirmed: never, report, proofs });
-    expect(Object.fromEntries(out.map((x) => [x.id, x.status]))).toEqual({
-      pass: 'awaiting confirmation',
-      fail: 'open',
-      unknown: 'open',
-      none: 'open',
-      shown: 'awaiting confirmation',
-      data: 'awaiting confirmation',
-      design: 'awaiting confirmation',
-      resource: 'awaiting confirmation',
-      check: 'awaiting confirmation',
-      server: 'awaiting confirmation',
-      contract: 'open',
-      hardening: 'open',
-    });
-    // a reopened defect stays reopened, and one awaiting confirmation keeps waiting
-    const kept = recordDefects({ base: [d({ id: 'r', status: 'reopened', source: 'judge', owner: 'client content' }), d({ id: 'w', status: 'awaiting confirmation', source: 'play', owner: 'client content' })], findings: [], confirmed: never, report: new Map([['r', { result: 'fixed', note: '' }], ['w', { result: 'fixed', note: '' }]]), proofs: new Map() });
-    expect(kept.map((x) => [x.id, x.status])).toEqual([['r', 'reopened'], ['w', 'awaiting confirmation']]);
+  it('lets a fixed row wait for confirmation whatever the owner, source and note of its defect, a reopened defect included', () => {
+    const defects = [
+      d({ id: 'client', status: 'open', source: 'play', owner: 'client content' }),
+      d({ id: 'server', status: 'open', source: 'judge', owner: 'server content' }),
+      d({ id: 'contract', status: 'open', source: 'hardening', owner: 'contract' }),
+      d({ id: 'data', status: 'open', source: 'check', owner: 'data' }),
+      d({ id: 'reopened', status: 'reopened', source: 'judge', owner: 'client content' }),
+    ];
+    const report = new Map(defects.map((defect) => [defect.id, { result: 'fixed', note: defect.id === 'client' ? '`client/tests/t.gd::test_a`' : '' }]));
+    const out = recordDefects({ base: defects, findings: [], confirmed: never, report });
+    expect(out.map((x) => [x.id, x.status])).toEqual(defects.map((defect) => [defect.id, 'awaiting confirmation']));
   });
 
   it('does not change the base defects', () => {

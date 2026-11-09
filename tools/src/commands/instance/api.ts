@@ -52,7 +52,7 @@ export interface InstanceOptions {
   fixture?: string;
   db?: 'postgresql';
   /**
-   * `window`: the client draws (play, judge, performance). `headless`: headless run (bot playtest,
+   * `window`: the client draws (play, judge, UI quality, instance measure). `headless`: headless run (bot playtest,
    * row simulation). `none`: no client; bot clients still start (build-time check).
    */
   client?: 'window' | 'headless' | 'none';

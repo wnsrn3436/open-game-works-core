@@ -1,9 +1,7 @@
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { exists, readText } from '../../../lib/fsx.ts';
 import { isPlainObject } from '../../../lib/json.ts';
 import { section } from '../../../lib/markdown.ts';
-import { proofExemption, type ReportRow, type Source } from '../../loop/lib/defects.ts';
-import { cell, column, parseTable } from '../../loop/lib/markdown.ts';
 import { readContentAgentFixes } from '../../loop/lib/findings.ts';
 import { readReportRows } from '../../loop/lib/record.ts';
 import { judgeReadingOf, judgeResultErrors, playFeedbackErrors } from '../../loop/lib/results.ts';
@@ -22,43 +20,14 @@ function firstLine(text: string, heading: string): string | null {
  * evaluate`, a moment of `## judge moments` of the run's `request.md` (beside the report) or `none`.
  */
 async function contentErrors(text: string, meta: AgentMeta, output: string): Promise<string[]> {
-  const read = readReportRows(text);
-  const input = await readText(meta.input);
-  const errors = [...read.errors, ...fixedNoteErrors(read.rows, input, resolve(dirname(output), '..', '..', '..'))];
-  if (firstLine(input, 'kind') !== 'fun') return errors;
+  const errors = readReportRows(text).errors;
+  if (firstLine(await readText(meta.input), 'kind') !== 'fun') return errors;
   const name = hypothesisMomentName(text);
   const request = join(dirname(output), 'request.md');
   const moments = exists(request) ? judgeMoments(await readText(request)).map((moment) => moment.name) : [];
   if (name === null) errors.push('`## hypothesis` has no `- moment: <name>` line');
   else if (name !== 'none' && !moments.includes(name)) {
     errors.push(`\`## hypothesis\` moment \`${name}\` is neither \`none\` nor a moment of \`## judge moments\` of ${request} (${moments.join(', ') || 'none'})`);
-  }
-  return errors;
-}
-
-/** A test name of a `fixed` note: `<test file>::<test>` with the test file under `client/tests/` or `server/tests/`. */
-const TEST_NAME = /^((?:client|server)\/tests\/[^:]+)::.+$/;
-
-/**
- * content: the `note` of each `fixed` row of a defect that needs the fix test proof by its `owner` and `source` in the
- * `## defects` table of the input (ogw.md `### fix test proof` of `## check`): `presentation`, or test names in backticks
- * whose test files are in the checkout `root`.
- */
-function fixedNoteErrors(rows: ReadonlyMap<string, ReportRow>, input: string, root: string): string[] {
-  const table = parseTable(section(input, 'defects') ?? []);
-  if (table === null) return [];
-  const [idCol, ownerCol, sourceCol] = ['id', 'owner', 'source'].map((name) => column(table, name)) as [number, number, number];
-  const errors: string[] = [];
-  for (const defect of table.rows) {
-    const id = cell(defect, idCol);
-    const row = rows.get(id);
-    if (row?.result !== 'fixed' || proofExemption({ owner: cell(defect, ownerCol), source: cell(defect, sourceCol) as Source }, row.note) !== null) continue;
-    const tests = row.tests ?? [];
-    if (tests.length === 0) errors.push(`\`## defects\` row ${id}: a \`fixed\` defect of owner ${cell(defect, ownerCol)} needs in \`note\` the regression tests that fail before the fix, each in backticks, or \`presentation\``);
-    for (const name of tests) {
-      const file = TEST_NAME.exec(name)?.[1];
-      if (file === undefined || !exists(join(root, file))) errors.push(`\`## defects\` row ${id}: \`${name}\` is not \`<test file>::<test>\` with a test file under client/tests/ or server/tests/ of ${root}`);
-    }
   }
   return errors;
 }

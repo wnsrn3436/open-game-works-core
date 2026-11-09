@@ -9,22 +9,16 @@ import { commitPaths, head } from '../../../lib/git.ts';
 import { requireOpenRun } from '../../../lib/runstate.ts';
 import type { GameSettings } from '../../../lib/settings.ts';
 import { gameModules, mergedCoreSettings } from '../../generate/api.ts';
-import { performanceLeaseBase } from '../../generation/api.ts';
 import { CHECK_ORDER, GATE_CHECKS, mergedResult, placeholderFailures, type CheckResult } from '../api.ts';
 import { staticCheck } from '../static-api.ts';
 import { botPlaytest, readScenario, type InstanceCheckOptions } from './bot-playtest.ts';
 import { coreSetting, importClient } from './engine.ts';
 import { checkResult, failure, type Evidence } from './evidence.ts';
-import { hostProbe, type HostProbe } from './host-load.ts';
 import { Slots } from './instances.ts';
-import { performanceChecks, platformProfiles } from './performance.ts';
-import { fixedRows, rowProofs } from './fix-proof.ts';
 import { regressionTest } from './regression.ts';
-import { rowSimulationCheck } from './row-simulation.ts';
 import { makeTelemetryRuns } from './telemetry-runs.ts';
-import type { FixTestProof } from '../../loop/lib/files.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
-import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
+import { platformProfiles, uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
 
 export { CHECK_ORDER };
 
@@ -37,11 +31,6 @@ export interface LoopOptions {
   db?: 'postgresql';
   /** Polling interval of instance state. */
   pollMs: number;
-  /** Host load sampling interval (ogw.md `### host load`: 1000 ms). */
-  sampleMs: number;
-  probe?: HostProbe;
-  /** The instance slots of the check, when the caller made them for work it starts before the checks (the fix test proof). */
-  slots?: Slots;
 }
 
 export interface LoopOutcome {
@@ -49,7 +38,6 @@ export interface LoopOutcome {
   commit: string;
   checks: CheckResult[];
   gate: 'pass' | 'fail';
-  fixTestProof: FixTestProof[];
 }
 
 /**
@@ -62,12 +50,6 @@ async function guarded(name: string, where: string, work: () => Promise<CheckRes
   } catch (error) {
     return checkResult(name, null, [failure(where, `${name} did not run: ${(error as Error).message}`)], true);
   }
-}
-
-function numberSetting(settings: GameSettings, key: string): number {
-  const value = settings[key];
-  if (typeof value !== 'number') throw new OgwError(`game settings ${key} is not set`);
-  return value;
 }
 
 /** The largest `AccessibilityCore.textScales` of the merged core settings, or null without `AccessibilityCore`. */
@@ -94,12 +76,6 @@ export async function runTimeLimitMs(ctx: Context, game: GameRepo): Promise<numb
   return coreNumber(await mergedCoreSettings(ctx, game), 'UnitTestCore.runTimeLimitMs');
 }
 
-/** The run and start limits of `UnitTestCore` of the game from one read of the merged core settings. */
-export async function testLimits(ctx: Context, game: GameRepo): Promise<{ runTimeLimitMs: number | null; startTimeLimitMs: number | null }> {
-  const merged = await mergedCoreSettings(ctx, game);
-  return { runTimeLimitMs: coreNumber(merged, 'UnitTestCore.runTimeLimitMs'), startTimeLimitMs: coreNumber(merged, 'UnitTestCore.startTimeLimitMs') };
-}
-
 export async function slotsOf(ctx: Context): Promise<Slots> {
   const max = (await ctx.settings()).maxConcurrentInstances;
   if (max === null) throw new OgwError('harness settings maxConcurrentInstances is null: do update env first');
@@ -111,9 +87,6 @@ export async function slotsOf(ctx: Context): Promise<Slots> {
  * `ogw core try`. `no blocker` and `full flow` come from one bot playtest.
  */
 export type CheckSet = 'all' | 'fun' | 'core try';
-
-/** Checks `ogw core try` runs (`core` command.md `update core`). */
-const CORE_TRY_CHECKS: readonly string[] = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality'];
 
 /** The values of game settings that the UI quality check reads. */
 function uiSettings(settings: GameSettings): { languages: string[]; screens: UiCheckScreen[]; baseResolution: [number, number]; gamepadSupported: boolean; quality: UiQualityLimits } {
@@ -135,12 +108,10 @@ export interface WorkBeside {
 
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
- * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
- * the bot playtest (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry
- * runs and the fix test proof of `--loop`); the failure of each is logged under its name. The work that does not read
- * the checkout's `client/` (the server regression test and no placeholder) runs beside its import. The performance
- * measurements start once every other instance of the check has stopped and the work of `alongside` has ended (ogw.md
- * `## performance`).
+ * `core try` leaves out `no placeholder`; `fun` runs only the regression test, the static check and the bot playtest
+ * (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry runs of
+ * `--loop`); the failure of each is logged under its name. The work that does not read the checkout's `client/` (the
+ * server regression test and no placeholder) runs beside its import.
  */
 export async function gameChecks(
   ctx: Context,
@@ -151,26 +122,9 @@ export async function gameChecks(
   set: CheckSet,
   alongside: readonly WorkBeside[] = [],
 ): Promise<CheckResult[]> {
-  const [slots, modules, scenario, merged, leaseBase, harness] = await Promise.all([
-    options.slots ?? slotsOf(ctx),
-    gameModules(ctx, game),
-    readScenario(game.root),
-    mergedCoreSettings(ctx, game),
-    performanceLeaseBase(ctx),
-    ctx.settings(),
-  ]);
+  const [slots, modules, scenario, merged] = await Promise.all([slotsOf(ctx), gameModules(ctx, game), readScenario(game.root), mergedCoreSettings(ctx, game)]);
   const instance: InstanceCheckOptions = { evidence, slots, db: options.db, pollMs: options.pollMs };
   const profiles = platformProfiles(settings.buildPlatforms ?? []);
-  const probe = options.probe ?? hostProbe(ctx);
-  const performanceOptions = {
-    ...instance,
-    targetFps: numberSetting(settings, 'targetFps'),
-    loadingTimeLimitMs: numberSetting(settings, 'loadingTimeLimitMs'),
-    quality: modules.client.includes('QualityCore'),
-    probe,
-    sampleMs: options.sampleMs,
-    lease: { base: leaseBase, waitMs: harness.performanceLeaseWaitTimeoutMs },
-  };
   const ui = { ...instance, ...uiSettings(settings), maxTextScale: maxTextScale(merged, modules.client) };
   // One import before the instances start, with the engine packages put in first: an instance skips its import once
   // `client/.godot/` exists, so no import may still be writing it when the instances start, and the import that the
@@ -193,11 +147,10 @@ export async function gameChecks(
   const client = { godot: options.godot, evidence, ...limits, importing, ...db };
   const all = set === 'all';
   const fun = set === 'fun';
-  // every instance of the check other than those of the performance measurements, in this order once the import ended
+  // the instances of the check, in this order once the import ended
   const instances: Promise<CheckResult | CheckResult[] | null>[] = [
     afterImport(() => span('bot playtest', () => botPlaytest(ctx, game.name, scenario, instance))),
     ...(fun ? [] : profiles.map((p) => afterImport(() => span(`UI quality ${p}`, () => uiQualityCheck(ctx, game.name, p, ui))))),
-    ...(all ? [afterImport(() => span('row simulation', () => rowSimulationCheck(ctx, game.name, game.root, numberSetting(settings, 'rowSimulationSeeds'), instance)))] : []),
   ];
   const besides = alongside.map((beside) =>
     afterImport(() => beside.work(instance)).catch((error: unknown) => {
@@ -208,14 +161,12 @@ export async function gameChecks(
     span('regression test', () => guarded('regression test', 'client/tests:1', () => regressionTest(ctx, game, { client: 'client/tests', server: 'server/tests' }, client))),
     afterImport((imported) => span('static check', () => guarded('static check', 'settings.json:1', () => staticCheck(ctx, game, { ...db, ...imported })))),
     ...instances,
-    ...(fun ? [] : [Promise.allSettled([...instances, ...besides]).then(() => afterImport(() => span('performance', () => performanceChecks(ctx, game.name, profiles, scenario, performanceOptions))))]),
     ...(all ? [span('no placeholder', () => guarded('no placeholder', 'resource/resources.csv:1', async () => checkResult('no placeholder', null, await placeholderFailures(ctx, game))))] : []),
   ];
   const [results] = await Promise.all([Promise.all(tasks), ...besides]);
   const done = await settled;
   if ('error' in done) throw done.error;
-  const checks = results.flatMap((r) => (r === null ? [] : [r].flat())).sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
-  return set === 'core try' ? checks.filter((c) => CORE_TRY_CHECKS.includes(c.name)) : checks;
+  return results.flatMap((r) => (r === null ? [] : [r].flat())).sort((a, b) => CHECK_ORDER.indexOf(a.name) - CHECK_ORDER.indexOf(b.name));
 }
 
 /** `ogw check <game> --loop`: the checks of iteration step 2 for the kind of the iteration, the result file, and `gate`. */
@@ -228,30 +179,15 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   const commit = await head(game.root, { env: ctx.env });
   const evidence: Evidence = { root: game.root, dir: evidenceDir, relative: true };
   const set = iterationKind(run, run.iteration) === 'fun' ? 'fun' : 'all';
-  const slots = await slotsOf(ctx);
-  const proofOptions = { godot: options.godot, ...(await testLimits(ctx, game)), ...(options.db ? { db: options.db } : {}), slots };
-  // a content agent report that cannot be read fails the check here, before any check starts
-  const fixed = await fixedRows(game, run);
-  // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout. It does not
-  // throw (what it could not decide is `unknown` with the reason), so its result is never left out
-  const proof = span('fix test proof', () => rowProofs(ctx, game, run, commit, fixed, proofOptions));
-  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the
-  // performance measurements wait for them and for the fix test proof
-  const checks = await gameChecks(ctx, game, settings, { ...options, slots }, evidence, set, [
+  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`)
+  const checks = await gameChecks(ctx, game, settings, options, evidence, set, [
     { name: 'shared telemetry runs', work: (instance) => span('shared telemetry runs', () => makeTelemetryRuns(ctx, game, run, commit, instance)) },
-    {
-      name: 'fix test proof',
-      work: async () => {
-        await proof;
-      },
-    },
-  ]).finally(() => Promise.allSettled([proof]));
-  const fixTestProof = await proof;
+  ]);
   const file = `${records}/check-${String(run.iteration)}.json`;
   const gate = gateOf(checks);
   await span('record', async () => {
-    await writeJsonAtomic(join(game.root, file), { commit, checks, gate, fixTestProof });
+    await writeJsonAtomic(join(game.root, file), { commit, checks, gate });
     await commitPaths(game.root, [file], `loop ${run.name}: check ${String(run.iteration)}`, { env: ctx.env });
   });
-  return { file, commit, checks, gate, fixTestProof };
+  return { file, commit, checks, gate };
 }

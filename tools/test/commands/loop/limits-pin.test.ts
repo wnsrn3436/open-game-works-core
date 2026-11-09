@@ -197,7 +197,7 @@ describe('run settings', () => {
 });
 
 describe('ogw loop verdict with blocking defects and run limits', () => {
-  const checks = ['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder'];
+  const checks = ['regression test', 'static check', 'no blocker', 'full flow', 'UI quality', 'no placeholder'];
   const judge = (path: string, kind: string): string => `### ${path}\n\n- kind: ${kind}\n- status: done\n- A: a\n- B: b\n- vs baseline: better\n- vs reference: pass\n`;
   const CANDIDATE = [
     '## commit', '', '- instance: c1', '- baseline: none', '- confirms: none', '- kind: completeness', '',

@@ -3,22 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationRequest } from '../../../../src/commands/instance/automation.ts';
-import { listInstances, startInstance, stopInstance } from '../../../../src/commands/instance/api.ts';
 import {
   lowerMedian,
   parseTable,
-  rowSimulationCheck,
-  rowSimulationFailures,
   rowValues,
   simulateRows,
   verdictOf,
 } from '../../../../src/commands/check/lib/row-simulation.ts';
-import { Slots } from '../../../../src/commands/check/lib/instances.ts';
-import { OgwError } from '../../../../src/lib/errors.ts';
 import { fakeAutomation, fakeContext, notOk, ok } from '../helpers.ts';
 
 vi.mock('../../../../src/commands/instance/automation.ts', () => ({ automationRequest: vi.fn() }));
-vi.mock('../../../../src/commands/instance/api.ts', () => ({ startInstance: vi.fn(), stopInstance: vi.fn(), listInstances: vi.fn() }));
 
 const ctx = fakeContext();
 
@@ -45,7 +39,6 @@ const commands = [{ name: 'get_state' }, { name: 'puzzle.simulate_level' }, { na
 
 beforeEach(() => {
   vi.mocked(automationRequest).mockReset();
-  vi.mocked(listInstances).mockResolvedValue([]);
 });
 
 describe('row simulation calculation', () => {
@@ -113,10 +106,6 @@ describe('simulateRows', () => {
       ['[lv_2]', 'unsolvable', { solve_permille: 0, moves_left: 0 }, 'solve_permille 0'],
     ]);
     expect(simulation.missing).toEqual(['bonus']);
-    expect(rowSimulationFailures(simulation)).toEqual([
-      { where: 'data/tables/level.csv:7', message: 'unsolvable [lv_2]: solve_permille 0', evidence: [] },
-      { where: 'data/tables/bonus.csv:1', message: 'error bonus has sim_ target columns but no simulate_bonus command', evidence: [] },
-    ]);
   });
 
   it('filters by table and rows', async () => {
@@ -178,165 +167,5 @@ describe('simulateRows', () => {
     await expect(simulateRows(ctx, 'i1', gameRoot({}), { seeds: 1 })).rejects.toThrow('list_commands failed: "x"');
     vi.mocked(automationRequest).mockResolvedValue(ok([]));
     expect(await simulateRows(ctx, 'i1', mkdtempSync(join(tmpdir(), 'ogw-empty-')), { seeds: 1 })).toEqual({ rows: [], tables: [], missing: [] });
-  });
-});
-
-describe('rowSimulationCheck', () => {
-  const evidence = { root: '/tmp', dir: null, relative: true };
-
-  it('runs on a headless instance and stops it', async () => {
-    vi.mocked(startInstance).mockResolvedValue({ id: 'r1' } as Awaited<ReturnType<typeof startInstance>>);
-    vi.mocked(stopInstance).mockResolvedValue();
-    vi.mocked(automationRequest).mockImplementation(fakeAutomation((command) => (command === 'list_commands' ? ok(commands) : ok({ solved: true, metrics: { moves_left: 9 } }))));
-    const result = await rowSimulationCheck(ctx, 'g', gameRoot({ level: LEVEL }), 2, { evidence, slots: new Slots(1), db: 'postgresql', pollMs: 1 });
-    expect(startInstance).toHaveBeenCalledWith(ctx, { game: 'g', client: 'headless', db: 'postgresql', randomBase: 1n }, { beforeFailedStop: expect.any(Function) as unknown });
-    expect(stopInstance).toHaveBeenCalledWith(ctx, 'r1');
-    expect(result).toEqual({
-      name: 'row simulation',
-      platform: null,
-      result: 'fail',
-      failures: [{ where: 'data/tables/level.csv:5', message: 'out [lv_1]: moves_left 9 not in [2, 5]', evidence: [] }],
-      warnings: [],
-    });
-    vi.mocked(automationRequest).mockImplementation(fakeAutomation((command) => (command === 'list_commands' ? ok([]) : ok(null))));
-    expect((await rowSimulationCheck(ctx, 'g', gameRoot({}), 2, { evidence, slots: new Slots(1), pollMs: 1 })).result).toBe('pass');
-  });
-
-  it('runs rows on helper instances in free slots of the check, each row with all its seeds on one instance, in row order', async () => {
-    const rowsCsv = ['desc,,', 'All,All,None', 'id(key),int,int?', 'id,moves,sim_moves_left_max', ...Array.from({ length: 6 }, (_, i) => `[lv_${String(i + 1)}],10,${String(i)}`), ''].join('\n');
-    let n = 0;
-    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `r${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
-    vi.mocked(stopInstance).mockResolvedValue();
-    const seen: { id: string; row: string; seed: string; start: number; end: number }[] = [];
-    vi.mocked(automationRequest).mockImplementation(async (_c, id, command, args) => {
-      if (command === 'list_commands') return ok(commands);
-      const start = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      seen.push({ id, row: args[0] ?? '', seed: args[1] ?? '', start, end: Date.now() });
-      // the moves left are the row number, one more than the max of the row: every row is out
-      return ok({ solved: true, metrics: { moves_left: Number(/\d+/.exec(args[0] ?? '')?.[0]) } });
-    });
-    const run = (slots: Slots): ReturnType<typeof rowSimulationCheck> => rowSimulationCheck(ctx, 'g', gameRoot({ level: rowsCsv }), 3, { evidence, slots, pollMs: 1 });
-    const one = await run(new Slots(1));
-    expect(new Set(seen.map((s) => s.id))).toEqual(new Set(['r1']));
-    seen.length = 0;
-    n = 0;
-    const three = await run(new Slots(3));
-    expect(three).toEqual(one);
-    expect(one.failures.map((f) => f.where)).toEqual(['data/tables/level.csv:5', 'data/tables/level.csv:6', 'data/tables/level.csv:7', 'data/tables/level.csv:8', 'data/tables/level.csv:9', 'data/tables/level.csv:10']);
-    // three instances ran rows at once; each row ran its three seeds in order on one instance
-    expect(new Set(seen.map((s) => s.id))).toEqual(new Set(['r1', 'r2', 'r3']));
-    expect(Math.max(...seen.map((s) => new Set(seen.filter((o) => o.start <= s.start && s.start < o.end).map((o) => o.id)).size))).toBe(3);
-    for (const row of new Set(seen.map((s) => s.row))) {
-      const runs = seen.filter((s) => s.row === row);
-      expect(new Set(runs.map((s) => s.id)).size).toBe(1);
-      expect(runs.map((s) => s.seed)).toEqual(['1', '2', '3']);
-    }
-  });
-
-  it('gives the rows after one whose client stops answering the result of one instance that runs them all, whatever the free slots', async () => {
-    const rowsCsv = ['desc,,', 'All,All,None', 'id(key),int,int?', 'id,moves,sim_moves_left_max', ...Array.from({ length: 6 }, (_, i) => `[lv_${String(i + 1)}],10,10`), ''].join('\n');
-    let n = 0;
-    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `r${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
-    vi.mocked(stopInstance).mockResolvedValue();
-    // the command of [lv_2] ends the client of its instance after 5 ms: no request to that instance answers after it,
-    // and each fails at once, sooner than a row of another instance (30 ms)
-    const ended = new Set<string>();
-    const requests: { id: string; row: string; live: boolean }[] = [];
-    vi.mocked(automationRequest).mockImplementation(async (_c, id, command, args) => {
-      if (command === 'list_commands') return ok(commands);
-      const row = args[0] ?? '';
-      requests.push({ id, row, live: !ended.has(id) });
-      if (ended.has(id)) throw new OgwError('the client of the instance does not answer');
-      await new Promise((resolve) => setTimeout(resolve, row === '[lv_2]' ? 5 : 30));
-      if (row === '[lv_2]') ended.add(id);
-      if (ended.has(id)) throw new OgwError('the client of the instance does not answer');
-      return ok({ solved: true, metrics: { moves_left: 1 } });
-    });
-    const run = (slots: Slots): ReturnType<typeof rowSimulationCheck> => rowSimulationCheck(ctx, 'g', gameRoot({ level: rowsCsv }), 1, { evidence, slots, pollMs: 1 });
-    const one = await run(new Slots(1));
-    expect(one.failures.map((f) => f.where)).toEqual([6, 7, 8, 9, 10].map((line) => `data/tables/level.csv:${String(line)}`));
-    expect(one.failures[1]?.message).toBe('error [lv_3]: seed 1: puzzle.simulate_level did not answer: the client of the instance does not answer');
-    for (const slots of [2, 3]) {
-      n = 0;
-      ended.clear();
-      requests.length = 0;
-      expect(await run(new Slots(slots))).toEqual(one);
-      expect(new Set(requests.map((r) => r.id)).size).toBe(slots);
-      // no instance takes a row after the one whose client ended but the instance of that row
-      expect(requests.filter((r) => ['[lv_4]', '[lv_5]', '[lv_6]'].includes(r.row) && r.live)).toEqual([]);
-    }
-  });
-
-  // per case: the rows whose command ends the client of their instance, at which seed and whether that request answers
-  // first; the ms each request of a row takes (30 when the row is not named); the data lines the runner alone fails, and
-  // the row and seed of the first of them, whose request does not answer
-  const endings: {
-    name: string;
-    seeds: number;
-    ends: Record<string, { seed: number; answers: boolean }>;
-    ms: Record<string, number>;
-    lines: number[];
-    first: string;
-  }[] = [
-    // with 3 slots, the instance of [lv_2] takes [lv_4] next while another instance takes [lv_3]
-    { name: '[lv_2] answers, then its client ends', seeds: 1, ends: { '[lv_2]': { seed: 1, answers: true } }, ms: { '[lv_2]': 5 }, lines: [7, 8, 9, 10], first: '[lv_3]: seed 1' },
-    // with 2 or 3 slots, the instance of [lv_5] has no row left after it, and another instance takes [lv_6]
-    { name: '[lv_5] answers, then its client ends', seeds: 1, ends: { '[lv_5]': { seed: 1, answers: true } }, ms: { '[lv_5]': 5 }, lines: [10], first: '[lv_6]: seed 1' },
-    // with 3 slots, the instance of [lv_4] ran [lv_2] before it, and another instance ran [lv_3]
-    { name: 'the client of [lv_4] ends before it answers', seeds: 1, ends: { '[lv_4]': { seed: 1, answers: false } }, ms: { '[lv_2]': 5 }, lines: [8, 9, 10], first: '[lv_4]: seed 1' },
-    // [lv_3] does not answer its second seed on its own instance
-    { name: '[lv_3] answers its first seed, then its client ends', seeds: 2, ends: { '[lv_3]': { seed: 1, answers: true } }, ms: { '[lv_3]': 5 }, lines: [7, 8, 9, 10], first: '[lv_3]: seed 2' },
-    // with 2 or 3 slots, [lv_3] ends its client after its first seed before [lv_2] ends its client after its last
-    {
-      name: '[lv_2] answers its last seed, then its client ends, and [lv_3] its first',
-      seeds: 2,
-      ends: { '[lv_2]': { seed: 2, answers: true }, '[lv_3]': { seed: 1, answers: true } },
-      ms: { '[lv_3]': 5 },
-      lines: [7, 8, 9, 10],
-      first: '[lv_3]: seed 1',
-    },
-  ];
-
-  it.each(endings)('gives the result of the runner alone when $name, whatever the free slots', async ({ seeds, ends, ms, lines, first }) => {
-    const rowsCsv = ['desc,,', 'All,All,None', 'id(key),int,int?', 'id,moves,sim_moves_left_max', ...Array.from({ length: 6 }, (_, i) => `[lv_${String(i + 1)}],10,10`), ''].join('\n');
-    let n = 0;
-    vi.mocked(startInstance).mockImplementation(() => Promise.resolve({ id: `r${String(++n)}` } as Awaited<ReturnType<typeof startInstance>>));
-    vi.mocked(stopInstance).mockResolvedValue();
-    const ended = new Set<string>();
-    vi.mocked(automationRequest).mockImplementation(async (_c, id, command, args) => {
-      // a client that ended answers no request, list_commands included
-      if (ended.has(id)) throw new OgwError('the client of the instance does not answer');
-      if (command === 'list_commands') return ok(commands);
-      const [row = '', seed = ''] = args;
-      await new Promise((resolve) => setTimeout(resolve, ms[row] ?? 30));
-      const end = ends[row];
-      if (end?.seed === Number(seed)) {
-        ended.add(id);
-        if (!end.answers) throw new OgwError('the client of the instance does not answer');
-      }
-      return ok({ solved: true, metrics: { moves_left: 1 } });
-    });
-    const results: Awaited<ReturnType<typeof rowSimulationCheck>>[] = [];
-    for (const slots of [1, 2, 3]) {
-      n = 0;
-      ended.clear();
-      results.push(await rowSimulationCheck(ctx, 'g', gameRoot({ level: rowsCsv }), seeds, { evidence, slots: new Slots(slots), pollMs: 1 }));
-    }
-    const [alone] = results;
-    expect(alone?.failures.map((f) => f.where)).toEqual(lines.map((line) => `data/tables/level.csv:${String(line)}`));
-    expect(alone?.failures[0]?.message).toBe(`error ${first}: puzzle.simulate_level did not answer: the client of the instance does not answer`);
-    expect(results.slice(1)).toEqual([alone, alone]);
-  });
-
-  it('is unknown when the instance does not start', async () => {
-    vi.mocked(startInstance).mockRejectedValue(new Error('no slot'));
-    expect(await rowSimulationCheck(ctx, 'g', gameRoot({}), 2, { evidence, slots: new Slots(1), pollMs: 1 })).toEqual({
-      name: 'row simulation',
-      platform: null,
-      result: 'unknown',
-      failures: [{ where: 'data/tables:1', message: 'row simulation did not run: no slot', evidence: [] }],
-      warnings: [],
-    });
   });
 });

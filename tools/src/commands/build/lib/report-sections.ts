@@ -120,7 +120,7 @@ export async function checksBody(game: GameRepo, branch: string, run: string, re
   if (result && result.webSmokeLoadingMs !== null) lines.push(`- web smoke first loading ms: ${String(result.webSmokeLoadingMs)}`);
   const checkFile = await lastCheckFile(game, branch, run);
   for (const check of checkFile?.checks ?? []) {
-    if (check.name !== 'performance' && check.name !== 'UI quality') continue;
+    if (check.name !== 'UI quality') continue;
     const where = check.platform === null ? '' : ` (${check.platform})`;
     lines.push(`- ${check.name}${where}: ${check.result} (${checkFile?.path ?? ''})`);
   }

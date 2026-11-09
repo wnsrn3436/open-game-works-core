@@ -6,7 +6,7 @@ import { LIMITS } from '../../../lib/limits.ts';
 import type { RunState } from '../../../lib/runstate.ts';
 import { renderCost, type CostRow } from './cost.ts';
 import { DEFECT_COLUMNS, defectRow, type Defect } from './defects.ts';
-import { GATE_CHECKS, type ElementVotes, type FixTestProof, type IterationKind, type JudgeAgent, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
+import { GATE_CHECKS, type ElementVotes, type IterationKind, type JudgeAgent, type JudgeEntry, type MeasureTarget, type VsBaseline, type VsReference } from './files.ts';
 import { cell, column, document, parseTable, renderTable, section } from './markdown.ts';
 import { abs, runRel } from './run.ts';
 import { combinedVsReference } from './votes.ts';
@@ -42,11 +42,7 @@ export interface IterationRecordData {
   votes: RecordVotes | null;
   plays: RecordPlay[] | null;
   defects: Defect[];
-  /** `fixTestProof` of the check file; empty without one. */
-  fixTestProof?: FixTestProof[];
   measurements: MeasureTarget[] | null;
-  /** null when the `performance` check is `pass` or has no item. */
-  load: { platform: string | null; result: string; hostLoad: unknown }[] | null;
   /** Keys that became `temporary` since the previous iteration (ogw.md `## loop record`). */
   temporary: string[];
   /** `## cost`: the agent jobs of the iteration per role. */
@@ -120,19 +116,10 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ]))
     : 'none';
   const defects = data.defects.length > 0 ? renderTable([...DEFECT_COLUMNS], data.defects.map(defectRow)) : 'none';
-  const proofs = data.fixTestProof ?? [];
-  const fixTestProof = proofs.length > 0
-    ? renderTable(['id', 'result', 'reason', 'tests'], proofs.map((p) => [
-      p.id, p.result, p.reason ?? 'none', p.tests.length > 0 ? p.tests.map((t) => `${t.name}: ${t.result}`).join(', ') : 'none',
-    ]))
-    : 'none';
   const measurements = data.measurements && data.measurements.length > 0
     ? renderTable(['metric', 'value', 'range', 'result'], data.measurements.map((t) => [
       t.metric, t.value === null ? 'none' : String(t.value), `${String(t.min)}..${String(t.max)}`, t.result,
     ]))
-    : 'none';
-  const load = data.load
-    ? renderTable(['platform', 'result', 'hostLoad'], data.load.map((l) => [l.platform ?? 'none', l.result, JSON.stringify(l.hostLoad ?? null)]))
     : 'none';
   return document([
     [
@@ -145,9 +132,7 @@ export function renderIterationRecord(data: IterationRecordData): string {
     ['votes', votesBlock(data.votes)],
     ['play', play],
     ['defects', defects],
-    ['fix test proof', fixTestProof],
     ['measurements', measurements],
-    ['load', load],
     ['temporary resources', data.temporary.length > 0 ? data.temporary.map((k) => `- \`${k}\``).join('\n') : 'none'],
     ['cost', renderCost(data.cost)],
     ['time', timeBlock(data.time)],

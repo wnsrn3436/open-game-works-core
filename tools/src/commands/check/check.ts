@@ -21,7 +21,7 @@ const MODES = ['loop', 'regression', 'static', 'bot', 'placeholder'] as const;
 type Mode = (typeof MODES)[number];
 
 /** Polling interval of instance state while a condition is not true yet. */
-export const timing = { pollMs: BOT_PLAYTEST_POLL_MS, sampleMs: 1000 };
+export const timing = { pollMs: BOT_PLAYTEST_POLL_MS };
 
 function modeOf(args: CommandArgs): Mode {
   const given = MODES.filter((mode) => flag(args, mode));
@@ -60,10 +60,6 @@ function checkText(check: CheckResult, mode: 'loop' | 'checkout' | 'core try' = 
   if (failures.length < check.failures.length) lines.push(`  ${String(check.failures.length - failures.length)} more failures, all in the result file`);
   for (const w of warnings) lines.push(`  warning ${w.where} ${w.message}`.trimEnd());
   if (warnings.length < check.warnings.length) lines.push(`  ${String(check.warnings.length - warnings.length)} more warnings, all in ${mode === 'loop' ? 'the result file' : 'ogw data <game> --json'}`);
-  if (check.hostLoad) {
-    const load = check.hostLoad;
-    lines.push(`  hostLoad cpuMaxPercent ${String(load.cpuMaxPercent)} memoryMaxPercent ${String(load.memoryMaxPercent)} instancesMax ${String(load.instancesMax)}`);
-  }
   return lines;
 }
 

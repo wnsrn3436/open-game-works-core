@@ -12,7 +12,6 @@ import type { GenerationMethod } from '../../lib/settings.ts';
 import { dataDir } from '../env/lib/host.ts';
 import { runHarnessSettings } from '../loop/lib/harness-pin.ts';
 import { methodDir, methodMarker, withMethodLock } from './lib/install.ts';
-import { withGenerationLease } from './lib/lease.ts';
 import { IMAGE_METHOD, keyChoices, keySpec, type Stage } from './lib/select.ts';
 import { outputsPresent, runCall, standardJob, type CallInput, type StageValues, type StandardJob } from './lib/standard.ts';
 import type { MeasuredRun } from '../env/lib/results.ts';
@@ -165,45 +164,43 @@ export const runCommand: CommandDef = {
     for (const item of items) await mkdir(item.out, { recursive: true });
     const batch = str(args, 'batch') !== undefined;
     const runLock = join(await dataDir(ctx), 'generation', 'run.lock');
-    // the waits for the run lock, the performance lease and the method lock are in the call span (ogw.md `## time`)
+    // the waits for the run lock and the method lock are in the call span (ogw.md `## time`)
     const outcome = await span('call', () => withLock(
       runLock,
-      // The lease keeps the calls off the host while `ogw check` measures performance (ogw.md `### performance lease`).
       // The method lock keeps `generation install` from emptying the folder while the call uses it.
-      () => withGenerationLease(ctx, () =>
-        withMethodLock(ctx, method, async () => {
-          const marker = await methodMarker(ctx, method);
-          if (!marker) throw new OgwError(notInstalled);
-          // the prompt copies are temp files of ogw (`tools/ogw.md` `## temp folder`); the call's TMPDIR is emptied after it
-          const work = await newPrivateTempFolder('ogw-generation-run-', ctx.env);
-          try {
-            const inputs: CallInput[] = [];
-            for (const [i, item] of items.entries()) {
-              const promptFile = join(work, `prompt-${String(i + 1)}.txt`);
-              await writeFile(promptFile, await readText(item.prompt));
-              const { stage, spec } = chosen[i] as Awaited<ReturnType<typeof stageFor>>;
-              inputs.push({ ctx, method, marker, dir, promptFile, images: item.images, out: item.out, stage: stageValues(stage), ...spec, seed: null });
-            }
-            if (!batch) {
-              const input = inputs[0] as CallInput;
-              const run = await runCall(ctx, method, await job.call(input), input.out, LIMITS.programMs, job.outputs);
-              return { runs: [run], results: [{ key: (items[0] as Item).key, out: input.out, result: run.result }] };
-            }
-            // what an out folder already holds is not taken for what this call made
-            // an input image of an item (an image edited in place) is never removed
-            const inputImages = new Set(await Promise.all(items.flatMap((i) => i.images).map(realPathOf)));
-            for (const item of items) {
-              for (const output of [...(job.outputs ?? []), ITEM_ERROR]) {
-                const path = join(item.out, output);
-                if (!inputImages.has(await realPathOf(path))) await rm(path, { force: true });
-              }
-            }
-            return job.batch === undefined ? await eachItem(ctx, method, job, inputs, items) : await oneCall(ctx, method, job, inputs, items);
-          } finally {
-            await rm(work, { recursive: true, force: true });
-            await rm(join(dir, 'tmp'), { recursive: true, force: true });
+      () => withMethodLock(ctx, method, async () => {
+        const marker = await methodMarker(ctx, method);
+        if (!marker) throw new OgwError(notInstalled);
+        // the prompt copies are temp files of ogw (`tools/ogw.md` `## temp folder`); the call's TMPDIR is emptied after it
+        const work = await newPrivateTempFolder('ogw-generation-run-', ctx.env);
+        try {
+          const inputs: CallInput[] = [];
+          for (const [i, item] of items.entries()) {
+            const promptFile = join(work, `prompt-${String(i + 1)}.txt`);
+            await writeFile(promptFile, await readText(item.prompt));
+            const { stage, spec } = chosen[i] as Awaited<ReturnType<typeof stageFor>>;
+            inputs.push({ ctx, method, marker, dir, promptFile, images: item.images, out: item.out, stage: stageValues(stage), ...spec, seed: null });
           }
-        })),
+          if (!batch) {
+            const input = inputs[0] as CallInput;
+            const run = await runCall(ctx, method, await job.call(input), input.out, LIMITS.programMs, job.outputs);
+            return { runs: [run], results: [{ key: (items[0] as Item).key, out: input.out, result: run.result }] };
+          }
+          // what an out folder already holds is not taken for what this call made
+          // an input image of an item (an image edited in place) is never removed
+          const inputImages = new Set(await Promise.all(items.flatMap((i) => i.images).map(realPathOf)));
+          for (const item of items) {
+            for (const output of [...(job.outputs ?? []), ITEM_ERROR]) {
+              const path = join(item.out, output);
+              if (!inputImages.has(await realPathOf(path))) await rm(path, { force: true });
+            }
+          }
+          return job.batch === undefined ? await eachItem(ctx, method, job, inputs, items) : await oneCall(ctx, method, job, inputs, items);
+        } finally {
+          await rm(work, { recursive: true, force: true });
+          await rm(join(dir, 'tmp'), { recursive: true, force: true });
+        }
+      }),
       LIMITS.jobMs,
     ));
     const failed = outcome.results.some((r) => r.result !== 'ok');

@@ -6,9 +6,9 @@ function check(name: string, result: CheckResult['result'], platform: string | n
   return { name, platform, result, failures: [], warnings: [] };
 }
 
-/** One passing item per check, `performance` and `UI quality` on two platforms. */
+/** One passing item per check, `UI quality` on two platforms. */
 function allPass(): CheckResult[] {
-  return CHECK_ORDER.flatMap((name) => (name === 'performance' || name === 'UI quality' ? [check(name, 'pass', 'ios'), check(name, 'pass', 'web')] : [check(name, 'pass')]));
+  return CHECK_ORDER.flatMap((name) => (name === 'UI quality' ? [check(name, 'pass', 'ios'), check(name, 'pass', 'web')] : [check(name, 'pass')]));
 }
 
 function withResult(name: string, result: CheckResult['result']): CheckResult[] {
@@ -32,11 +32,11 @@ describe('gateOf', () => {
   });
 
   it('stays pass when only a check outside the gate fails or is unknown', () => {
-    for (const name of ['performance', 'UI quality', 'no placeholder', 'row simulation']) {
+    for (const name of ['UI quality', 'no placeholder']) {
       expect(gateOf(withResult(name, 'fail'))).toBe('pass');
       expect(gateOf(withResult(name, 'unknown'))).toBe('pass');
     }
-    const oneWeb = allPass().map((c) => (c.name === 'performance' && c.platform === 'web' ? { ...c, result: 'fail' as const } : c));
+    const oneWeb = allPass().map((c) => (c.name === 'UI quality' && c.platform === 'web' ? { ...c, result: 'fail' as const } : c));
     expect(gateOf(oneWeb)).toBe('pass');
   });
 });

@@ -142,7 +142,7 @@ games/<game>/
 
 0. In iteration 1 of `create game`, before any other work, the content agent writes `brief.md` from the request saved in `setup game`. The content agent decides the items that the human's request does not have
 1. The content agent edits `design.md`, client content code, server content code, data and contract together
-2. Regression tests, static checks, completeness checks and row simulation run. Regression tests are all the tests that the content agent wrote together with the features it made
+2. Regression tests, static checks and completeness checks run. Regression tests are all the tests that the content agent wrote together with the features it made
 3. The play agent reads `play-guide.md`, plays the instance with real input, then gives feedback. Feedback is written per observation, not as a total score
 4. Judge agents play in new contexts and write judge results comparing with the baseline game and the gameplay video of the reference game. Several judge agents judge an iteration with the sides `A` and `B` swapped between them, and the harness tool counts their votes per element. Each iteration, the harness tool writes the judge results, the votes and the defect list into the loop iteration record, and decides success from the votes, the completeness check and the defect list: no defect of severity `blocker` or `major` that is not fixed or refused remains
 5. When the loop stops, the lead agent reports to the human with the loop end record. A human makes builds with the `build` command. The human's feedback becomes the input of the next loop through `update game`. The loop does not wait for the human midway
@@ -158,12 +158,11 @@ games/<game>/
 
 ### completeness check
 
-Completeness is judged by the five elements below, and all of them are checked by automated checks.
+Completeness is judged by the four elements below, and all of them are checked by automated checks.
 
 | element | meaning | check |
 |---|---|---|
 | no blocker | There is no problem that blocks progress. e.g. crash, softlock, error screen | bot playtest |
-| performance | Each scene keeps the fps, the frames keep (hitch ratio and long frame), and each scene load ends within game settings `loadingTimeLimitMs`, as `## performance` of [ogw](tools/ogw.md) judges them | runtime profiling |
 | no placeholder | There is no placeholder resource, missing translation or stale translation | project check |
 | full flow | The bot playtest plays from first launch through tutorial, main loop, save and reconnect without a blocker and reaches its goal. Reconnect is recovery after a server communication failure, and for a realtime game it also includes reconnection after a peer disconnect during a match, a matchmaker disconnect and an app restart. It also includes room match for a realtime game that starts matches through rooms, and the flow of exchanges with other users for a game that uses `friend`, `guild` or `chat` | bot playtest |
 | UI quality | These checks of `## UI quality` of [ogw](tools/ogw.md) pass: in every supported resolution, safe area and language, clipping, overlap, on-screen keyboard cover, text size count, minimum font size, contrast by text size, empty panel and, on `android` and `ios`, touch target; when gamepad is supported, the gamepad focus check | capture per resolution, language and on-screen keyboard, and gamepad focus check |

@@ -17,7 +17,6 @@ const ALL_PASS = {
   'static check': 'pass',
   'no blocker': 'pass',
   'full flow': 'pass',
-  performance: 'pass',
   'UI quality': 'pass',
   'no placeholder': 'pass',
 } as const;
@@ -25,14 +24,14 @@ const ALL_PASS = {
 describe('check file', () => {
   it('reduces items per check and computes gate and completeness', () => {
     const file = check(ALL_PASS);
-    file.checks.push({ name: 'performance', platform: 'web', result: 'unknown', failures: [], warnings: [] });
-    expect(checkResult(file, 'performance')).toBe('unknown');
-    expect(checkResult(file, 'row simulation')).toBe('unknown');
+    file.checks.push({ name: 'UI quality', platform: 'web', result: 'unknown', failures: [], warnings: [] });
+    expect(checkResult(file, 'UI quality')).toBe('unknown');
+    expect(checkResult(file, 'no such check')).toBe('unknown');
     expect(gateOf(file)).toBe('pass');
     const passing = { kind: 'completeness', vsBaseline: 'better', vsReference: 'pass' } as const;
     expect(successPrecondition(passing, (name) => checkResult(file, name))).toBe(false);
-    file.checks.push({ name: 'performance', platform: 'ios', result: 'fail', failures: [], warnings: [] });
-    expect(checkResult(file, 'performance')).toBe('fail');
+    file.checks.push({ name: 'UI quality', platform: 'ios', result: 'fail', failures: [], warnings: [] });
+    expect(checkResult(file, 'UI quality')).toBe('fail');
     expect(gateOf({ ...check(ALL_PASS), gate: 'fail' })).toBe('fail');
     expect(gateOf({ commit: 'c', checks: [] } as unknown as CheckFile)).toBeNull();
     expect(gateOf({ ...check({}), gate: 'unknown' } as unknown as CheckFile)).toBeNull();
@@ -92,7 +91,6 @@ const DATA: IterationRecordData = {
   plays: [{ result: 'records/loops/r/play-1-1.md', counts: { blocker: 1, major: 0, minor: 2, none: 3 } }],
   defects: [],
   measurements: [{ metric: 'fps', min: 30, max: 60, value: null, result: 'unknown', data: null }],
-  load: [{ platform: 'web', result: 'unknown (host CPU 99%)', hostLoad: { cpuMaxPercent: 99 } }],
   temporary: ['icon/a', 'image/b'],
   cost: [
     { role: 'content', jobs: 1, inputTokens: 31898, cachedTokens: 22611, outputTokens: 63, costUsd: 0.0211411, withoutUsage: 0, withoutCost: 0, costUnknown: [] },
@@ -103,7 +101,7 @@ const DATA: IterationRecordData = {
 describe('iteration record', () => {
   it('renders every heading in order and parses back', () => {
     const text = renderIterationRecord(DATA);
-    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## fix test proof', '## measurements', '## load', '## temporary resources', '## cost', '## time']);
+    expect(text.match(/^## .+$/gm)).toEqual(['## commit', '## variants', '## checks', '## judge', '## votes', '## play', '## defects', '## measurements', '## temporary resources', '## cost', '## time']);
     expect(text).toContain('- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n');
     expect(text).toContain('- status: done\n- agent: claude-code m1 high\n- A: c1\n- B: b0\n- vs reference: pass\n- omitted moments: boss\n');
     expect(text).toContain('- agent: codex m2 medium\n');
@@ -114,7 +112,6 @@ describe('iteration record', () => {
     expect(text).toContain('- omitted moments: boss');
     expect(text).toContain('| records/loops/r/play-1-1.md | 1 | 0 | 2 | 3 |');
     expect(text).toContain('| fps | none | 30..60 | unknown |');
-    expect(text).toContain('| web | unknown (host CPU 99%) | {"cpuMaxPercent":99} |');
     expect(text).toContain('#### loser better\n\nnone');
     expect(text).toContain(
       '## cost\n\n| role | jobs | input tokens | cached tokens | output tokens | cost USD | without usage | without cost |\n|---|---|---|---|---|---|---|---|\n| content | 1 | 31898 | 22611 | 63 | 0.02 | 0 | 0 |\n| judge | 2 | 16552 | 13312 | 5 | none | 1 | 2 (codex prints no money cost: 1, no usage: 1) |\n',
@@ -163,9 +160,9 @@ describe('iteration record', () => {
   });
 
   it('writes none for steps that did not run', () => {
-    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, load: null, temporary: [], cost: [] });
+    const text = renderIterationRecord({ ...DATA, commit: null, checks: [], judges: null, votes: null, plays: null, measurements: null, temporary: [], cost: [] });
     expect(text).toBe(
-      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## fix test proof\n\nnone\n\n## measurements\n\nnone\n\n## load\n\nnone\n\n## temporary resources\n\nnone\n\n## cost\n\nnone\n\n## time\n\nnone\n',
+      '## commit\n\n- instance: none\n- baseline: b0\n- confirms: none\n- kind: completeness\n- harness: h1\n\n## variants\n\nnone\n\n## checks\n\nnone\n\n## judge\n\nnone\n\n## votes\n\nnone\n\n## play\n\nnone\n\n## defects\n\nnone\n\n## measurements\n\nnone\n\n## temporary resources\n\nnone\n\n## cost\n\nnone\n\n## time\n\nnone\n',
     );
     const parsed = parseIterationRecord(text, 2, 'p');
     expect(parsed).toMatchObject({ commit: null, judges: null, confirms: null, playBlockers: 0, vsBaseline: null, vsReference: null });
@@ -260,9 +257,9 @@ describe('verdict', () => {
       expect(verdict({ ...base, records: [successRecord(2, all, ALL_PASS, together)] }).reason).toBe('continue');
     }
     expect(verdict({ ...base, records: [successRecord(2, passing, { ...ALL_PASS, 'UI quality': 'fail' })] }).reason).toBe('continue');
-    const noPerformance: Record<string, string> = { ...ALL_PASS };
-    delete noPerformance.performance;
-    expect(verdict({ ...base, records: [successRecord(2, passing, noPerformance)] }).reason).toBe('continue');
+    const noUiQuality: Record<string, string> = { ...ALL_PASS };
+    delete noUiQuality['UI quality'];
+    expect(verdict({ ...base, records: [successRecord(2, passing, noUiQuality)] }).reason).toBe('continue');
     expect(verdict({ ...base, records: [{ ...successRecord(2, []), judges: null }] }).reason).toBe('continue');
   });
 

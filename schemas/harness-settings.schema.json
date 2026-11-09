@@ -8,7 +8,6 @@
     "humanLanguage",
     "agents",
     "instanceWaitTimeoutMs",
-    "performanceLeaseWaitTimeoutMs",
     "jobWaitTimeoutMs",
     "paths",
     "coreReleaseRepository",
@@ -161,11 +160,6 @@
     },
     "instanceWaitTimeoutMs": {
       "description": "The maximum duration that ogw instance start waits for a slot when the number of concurrent instances is maxConcurrentInstances",
-      "type": "integer",
-      "minimum": 1
-    },
-    "performanceLeaseWaitTimeoutMs": {
-      "description": "The maximum duration that the performance measurement of ogw check waits for the performance lease (`### performance lease` of [ogw](../tools/ogw.md)). When it passes, the performance result is unknown",
       "type": "integer",
       "minimum": 1
     },

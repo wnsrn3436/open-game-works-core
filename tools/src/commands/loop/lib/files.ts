@@ -4,28 +4,11 @@ import { CHECK_ORDER, GATE_CHECKS, mergedResult, type CheckResult } from '../../
 
 export { GATE_CHECKS };
 
-/** One named test of a fix test proof, with its result on the fix base (ogw.md `### fix test proof` of `## check`). */
-export interface ProofTest {
-  name: string;
-  result: 'pass' | 'fail' | 'unknown';
-  reason: string | null;
-}
-
-/** The fix test proof of one `fixed` row of the content agent report. */
-export interface FixTestProof {
-  id: string;
-  result: 'pass' | 'fail' | 'unknown';
-  reason: string | null;
-  tests: ProofTest[];
-}
-
 /** `records/loops/<run>/check-<iteration>.json`. */
 export interface CheckFile {
   commit: string;
   checks: CheckResult[];
   gate: 'pass' | 'fail';
-  /** Absent in a file written before the fix test proof: read as `[]`. */
-  fixTestProof?: FixTestProof[];
 }
 
 /** `records/loops/<run>/measure-<iteration>.json`. */
@@ -144,7 +127,7 @@ export interface EvaluateFile {
   memorableMoment?: 'missing' | 'omitted';
 }
 
-export const COMPLETENESS_CHECKS = ['no blocker', 'performance', 'no placeholder', 'full flow', 'UI quality'] as const;
+export const COMPLETENESS_CHECKS = ['no blocker', 'no placeholder', 'full flow', 'UI quality'] as const;
 
 /** Result of a check over its items, as `ogw check` merges them (`unknown` also when the check has no item). */
 export function checkResult(file: CheckFile, name: string): 'pass' | 'fail' | 'unknown' {

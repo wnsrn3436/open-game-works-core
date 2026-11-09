@@ -78,31 +78,19 @@ describe('ogw agent: result format', () => {
     expect(waited.stdout).toContain('failed: agent CLI ended with code 4\n');
   });
 
-  it('needs in the note of a fixed row of a code owner defect not found by a check the regression tests in backticks, whose files are in the checkout, or presentation', async () => {
+  it('takes any note of a fixed row', async () => {
     const ws = makeWorkspace({ resultFixRounds: 3 });
     const input = [
       '## kind', '', 'completeness', '', '## defects', '',
       '| id | severity | owner | where | what | why | evidence | source | status |', '|---|---|---|---|---|---|---|---|---|',
-      '| crash | major | client content | boss | crash | x | e | play | open |', '| flat | minor | client content | hud | flat | x | e | judge | open |',
-      '| bal | major | data | room | hard | x | e | play | open |', '| ui | major | client content | hud | overlap | x | e | check | open |', '',
+      '| crash | major | client content | boss | crash | x | e | play | open |', '| flat | minor | client content | hud | flat | x | e | judge | open |', '',
     ].join('\n');
-    const { root } = await gameWithRun(ws, { 'in.md': input, 'client/tests/a.gd': 'extends GutTest\n', 'server/tests/s.test.ts': 'test\n' });
-    const report = (crash: string, flat: string): string =>
-      ['## defects', '', '| id | result | note |', '|---|---|---|', `| crash | fixed | ${crash} |`, `| flat | fixed | ${flat} |`, '| bal | fixed | |', '| ui | fixed | |', ''].join('\n');
-    const fake = fakeAgentCli(ws, writesByRun([
-      report('', 'it looks better'),
-      report('`client/tests/missing.gd::test_x`, `client/tests/a.gd`', 'presentation'),
-      report('`client/tests/a.gd::test_a`, `server/tests/s.test.ts::shop > rejects`', '`presentation`'),
-    ]));
+    const { root } = await gameWithRun(ws, { 'in.md': input });
+    const report = ['## defects', '', '| id | result | note |', '|---|---|---|', '| crash | fixed | |', '| flat | fixed | it looks better |', ''].join('\n');
+    const fake = fakeAgentCli(ws, writesByRun([report]));
     const { waited } = await runAgent(ws, ['content', '--game', 'g', '--input', join(root, 'in.md')], fake.env, root);
     expect(waited.code).toBe(0);
-    const output = join(root, 'records/loops/r1/content-1.md');
-    const needs = (id: string): string => `\`## defects\` row ${id}: a \`fixed\` defect of owner client content needs in \`note\` the regression tests that fail before the fix, each in backticks, or \`presentation\``;
-    const notTest = (name: string): string => `\`## defects\` row crash: \`${name}\` is not \`<test file>::<test>\` with a test file under client/tests/ or server/tests/ of ${root}`;
-    expect(fake.calls().slice(1).map((call) => call.prompt)).toEqual([
-      fixPrompt(output, [needs('crash'), needs('flat')]),
-      fixPrompt(output, [notTest('client/tests/missing.gd::test_x'), notTest('client/tests/a.gd')]),
-    ]);
+    expect(fake.calls()).toHaveLength(1);
   });
 
   it('checks the hypothesis moment of a fun iteration against the judge moments of the request of the run', async () => {
