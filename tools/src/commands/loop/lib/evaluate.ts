@@ -36,20 +36,6 @@ import {
 } from './files.ts';
 import { appendCoverage, judgeReadingOf, judgeResultErrors, judgeVerdict, type JudgeVerdict } from './results.ts';
 import { abs, runRel } from './run.ts';
-import {
-  botRun,
-  checkTelemetryRuns,
-  comparisonText,
-  scenarioAtHead,
-  sideRuns,
-  SHARED_TELEMETRY_RUNS,
-  withInputLatency,
-  type BotRun,
-  type PairRuns,
-  type SharedScenario,
-} from './shared-telemetry.ts';
-import { BOT_PLAYTEST_POLL_MS } from '../../check/lib/bot-playtest.ts';
-import type { Scenario } from '../../check/lib/scenario.ts';
 import { combinedVsBaseline, combinedVsReference, countVotes } from './votes.ts';
 import { MEMORABLE_MOMENT, NAME_FILE, parseGameNames, type Moment, type Reference } from './setup.ts';
 import { newPrivateTempFolder } from '../../../lib/secret-files.ts';
@@ -67,8 +53,6 @@ export const evaluateDeps = {
    * agent, and an instance start, stop or other work of the run that ends wakes the wait at once.
    */
   pollMs: 1000,
-  /** The poll interval of the shared-telemetry bot runs: that of the bot playtest. */
-  botPollMs: BOT_PLAYTEST_POLL_MS,
   now: Date.now,
   /** Calls `handler` on SIGTERM and SIGINT until the returned function is called. */
   onSignal: (handler: (signal: NodeJS.Signals) => void): (() => void) => {
@@ -125,8 +109,6 @@ export interface JudgePair {
 export interface EvaluateSite {
   /** Absolute path of the agent input file of `role` written at unix ms `ms`. */
   input(role: 'play' | 'judge', ms: number): string;
-  /** Absolute path of the shared telemetry comparison of the k-th step 4 judge of the pair. */
-  telemetry(pair: JudgePair, k: number): string;
   /** Absolute path of the `ogw measure` raw data of a play instance. */
   measure(instance: string): string;
   /**
@@ -151,16 +133,6 @@ export interface JudgingPlan {
   site: EvaluateSite;
   /** Whether the success judges start, once every step 4 judge ended; absent: no success judge opens. */
   successOpen?: (main: readonly JudgeEntry[]) => boolean;
-  /**
-   * The shared telemetry runs of the pair that another command made with this scenario (those of `ogw check --loop`);
-   * null when there are none, and the judging makes them. Absent: the judging always makes them.
-   */
-  takeRuns?: (pair: JudgePair, scenario: SharedScenario) => Promise<PairRuns | null>;
-  /**
-   * True when the shared telemetry runs of a baseline commit with the same degradation flags are made once for every
-   * pair that has them (`ogw loop variants`); absent: each pair makes its own.
-   */
-  shareBaselineRuns?: boolean;
   /** Groups that come while the judging runs (`ogw loop variants`); absent: every group is in the queue it starts with. */
   feed?: JudgingFeed;
 }
@@ -173,7 +145,7 @@ export interface JudgingFeed {
   jobs(): readonly string[];
 }
 
-/** What holds instance slots of the run: a play slot, a judge slot, or the shared telemetry runs of a pair. */
+/** What holds instance slots of the run: a play slot or a judge slot. */
 interface Holder {
   /** Its instances that are starting, running or stopping. */
   live: number;
@@ -190,14 +162,10 @@ interface Spec {
   commit: string;
   platform?: string;
   fixture?: string;
-  /** The headless instance of a bot run (the shared telemetry). */
-  headless?: boolean;
   /** `--input-latency` of the instance; absent or 0 for none. */
   inputLatencyMs?: number;
   /** The id the instance gets: one a judge input named before the start. */
   id?: string;
-  /** `--random-base` of the instance: the k-th bot run of a commit of the shared telemetry has k; absent for none. */
-  randomBase?: bigint;
 }
 
 interface PlaySlot extends Holder {
@@ -228,8 +196,6 @@ export interface JudgeSlot extends Holder {
   /** The order of a step 4 judge from 1; 0 for a success judge. */
   k: number;
   agent: AgentSettings;
-  /** Absolute path of the judge input `telemetry`, or null. */
-  telemetry: string | null;
   side: 'A' | 'B';
   moments: Moment[];
   omitted: string[];
@@ -250,21 +216,6 @@ export interface JudgeSlot extends Holder {
 }
 
 export type Slot = PlaySlot | JudgeSlot;
-
-/** The shared telemetry runs of a pair that the judging makes, which the judges of the pair wait for. */
-interface TelemetryJob extends Holder {
-  role: 'telemetry';
-  pair: JudgePair;
-  scenario: Scenario;
-  /** The slots it keeps from its start until its runs ended: `SHARED_TELEMETRY_RUNS` per commit it runs. */
-  size: number;
-  status: 'queued' | 'running' | 'done';
-  /**
-   * True when this job makes the runs of the baseline commit; false when it takes those of the job before it that makes
-   * them for the pairs with the same baseline commit and degradation (`shareBaselineRuns`).
-   */
-  makesBaseline: boolean;
-}
 
 export interface Group {
   size: number;
@@ -304,21 +255,8 @@ interface State {
   wake: AbortController;
   /** Aborted when work of `tasks` or an instance start or stop ends: ends the wait between polls. */
   nudge: AbortController;
-  /** The work that runs beside the polls: instance starts, stops, finishing an ended agent, shared telemetry runs. */
+  /** The work that runs beside the polls: instance starts, stops, finishing an ended agent. */
   tasks: Set<Promise<void>>;
-  /** The shared telemetry jobs in the order they start, before every group. */
-  telemetry: TelemetryJob[];
-  /** The job of each pair whose shared telemetry the judging makes. */
-  telemetryOf: Map<JudgePair, TelemetryJob>;
-  /** The pairs whose shared telemetry was set up. */
-  shared: Set<JudgePair>;
-  /**
-   * The runs of a baseline commit made once for every pair with it (`shareBaselineRuns`), by commit and degradation: the
-   * job that makes them, and the runs once it started.
-   */
-  baselineRuns: Map<string, { maker: TelemetryJob; runs: Promise<BotRun[] | null> | null }>;
-  /** `client/dev/bot/scenario.json` of the checkout HEAD, read once at the first pair with a baseline commit. */
-  scenario: Promise<SharedScenario | null> | null;
   /** True once the feed gives no more groups. */
   feedDone: boolean;
   /** Resolves when `runSlots` ended and the run cleaned up after a failure. */
@@ -385,7 +323,6 @@ export function judgeGroup(
     pair,
     k,
     agent,
-    telemetry: null,
     side,
     moments: included,
     omitted,
@@ -567,13 +504,12 @@ async function settleTasks(state: State): Promise<void> {
  */
 async function start(state: State, spec: Spec, owner: Holder): Promise<InstanceInfo | null> {
   checkStopped(state);
-  const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: spec.headless === true ? 'headless' : 'window', ...degradeOptions(spec) };
+  const options: InstanceOptions = { game: state.plan.game.name, commit: spec.commit, client: 'window', ...degradeOptions(spec) };
   if (spec.platform !== undefined) options.platform = spec.platform;
   if (spec.fixture !== undefined) options.fixture = spec.fixture;
-  else if (spec.headless !== true) options.played = true;
+  else options.played = true;
   if (state.plan.db) options.db = state.plan.db;
   if (spec.id !== undefined) options.id = spec.id;
-  if (spec.randomBase !== undefined) options.randomBase = spec.randomBase;
   const reserved: string[] = [];
   let info: InstanceInfo | null = null;
   owner.live++;
@@ -750,7 +686,7 @@ async function launchJudge(state: State, slot: JudgeSlot): Promise<void> {
   };
   const reference = plan.kind === 'fun' || plan.reference === null ? null : { name: plan.reference.name, presentation: plan.reference.presentation, moments: plan.reference.moments };
   const [a, b] = [await game('A'), await game('B')];
-  const input = inputFile(state, 'judge', { A: a, B: b, fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), telemetry: slot.telemetry, reference });
+  const input = inputFile(state, 'judge', { A: a, B: b, fixtures: fixtureEntries(specs, ids), elements: elementsOf(plan.kind), reference });
   slot.input = input;
   await startJob(state, slot, input);
 }
@@ -783,17 +719,8 @@ async function launch(state: State, slot: Slot): Promise<void> {
   else await launchJudge(state, slot);
 }
 
-/** Every holder of instance slots of the run. */
-function holders(state: State): (Slot | TelemetryJob)[] {
-  return [...state.all, ...state.telemetry];
-}
-
-/**
- * The slots a holder keeps: its instances, a running judge also the slots for its pending instances up to its budget,
- * and a running shared telemetry job its size.
- */
-function kept(holder: Slot | TelemetryJob): number {
-  if (holder.role === 'telemetry') return holder.status === 'running' ? Math.max(holder.live, holder.size) : holder.live;
+/** The slots a holder keeps: its instances, and a running judge also the slots for its pending instances up to its budget. */
+function kept(holder: Slot): number {
   if (holder.role === 'play') return Math.max(holder.live, holder.reserved);
   return Math.max(holder.live, holder.reserved, Math.min(holder.budget, holder.instances.length + holder.starting + holder.pending.length));
 }
@@ -808,16 +735,11 @@ async function roomOf(state: State, max: number): Promise<{ free: number; actual
   const others = listed.filter((i) => !state.instances.has(i.id) && !state.starting.has(i.id)).length;
   let live = 0;
   let keeps = 0;
-  for (const holder of holders(state)) {
+  for (const holder of state.all) {
     live += holder.live;
     keeps += kept(holder);
   }
   return { free: max - others - keeps, actual: max - others - live, kept: keeps > 0 };
-}
-
-/** True when a judge of the group waits for the shared telemetry of its pair. */
-function waitsForTelemetry(state: State, group: Group): boolean {
-  return group.slots.some((slot) => slot.role === 'judge' && (state.telemetryOf.get(slot.pair)?.status ?? 'done') !== 'done');
 }
 
 /**
@@ -825,7 +747,7 @@ function waitsForTelemetry(state: State, group: Group): boolean {
  * in a failure after `instanceWaitTimeoutMs`, like an instance start that waits for a slot.
  */
 function waitForRoom(state: State, size: number): void {
-  if (holders(state).some((holder) => holder.live > 0)) {
+  if (state.all.some((holder) => holder.live > 0)) {
     endRoomWait(state);
     return;
   }
@@ -878,7 +800,7 @@ function checkRun(state: State): void {
 /** The room an admission pass takes from: the slots free for a group and for a pending instance, and whether this run keeps one. */
 interface Room {
   max: number | null;
-  /** Free beside the slots the holders of this run keep: for a job or group. */
+  /** Free beside the slots the holders of this run keep: for a group. */
   free: number;
   /** Free beside their instances alone: for a pending instance of a running judge, which takes a slot its judge keeps. */
   actual: number;
@@ -887,7 +809,7 @@ interface Room {
 }
 
 /**
- * Whether a job or group of `size` fits. One larger than `maxConcurrentInstances` never fits: it starts once this run
+ * Whether a group of `size` fits. One larger than `maxConcurrentInstances` never fits: it starts once this run
  * holds no instance, and `startInstance` waits for each slot.
  */
 function fits(room: Room, size: number): boolean {
@@ -913,25 +835,7 @@ function admitPending(state: State, room: Room): void {
   }
 }
 
-/** Starts the shared telemetry jobs in order; false when one does not fit, which stops the starts. */
-function admitTelemetry(state: State, room: Room): boolean {
-  for (const job of state.telemetry) {
-    if (job.status !== 'queued') continue;
-    if (!fits(room, job.size)) {
-      waitForRoom(state, job.size);
-      return false;
-    }
-    take(room, job.size);
-    job.status = 'running';
-    spawn(state, () => span('shared telemetry', () => makeTelemetry(state, job)));
-  }
-  return true;
-}
-
-/**
- * Starts the queued groups in order. A group whose judges wait for the shared telemetry of their pair keeps its slots
- * and lets the groups after it start; a group that does not fit, or one whose gate is still pending, stops the starts.
- */
+/** Starts the queued groups in order; a group that does not fit, or one whose gate is still pending, stops the starts. */
 function admitGroups(state: State, room: Room): void {
   for (let i = 0; i < state.queue.length; ) {
     const group = state.queue[i] as Group;
@@ -941,11 +845,6 @@ function admitGroups(state: State, room: Room): void {
       continue;
     }
     if (gate === 'pending') return;
-    if (waitsForTelemetry(state, group)) {
-      room.free -= group.size;
-      i++;
-      continue;
-    }
     if (!fits(room, group.size)) {
       waitForRoom(state, group.size);
       return;
@@ -959,7 +858,7 @@ function admitGroups(state: State, room: Room): void {
 
 /**
  * Starts what fits now, every start beside the others (ogw.md `## loop evaluate`): first the next instances of the
- * running judges in the slots they keep, then the shared telemetry jobs in order, then the queued groups in order.
+ * running judges in the slots they keep, then the queued groups in order.
  */
 async function admit(state: State): Promise<void> {
   const max = state.plan.settings.maxConcurrentInstances;
@@ -967,7 +866,7 @@ async function admit(state: State): Promise<void> {
   checkRun(state);
   const room: Room = { max, free: counted?.free ?? Number.POSITIVE_INFINITY, actual: counted?.actual ?? Number.POSITIVE_INFINITY, kept: counted?.kept ?? false };
   admitPending(state, room);
-  if (admitTelemetry(state, room)) admitGroups(state, room);
+  admitGroups(state, room);
 }
 
 function rel(state: State, path: string | null): string {
@@ -1030,7 +929,6 @@ function judgeEntry(state: State, slot: JudgeSlot, output: string | null, verdic
     votes: verdict?.votes ?? null,
     lostMoments: verdict?.lostMoments ?? [],
     vsReference: state.plan.kind === 'fun' ? null : (verdict?.vsReference ?? 'unknown'),
-    telemetry: slot.telemetry,
     status: verdict ? 'done' : 'failed',
   };
 }
@@ -1220,103 +1118,6 @@ function abortOnSignal(state: State): () => void {
   return off;
 }
 
-/**
- * The k-th bot run of the scenario on a new headless instance of `commit` with random base k; null when it did not start
- * or reach every step.
- */
-async function botRunOf(state: State, job: TelemetryJob, commit: string, scenario: Scenario, k: number, degrade: Degrade = {}): Promise<BotRun | null> {
-  let instance: InstanceInfo | null = null;
-  try {
-    instance = await start(state, { commit, headless: true, randomBase: BigInt(k), ...degrade }, job);
-    const run = instance === null ? null : await botRun(state.ctx, instance, scenario, evaluateDeps.botPollMs);
-    if (run === null) state.ctx.log(`shared telemetry: a bot run of ${commit} did not reach every step`);
-    return run;
-  } catch (error) {
-    checkStopped(state);
-    state.ctx.log(`shared telemetry: no bot run of ${commit}: ${firstLine(error)}`);
-    return null;
-  } finally {
-    await stop(state, instance);
-  }
-}
-
-/**
- * The shared telemetry of one pair (ogw.md `## loop evaluate`): the shared telemetry runs of this commit and the
- * baseline commit compared with `A` and `B` of each step 4 judge of the pair in the site's telemetry file. A success
- * judge gets the file of the first step 4 judge of its side.
- */
-async function shareRuns(state: State, pair: JudgePair, mine: readonly BotRun[], theirRuns: readonly BotRun[]): Promise<void> {
-  const theirs = theirRuns.map((r) => withInputLatency(r, pair.baselineLatencyMs));
-  const judges = state.all.filter((s): s is JudgeSlot => s.role === 'judge' && s.pair === pair);
-  for (const slot of judges.filter((j) => j.kind === 'main')) {
-    const path = state.plan.site.telemetry(pair, slot.k);
-    await writeFileAtomic(path, slot.side === 'A' ? comparisonText(mine, theirs) : comparisonText(theirs, mine));
-    slot.telemetry = path;
-  }
-  for (const slot of judges.filter((j) => j.kind !== 'main')) {
-    slot.telemetry = judges.find((j) => j.kind === 'main' && j.side === slot.side)?.telemetry ?? null;
-  }
-}
-
-/** The key of the runs of the baseline commit of a pair that the pairs with that commit and degradation share. */
-function baselineKey(pair: JudgePair): string {
-  return `${pair.baseline as string}\0${JSON.stringify(baselineDegrade(pair))}`;
-}
-
-/**
- * A job that makes the shared telemetry runs of a pair: of both commits, or of this commit beside the baseline runs a
- * job before it makes. The jobs start in order, so the one that makes the baseline runs has started when another takes them.
- */
-function telemetryJob(state: State, pair: JudgePair, scenario: Scenario): TelemetryJob {
-  const shared = state.plan.shareBaselineRuns === true ? state.baselineRuns.get(baselineKey(pair)) : undefined;
-  const job: TelemetryJob = { role: 'telemetry', pair, scenario, size: SHARED_TELEMETRY_RUNS * (shared === undefined ? 2 : 1), status: 'queued', makesBaseline: shared === undefined, live: 0, starting: 0, reserved: 0 };
-  if (state.plan.shareBaselineRuns === true && shared === undefined) state.baselineRuns.set(baselineKey(pair), { maker: job, runs: null });
-  return job;
-}
-
-/**
- * Makes the shared telemetry runs of a job, those of both commits at once, and gives them to the judges of its pair.
- * Without the runs of both commits the judges of the pair get `telemetry` null.
- */
-async function makeTelemetry(state: State, job: TelemetryJob): Promise<void> {
-  const { pair, scenario } = job;
-  const between = (): void => {
-    checkStopped(state);
-  };
-  const mine = sideRuns((k) => botRunOf(state, job, pair.commit, scenario, k), between);
-  const shared = state.baselineRuns.get(baselineKey(pair));
-  const taken = job.makesBaseline ? null : (shared?.runs ?? null);
-  if (!job.makesBaseline && taken === null) throw new OgwError(`the shared telemetry runs of ${pair.baseline as string} did not start before those of ${pair.commit}`);
-  const theirs = taken ?? sideRuns((k) => botRunOf(state, job, pair.baseline as string, scenario, k, baselineDegrade(pair)), between);
-  if (shared?.maker === job) shared.runs = theirs;
-  const [commitRuns = null, baselineRuns = null] = await allSettled([mine, theirs]);
-  if (commitRuns !== null && baselineRuns !== null) await shareRuns(state, pair, commitRuns, baselineRuns);
-  job.status = 'done';
-}
-
-/**
- * Sets up the shared telemetry of each new pair of `slots` with a baseline commit, from the scenario of the checkout
- * HEAD (none without it): the runs `takeRuns` gives, or else a job that makes them, which the judges of the pair wait for.
- */
-async function setupTelemetry(state: State, slots: readonly Slot[]): Promise<void> {
-  const pairs = [...new Set(slots.filter((s): s is JudgeSlot => s.role === 'judge').map((s) => s.pair))].filter((p) => p.baseline !== null && !state.shared.has(p));
-  if (pairs.length === 0) return;
-  for (const pair of pairs) state.shared.add(pair);
-  state.scenario ??= scenarioAtHead(state.plan.game, state.ctx.env);
-  const shared = await state.scenario;
-  if (shared === null) return;
-  for (const pair of pairs) {
-    const taken = (await state.plan.takeRuns?.(pair, shared)) ?? null;
-    if (taken !== null) {
-      if (taken.commit !== null && taken.baseline !== null) await shareRuns(state, pair, taken.commit, taken.baseline);
-      continue;
-    }
-    const job = telemetryJob(state, pair, shared.scenario);
-    state.telemetry.push(job);
-    state.telemetryOf.set(pair, job);
-  }
-}
-
 /** A failure of the feed, which ends the judging as a failure that keeps no ended slot. */
 class FeedFailure extends Error {
   readonly error: unknown;
@@ -1326,7 +1127,7 @@ class FeedFailure extends Error {
   }
 }
 
-/** Takes the groups that came from the feed into the queue, with the shared telemetry of their pairs. */
+/** Takes the groups that came from the feed into the queue. */
 async function takeArrivals(state: State): Promise<void> {
   const feed = state.plan.feed;
   if (feed === undefined || state.feedDone) return;
@@ -1342,12 +1143,11 @@ async function takeArrivals(state: State): Promise<void> {
 
 /**
  * Before the judges of `slots` start: the `<game>` of their judge inputs (`sideOf`), so that a judge starts its agent as
- * soon as its instances started, and the shared telemetry of their pairs.
+ * soon as its instances started.
  */
 async function prepareJudges(state: State, slots: readonly Slot[]): Promise<void> {
   const commits = new Set(slots.flatMap((s) => (s.role === 'judge' ? [s.pair.commit, ...(s.pair.baseline === null ? [] : [s.pair.baseline])] : [])));
   await allSettled([...commits].map((commit) => sideOf(state, commit)));
-  await setupTelemetry(state, slots);
 }
 
 /** True when nothing is left to start, run or come. */
@@ -1421,7 +1221,6 @@ function runSite(game: GameRepo, run: RunState): EvaluateSite {
   const n = String(run.iteration);
   return {
     input: (role, ms) => abs(game, runRel(run, `evidence/input-${role}-${n}-${String(ms)}.json`)),
-    telemetry: (_pair, k) => abs(game, runRel(run, `evidence/telemetry-${n}-${String(k)}.md`)),
     measure: (instance) => abs(game, runRel(run, `evidence/measure-${n}/${instance}.json`)),
     judgePlace: () => null,
   };
@@ -1439,15 +1238,11 @@ function judgingPlanOf(plan: EvaluatePlan): JudgingPlan {
     ...(plan.fixtureDir === undefined ? {} : { fixtureDir: plan.fixtureDir }),
     site: runSite(plan.game, plan.run),
     successOpen: (main) => successPrecondition({ kind: plan.kind, ...together(plan, main) }, (name) => checkResult(plan.check, name)),
-    // the runs `ogw check --loop` made of the same two commits with the same scenario (ogw.md `## check`)
-    takeRuns: (pair, shared) =>
-      pair.baseline === null ? Promise.resolve(null) : checkTelemetryRuns(plan.game, plan.run, plan.run.iteration, { commit: pair.commit, baseline: pair.baseline, scenario: shared.sha256 }),
   };
 }
 
 /**
- * Runs the groups (judges and plays) in order within `maxConcurrentInstances`, the judges of a pair once its shared
- * telemetry is there, and returns every slot with its entry. On a failure or a signal it stops what it started and throws.
+ * Runs the groups (judges and plays) in order within `maxConcurrentInstances`, and returns every slot with its entry. On a failure or a signal it stops what it started and throws.
  */
 export async function runJudging(ctx: Context, plan: JudgingPlan, queue: Group[]): Promise<Slot[]> {
   return (await judging(ctx, plan, queue, false)).slots;
@@ -1481,11 +1276,6 @@ async function judging(ctx: Context, plan: JudgingPlan, queue: Group[], keep: bo
     wake: new AbortController(),
     nudge: new AbortController(),
     tasks: new Set(),
-    telemetry: [],
-    telemetryOf: new Map(),
-    shared: new Set(),
-    baselineRuns: new Map(),
-    scenario: null,
     feedDone: false,
     settled: Promise.resolve(),
     guides: null,
@@ -1544,7 +1334,6 @@ async function recordEvaluation(ctx: Context, plan: EvaluatePlan, slots: readonl
   const path = runRel(plan.run, `evaluate-${n}.json`);
   await writeJsonAtomic(abs(plan.game, path), file);
   const written = [measure, ...plays.map((p) => p.result), ...judges.map((j) => j.result)];
-  // the telemetry files are evidence, which is not committed
   const paths = written.filter((r): r is string => r !== null && r !== '' && exists(abs(plan.game, r)));
   if (measure === null && hadMeasure) paths.push(measureRel);
   await commitPaths(plan.game.root, [path, ...paths], `loop ${plan.run.name}: evaluate ${n}`, { env: ctx.env });

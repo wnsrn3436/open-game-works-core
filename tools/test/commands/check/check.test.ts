@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -735,13 +734,9 @@ if (args.includes('--import')) {
     expect(text.stdout.trimEnd().split('\n').at(-1)).toBe('gate: fail');
   });
 
-  it('makes the shared telemetry runs of this commit and the baseline game beside the checks, and measures performance with no other instance of the check running', async () => {
+  it('measures performance with no other instance of the check running', async () => {
     const root = setupGame(ws, { 'server/tests/a.test.ts': "it('a', () => { expect(1).toBe(1); });\n" });
-    // an update run: its baseline game at iteration 1 is the commit the work branch was made from
-    const base = await openRun(1, {}, 'update');
-    writeFileSync(join(root, 'client/tests/a/test_b.gd'), 'func test_b():\n');
-    commitAll(root, 'content');
-    const commit = (await head(root)).trim();
+    await openRun(1);
     serveClient();
     const answer = vi.mocked(automationRequest).getMockImplementation() as typeof automationRequest;
     const measured = new Set<string>();
@@ -749,15 +744,13 @@ if (args.includes('--import')) {
       if (command === 'set_quality_level') measured.add(id);
       return answer(c, id, command, args, ...rest);
     });
-    // starts and stops in order; each instance has a checkout with a play guide
+    // starts and stops in order
     const events: [string, string][] = [];
-    const checkout = mkdtempSync(join(tmpdir(), 'ogw-instance-'));
-    writeFileSync(join(checkout, 'play-guide.md'), '## controls\n\ntap\n');
     let n = 0;
     vi.mocked(startInstance).mockImplementation(() => {
       const id = `i${String(++n)}`;
       events.push(['start', id]);
-      return Promise.resolve({ id, root: checkout } as Awaited<ReturnType<typeof startInstance>>);
+      return Promise.resolve({ id } as Awaited<ReturnType<typeof startInstance>>);
     });
     vi.mocked(stopInstance).mockImplementation((_c, id) => {
       events.push(['stop', id]);
@@ -766,21 +759,7 @@ if (args.includes('--import')) {
     const run = await ogw(ws, ['check', 'g', '--loop']);
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
-    // three headless runs of each commit, each on a new instance of its commit
-    const starts = vi.mocked(startInstance).mock.calls.map((c) => c[1]);
-    // the k-th run of a commit has random base k; every other instance of the check has random base 1
-    expect(starts.filter((o) => o.commit === commit)).toEqual([1n, 2n, 3n].map((randomBase) => ({ game: 'g', commit, client: 'headless', db: undefined, randomBase })));
-    expect(starts.filter((o) => o.commit === base)).toEqual([1n, 2n, 3n].map((randomBase) => ({ game: 'g', commit: base, client: 'headless', db: undefined, randomBase })));
-    expect(starts.filter((o) => o.commit === undefined).map((o) => o.randomBase)).toEqual(starts.filter((o) => o.commit === undefined).map(() => 1n));
-    expect(starts.filter((o) => o.commit === undefined).length).toBeGreaterThan(0);
-    const scenario = createHash('sha256').update(readFileSync(join(root, 'client/dev/bot/scenario.json'))).digest('hex');
-    const runs = JSON.parse(readFileSync(join(root, 'records/loops/update-1/evidence/check-1/telemetry-runs.json'), 'utf8')) as { commit: string; baseline: string; scenario: string; runs: Record<string, { telemetry: { started_at: number }; guide: string | null }[] | null> };
-    expect({ commit: runs.commit, baseline: runs.baseline, scenario: runs.scenario }).toEqual({ commit, baseline: base, scenario });
-    for (const side of ['commit', 'baseline']) {
-      expect(runs.runs[side]?.map((r) => [r.telemetry.started_at, r.guide])).toEqual(Array.from({ length: 3 }, () => [0, '## controls\n\ntap\n']));
-    }
-    // the runs are not a check
-    const file = JSON.parse(readFileSync(join(root, 'records/loops/update-1/check-1.json'), 'utf8')) as { checks: { name: string }[] };
+    const file = JSON.parse(readFileSync(join(root, 'records/loops/create-1/check-1.json'), 'utf8')) as { checks: { name: string }[] };
     expect([...new Set(file.checks.map((c) => c.name))]).toEqual(['regression test', 'static check', 'no blocker', 'full flow', 'performance', 'UI quality', 'no placeholder', 'row simulation']);
     // each performance measurement (one per platform profile) starts when no other instance of the check runs, and
     // no instance starts or stops until it stops

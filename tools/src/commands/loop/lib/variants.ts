@@ -148,7 +148,6 @@ function variantSite(game: GameRepo, run: RunState): EvaluateSite {
   const n = String(run.iteration);
   return {
     input: (role, ms) => abs(game, runRel(run, `evidence/input-${role}-${n}-${String(ms)}.json`)),
-    telemetry: (pair, j) => abs(game, runRel(run, `evidence/telemetry-${n}-${pair.name}-${String(j)}.md`)),
     measure: (instance) => abs(game, runRel(run, `evidence/measure-${n}/${instance}.json`)),
     judgePlace: (pair, j) => ({
       output: abs(game, runRel(run, `judge-${n}-${pair.name}-${String(j)}.md`)),
@@ -163,9 +162,9 @@ type EndVariant = (variant: Started, outcome: AgentOutcome | undefined) => Promi
 
 /**
  * Runs `loop.judgeVotes` fun judges of each variant commit against the baseline, all variants in one judging, the judges
- * of a variant as soon as its agent ended (`end` makes its entry). The shared telemetry runs of the baseline commit are
- * made once for every variant. A variant whose judges did not all end before a failure of the judging gets no votes;
- * returns that failure, or null. The agents that had not ended at the failure are left to the caller.
+ * of a variant as soon as its agent ended (`end` makes its entry). A variant whose judges did not all end before a
+ * failure of the judging gets no votes; returns that failure, or null. The agents that had not ended at the failure are
+ * left to the caller.
  */
 async function judgeVariants(
   ctx: Context,
@@ -177,7 +176,7 @@ async function judgeVariants(
   end: EndVariant,
   db: 'postgresql' | undefined,
 ): Promise<string | null> {
-  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db, site: variantSite(game, run), shareBaselineRuns: true };
+  const plan: JudgingPlan = { game, kind: 'fun', moments: [], reference: null, settings, db, site: variantSite(game, run) };
   const pairs = new Map<JudgePair, VariantEntry>();
   const waiting = [...started];
   const feed: JudgingFeed = {

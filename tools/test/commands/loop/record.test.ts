@@ -67,7 +67,7 @@ const AGENT = { cli: 'claude-code', model: 'claude-opus-5-5', effort: 'high' };
 
 /** A judge entry of `evaluate-<n>.json` with the fields a test does not look at filled in. */
 function judgeOf(fields: Record<string, unknown>): Record<string, unknown> {
-  return { agent: AGENT, omittedMoments: [], votes: null, lostMoments: [], telemetry: null, status: 'done', ...fields };
+  return { agent: AGENT, omittedMoments: [], votes: null, lostMoments: [], status: 'done', ...fields };
 }
 
 /** The `evaluate-<n>.json` fields of the step 4 judges together and the kind. */

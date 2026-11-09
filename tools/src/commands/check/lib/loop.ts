@@ -21,7 +21,6 @@ import { performanceChecks, platformProfiles } from './performance.ts';
 import { fixedRows, rowProofs } from './fix-proof.ts';
 import { regressionTest } from './regression.ts';
 import { rowSimulationCheck } from './row-simulation.ts';
-import { makeTelemetryRuns } from './telemetry-runs.ts';
 import type { FixTestProof } from '../../loop/lib/files.ts';
 import { iterationKind } from '../../loop/lib/run.ts';
 import { uiQualityCheck, type UiCheckScreen, type UiQualityLimits } from './ui-quality.ts';
@@ -136,9 +135,9 @@ export interface WorkBeside {
 /**
  * The checks of iteration step 2 on the checkout of `game`, with evidence in `evidence`, sorted in `CHECK_ORDER`;
  * `core try` leaves out `no placeholder` and `row simulation`; `fun` runs only the regression test, the static check and
- * the bot playtest (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the shared telemetry
- * runs and the fix test proof of `--loop`); the failure of each is logged under its name. The work that does not read
- * the checkout's `client/` (the server regression test and no placeholder) runs beside its import. The performance
+ * the bot playtest (ogw.md `## check`). `alongside` is more work of the check, which is not a check (the fix test proof of
+ * `--loop`); the failure of each is logged under its name. The work that does not read the checkout's `client/` (the
+ * server regression test and no placeholder) runs beside its import. The performance
  * measurements start once every other instance of the check has stopped and the work of `alongside` has ended (ogw.md
  * `## performance`).
  */
@@ -235,10 +234,8 @@ export async function loopCheck(ctx: Context, game: GameRepo, settings: GameSett
   // the fix test proof works in a worktree of its own: it does not wait for the import of the checkout. It does not
   // throw (what it could not decide is `unknown` with the reason), so its result is never left out
   const proof = span('fix test proof', () => rowProofs(ctx, game, run, commit, fixed, proofOptions));
-  // the step 4 judges take the shared telemetry runs made here instead of waiting for them (ogw.md `## check`); the
-  // performance measurements wait for them and for the fix test proof
+  // the performance measurements wait for the fix test proof
   const checks = await gameChecks(ctx, game, settings, { ...options, slots }, evidence, set, [
-    { name: 'shared telemetry runs', work: (instance) => span('shared telemetry runs', () => makeTelemetryRuns(ctx, game, run, commit, instance)) },
     {
       name: 'fix test proof',
       work: async () => {

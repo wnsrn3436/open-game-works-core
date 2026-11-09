@@ -15,7 +15,6 @@ const PATH_FIELDS: Record<'play' | 'judge', PathField[]> = {
   judge: [
     { path: ['A', 'playGuide'], name: () => 'play-guide-A.md' },
     { path: ['B', 'playGuide'], name: () => 'play-guide-B.md' },
-    { path: ['telemetry'], name: () => 'telemetry.md' },
   ],
 };
 

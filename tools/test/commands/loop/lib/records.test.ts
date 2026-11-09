@@ -63,7 +63,6 @@ function judgeEntry(fields: Partial<JudgeEntry>): JudgeEntry {
     votes: null,
     lostMoments: [],
     vsReference: 'pass',
-    telemetry: null,
     status: 'done',
     ...fields,
   };

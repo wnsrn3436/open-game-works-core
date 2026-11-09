@@ -9,7 +9,7 @@ import { withInstance, type Slots } from './instances.ts';
 import { ClientLogUnreadable, clientLog } from './logs.ts';
 import { parseScenario, runScenario, type Scenario, type ScenarioOutcome } from './scenario.ts';
 
-/** Polling interval of instance state while a bot playtest scenario runs (`ogw check`, the shared-telemetry bot runs of `ogw loop evaluate`). */
+/** Polling interval of instance state while a bot playtest scenario runs (`ogw check`). */
 export const BOT_PLAYTEST_POLL_MS = 200;
 
 export const SCENARIO = 'client/dev/bot/scenario.json';

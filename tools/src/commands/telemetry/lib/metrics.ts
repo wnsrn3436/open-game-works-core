@@ -220,6 +220,16 @@ export function metricValue(metric: string, samples: readonly Sample[], free: Fr
   return calc(samples, free);
 }
 
+/**
+ * The telemetry of an instance started with `--input-latency <latencyMs>` as the player meets it (ogw.md `## telemetry
+ * compare`): the client measures `latency_ms` from when it gets the input, after the supervisor held it, so the held
+ * time is added to each measured one. An input without a response stays without one.
+ */
+export function withInputLatency(t: Telemetry, latencyMs: number): Telemetry {
+  if (latencyMs <= 0) return t;
+  return { ...t, inputs: t.inputs.map((i) => (i.latency_ms === null ? i : { ...i, latency_ms: i.latency_ms + latencyMs })) };
+}
+
 function within(at: number, from: number, to: number): boolean {
   return at >= from && at < to;
 }

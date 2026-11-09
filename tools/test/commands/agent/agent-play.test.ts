@@ -55,7 +55,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const fake = fakeAgentCli(ws, "fs.writeFileSync(output, '## vs baseline\\n\\nnone\\n\\n## vs reference\\n\\n| instance | element | result | reason | evidence |\\n|---|---|---|---|---|\\n| A | game feel | good | r | e |\\n');");
     const input = join(ws.root, 'judge.json');
     const game = { instance: 'a', playGuide: join(root, 'play-guide.md') };
-    writeFileSync(input, JSON.stringify({ A: game, B: { ...game, instance: 'b' }, fixtures: [], elements: ['game feel'], telemetry: null, reference: { name: 'ref', presentation: 'ref', moments: [] } }));
+    writeFileSync(input, JSON.stringify({ A: game, B: { ...game, instance: 'b' }, fixtures: [], elements: ['game feel'], reference: { name: 'ref', presentation: 'ref', moments: [] } }));
     const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const output = join(root, 'records/calibration/6/judge-a-1.md');
     const id = await startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output, evidence: join(root, 'builds/calibration/6/judge-a-1') } });
@@ -75,7 +75,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     expect((await readJob(viaCodex, ws.env)).meta.session ?? null).toBeNull();
     expect((await readJob(viaCodex, ws.env)).meta.sessionUsage).toBeUndefined();
     // the input sets what is read: without B and reference, neither table
-    writeFileSync(input, JSON.stringify({ A: game, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
+    writeFileSync(input, JSON.stringify({ A: game, B: null, fixtures: [], elements: ['game feel'], reference: null }));
     const free = await startAgentJob(ctx, { role: 'judge', game: 'g', input, calibration: { output, evidence: join(root, 'builds/calibration/6/judge-a-2') } });
     expect((await ogw(ws, ['agent', 'wait', free, '--timeout', '60000'], { env: fake.env })).code).toBe(0);
   });
@@ -96,7 +96,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const root = makeGame(ws, 'g', { 'settings.json': {}, 'play-guide.md': '# guide\n' });
     const fake = fakeAgentCli(ws, "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png'); fs.writeFileSync(output, 'capture ' + process.cwd() + '/captures/shot.png\\n');");
     const input = join(ws.root, 'judge.json');
-    writeFileSync(input, JSON.stringify({ A: { instance: 'a', playGuide: join(root, 'play-guide.md') }, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
+    writeFileSync(input, JSON.stringify({ A: { instance: 'a', playGuide: join(root, 'play-guide.md') }, B: null, fixtures: [], elements: ['game feel'], reference: null }));
     const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const output = join(root, 'records/calibration/5/judge-null-1-1.md');
     const evidence = join(root, 'builds/calibration/5/judge-null-1-1');
@@ -120,7 +120,7 @@ describe.runIf(process.platform === 'darwin')('ogw agent: play and judge', () =>
     const { root } = await gameWithRun(ws, { 'play-guide.md': '# guide\n' }, { iteration: 2 });
     const fake = fakeAgentCli(ws, "fs.mkdirSync('captures'); fs.writeFileSync('captures/shot.png', 'png'); fs.writeFileSync(output, 'capture ' + process.cwd() + '/captures/shot.png\\n');");
     const input = join(ws.root, 'judge.json');
-    writeFileSync(input, JSON.stringify({ A: { instance: 'a', playGuide: join(root, 'play-guide.md') }, B: null, fixtures: [], elements: ['game feel'], telemetry: null, reference: null }));
+    writeFileSync(input, JSON.stringify({ A: { instance: 'a', playGuide: join(root, 'play-guide.md') }, B: null, fixtures: [], elements: ['game feel'], reference: null }));
     const ctx = createContext({ cwd: root, env: { ...ws.env, ...fake.env }, stdin: () => Promise.resolve(''), stderr: () => undefined });
     const output = join(root, 'records/loops/r1/judge-2-v1-1.md');
     const evidence = join(root, 'records/loops/r1/evidence/judge-2-v1-1');
